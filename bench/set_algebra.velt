@@ -1,0 +1,36 @@
+// Row (#3792): the Set algebra and iteration on numbers and strings, both size branches of each
+// method; count instructions (cachegrind) with base and head std, one compiler.
+function nums(from: number, n: number): Set<number> {
+  const s = new Set<number>();
+  for (let i = 0; i < n; i++) s.add(from + i * 3);
+  return s;
+}
+
+function strs(from: number, n: number): Set<string> {
+  const s = new Set<string>();
+  for (let i = 0; i < n; i++) s.add(`k${from + i * 3}`);
+  return s;
+}
+
+let check = 0;
+const a = nums(0, 2000);
+const big = nums(600, 3000);
+const small = nums(300, 500);
+const sa = strs(0, 1000);
+const sbig = strs(600, 1500);
+const ssmall = strs(300, 250);
+for (let round = 0; round < 40; round++) {
+  for (const o of [big, small]) {
+    check += a.union(o).size + a.intersection(o).size + a.difference(o).size;
+    check += a.symmetricDifference(o).size;
+    check += (a.isSubsetOf(o) ? 1 : 0) + (a.isSupersetOf(o) ? 2 : 0) + (a.isDisjointFrom(o) ? 4 : 0);
+  }
+  for (const o of [sbig, ssmall]) {
+    check += sa.union(o).size + sa.intersection(o).size + sa.difference(o).size;
+    check += sa.symmetricDifference(o).size;
+    check += (sa.isSubsetOf(o) ? 1 : 0) + (sa.isSupersetOf(o) ? 2 : 0) + (sa.isDisjointFrom(o) ? 4 : 0);
+  }
+  for (const x of a) check += x;
+  for (const s of sa) check += s.length;
+}
+console.log(check);

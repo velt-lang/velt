@@ -197,10 +197,9 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   more than 64 units points at a literal (the JSON reader copies such a key instead of borrowing it,
   rt_abi_async.md §12.3), and so must any other producer of borrowed views.
 - `VELT_RC_STATS=1` with a **debug** runtime prints one line to stderr at exit,
-  `rc stats: retain=<n> release=<n> alloc=<n> free=<n> blocks=<allocated>/<freed> panics caught=<n>`
+  `rc stats: retain=<n> release=<n> alloc=<n> free=<n> blocks=<allocated>/<freed>`
   (retain = increments, release = decrements of shared buffers, alloc/free = heap string
-  buffers, blocks = every non-empty `velt_rt_alloc`/`velt_rt_free` and array buffer handed over,
-  panics caught = panics stopped at a promise that catches them, each of which leaks).
+  buffers, blocks = every non-empty `velt_rt_alloc`/`velt_rt_free` and array buffer handed over).
   Release runtimes compile the counters out; to count optimized code, link a release-built
   program against the debug runtime (`VELT_RT_LIB` naming `<target>/debug/libvelt_rt.a`, or
   `velt_rt.lib` on Windows).

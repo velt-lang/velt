@@ -45,6 +45,7 @@ mod any_member;
 mod any_not_fn;
 mod any_number;
 mod any_object_fill;
+mod any_promise_cast;
 mod any_proxy;
 mod any_ready;
 mod any_record;

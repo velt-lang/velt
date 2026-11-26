@@ -146,6 +146,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::IsUnique
         | I::WeakRead
         | I::HoldsNull
+        | I::IsExactClass
         | I::NullAs
         | I::Truthy
         | I::IsNull

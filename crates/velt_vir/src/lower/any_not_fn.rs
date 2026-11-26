@@ -75,7 +75,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The prelude's `TypeError` class and its type (looked up once per program).
-    fn type_error_def(&mut self) -> Option<(hir::DefId, TyId)> {
+    pub(super) fn type_error_def(&mut self) -> Option<(hir::DefId, TyId)> {
         let hir = self.cx.hir;
         let found = *self.cx.prelude_type_error.get_or_insert_with(|| {
             let name = velt_common::std_item!(prelude_error, "TypeError");
@@ -89,7 +89,7 @@ impl FnLower<'_, '_> {
 
     /// Can an error of type `to` hold one of class `from` ([`widen_error`](Self::widen_error)'s
     /// conversions)?
-    fn takes_error(&mut self, to: TyId, from: TyId) -> bool {
+    pub(super) fn takes_error(&mut self, to: TyId, from: TyId) -> bool {
         if to == from || self.cx.is_dynamic(to) {
             return true;
         }

@@ -309,6 +309,17 @@ impl FnLower<'_, '_> {
         let (objs_bb, not_objs_bb) = (self.new_block(), self.new_block());
         self.branch(objs, objs_bb, not_objs_bb);
         self.switch_to(objs_bb);
+        if self.cx.boxing.any_promise_types {
+            // Two promise types (a cast's and the promise it converts, any_promise_cast.rs):
+            // the promises each holder stands for (`velt_rt_fut_id`).
+            let both = self.any_both_promises(&xa, &xb);
+            let (promises_bb, plain_bb) = (self.new_block(), self.new_block());
+            self.branch(both, promises_bb, plain_bb);
+            self.switch_to(promises_bb);
+            let r = self.any_promises_same(&da, &db);
+            set(self, r);
+            self.switch_to(plain_bb);
+        }
         let r = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, da.clone(), db.clone()));
         set(self, r);
         self.switch_to(not_objs_bb);

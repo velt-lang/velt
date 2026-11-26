@@ -95,7 +95,7 @@ const DEF_SETS: [&str; 4] = [
 const UNSEEDED_SETS: [&str; 2] = ["weak-capable", "a possible proxy"];
 
 /// How many [`CountedSeed::flags`] there are: [`FLAGS`] names each, and `with_seed` sets each.
-const FLAG_COUNT: usize = 15;
+const FLAG_COUNT: usize = 16;
 
 /// What each of [`CountedSeed::flags`] decides, program-wide, about live values or the tables
 /// they point at.
@@ -115,6 +115,7 @@ const FLAGS: [&str; FLAG_COUNT] = [
     "the `any` tables' member slots",
     "the wrappers of function values",
     "whether a function's apply slot calls one that returns a promise",
+    "how `any` values compare promises of two types",
 ];
 
 impl CountedSeed {
@@ -230,6 +231,7 @@ impl Cx<'_> {
             any_reflect,
             any_number,
             any_applies,
+            any_promise_types,
             any_call_keys,
             recursive,
             transferred,
@@ -281,6 +283,7 @@ impl Cx<'_> {
             *any_members,
             *fn_wrappers,
             *any_applies,
+            *any_promise_types,
         ];
         CountedSeed {
             types: vec![
@@ -372,6 +375,7 @@ impl Cx<'_> {
             &mut b.any_members,
             &mut b.fn_wrappers,
             &mut b.any_applies,
+            &mut b.any_promise_types,
         ];
         for (flag, &seeded) in flags.into_iter().zip(&seed.flags) {
             *flag |= seeded;

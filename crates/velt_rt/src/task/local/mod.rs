@@ -13,20 +13,11 @@
 //! Directly awaited calls never get here: `await f()` embeds `f`'s state in the caller's (no
 //! allocation), and `spawn(f())` gives `f` its own task.
 
-mod catch;
-mod losers;
 mod micro;
 mod node;
 mod set;
-mod unhandled;
 
-pub use catch::{
-    velt_rt_catch_arm, velt_rt_catch_free, velt_rt_catch_message, velt_rt_catch_settled,
-    velt_rt_catch_take,
-};
-pub use losers::velt_rt_fut_detach;
-pub(crate) use micro::{grant_step, settled, step_free, ticket_pending};
-pub use micro::{velt_rt_await_ready, velt_rt_await_tick, velt_rt_microtask};
+pub(crate) use micro::{settled, step_free, ticket_pending};
 
 use std::cell::Cell;
 use std::future::Future;
@@ -51,8 +42,6 @@ struct TaskCx {
     /// The task's await word (micro.rs): its queued microtasks plus the synchronous runs under
     /// way. Generated code reads it through `cx` (`await_word`).
     word: Cell<u32>,
-    /// The microtask being run is a waiter's step already (micro.rs).
-    credit: Cell<bool>,
 }
 
 thread_local! {
@@ -172,7 +161,6 @@ impl SetPtr {
             id: &mut self.1,
             turn: self.2,
             word: Cell::new(self.0.as_ref().map_or(0, |s| s.micro.len() as u32)),
-            credit: Cell::new(false),
         };
         let _enter = Enter::new(&tcx);
         if !self.0.is_null() {
@@ -194,10 +182,6 @@ impl SetPtr {
                 root,
                 word: tcx.word.as_ptr(),
             });
-        }
-        // Rejections nobody handles, reported once the queue is drained (unhandled.rs).
-        if !self.0.is_null() && unhandled::waiting(self.0) {
-            unhandled::flush(self.0);
         }
     }
 
@@ -318,21 +302,10 @@ pub unsafe extern "C-unwind" fn velt_rt_fut_start(
     f: *mut VeltFut,
     result_drop: Option<ResultDropFn>,
 ) {
-    start(f, result_drop, false);
+    start(f, result_drop);
 }
 
-/// [`velt_rt_fut_start`] for a promise that can reject (its result is a `Result`, tag first): a
-/// rejection its owner has not claimed by the next microtask checkpoint is reported as uncaught
-/// then, as in Node (unhandled.rs).
-#[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_fut_start_rejecting(
-    f: *mut VeltFut,
-    result_drop: Option<ResultDropFn>,
-) {
-    start(f, result_drop, true);
-}
-
-unsafe fn start(f: *mut VeltFut, result_drop: Option<ResultDropFn>, rejecting: bool) {
+unsafe fn start(f: *mut VeltFut, result_drop: Option<ResultDropFn>) {
     if !node::is_lazy(f) {
         return;
     }
@@ -344,22 +317,11 @@ unsafe fn start(f: *mut VeltFut, result_drop: Option<ResultDropFn>, rejecting: b
     let set = task_set(&*tcx);
     node::stamp(f, (*tcx).turn);
     node::mark_started(f, &(*set).shared, result_drop);
-    if rejecting {
-        node::mark_rejectable(f);
-    }
-    // Started inside a poll that catches panics, or by `catchPanic`: it catches its own
-    // (node/panicked.rs, catch.rs).
-    node::catches_here(f);
-    catch::take_arming(f);
     // The creator goes on after this first run, so the run's `await`s take their steps through
     // the queue (micro.rs).
     let t = &*tcx;
     micro::sync_enter(t);
-    // The credit of a waiter being resumed (micro.rs) is its own step: not one of the promise
-    // it starts, whose `await`s take steps of their own.
-    let credit = t.credit.replace(false);
     let finished = node::poll_first(f, t.word.as_ptr());
-    t.credit.set(credit);
     micro::sync_exit(t);
     if finished {
         // Finished before its first suspension: nobody awaits it yet, nothing to resume.
@@ -435,11 +397,6 @@ pub(crate) unsafe fn await_unadopted(f: *mut VeltFut, cx: *mut std::ffi::c_void)
     node::poll_unadopted(f, cx)
 }
 
-/// The panic message of started promise `f` if it panicked (node/panicked.rs): it has no result.
-pub(crate) unsafe fn node_panic(f: *mut VeltFut) -> Option<Box<[u8]>> {
-    node::panicked_message(f)
-}
-
 /// The owner of finished started promise `f` claims its result.
 pub(crate) unsafe fn deliver_unadopted(f: *mut VeltFut) {
     node::deliver_unadopted(f)
@@ -486,20 +443,4 @@ pub(crate) fn outside_done() {
 /// Has started promise `f` finished?
 pub(crate) unsafe fn node_done(f: *mut VeltFut) -> bool {
     node::is_done(f)
-}
-
-/// The `n` futures in `futs` are handled by a combinator (`Promise.race`, `any`, `all`): a
-/// started promise among them that is dropped unfinished and rejects later is not reported as an
-/// unhandled rejection, like in JS; `quiet_drop` disposes of its result slot (null if nothing to
-/// drop). Call before handing the futures over.
-#[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_futs_handled(
-    futs: *const *mut VeltFut,
-    n: u64,
-    quiet_drop: Option<ResultDropFn>,
-) {
-    for i in 0..n as usize {
-        let f = *futs.add(i);
-        node::mark_handled(f, quiet_drop);
-    }
 }

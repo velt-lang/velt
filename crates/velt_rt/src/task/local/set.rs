@@ -112,13 +112,6 @@ pub(crate) struct LocalSet {
     /// `drive_adopted`): bounded, so a long chain of promises each awaiting the one before it
     /// (`p = p.then(f)` in a loop) is never polled recursively from end to start.
     pub(super) adopting: u32,
-    /// Promises that rejected while nobody awaited them: reported once the microtask queue is
-    /// drained unless their owner claimed them by then (unhandled.rs; each holds a reference).
-    pub(super) rejections: Vec<*mut VeltFut>,
-    /// The length of `rejections` at which those their owners claimed meanwhile are let go
-    /// (unhandled.rs `watch`): a loop that never reaches a checkpoint keeps only the ones still
-    /// open.
-    pub(super) compact_at: usize,
 }
 
 /// A node being polled, linked to the one whose poll led to it (on the stack of [`polling`]).
@@ -136,8 +129,6 @@ impl LocalSet {
             running: std::ptr::null(),
             micro: super::micro::Queue::new(),
             adopting: 0,
-            rejections: Vec::new(),
-            compact_at: super::unhandled::COMPACT_MIN,
         })
     }
 
@@ -212,9 +203,8 @@ unsafe fn is_running(set: *mut LocalSet, f: *mut VeltFut) -> bool {
     false
 }
 
-/// Run member `f` now, from inside a poll of the task's root or of another node (a promise its
-/// owner just detached, losers.rs): like [`run`], except that the root,
-/// which is being polled, is woken instead of polled when `f` resumes it. A node that is being
+/// Run member `f` now, from inside a poll of the task's root or of another node: like [`run`],
+/// except that the root, which is being polled, is woken instead of polled when `f` resumes it. A node that is being
 /// polled already is queued instead.
 pub(super) unsafe fn run_now(set: *mut LocalSet, t: &TaskCx, f: *mut VeltFut) {
     if is_running(set, f) {
@@ -334,10 +324,6 @@ impl Drop for LocalSet {
             let _g = self.shared.closing.lock();
             // SAFETY: the set is closed: this is the queue's last consumer.
             unsafe { self.shared.release_queued() };
-        }
-        for f in self.rejections.drain(..) {
-            // SAFETY: a watched rejection holds a reference (unhandled.rs).
-            unsafe { node::release(f) };
         }
         for SendPtr(f) in self.pending.drain(..) {
             // SAFETY: the queue held a reference.

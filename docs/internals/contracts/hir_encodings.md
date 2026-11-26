@@ -210,6 +210,13 @@ assignment) are listed in the module comment of `crates/velt_sema/src/hir/mod.rs
   `&&` and `||` itself (`const_cond`): an `if` lowers only the branch taken and `&&` / `||` only
   the operand that decides, so the code of an instantiation for which the test is false is the
   code without it (std/prelude/map.velt: a `Map` whose `V` excludes null keeps its VIR).
+- `Intrinsic::IsExactClass` (`isExactClass(value)`, std only, `value` of a class type `T`): is
+  the object of `T` itself, not of a class that extends it? When no class of the program extends
+  `T` it is a constant `true`, taken like `HoldsNull` (`const_cond`; the value is not evaluated),
+  so the branch for a subclass's objects is not lowered and such a program keeps its VIR.
+  Otherwise it is one compare of the object's class id with `T`'s own (class_test.rs). std's
+  built-ins use it where JavaScript's specification calls a method a subclass may override
+  (`RegExp`'s `exec`, std/text/regex/regexp.velt): their own objects keep their own code.
 - Array methods on a proxy (issue #2424): `Call { Intrinsic(AnyMethodCalled), [Lit(Str(name))] }`,
   std only, is a constant of the program, taken like the tests above: can the array method `name`
   be called through `any`? True when a call through `any` names it or a computed key, or when the
