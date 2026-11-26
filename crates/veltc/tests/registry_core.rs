@@ -474,7 +474,8 @@ fn archives() -> Vec<Case> {
         ("src/a\u{0}b", b"d"),
         ("src/z", b""),
     ]));
-    // A native crate directory: allowed only when the manifest declares it.
+    // A Rust crate's directory (the old native ABI, velt-lang/velt#2563): refused, as the manifest
+    // that names it is.
     let native: &[u8] =
         b"export const pkg: Package = { name: \"p\", version: \"1.0.0\", native: { path: \"crate\" } };";
     all.push(archive(&[

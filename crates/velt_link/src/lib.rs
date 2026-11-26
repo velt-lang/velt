@@ -17,10 +17,10 @@
 //! - Debug builds may link the runtime as a shared library instead ([`shared`]): the
 //!   `runtime_lib` of a [`LinkRequest`] then names it (see [`find_shared_runtime_lib`]).
 //!
-//! - Native libraries of packages ([`NativeLink`], docs/internals/contracts/native_abi.md
-//!   "Linking"): a prelinked object linked like the program's own objects, or a shared library
-//!   (`-l` + rpath on Unix; the import library plus a copy of the DLL beside the executable on
-//!   Windows).
+//! - C libraries packages build from `sources` ([`NativeLink`], docs/internals/design/c-ffi.md
+//!   "Where libraries come from"): a static library linked like the program's own objects, or a
+//!   shared library (`-l` + rpath on Unix; the import library plus a copy of the DLL beside the
+//!   executable on Windows).
 //!
 //! `$VELT_LINKER` chooses ([`bundled`]): `bundled` or `system` forces that linker; any other
 //! value overrides the system linker program (the argument style stays the same).

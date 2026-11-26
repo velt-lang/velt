@@ -64,11 +64,12 @@ fn show_dependencies(deps: &BTreeMap<String, String>) -> String {
         .join(", ")
 }
 
-/// A registry package's native libraries need ABI `abi`, which this velt must provide.
+/// A registry package's native libraries need ABI `abi`: more than this velt's is a Rust crate's
+/// library (the old native ABI), which velt no longer supports.
 pub(super) fn check_abi(name: &str, version: &semver::Version, abi: u32) -> Result<(), String> {
     if abi > NATIVE_ABI {
         return Err(format!(
-            "`{name} {version}` needs Velt native ABI {abi}; this velt provides {NATIVE_ABI}. Update velt."
+            "`{name} {version}` has a Rust crate's native library (native ABI {abi}), which velt no longer supports: it needs a version that declares its C functions with `declare c`"
         ));
     }
     Ok(())

@@ -59,9 +59,6 @@ pub struct Plan {
     /// `golden` job compares every golden ([`Self::vir_identity_pr`]), the queue the sample
     /// ([`Self::vir_identity_queue`]), and the report suggests every golden locally too.
     pub vir_identity_all: bool,
-    /// The native crates of the repository's packages (`packages/<name>/native`, outside the
-    /// workspace): `cargo fmt` and clippy. (`veltc::packages` runs their tests.)
-    pub native_crates: bool,
     /// `tests/difftest`: `cargo fmt`, clippy and its unit tests.
     pub difftest: bool,
     /// The VS Code extension (`editors/vscode`): `npm ci`, then `npm test` (tsc and its unit
@@ -123,7 +120,6 @@ impl Plan {
             vir_identity: true,
             // (Only a hint for a known change: without one there is nothing to tell its author.)
             vir_identity_all: false,
-            native_crates: true,
             difftest: true,
             vscode: true,
             // `--full` (the merge queue, nightly) knows no changes: the environment chooses
@@ -163,7 +159,6 @@ impl Plan {
             velt_fmt: false,
             vir_identity: false,
             vir_identity_all: false,
-            native_crates: false,
             difftest: false,
             vscode: false,
             sweep: Sweep::Default,
@@ -251,6 +246,12 @@ impl Plan {
                     plan.goldens = Goldens::All;
                     plan.velt_fmt = true;
                     plan.vir_identity = true;
+                    // A std file a crate's own tests read (`READ_BY_TESTS`).
+                    for (prefix, packages, _) in READ_BY_TESTS {
+                        if path == *prefix || (prefix.ends_with('/') && path.starts_with(prefix)) {
+                            plan.packages.extend(packages.iter().map(|p| p.to_string()));
+                        }
+                    }
                 }
                 Effect::ReadByTests(packages, binaries) => {
                     plan.reasons.push(format!("{path}: read by tests"));
@@ -265,9 +266,6 @@ impl Plan {
                         .any(|d| path.starts_with(d))
                     {
                         plan.velt_fmt = true;
-                    }
-                    if path.starts_with("packages/") && path.contains("/native/") {
-                        plan.native_crates = true;
                     }
                     if let Some(users) = package_users::of_path(path) {
                         plan.add_veltc(users.binaries);
@@ -592,10 +590,6 @@ impl Plan {
                      every golden before pushing: VELT_VIR_IDENTITY=all)"
                 }
             }
-        ));
-        out.push_str(&format!(
-            "  packages/*/native (fmt, clippy): {}\n",
-            yes(self.native_crates)
         ));
         out.push_str(&format!(
             "  tests/difftest (fmt, clippy, unit tests): {}\n",
