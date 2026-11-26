@@ -51,9 +51,15 @@ fn build_and_run_on(
 
 /// Runs `exe` with `VELT_THREADS=threads`, which must exit with `code` within a minute: its stdout.
 fn run_exe(exe: &Path, threads: &str, code: i32, what: &str) -> String {
+    run_exe_with(exe, threads, code, what, &[])
+}
+
+/// [`run_exe`] with `env` set too.
+fn run_exe_with(exe: &Path, threads: &str, code: i32, what: &str, env: &[(&str, &str)]) -> String {
     let mut child = command(exe)
         .env("VELT_THREADS", threads)
         .env_remove("VELT_SCHEDULER")
+        .envs(env.iter().copied())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -580,6 +586,51 @@ async function main() {
         for run in 0..5 {
             let what = format!("{threads} workers, run {run}");
             assert_eq!(run_exe(&exe, threads, 0, &what), want, "{what}");
+        }
+    }
+}
+
+/// A `sleep` due after Node timers waits for them, also at a park while their turns come one at a
+/// time (#3872): 64 tasks each make an `AbortSignal.timeout(20)` and end, then `main` sleeps 100 ms
+/// and counts the signals that aborted. In Node every one has: the sleep is a timer due after
+/// them. Each turn is made slow (the block counters on and `VELT_SCHED_WAKE_PAUSE=2000`: the core
+/// given away after every wake, and every turn begins with one), as a loaded machine makes them;
+/// a parking worker then fired the sleep while most timeouts still waited for their turn (28 to 54
+/// of 64 had aborted). Three runs with `VELT_THREADS=4` and with 8.
+#[test]
+fn a_sleep_due_after_timers_waits_for_their_turns() {
+    if !std_builds_here() {
+        return;
+    }
+    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    let dir = test_dir::TestDir::new();
+    let src = "async function child(): Promise<AbortSignal> {
+  return AbortSignal.timeout(20);
+}
+
+async function main(): Promise<void> {
+  const ps: Promise<AbortSignal>[] = [];
+  for (let i = 0; i < 64; i++) {
+    ps.push(spawn(child()));
+  }
+  const got = await Promise.all(ps);
+  // timing: a sleep due 80 ms after the timeouts it waits past; their order is the subject.
+  await sleep(100);
+  console.log(`${got.filter((s) => s.aborted).length} of 64 aborted`);
+}
+";
+    let want = "64 of 64 aborted\n";
+    let (out, _) = build_and_run_on(dir.path(), "sleep_after_timers", src, 0, "4");
+    assert_eq!(out, want);
+    let exe = dir.path().join(format!(
+        "sleep_after_timers_std{}",
+        if cfg!(windows) { ".exe" } else { "" }
+    ));
+    let slow = [("VELT_RC_STATS", "1"), ("VELT_SCHED_WAKE_PAUSE", "2000")];
+    for threads in ["4", "8"] {
+        for run in 0..3 {
+            let what = format!("slow turns, {threads} workers, run {run}");
+            assert_eq!(run_exe_with(&exe, threads, 0, &what, &slow), want, "{what}");
         }
     }
 }

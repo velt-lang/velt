@@ -302,9 +302,12 @@ function turnDrop(f: usize): void {
  * too, as Node's `new Promise(r => setTimeout(r, ms))`): the timer that comes next gets its turn
  * if its time has come and no sleep of this worker due before it is left to fire; those sleeps
  * go first. Nothing moves while something holds the loop (a turn handed out, or the poll that took
- * the last one under way), except at a park (`all`: every due sleep goes then). `O_WAKE_AT` says
- * when a worker must look again (0: no timer waits for a time); the deadline of the first sleep of
- * this worker left pending (0: none).
+ * the last one under way), except at a park (`all`): the sleeps due by the first timer still
+ * queued fire then, and one due later waits for the timers before it (#3872: their turns come one
+ * at a time, so on a busy machine a park could otherwise end a sleep many timers early); the
+ * worker looks again in a moment (`mv.soon`). `O_WAKE_AT` says when a worker must look again (0:
+ * no timer waits for a time); the deadline of the first sleep of this worker left pending (0:
+ * none), or that moment.
  *
  * `how`: a look (`S_LOOK`) tries the lock (a worker that finds it taken leaves the move to its
  * holder) and runs in the poll `e` runs, if any; the end of task `k`'s poll (`S_RELEASED`: it took
@@ -323,13 +326,18 @@ function step(e: usize, k: usize, how: u32, all: bool, now: u64): u64 {
     return stepAlone(wb, b, k, how, all, now);
   }
   if (kind === l.NO_LOCK) {
-    return all ? mv.sleeps(wb, now) : 0;
+    // Another worker steps: only it knows which timers wait. A parking worker fires no sleep now
+    // and looks again in a moment.
+    return all ? mv.soon(now) : 0;
   }
-  // How far this worker's sleeps fire (0: none).
-  let upto = all ? now : 0;
+  // How far this worker's sleeps fire (0: none); at a park, while the loop is held, those due by
+  // the first timer still queued.
+  let upto = all ? mv.heldUpto(b, now) : 0;
+  let held = true;
   let w: usize = 0;
   let sooner = false;
   if (mv.free(b, k, how)) {
+    held = false;
     m.st(b + p.P_CUR, k !== 0 ? k : m.ld(e + t.E_CURRENT));
     const before = m.ld(b + l.O_WAKE_AT);
     upto = now;
@@ -350,6 +358,10 @@ function step(e: usize, k: usize, how: u32, all: bool, now: u64): u64 {
   }
   if (sooner) {
     ow.nudge(kind, e, all || ow.parksNext(e, k));
+  }
+  if (held && all && d !== 0 && d <= now) {
+    // A due sleep waits for the timers before it: the park looks again in a moment.
+    return mv.soon(now);
   }
   return d;
 }

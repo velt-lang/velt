@@ -57,6 +57,28 @@ export function move(b: usize, wb: usize, h: usize): usize {
   return grant(b, h);
 }
 
+/**
+ * How far a parking worker's sleeps fire while the loop is held (order `b` locked): those due by
+ * the time of the first timer still queued, as when its turn comes (`uptoFor`, `move`), or all
+ * that are due when no timer due before `now` waits. A sleep due later waits for the timers due
+ * before it, as in Node's order, where it is a timer too (#3872).
+ */
+@inline("always")
+export function heldUpto(b: usize, now: u64): u64 {
+  const first = m.ld(b + l.O_QUEUED) !== 0 ? p.firstExpiry(b) : 0;
+  if (first === 0) {
+    return now;
+  }
+  const at = (first * 1000000) as u64;
+  return at < now ? at : now;
+}
+
+/** When a parking worker whose due sleep waits for the timers before it looks again. */
+@inline("always")
+export function soon(now: u64): u64 {
+  return now + 1000000;
+}
+
 /** Worker block `wb`'s sleeps (0: none) due by `upto` fire: the next one's deadline (0: none). */
 @inline("always")
 export function sleeps(wb: usize, upto: u64): u64 {
