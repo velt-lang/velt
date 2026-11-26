@@ -300,3 +300,76 @@ function main() {
 "#;
     assert_eq!(shown(src), ["Rows", "i32"]);
 }
+
+/// A generator that failed is asked once in a check, however many rounds the check runs: the
+/// thrown union here is known too late, which starts a second round (#3807).
+#[test]
+fn a_failed_generator_is_not_asked_again_by_a_later_round() {
+    let l = load_src(
+        r#"
+declare generated("./gen") function describe<T>(): string;
+
+interface Risky {
+  run(n: number): void throws RangeError | TypeError;
+}
+
+class Calm implements Risky {
+  run(n: number): void {}
+}
+
+function main() {
+  new Calm().run(1);
+  console.log(describe<Calm>());
+}
+"#,
+    );
+    let calls = std::sync::atomic::AtomicU32::new(0);
+    let generate = |d: &Demand| {
+        assert!(!d.requests.is_empty());
+        calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        None
+    };
+    let (out, diags) = velt_sema::check_generating(
+        &l.modules,
+        l.root,
+        CheckOptions::default(),
+        &GenInput::default(),
+        &[],
+        Some(&generate),
+        None,
+    );
+    assert!(diags.iter().all(|d| !d.is_error()), "{}", l.render(&diags));
+    assert!(
+        out.is_none(),
+        "a failed generator gives no outcome: {out:?}"
+    );
+    assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+}
+
+/// A generator that answers with no module is asked once: the check ends with the instances
+/// still demanded, where it used to ask again for ever (#3807).
+#[test]
+fn a_generator_that_makes_no_module_is_asked_once() {
+    let l = load_src(PROGRAM);
+    let calls = std::sync::atomic::AtomicU32::new(0);
+    let generate = |_: &Demand| {
+        let n = calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        assert!(n < 8, "asked again and again");
+        Some(velt_sema::generated::GenBatch::default())
+    };
+    let (out, diags) = velt_sema::check_generating(
+        &l.modules,
+        l.root,
+        CheckOptions::default(),
+        &GenInput::default(),
+        &[],
+        Some(&generate),
+        None,
+    );
+    assert!(diags.iter().all(|d| !d.is_error()), "{}", l.render(&diags));
+    let Some(Checked::Demand(d)) = out else {
+        panic!("the instances are still demanded: {out:?}");
+    };
+    assert_eq!(d.requests.len(), 2);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+}

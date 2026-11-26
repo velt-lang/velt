@@ -47,6 +47,8 @@ pub(crate) struct StdLoad<'a> {
     scope: &'a CheckScope,
     /// The files of the modules served.
     pub(super) files: Vec<velt_common::FileId>,
+    /// The modules served, which the check owns from then on ([`Served`]).
+    pub(crate) served: Vec<Served>,
     /// The demanded modules that could not be served in place (velt_loader
     /// `LoadOptions::refuse_out_of_rule`): the driver checks the program again with them loaded
     /// up front (`sema_stage`).
@@ -70,6 +72,7 @@ impl<'a> StdLoad<'a> {
             opts,
             scope,
             files: vec![],
+            served: vec![],
             refused: vec![],
             prebuilt,
         }
@@ -116,8 +119,23 @@ impl<'a> StdLoad<'a> {
             return refusal(demanded);
         }
         self.files.extend(batch.modules.iter().map(|m| m.file));
+        self.served.extend(batch.modules.iter().map(|m| Served {
+            path: m.path.clone(),
+            file: m.file,
+            imports: m.imports.clone(),
+        }));
         batch
     }
+}
+
+/// A std module served on demand, as the driver still knows it once the check owns it: what
+/// generating for a generated function it declares needs (`crate::generate`), since the
+/// program's load does not hold the module.
+pub(crate) struct Served {
+    pub path: String,
+    pub file: velt_common::FileId,
+    /// [`velt_sema::SourceModule::imports`].
+    pub imports: Vec<(String, String)>,
 }
 
 /// The answer to a refused demand: it tells the check to stop (velt_sema `StdLoads::refused`).
