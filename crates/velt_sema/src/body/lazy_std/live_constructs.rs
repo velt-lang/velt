@@ -51,7 +51,8 @@ pub(super) fn note_prints(cx: &mut Ctx, prints: impl Iterator<Item = (TyId, bool
 /// May what is printed for a value of type `t` hold a container, so that its line breaking runs
 /// (velt_vir `glue/format.rs` `format_top_inspect`)? As lowering writes it: no for what prints as
 /// one scalar (numbers, booleans, strings, symbols, literals, pointers, an enum without
-/// payloads), for an option or a union of such (`"AM" | "PM"`, `string | null`), and for the
+/// payloads, an error-set variable), for an option or a union of such (`"AM" | "PM"`,
+/// `string | null`), and for the
 /// `text` of a dynamic value or a promise, which is JavaScript's `ToString` (std's `anyText`:
 /// an array joined, `[object Object]`), never the inspected form. Anything else may.
 pub(super) fn may_hold_containers(cx: &mut Ctx, t: TyId, text: bool, depth: u32) -> bool {
@@ -70,6 +71,10 @@ pub(super) fn may_hold_containers(cx: &mut Ctx, t: TyId, text: bool, depth: u32)
         | TyKind::Ptr(_)
         | TyKind::Literal(_) => return false,
         TyKind::Promise(..) => return !text,
+        // An error-set variable (`throws` of a function whose set is still being found) holds
+        // no type of its own: its members are what the throw sites throw, which live code
+        // records itself, so it counts as the `never` it is checked as without variables.
+        TyKind::Op(crate::hir::TyOp::ErrSite(_), _) => return false,
         TyKind::Option(e, _) | TyKind::Shared(e) => vec![*e],
         TyKind::Adt(d, _) => {
             let d = *d;
