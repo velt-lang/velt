@@ -1,0 +1,2 @@
+error: mismatched types
+expected string, found { n: f64; add(...xs: f64[]): f64 }

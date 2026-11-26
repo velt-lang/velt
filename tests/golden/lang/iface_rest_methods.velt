@@ -1,0 +1,186 @@
+// check: no leaks
+// Interface methods ending in a rest parameter (`...xs: T[]`): declared, implemented by classes
+// and object literals (with and without `this`), inherited, generic, with an optional parameter
+// before the rest, called with no, one, several and spread arguments.
+interface Adder {
+  n: number;
+  add(...xs: number[]): number;
+}
+interface Named extends Adder {
+  tag(label: string, ...parts: string[]): string;
+}
+interface Box<T> {
+  push(...xs: T[]): number;
+}
+interface WithDefault {
+  base: number;
+  sum(...xs: number[]): number;
+  twice(...xs: number[]): number;
+}
+
+class A implements Named {
+  n = 1;
+  add(...xs: number[]): number {
+    return xs.reduce((a, b) => a + b, this.n);
+  }
+  tag(label: string, ...parts: string[]): string {
+    return label + ":" + parts.join(",");
+  }
+}
+
+class Store<T> implements Box<T> {
+  items: T[] = [];
+  push(...xs: T[]): number {
+    for (const x of xs) this.items.push(x);
+    return this.items.length;
+  }
+}
+
+function useAdder(a: Adder): number {
+  return a.add() + a.add(1) + a.add(1, 2, 3);
+}
+
+function useNamed(a: Named): string {
+  const arr = ["x", "y"];
+  return a.tag("t") + " " + a.tag("t", "p") + " " + a.tag("t", ...arr) + " " + a.add(...[4, 5]);
+}
+
+const a = new A();
+console.log(useAdder(a), useNamed(a));
+
+const typed: Adder = {
+  n: 2,
+  add(...xs: number[]) {
+    return xs.reduce((s, b) => s + b, this.n);
+  },
+};
+console.log(useAdder(typed), typed.add(10, 20));
+
+const named: Named = {
+  n: 3,
+  add(...xs: number[]) {
+    return xs.length + this.n;
+  },
+  tag(label: string, ...parts: string[]) {
+    return label + parts.length;
+  },
+};
+console.log(useNamed(named));
+
+const s: Box<string> = new Store<string>();
+console.log(s.push("a", "b"), s.push(), s.push("c"));
+
+const own = {
+  n: 5,
+  add(...xs: number[]) {
+    return xs.reduce((s, b) => s + b, this.n);
+  },
+  plain(...xs: string[]) {
+    return xs.join("-");
+  },
+};
+console.log(own.add(1, 2, 3), own.add(), own.plain("a", "b"));
+
+const arrow: Adder = {
+  n: 0,
+  add: (...xs: number[]) => xs.length,
+};
+console.log(arrow.add(1, 1, 1));
+
+class D implements WithDefault {
+  base = 100;
+  sum(...xs: number[]): number {
+    return xs.reduce((a, b) => a + b, this.base);
+  }
+  twice(...xs: number[]): number {
+    return this.sum(...xs) * 2;
+  }
+}
+const w: WithDefault = new D();
+console.log(w.sum(1, 2), w.twice(1, 2));
+
+interface Logger {
+  log(...msgs: string[]): void;
+}
+const lines: string[] = [];
+const lg: Logger = {
+  log(...msgs: string[]) {
+    lines.push(msgs.join(" "));
+  },
+};
+lg.log("a", "b");
+lg.log();
+console.log(lines.length, lines[0]);
+
+interface AsyncAdder {
+  addLater(...xs: number[]): Promise<number>;
+}
+const aa: AsyncAdder = {
+  async addLater(...xs: number[]) {
+    return xs.length;
+  },
+};
+aa.addLater(1, 2, 3).then((v) => console.log("later", v));
+
+interface Joiner {
+  join(...parts: string[]): string;
+}
+class J implements Joiner {
+  join(...parts: string[]): string {
+    return parts.join("+");
+  }
+}
+const j: Joiner = new J();
+// Wrapped in an arrow: how such a method is used as a function value.
+const f = (...ps: string[]) => j.join(...ps);
+console.log(f("a", "b", "c"), f());
+
+// Through any, a literal's method stored as a function (a method called through any: #3812).
+const anyLit: any = { join(...parts: string[]) { return parts.length; } };
+console.log(anyLit.join("x", "y", "z"));
+
+// A generic interface method with a rest parameter.
+interface Mapper {
+  apply<U>(f: (x: number) => U, ...xs: number[]): U[];
+}
+class M implements Mapper {
+  apply<U>(f: (x: number) => U, ...xs: number[]): U[] {
+    return xs.map(f);
+  }
+}
+const m: Mapper = new M();
+console.log(m.apply((x) => x * 2, 1, 2, 3).join(","), m.apply((x) => "s" + x).length);
+
+// Optional parameter before the rest parameter.
+interface Fmt {
+  fmt(head?: string, ...rest: number[]): string;
+}
+const fm: Fmt = {
+  fmt(head?: string, ...rest: number[]) {
+    return (head ?? "-") + rest.length;
+  },
+};
+console.log(fm.fmt(), fm.fmt("h"), fm.fmt("h", 1, 2));
+
+// A readonly rest array.
+interface Sum {
+  sum(...xs: readonly number[]): number;
+}
+const sm: Sum = { sum(...xs: readonly number[]) { return xs.reduce((a, b) => a + b, 0); } };
+console.log(sm.sum(1, 2, 3));
+
+// Spreads of a mix.
+const more = [3, 4];
+console.log(sm.sum(1, ...more, 5));
+
+// An interface of an extended interface implemented by a literal.
+interface Base {
+  each(...xs: number[]): number;
+}
+interface Derived extends Base {
+  name: string;
+}
+const dv: Derived = { name: "d", each(...xs: number[]) { return xs.length * 10; } };
+console.log(dv.each(1, 2), dv.name);
+const asBase: Base = dv;
+console.log(asBase.each(7));
