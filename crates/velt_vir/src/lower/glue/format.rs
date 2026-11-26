@@ -539,8 +539,14 @@ impl FnLower<'_, '_> {
         } else if let TyKind::Array(_) = self.cx.kind(rty) {
             // An array: after the name and its length, as Node prints an array subclass or a
             // typed array (`Uint8Array(3) [ 1, 2, 3 ]`), cut to `[Uint8Array]` past the depth
-            // limit.
-            self.within_depth(buf, depth, &format!("[{name}]"), None, |lw, _| {
+            // limit. A program's subclass of a std class also prints the std class, as Node tags
+            // a typed array's subclass (`V(2) [Int16Array] [ 0, 5 ]`, `[V [Int16Array]]`).
+            let tag = self.inspect_owner_tag(ty, m);
+            let cut = match tag.is_empty() {
+                true => format!("[{name}]"),
+                false => format!("[{name} {}]", tag.trim_end()),
+            };
+            self.within_depth(buf, depth, &cut, None, |lw, _| {
                 let start = lw.temp(Ty::U64);
                 lw.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
                 let start = Operand::Copy(Place::local(start));
@@ -549,7 +555,7 @@ impl FnLower<'_, '_> {
                 lw.push_text(buf, &format!("{name}("));
                 let u64_ = lw.cx.intern(TyKind::Int(velt_sema::hir::IntTy::U64));
                 lw.push_scalar(buf, len, u64_);
-                lw.push_text(buf, ") ");
+                lw.push_text(buf, &format!(") {tag}"));
                 lw.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
                 lw.format_nested(buf, &res, rty, depth);
             });
@@ -564,6 +570,24 @@ impl FnLower<'_, '_> {
             self.format_nested(buf, &res, rty, depth);
         }
         self.drop_glue(res, rty);
+    }
+
+    /// `[Int16Array] ` when the `[INSPECT]()` method `m` that prints class `ty` is a std class's
+    /// other than `ty` itself (a program's `class V extends Int16Array`), else empty.
+    fn inspect_owner_tag(&self, ty: TyId, m: DefId) -> String {
+        let Some(owner) = self.cx.fn_def(m).self_ty else {
+            return String::new();
+        };
+        let (TyKind::Adt(od, _), TyKind::Adt(d, _)) = (self.cx.kind(owner), self.cx.kind(ty))
+        else {
+            return String::new();
+        };
+        let std_owner = matches!(self.cx.hir.def(od), velt_sema::hir::Def::Adt(a)
+            if a.name.starts_with(velt_common::std_modules::CANONICAL_PREFIX));
+        match od != d && std_owner {
+            true => format!("[{}] ", self.cx.type_name(owner)),
+            false => String::new(),
+        }
     }
 
     /// The string at `text` (a custom inspect's), kept as one piece when the value around it is
