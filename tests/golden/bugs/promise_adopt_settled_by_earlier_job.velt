@@ -1,0 +1,69 @@
+// A promise returned from a `then` callback, still pending there but settled by a job queued
+// earlier, settles the new promise a microtask before Node's does (#3775). `.out` is Node 22's.
+function chain(log: string[], n: number): Promise<void> {
+  let p = Promise.resolve();
+  for (let i = 0; i < n; i++) {
+    const k = i;
+    p = p.then(() => {
+      log.push("t" + k);
+    });
+  }
+  return p;
+}
+
+class Box {
+  resolve: ((v: number) => void) | null = null;
+}
+
+function answer(box: Box, log: string[]) {
+  log.push("p1");
+  const r = box.resolve;
+  if (r != null) {
+    r(1);
+  }
+}
+
+// How the resolver is reached: 0 an async function after one await, 1 a job queued by a job.
+// How the promise reaches the watcher: adopted from a reaction, or the resolver's own promise.
+async function variant(name: string, how: number, adopt: boolean): Promise<void> {
+  const log: string[] = [];
+  const box = new Box();
+  queueMicrotask(() => {
+    if (how == 0) {
+      const f = async () => {
+        await null;
+        answer(box, log);
+      };
+      f().then(() => {});
+    } else {
+      queueMicrotask(() => answer(box, log));
+    }
+  });
+  const t = chain(log, 10);
+  let p: Promise<number>;
+  if (adopt) {
+    p = Promise.resolve().then(() => {
+      const { promise, resolve } = Promise.withResolvers<number>();
+      box.resolve = resolve;
+      return promise;
+    });
+  } else {
+    const { promise, resolve } = Promise.withResolvers<number>();
+    box.resolve = resolve;
+    p = promise;
+  }
+  p.then((v) => {
+    log.push("v" + v);
+  });
+  await t;
+  console.log(name + ": " + log.join(" "));
+}
+
+async function main(): Promise<void> {
+  await variant("async fn, adopted", 0, true);
+  await variant("job, adopted", 1, true);
+  await variant("async fn, direct", 0, false);
+  await variant("job, direct", 1, false);
+}
+
+main();
