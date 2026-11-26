@@ -1,0 +1,6 @@
+resolved in a reaction: t0 t1 t2 t3 direct t4 t5
+rejected in a reaction: t0 t1 t2 t3 caught x t4 t5
+withResolvers, a then and an await: t0 t1 t2 t3 then 1 awaited 1 t4 t5
+resolved twice in a reaction: t0 t1 t2 t3 after got 1 t4 t5
+resolved in a queued microtask: t0 t1 t2 t3 queued t4 direct t5
+resolved in an async function after its await: t0 t1 t2 t3 resolver t4 direct t5
