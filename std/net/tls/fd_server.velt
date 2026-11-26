@@ -51,8 +51,8 @@ export class FdServerSessions implements TlsSessions {
 
 /**
  * A TLS listener served in Velt with any key kind the server signs with (P-256, P-384, Ed25519,
- * RSA; #2392 step 6): on `addr`, bound on the reactor, or on `handed` when not 0 (the runtime's
- * plain listener under `velt dev`, whose supervisor keeps the socket, or with no reactor). Null
+ * RSA; #2392 step 6): on `addr`, bound on the reactor, or on `handed` when not 0 (the plain
+ * listener `velt dev`'s supervisor handed over, which keeps the socket across a restart). Null
  * for a key of another kind. Throws `IoError` `EINVAL` for a certificate or key that is not valid
  * PEM.
  */

@@ -73,11 +73,14 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> (Overridden, Overrides) {
             }
         }
         let decl = cx.adt(d).and_then(|a| a.decl).expect("ICE: class decl");
+        // A member hidden by a std ancestor's `@own()` one overrides nothing (`collect::sigs`).
+        let own = crate::decorators::own::inherited(cx, d);
         // `override #m` is reported by `own_methods`: private names are never inherited.
         for m in decl
             .methods
             .iter()
             .filter(|m| !m.decl.sig.name.is_private_name())
+            .filter(|m| !crate::decorators::own::hidden(&own, m))
         {
             let name = &m.decl.sig.name;
             let module = cx.adt(d).expect("ICE: adt").module;

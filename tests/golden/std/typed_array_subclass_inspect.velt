@@ -1,0 +1,23 @@
+// `console.log` of a typed array's subclass prints the base kind after the length, as Node does
+// (`V(2) [Int16Array] [ 0, 5 ]`), and reads the elements internally: a `values` override
+// doesn't run.
+class V extends Int16Array {
+  override values() {
+    console.log("values");
+    return super.values();
+  }
+}
+
+class W extends V {}
+
+class Bytes extends Uint8Array {}
+
+const v = new V(2);
+v[1] = 5;
+console.log(v);
+console.log([v]);
+console.log({ v: v });
+console.log(new W(3));
+console.log(new Bytes(0));
+console.log(new Int16Array(2));
+console.log({ a: { b: { c: v } } });

@@ -1,0 +1,9 @@
+all first a1
+all middle b1
+race resolved first ok
+race two rejected r1
+any resolved first ok
+any all rejected All promises were rejected
+allSettled rejected,fulfilled,rejected
+allSettled late fulfilled,fulfilled,rejected
+done

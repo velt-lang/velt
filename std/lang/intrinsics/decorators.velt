@@ -115,6 +115,15 @@ export declare decorator function align(bytes: u32): TypeDecorator;
 export declare decorator function modifies(...params: string[]): FunctionDecorator;
 
 /**
+ * On an instance member of a std class only: a member JavaScript installs as an own property of
+ * every instance (an error's `stack`, which V8 writes when the error is made). A subclass member
+ * of the same name never replaces it: it is declared and checked, but no access or call reaches
+ * it, as in JavaScript, where the own property comes first. Without the decorator a subclass's
+ * `get stack()` would override the base's, which Node never calls.
+ */
+export declare decorator function own(): MethodDecorator;
+
+/**
  * On a `declare function` of std/lang/intrinsics: an operation the compiler emits itself, which
  * no Velt code can express (std-layout.md §10). The declaration is the signature calls are checked
  * against (modes.velt says how arguments are passed); velt_sema's table (`intrinsic_decls.rs`)

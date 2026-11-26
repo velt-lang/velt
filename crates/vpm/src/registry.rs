@@ -417,7 +417,7 @@ fn publish_to(root: &Path, loc: &Locations, manifest: &Manifest) -> Result<Index
     for (dep, spec) in &manifest.dependencies {
         if spec.is_workspace() {
             // Publishing members, with `"workspace"` replaced by versions, is planned
-            // (docs/internals/design/workspaces.md "Publishing").
+            // (docs/internals/design/workspaces.md "Not yet implemented").
             return Err(format!(
                 "cannot publish `{name}`: dependency `{dep}` is `\"workspace\"`; publishing members of a workspace is not supported yet"
             ));

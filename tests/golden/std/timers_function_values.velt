@@ -35,8 +35,15 @@ async function main() {
   await calls.receive();
   setTimeout(localOptional, 1);
   await calls.receive();
-  // The interval may run again before it is cleared: only its first run is printed.
-  const interval = setInterval(local, 30);
+  // The interval may run again before it is cleared, when `main` goes on late: only its first
+  // run calls `local`, so the output does not depend on that (#3864).
+  const runs = shared(0);
+  const firstRun = () => {
+    if (runs.add(1) == 1) {
+      local();
+    }
+  };
+  const interval = setInterval(firstRun, 30);
   await calls.receive();
   clearInterval(interval);
   each(["a", "b"], show);
@@ -44,4 +51,4 @@ async function main() {
   setTimeout(tick, 1);
 }
 
-// timing: timers are the subject; follow-up #1999: the 30 ms interval may run twice
+// timing: timers are the subject

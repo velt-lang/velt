@@ -1,8 +1,9 @@
 //! Checking `declare c struct`s against their library's C headers (#2187 layer 4,
-//! docs/internals/design/c-ffi.md "As built" 13): each struct a library's declarations reach (as
-//! a pointer's pointee, an `Out<T>`'s `T`, or another reached struct's field) must be a struct
-//! the headers define, under its tag or a typedef, with the same fields in the same order, by
-//! name and by type through the table functions use; a nested struct is compared by name. Its
+//! docs/internals/design/c-ffi.md "Checking declarations against C headers"): each struct a
+//! library's declarations reach (as a pointer's pointee, an `Out<T>`'s `T`, or another reached
+//! struct's field) must be a struct the headers define, under its tag or a typedef, with the same
+//! fields in the same order, by name and by type through the table functions use; a nested
+//! struct is compared by name. Its
 //! size, alignment and every field's offset are clang's own answers, from a generated file whose
 //! enumerators are `sizeof`, `_Alignof` and `__builtin_offsetof` (as `declare c const`s' values come), so
 //! `#pragma pack`, `aligned(…)` and padding are compared, not assumed. Unions, bit-fields,

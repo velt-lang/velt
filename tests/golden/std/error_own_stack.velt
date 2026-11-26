@@ -1,0 +1,86 @@
+// An error's `stack` is its own property, as in JavaScript (V8 writes it when the error is made):
+// a subclass's `stack` accessor, with or without `override`, is declared but never reached, from
+// outside, through `Error`, or as `this.stack` in the subclass. Only the first line is printed:
+// Node adds the call frames after it.
+
+function head(s: string | undefined): string {
+  return (s ?? "").split("\n")[0];
+}
+
+class S1 extends Error {
+  get stack(): string | undefined {
+    return "S1-stack";
+  }
+  ownView(): string {
+    return head(this.stack);
+  }
+}
+
+class S2 extends Error {
+  override get stack(): string | undefined {
+    return "S2-stack";
+  }
+}
+
+class S3 extends S1 {
+  override get stack(): string | undefined {
+    return "S3-stack";
+  }
+}
+
+class T1 extends TypeError {
+  get stack(): string | undefined {
+    return "T1-stack";
+  }
+}
+
+const s1 = new S1("s");
+console.log(head(s1.stack), s1.ownView(), String(s1));
+console.log(head(new S2("t").stack));
+const s3 = new S3("u");
+console.log(head(s3.stack), s3.ownView());
+console.log(head(new T1("v").stack));
+
+const all: Error[] = [new S1("a"), new S2("b"), new S3("c"), new T1("d"), new Error("e")];
+for (const e of all) console.log(head(e.stack), e.message, String(e));
+
+try {
+  throw new S2("thrown");
+} catch (e) {
+  if (e instanceof Error) console.log(head(e.stack));
+}
+
+// Assigning `stack` writes the own property, through `Error`'s setter: a subclass's
+// `set stack` is never called, as Node never calls it.
+class WithSetter extends Error {
+  get stack(): string | undefined {
+    return "WithSetter-get";
+  }
+  set stack(v: string | undefined) {
+    console.log("WithSetter-set", v);
+  }
+}
+const ws = new WithSetter("m");
+ws.stack = "assigned";
+console.log(head(ws.stack));
+
+class SetterOnly extends Error {
+  set stack(v: string | undefined) {
+    console.log("SetterOnly-set", v);
+  }
+}
+const so = new SetterOnly("m");
+console.log(head(so.stack));
+so.stack = "assigned too";
+console.log(head(so.stack));
+
+class InCtor extends Error {
+  constructor(m: string) {
+    super(m);
+    this.stack = "custom\nframe";
+  }
+}
+console.log(head(new InCtor("c").stack));
+const later = new Error("plain");
+later.stack = "set later";
+console.log(head(later.stack));
