@@ -1,0 +1,5 @@
+iface_this_result_literal_errors.velt:32:5: error: method `step` of an object literal implementing `Totalled` must return `this`
+iface_this_result_literal_errors.velt:48:14: error: method `step` of an object literal implementing `Fluent` must return `this`
+iface_this_result_literal_errors.velt:56:11: error: method `step` of an object literal implementing `Fluent` must return `this`
+iface_this_result_literal_errors.velt:63:16: error: method `step` of an object literal implementing `Totalled` must return `this`
+iface_this_result_literal_errors.velt:76:23: error: method `step` of an object literal implementing `Fluent` must return `this`
