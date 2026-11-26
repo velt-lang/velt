@@ -458,6 +458,8 @@ with_tls_hooks! {
     any_join => lang_hooks_any_text, "anyJoin", sig((move any, &string, &string) -> string), lowered;
     /// `xs.join(sep)` of an `any` `xs` (`velt_sema` `dynamic_member.rs`).
     any_join_method => lang_hooks_any_text, "anyJoinMethod", sig((move any, move any, &string) -> any);
+    /// `xs.join()` of an `any` `xs`, with no argument written.
+    any_join_none => lang_hooks_any_text, "anyJoinNone", sig((move any, &string) -> any);
     /// The list of `f.apply(self, list)` read at the call (`velt_sema` `dynamic_member.rs`).
     any_apply_list => lang_hooks_any_ops, "anyApplyList", sig((&any, move any) -> any throws union(TypeError, RangeError));
     /// A typed array as that list, in a program that has them.
