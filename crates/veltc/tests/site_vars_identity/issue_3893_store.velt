@@ -1,0 +1,17 @@
+// A promise from a call of a function whose `Promise<number>` result has an error-set variable,
+// stored into a `Promise<number>` written as a variable's type: converted as written, the
+// variable assumed empty, so the check with variables takes one round, as the one without (#3893).
+function later(n: number): Promise<number> {
+  return new Promise((r) => setTimeout(() => r(n), 1));
+}
+
+async function main(): Promise<void> {
+  const p = later(1);
+  const maybe: Promise<number> | null = p;
+  const sure: Promise<number> = later(2);
+  if (maybe != null) {
+    console.log(await maybe, await sure);
+  }
+}
+
+main();
