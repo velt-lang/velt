@@ -177,14 +177,12 @@ own executor.
 | `velt_rt_wasm` | the WebAssembly runtime and its JavaScript glue |
 | `velt_rt_host` | the runtime's sources built as an rlib, which hosts JIT-compiled programs in `velt dev` |
 | `velt_text` | Velt's string encoding, number formatting and database JSON, shared by the runtime and std's native libraries |
-| `velt_tls` | a rustls client setup (Mozilla's roots, extra CAs) for native libraries (`packages/postgres/native`); programs' TLS is Velt's, std/net/tls/ |
 | `velt_build_cache` | the machine-wide build cache: compiled code keyed by content, bounded in size |
 | `velt_fmt` | formatter |
 | `velt_lsp` | language server |
 | `velt_doc` | API docs (`velt doc`: HTML pages and JSON) |
 | `velt_tscompat` | `velt check --ts-compat`: the lint for code shared with TypeScript |
 | `velt_lint` | lint profiles, levels, `velt-allow` comments and fixes; the `perf/…` rules of `velt check --perf` |
-| `velt_native`, `velt_native_macros` | the Rust side of a package's native library, and its `#[export]` attribute |
 | `vpm`, `velt_registry` | package manager, registry server |
 | `velt_http` | a minimal HTTP/1.1 server and client for the developer tools |
 | `velt_toolchain` | side-by-side toolchain versions: the `velt` pin of `package.velt`, installed versions, downloading a release |
@@ -207,7 +205,7 @@ deliberate, reviewed change.
 | The package manifest | [contracts/manifest.md](contracts/manifest.md) |
 | The sema query API for editors | [contracts/sema_ide.md](contracts/sema_ide.md) |
 | How TSX is lowered, and what a JSX provider exports | [contracts/jsx.md](contracts/jsx.md) |
-| Native libraries of packages | [contracts/native_abi.md](contracts/native_abi.md) |
+| Prebuilt C libraries of packages (bundles) | [contracts/native_abi.md](contracts/native_abi.md) |
 | Host builds for JavaScript platforms (`velt build --host`) | [contracts/workers.md](contracts/workers.md) |
 
 ## Design notes
@@ -259,8 +257,6 @@ whether it is implemented, partly implemented, accepted or proposed.
 - [Generic instances shared by shape](design/shape-sharing.md).
 - [Native code through `declare c` and `unsafe`](design/c-ffi.md): calling C and the platform's
   C library, checked against C headers.
-- [Native code in packages](design/native-packages.md): a package's Rust crate and prebuilt
-  per-target binaries.
 - [C calls on wasm32-wasip1](design/wasi-libc.md).
 
 **Standard library and engines**

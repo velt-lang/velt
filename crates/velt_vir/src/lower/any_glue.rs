@@ -556,7 +556,16 @@ impl FnLower<'_, '_> {
                         .into_iter()
                         .map(|t| self.cx.subst(t, &r.targs))
                         .collect();
-                    let args = self.any_params(argv, argc, &params);
+                    let args = match (m.rest, params.split_last()) {
+                        // A rest parameter gets the arguments past the fixed ones, packed
+                        // (`any_rest`), as a function value's does.
+                        (true, Some((&last, fixed))) => {
+                            let mut args = self.any_fixed_params(argv, argc, fixed);
+                            args.push(self.any_rest_arg(argv, argc, fixed.len() as u64, last));
+                            args
+                        }
+                        _ => self.any_params(argv, argc, &params),
+                    };
                     let this = self.any_this(data, ty);
                     self.any_invoke(&r, this, args, &outp);
                     self.ret_status(ST_OK);

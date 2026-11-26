@@ -1,5 +1,5 @@
 // Generated code names the types of its request by handles (`__type<…>`,
-// docs/internals/design/source-generators.md "As built so far"), so it can name types Velt
+// docs/internals/design/source-generators.md "Access and scope"), so it can name types Velt
 // syntax cannot write where the code is: a class declared inside a function, an intersection
 // with an object part, an object type made by a spread, and a generic object type at its
 // arguments.

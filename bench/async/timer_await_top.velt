@@ -1,5 +1,5 @@
 // timer_await.velt at the top level, where each `await` that suspends also tells the runtime
-// where the program waits (modules.md).
+// where the program waits (https://veltlang.com/docs/reference/modules/).
 let s = 0;
 for (let i = 0; i < 20000; i++) {
   s += await new Promise<number>((r) => setTimeout(() => r(i % 7), 0));

@@ -144,11 +144,11 @@ pub fn warn_yanked(installed: &vpm::Installed) {
 
 /// List the packages that run native code (and where their libraries came from).
 fn report_native(graph: &vpm::PackageGraph) {
-    let prebuilt_c = graph.packages().iter().filter_map(|p| match &p.c_bundle {
+    let prebuilt = graph.packages().iter().filter_map(|p| match &p.c_bundle {
         Some(vpm::graph::CBundle::Prebuilt(lib)) => Some((p, &**lib)),
         _ => None,
     });
-    for (pkg, lib) in graph.natives().chain(prebuilt_c) {
+    for (pkg, lib) in prebuilt {
         let how = match lib.origin {
             NativeOrigin::Prebuilt => "prebuilt, checksum verified",
             NativeOrigin::BuiltFromSource => "built from source",
@@ -266,7 +266,7 @@ pub fn publish(native_artifacts: Option<&Path>, native_only: bool) -> Result<(),
 }
 
 /// The bundle of each `native` target: from `artifacts/<triple>/`, else
-/// `target/velt-native/<triple>/`; the host's is built when it is in neither. With
+/// `target/velt-native/<triple>/`, built (with zig, for any target) when it is in neither. With
 /// `native_only`, whatever bundles exist (at least one).
 fn collect_bundles(
     root: &Path,
@@ -283,9 +283,6 @@ fn collect_bundles(
         }
         return Ok(BTreeMap::new());
     }
-    // zig builds C sources for any target from here; cargo only this machine's.
-    let buildable =
-        |target: &str| manifest.has_c_sources() || target == velt_codegen_cl::host_triple();
     let built = root.join("target").join("velt-native");
     let mut bundles = BTreeMap::new();
     for target in manifest.bundle_targets() {
@@ -299,13 +296,13 @@ fn collect_bundles(
         let dir = match found {
             Some(d) => {
                 // A bundle built here may be stale: rebuild it (a no-op when current).
-                if buildable(target) && d == built.join(target) {
+                if d == built.join(target) {
                     build_bundle(root, manifest, target)?
                 } else {
                     d
                 }
             }
-            None if buildable(target) && !native_only => build_bundle(root, manifest, target)?,
+            None if !native_only => build_bundle(root, manifest, target)?,
             None => continue,
         };
         bundles.insert(target.clone(), dir);
@@ -320,26 +317,14 @@ fn collect_bundles(
 }
 
 fn build_bundle(root: &Path, manifest: &vpm::Manifest, target: &str) -> Result<PathBuf, String> {
-    let work = root.join("target").join("velt-native");
-    let out = work.join(target);
+    let out = root.join("target").join("velt-native").join(target);
     style::status("Building", &format!("native library for {target}"));
-    if manifest.has_c_sources() {
-        vpm::native::c_build::build(vpm::native::c_build::CBuildRequest {
-            root,
-            manifest,
-            target,
-            out: &out,
-            origin: NativeOrigin::BuiltFromSource,
-        })?;
-        return Ok(out);
-    }
-    vpm::native::build::build(vpm::native::build::BuildRequest {
+    vpm::native::c_build::build(vpm::native::c_build::CBuildRequest {
         root,
         manifest,
         target,
         out: &out,
-        cargo_target_dir: &work.join("cargo"),
-        locked: false,
+        origin: NativeOrigin::BuiltFromSource,
     })?;
     Ok(out)
 }
@@ -357,20 +342,17 @@ pub fn native_build(target: Option<String>) -> Result<(), String> {
     }
     if !manifest.has_bundles() {
         return Err(format!(
-            "package `{}` has no `native` in package.velt",
+            "package `{}` has no C `sources` in package.velt (`native.c`)",
             manifest.package.name
         ));
     }
     let out = build_bundle(&root, &manifest, &target)?;
     let meta = vpm::native::NativeMeta::read(&out)?;
-    let (count, what) = match meta.c.len() {
-        0 => (meta.exports.len(), "export"),
-        n => (n, "C library"),
-    };
-    let plural = match (count, what) {
-        (1, _) => what.to_string(),
-        (_, "C library") => "C libraries".to_string(),
-        _ => format!("{what}s"),
+    let count = meta.c.len();
+    let plural = if count == 1 {
+        "C library"
+    } else {
+        "C libraries"
     };
     style::status("Built", &format!("{} ({count} {plural})", out.display()));
     Ok(())

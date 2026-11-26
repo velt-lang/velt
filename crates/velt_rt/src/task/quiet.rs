@@ -237,23 +237,6 @@ pub(crate) fn external_end() {
     COUNTERS.external.fetch_sub(1, SeqCst);
 }
 
-/// Counts as a pending timer or I/O while it lives: for runtime tasks that wait for one on
-/// behalf of the program outside a leaf (a child process's exit, a native library's work).
-pub(crate) struct Pending(());
-
-impl Pending {
-    pub(crate) fn new() -> Pending {
-        external_begin();
-        Pending(())
-    }
-}
-
-impl Drop for Pending {
-    fn drop(&mut self) {
-        external_end();
-    }
-}
-
 /// What the process waits for besides the counters: keep-alive references and the runtime's
 /// tasks, as [`wait`] reads them.
 #[derive(Clone, Copy)]

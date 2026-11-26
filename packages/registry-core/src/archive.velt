@@ -149,8 +149,8 @@ function text(bytes: u8[], message: string): string {
 
 /**
  * Checks that a package archive's entries are what a package may hold: `package.velt`, files
- * under `src/`, and files under its native crate's directory (`nativeDir`, the manifest's
- * `native.path`, when it has one). Throws `ArchiveError` otherwise, or for a `velt.toml`.
+ * under `src/`, and files under the directory of its C sources (`nativeDir`, `native`, when it
+ * has them). Throws `ArchiveError` otherwise, or for a `velt.toml`.
  */
 export function checkPackagePaths(entries: ArchiveEntry[], nativeDir: string | null): void {
   for (const e of entries) {

@@ -1,0 +1,73 @@
+// A union of integer and float literals (`0 | 1 | 2.5`) is a `number` everywhere one is
+// expected and to every operator, as in TypeScript (#3815): its members have two base types
+// underneath (`i64` and `f64`), where `0 | 1` or `0.5 | 1.5` has one. `===` and `switch` still
+// compare it as the union it is.
+type Mix = 0 | 1 | 2.5;
+
+function g(u: Mix) {
+  const x: number = u;
+  console.log(x, u * 2, -u, +u, ~u, u / 4, u + 1, u - 0.5, u % 2, u ** 2);
+  console.log(u | 0, u & 3, u ^ 1, u << 1, u >> 1, u >>> 0);
+  console.log(u === 1, u === 2.5, u == 0, u < 2, u >= 1, typeof u, `${u}`, String(u));
+}
+
+g(0);
+g(1);
+g(2.5);
+
+function half(n: number): number {
+  return n / 2;
+}
+
+function back(u: Mix): number {
+  return u;
+}
+
+function maybe(u: Mix): number | null {
+  return u;
+}
+
+function either(u: Mix): string | number {
+  return u;
+}
+
+const all: Mix[] = [0, 1, 2.5];
+let sum = 0;
+let bits = 0;
+for (const u of all) {
+  sum += u;
+  bits |= u;
+  console.log(half(u), back(u), maybe(u), either(u), Math.max(u, 1), Math.floor(u));
+}
+console.log(sum, bits, all.map((u) => u * 10), all.reduce((a: number, b) => a + b, 0));
+
+class Holder {
+  v: Mix = 2.5;
+  total(): number {
+    return this.v * 2 + -this.v;
+  }
+}
+
+console.log(new Holder().total(), -new Holder().v);
+const neg: -1 | 0.5 = -1;
+console.log(-neg, neg * 3, neg + 0.25);
+
+function label(u: Mix): string {
+  switch (u) {
+    case 0:
+      return "zero";
+    case 1:
+      return "one";
+    case 2.5:
+      return "two and a half";
+  }
+}
+
+console.log(all.map(label).join(", "));
+let acc: number = 1;
+for (const u of all) {
+  acc *= u + 1;
+  acc -= u;
+  acc ^= u;
+}
+console.log(acc);

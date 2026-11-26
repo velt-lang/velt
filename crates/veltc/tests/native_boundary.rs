@@ -105,30 +105,19 @@ fn a_dependency_can_t_take_the_root_s_name() {
     assert!(!app.join("velt.lock.json").exists());
 }
 
-/// The impostor's build script would run at install; it must not get that far.
+/// The impostor's C sources would be compiled for the program; it must not get that far.
 #[test]
 fn a_dependency_named_like_the_root_builds_nothing() {
     let dir = test_dir::TestDir::new();
     let root = dir.path();
-    named_like_the_root(root, "native: {},");
-    let marker = root.join("build-script-ran");
-    write(
+    named_like_the_root(
         root,
-        "evil/native/Cargo.toml",
-        "[package]\nname = \"evilcrate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\ncrate-type = [\"cdylib\", \"staticlib\"]\n\n[workspace]\n",
+        "native: { c: { evil: { sources: [\"native/evil.c\"], unchecked: true } } },",
     );
-    write(root, "evil/native/src/lib.rs", "");
-    write(
-        root,
-        "evil/native/build.rs",
-        &format!(
-            "fn main() {{ std::fs::write({:?}, \"\").unwrap(); }}\n",
-            marker.display().to_string()
-        ),
-    );
+    write(root, "evil/native/evil.c", "int evil(void) { return 1; }\n");
     let out = refused(&root.join("app"), &["run"]);
     assert!(out.contains("is the name of this package"), "{out}");
-    assert!(!marker.exists(), "the build script ran: {out}");
+    assert!(!root.join("evil/target").exists(), "it was built: {out}");
 }
 
 /// A package may depend back on the root itself: that's the root, and its native code is its own.
@@ -298,7 +287,6 @@ fn an_npm_package_in_an_allowed_git_package_is_not_that_package() {
 fn a_whole_workspace_install_checks_each_member_s_list() {
     let dir = test_dir::TestDir::new();
     let root = dir.path();
-    let marker = root.join("build-script-ran");
     write(
         root,
         "velt.workspace.velt",
@@ -311,26 +299,18 @@ fn a_whole_workspace_install_checks_each_member_s_list() {
         "dependencies: { evil: { path: \"../evil\" } },",
     );
     write(root, "app/src/main.velt", "function main() {}\n");
-    manifest(root, "evil", "evil", "native: {},");
+    manifest(
+        root,
+        "evil",
+        "evil",
+        "native: { c: { evil: { sources: [\"native/evil.c\"], unchecked: true } } },",
+    );
     write(root, "evil/src/lib.velt", "export const x = 1;\n");
-    write(
-        root,
-        "evil/native/Cargo.toml",
-        "[package]\nname = \"velt_native_evil\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nname = \"velt_native_evil\"\ncrate-type = [\"cdylib\", \"staticlib\"]\n\n[workspace]\n",
-    );
-    write(root, "evil/native/src/lib.rs", "");
-    write(
-        root,
-        "evil/native/build.rs",
-        &format!(
-            "fn main() {{ std::fs::write({:?}, \"\").unwrap(); }}\n",
-            marker.display().to_string()
-        ),
-    );
+    write(root, "evil/native/evil.c", "int evil(void) { return 1; }\n");
     let out = refused(root, &["install"]);
     assert!(
         out.contains("workspace member `app`: package `evil` has native code"),
         "{out}"
     );
-    assert!(!marker.exists(), "the build script ran: {out}");
+    assert!(!root.join("evil/target").exists(), "it was built: {out}");
 }

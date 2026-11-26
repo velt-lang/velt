@@ -215,7 +215,7 @@ fn the_formatter_reaches_its_dependents_and_the_velt_format_check() {
     let Veltc::Some(binaries) = &p.veltc else {
         panic!("{:?}", p.veltc)
     };
-    assert!(binaries.contains("templates") && binaries.contains("native_packages"));
+    assert!(binaries.contains("templates") && binaries.contains("registry_cli"));
 }
 
 /// A change in packages/ runs `velt test` in the packages, the registry flow of packages/sqlite,
@@ -226,21 +226,12 @@ fn a_changed_package_runs_the_package_tests() {
     let p = plan(&["packages/redis/src/client.velt"]);
     assert_eq!(
         p.veltc,
-        Veltc::Some(set(&[
-            "packages",
-            "native_packages",
-            "example_apps",
-            "bench_programs",
-            "docs"
-        ]))
+        Veltc::Some(set(&["packages", "example_apps", "bench_programs", "docs"]))
     );
     assert_eq!(p.goldens, Goldens::None);
     assert!(p.filterset().unwrap().contains("binary(packages)"));
-    // Its Velt files are formatted like std's; its native crate is linted only when it changed.
-    assert!(p.velt_fmt && !p.native_crates);
-    let p = plan(&["packages/postgres/native/src/lib.rs"]);
-    assert!(p.native_crates);
-    assert!(!p.rust, "no workspace crate changed");
+    // Its Velt files are formatted like std's.
+    assert!(p.velt_fmt);
 }
 
 /// packages/http-server is used by goldens, the standard library's tests, benchmarks and the
@@ -770,4 +761,11 @@ fn skipping_the_webassembly_goldens_leaves_them_out_of_the_tests_only() {
         .filterset()
         .unwrap()
         .contains("- binary_id(veltc::wasm_goldens)"));
+}
+
+/// std's TLS trust anchors are compared with velt_http's by velt_http's tests.
+#[test]
+fn the_tls_roots_table_runs_velt_http_s_tests() {
+    let p = plan(&["std/net/tls/x509/roots_table.velt"]);
+    assert!(p.packages.contains("velt_http"), "{:?}", p.packages);
 }

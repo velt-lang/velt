@@ -143,7 +143,7 @@ function inlineable(model: Model, t: Type): bool {
 /**
  * Ask for the instances `Map`'s `deepEquals` calls for a map or record `t` (both comparisons
  * of its keys and of its values), so they are generated with `t`'s: else the code calling it
- * would need another round (docs/internals/design/source-generators.md §6).
+ * would need another round (docs/internals/design/source-generators.md "Compilation").
  */
 function entryInstances(out: Output, t: Type): void {
   for (const arg of t.args) {

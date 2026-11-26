@@ -156,8 +156,9 @@ pub(super) fn facts(h: &mut Hashing) -> Vec<(&'static str, u64)> {
                              kind,
                              def,
                              owner,
+                             rest,
                          }| {
-                            (name, format!("{kind:?}"), h.name(*def), h.ty(*owner))
+                            (name, format!("{kind:?}"), h.name(*def), h.ty(*owner), *rest)
                         },
                     )
                     .collect();

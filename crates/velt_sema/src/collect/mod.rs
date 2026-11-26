@@ -28,6 +28,7 @@ mod c_struct;
 mod classes;
 mod comparable;
 mod constants;
+mod covariant;
 mod declare;
 mod default_snapshots;
 mod export_walk;
@@ -50,6 +51,7 @@ mod iterable;
 mod lookup;
 mod nested;
 mod operators;
+mod program_slots;
 mod regexp_symbols;
 pub(crate) mod ret_infer;
 pub(crate) mod shapes;
@@ -74,9 +76,9 @@ pub(crate) use shapes::self_type;
 pub(crate) type ItemDefs = Vec<DefId>;
 
 /// Collect generated modules `ms` once the program's bodies are checked
-/// (docs/internals/design/source-generators.md §6): their items declared in their own scope
-/// (with their declaring module's names inherited) and their signatures resolved. Returns the
-/// definitions made.
+/// (docs/internals/design/source-generators.md "Compilation"): their items declared in their own
+/// scope (with their declaring module's names inherited) and their signatures resolved. Returns
+/// the definitions made.
 pub(crate) fn collect_generated(cx: &mut Ctx, ms: &[usize]) -> ItemDefs {
     let mut items = ItemDefs::new();
     declare::declare_generated(cx, ms, &mut items);

@@ -50,9 +50,9 @@ export type Package = {
   /// every use of the name as a value is that literal, so `if (__DEV__)` branches fold. Only the
   /// root package's apply.
   define?: Record<string, string>;
-  /// A Rust crate in the package, built into a native library.
+  /// The package's native code: the C libraries its `declare c` functions name.
   native?: Native;
-  /// The packages with native code (C libraries or a Rust crate) the program allows:
+  /// The packages with native code (C libraries) the program allows:
   /// `["sqlite"]` from the registry (or a local path), `{ name: "llama", git: "https://…" }` from
   /// that repository, `{ name: "duck", url: "https://…/releases/download/" }` from archives under
   /// that prefix. Installing or building with any other package that has native code, or with a
@@ -179,15 +179,11 @@ export type Build = {
   cpu?: string;
 };
 
-/// A package's native library (https://veltlang.com/docs/book/native-packages/).
+/// A package's native code: the C libraries its `declare c` functions name.
 export type Native = {
-  /// The crate's directory, one directory name in the package root (default `"native"`).
-  path?: string;
-  /// The targets `velt publish` publishes a prebuilt library for, of a Rust crate or a package's
-  /// C `sources`, such as `"x86_64-unknown-linux-gnu"` or `"aarch64-apple-darwin"`.
+  /// The targets `velt publish` publishes the libraries of the package's C `sources` for, such
+  /// as `"x86_64-unknown-linux-gnu"` or `"aarch64-apple-darwin"`.
   targets?: string[];
-  /// WebAssembly libraries are not supported yet: must be `false` (the default).
-  wasm?: boolean;
   /// The C libraries the package's `declare c("<library>")` functions name, by that name: where
   /// each comes from on each target, and its headers. `"c"`, the platform's C library, needs no
   /// `system` (`c: { c: { headers: ["<string.h>"] } }`). A package with this object has native

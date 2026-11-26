@@ -154,8 +154,8 @@ pub(super) fn link_stage(
     paths: &OutputPaths,
 ) -> Result<(), BuildError> {
     let t = Instant::now();
-    let (packages, crates) = (opts.packages.as_ref(), !sess.generator_build);
-    let native = crate::native::program_links(packages, &sess.c_libs, crates, opts.release, target);
+    let packages = opts.packages.as_ref();
+    let native = crate::native::program_links(packages, &sess.c_libs, opts.release, target);
     let linked = crate::link::link_executable(
         target,
         objects,

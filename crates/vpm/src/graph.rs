@@ -22,9 +22,6 @@ pub struct GraphPackage {
     pub host_modules: crate::host_modules::HostModules,
     /// The package's `host` object: it is a host package (`crate::host`).
     pub host: Option<crate::host::HostConfig>,
-    /// The package's native library for the build target (packages with native code, when the
-    /// install had a target).
-    pub native: Option<crate::native::NativeLib>,
     /// Where the package's C libraries built from `sources` come from for the build target
     /// (when the install had one).
     pub c_bundle: Option<CBundle>,
@@ -145,7 +142,6 @@ impl PackageGraph {
             imports: BTreeMap::new(),
             host_modules: BTreeMap::new(),
             host: None,
-            native: None,
             c_bundle: None,
             c_libraries: BTreeMap::new(),
             has_native_code: false,
@@ -224,13 +220,6 @@ impl PackageGraph {
     /// All packages, in insertion order (root package first when built by [`crate::install`]).
     pub fn packages(&self) -> &[GraphPackage] {
         &self.packages
-    }
-
-    /// The packages with a native library, in insertion order.
-    pub fn natives(&self) -> impl Iterator<Item = (&GraphPackage, &crate::native::NativeLib)> {
-        self.packages
-            .iter()
-            .filter_map(|p| p.native.as_ref().map(|n| (p, n)))
     }
 
     /// The package `file` is code of, which decides what the file may do (native code, `unsafe`

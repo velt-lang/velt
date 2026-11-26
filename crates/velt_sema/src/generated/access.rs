@@ -1,4 +1,5 @@
-//! Generated modules' scope and access (docs/internals/design/source-generators.md §7):
+//! Generated modules' scope and access (docs/internals/design/source-generators.md "Access and
+//! scope"):
 //!
 //! - a generated module is checked in the scope of the module declaring the generated functions
 //!   it implements: that module's imports and top-level declarations, exported or not, are

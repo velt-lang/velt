@@ -149,6 +149,12 @@ impl FnCx<'_, '_> {
     ) -> (hir::Expr, hir::Expr) {
         use ast::BinaryOp as B;
         let eq = matches!(op, B::Eq | B::NotEq | B::StrictEq | B::StrictNotEq);
+        // A union of integer and float literals (`0 | 1 | 2.5`) is a `number` to an operator,
+        // as it is in TypeScript; `===` compares it as it is (#3815).
+        let (l, r) = match eq {
+            true => (l, r),
+            false => (self.mixed_as_number(l), self.mixed_as_number(r)),
+        };
         let lits = self.cx.lit_value(l.ty).is_some() || !eq && self.cx.widened(l.ty) != l.ty;
         if l.ty == r.ty && !lits {
             return (l, r);
@@ -175,7 +181,8 @@ impl FnCx<'_, '_> {
     /// an `f64` underneath), as the `number` it is in TypeScript: what a value of such a type is
     /// wherever a `number` takes it (a conversion, the operand of `x += n`, an element spread
     /// into a `number[]`, the receiver of `n.toFixed(1)`; #3867). One literal is the `number`
-    /// constant it denotes. `Err(h)` for any other value (`string` literals, sized ones such as
+    /// constant it denotes; a union of integer and float literals (`1 | 2.5`, #3815) converts
+    /// member by member. `Err(h)` for any other value (`string` literals, sized ones such as
     /// `1u8`, which convert as their base does).
     fn literal_as_number(&mut self, h: hir::Expr) -> Result<hir::Expr, hir::Expr> {
         if !self.number_literal_type(h.ty) {
@@ -186,7 +193,10 @@ impl FnCx<'_, '_> {
         }
         let (f64, i64) = (self.cx.ty.f64, self.cx.ty.i64);
         let original = h.clone();
-        let value = self.widen_value(h);
+        let value = match self.mixed_number_literal(h.ty) {
+            true => self.mixed_as_number(h),
+            false => self.widen_value(h),
+        };
         match value.ty {
             t if t == f64 => Ok(value),
             t if t == i64 => Ok(self.int_to_float(value, f64)),
@@ -194,10 +204,11 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// Is `t` a number literal type or a union of them, of `i64`s or `f64`s (`1 | 2`, `2.5`)?
+    /// Is `t` a number literal type or a union of them, of `i64`s, `f64`s or both (`1 | 2`,
+    /// `2.5`, `1 | 2.5`)?
     pub(super) fn number_literal_type(&mut self, t: TyId) -> bool {
         let w = self.cx.widened(t);
-        w != t && (w == self.cx.ty.f64 || w == self.cx.ty.i64)
+        (w != t && (w == self.cx.ty.f64 || w == self.cx.ty.i64)) || self.mixed_number_literal(t)
     }
 
     /// `h`, of an integer literal type or a union of them (`5`, `0 | 1`: an `i64` underneath),
@@ -212,7 +223,8 @@ impl FnCx<'_, '_> {
         exp: TyId,
     ) -> Result<hir::Expr, hir::Expr> {
         let f64 = self.cx.ty.f64;
-        if exp == h.ty || !self.number_literal(h.ty) || !self.holds_number(exp, 4) {
+        let mixed = self.mixed_number_literal(h.ty);
+        if exp == h.ty || !(mixed || self.number_literal(h.ty)) || !self.holds_number(exp, 4) {
             return Err(h);
         }
         let original = h.clone();
@@ -257,6 +269,9 @@ impl FnCx<'_, '_> {
     /// underneath) is the `number` it is in TypeScript, so `-n` of 0 is `-0` and `~n` is
     /// JavaScript's 32-bit not (#3784). Any other value as it is.
     pub(super) fn unary_literal_operand(&mut self, h: hir::Expr) -> hir::Expr {
+        if self.mixed_number_literal(h.ty) {
+            return self.mixed_as_number(h);
+        }
         let w = self.cx.widened(h.ty);
         if w == h.ty || !self.cx.ty.is_numeric(w) {
             return h;
@@ -266,6 +281,35 @@ impl FnCx<'_, '_> {
             true => self.int_to_float(base, self.cx.ty.f64),
             false => base,
         }
+    }
+
+    /// Is `t` a union of unsuffixed integer and float literals, both (`0 | 1 | 2.5`)? Its
+    /// members have two base types, `i64` and `f64`, so [`Ctx::widened`] leaves it as it is,
+    /// though in TypeScript each member, and so the union, is a `number` (#3815).
+    pub(super) fn mixed_number_literal(&mut self, t: TyId) -> bool {
+        let Some(members) = self.cx.union_members(t) else {
+            return false;
+        };
+        let (mut int, mut float) = (false, false);
+        for m in members {
+            match self.cx.lit_value(m) {
+                Some(hir::LitValue::Int(hir::IntTy::I64, _)) => int = true,
+                Some(hir::LitValue::Float(hir::FloatTy::F64, _)) => float = true,
+                _ => return false,
+            }
+        }
+        int && float
+    }
+
+    /// `h` as the `number` it is when it is of a union of integer and float literals
+    /// ([`mixed_number_literal`](Self::mixed_number_literal)): each member converted to `number`
+    /// (an integer through [`int_literal_to`](Self::int_literal_to)). Any other value as it is.
+    pub(super) fn mixed_as_number(&mut self, h: hir::Expr) -> hir::Expr {
+        if !self.mixed_number_literal(h.ty) {
+            return h;
+        }
+        let f64 = self.cx.ty.f64;
+        self.union_to_common(h, f64).unwrap_or_else(|h| h)
     }
 
     /// Is `t` a number literal type or a union of them, of `i64`s (`1 | 2`)?
@@ -286,9 +330,12 @@ impl FnCx<'_, '_> {
     /// Members of a literal type or a union of literals are its base type's (`l.length`,
     /// `kind.toUpperCase()` on `"lo" | "mid"`), unless the union itself has the member (an
     /// `extend` block on it). A number literal's are `number`'s (`n.toFixed(1)` on `n: 0 | 1`,
-    /// #3867), and an integer one keeps `i64`'s methods `number` has not.
+    /// #3867; a union of integer and float literals too, `k.toFixed(2)` on `k: 1 | 2.5`), and an
+    /// integer one keeps `i64`'s methods `number` has not.
     pub(crate) fn widen_literal_receiver(&mut self, h: hir::Expr, name: &str) -> hir::Expr {
-        if !self.cx.has_literal_member(h.ty) || self.cx.widened(h.ty) == h.ty {
+        if !self.cx.has_literal_member(h.ty)
+            || (self.cx.widened(h.ty) == h.ty && !self.mixed_number_literal(h.ty))
+        {
             return h;
         }
         if self.cx.lit_value(h.ty).is_none() && self.method_exists(h.ty, name) {

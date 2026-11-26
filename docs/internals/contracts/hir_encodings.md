@@ -1568,7 +1568,9 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   argument passes one argument instead, an `any[]` (the array literal `[a..., ...xs]`, never a
   boxed `any`), whose elements move into the call. An `unknown` receiver is
   an error until narrowed. When a program has any of these, `Program::dyn_members` lists the
-  methods and accessors (`DynMember`: name, kind, def, declaring type) of every struct, class and
+  methods and accessors (`DynMember`: name, kind, def, declaring type, and whether a method's
+  last parameter is a rest parameter, which a call by name packs its remaining arguments into)
+  of every struct, class and
   object type by name, and every `any` table gets four more slots (velt_vir `lower/any_member.rs`):
   5 `AnyGet (data, key, out) -> u8`, 6 `AnyIndex (data, f64, out) -> u8`, 7 `AnyCall (data, key,
   argv, argc, out) -> u8`, 8 `AnyApply (data, argv, argc, out) -> u8`, returning 0 (the result

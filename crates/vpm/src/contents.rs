@@ -49,17 +49,15 @@ fn native_dir(root: &Path) -> Option<String> {
     native_dir_of(&text)
 }
 
-/// The directory of manifest text's native sources: `native.path`, or where C `sources` are.
+/// The directory of manifest text's native sources: where C `sources` are.
 pub fn native_dir_of(manifest: &str) -> Option<String> {
     let manifest = crate::manifest::Manifest::parse(manifest).ok()?;
-    match manifest.native {
-        Some(native) => Some(native.path),
-        None if manifest.has_c_sources() => Some(crate::manifest::C_SOURCES_DIR.to_string()),
-        None => None,
-    }
+    manifest
+        .has_c_sources()
+        .then(|| crate::manifest::C_SOURCES_DIR.to_string())
 }
 
-/// Directories never distributed inside a native crate.
+/// Directories never distributed inside the native sources.
 const SKIPPED_DIRS: &[&str] = &["target", ".git"];
 
 fn collect(dir: &Path, rel: &str, out: &mut Vec<String>) -> Result<(), String> {
@@ -160,25 +158,25 @@ mod tests {
     }
 
     #[test]
-    fn native_crate_sources_are_included() {
+    fn native_sources_are_included() {
         let tmp = tempfile::tempdir().unwrap();
         let a = tmp.path();
         write(
             a,
             "package.velt",
-            "export const pkg: Package = { name: \"a\", version: \"1.0.0\", native: { path: \"rs\" } };",
+            "export const pkg: Package = { name: \"a\", version: \"1.0.0\", native: { c: { x: { sources: [\"native/x.c\"], unchecked: true } } } };",
         );
         write(a, "src/lib.velt", "");
+        write(a, "native/x.c", "");
+        write(a, "native/sub/x.h", "");
+        write(a, "native/target/x86_64-unknown-linux-gnu/native.json", "");
         write(a, "rs/Cargo.toml", "");
-        write(a, "rs/src/lib.rs", "");
-        write(a, "rs/target/release/libx.so", "");
-        write(a, "native/ignored.rs", "");
         assert_eq!(
             list_files(a).unwrap(),
             [
+                "native/sub/x.h",
+                "native/x.c",
                 "package.velt",
-                "rs/Cargo.toml",
-                "rs/src/lib.rs",
                 "src/lib.velt"
             ]
         );

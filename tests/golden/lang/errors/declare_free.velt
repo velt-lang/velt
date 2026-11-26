@@ -1,6 +1,5 @@
-// Outside the standard library, `declare function` may only name an export of the package's own
-// native library. A program that is not in a package with one can't declare C functions such as
-// libc's `free`.
+// Outside the standard library, a function without a body is a `declare c` one: a plain
+// `declare function`, such as one of libc's `free`, is an error.
 declare function free(p: u64): void;
 
 function main() {

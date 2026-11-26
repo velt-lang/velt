@@ -342,7 +342,7 @@ fn find_targets(
             };
             // The class and its subclasses, through the map the scan built.
             let mut out: Vec<Target> = (lits.below(class).into_iter())
-                .filter_map(|c| cx.adt(c)?.vtable.get(*slot as usize).map(|&m| (m, 0)))
+                .filter_map(|c| cx.vtable_of(c)?.get(*slot as usize).map(|&m| (m, 0)))
                 .collect();
             out.sort_by_key(|t| t.0 .0);
             out.dedup();
@@ -454,8 +454,8 @@ pub(super) fn methods_of(cx: &Ctx, c: DefId) -> Vec<DefId> {
     let mut methods: Vec<DefId> = (cx.adt(c).into_iter())
         .flat_map(|a| a.methods.values().filter(|m| !m.is_static).map(|m| m.def))
         .collect();
-    if let Some(a) = cx.adt(c) {
-        methods.extend(a.vtable.iter().copied());
+    if let Some(v) = cx.vtable_of(c) {
+        methods.extend(v.iter().copied());
     }
     methods.sort_by_key(|m| m.0);
     methods

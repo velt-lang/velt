@@ -108,21 +108,3 @@ impl AsyncWrite for TcpStream {
         Pin::new(&mut self.get_mut().0).poll_shutdown(cx)
     }
 }
-
-/// A listening TCP socket, registered with the host's reactor.
-pub struct TcpListener(tokio::net::TcpListener);
-
-impl TcpListener {
-    /// From a bound, listening standard socket.
-    pub fn from_std(l: std::net::TcpListener) -> io::Result<TcpListener> {
-        tokio::net::TcpListener::from_std(l).map(TcpListener)
-    }
-
-    pub async fn accept(&self) -> io::Result<(TcpStream, SocketAddr)> {
-        self.0.accept().await.map(|(s, a)| (TcpStream(s), a))
-    }
-
-    pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.0.local_addr()
-    }
-}
