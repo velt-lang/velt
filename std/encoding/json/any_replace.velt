@@ -10,11 +10,13 @@ import {
   jsonReplacerDepth,
   jsonReplacerKept,
   jsonReplacerView,
+  jsonWalkEnter,
+  jsonWalkLeave,
 } from "velt/encoding/json/replace_ops";
 import { pushRevived, setRevived } from "velt/encoding/json/value_ops";
 import { JsonValue } from "velt/prelude/json/json_value";
 import { JsonReplacer } from "velt/prelude/json/layout";
-import { callToJSON, entryCount, entryName, entryValue, typeOf } from "velt/reflect";
+import { callToJSON, entryCount, entryName, entryValue, identity, typeOf } from "velt/reflect";
 
 /**
  * The dynamic value `v` under `key` replaced (`raw`: its view in its parent's, if that holds
@@ -58,12 +60,16 @@ export function replaceJsonAny(
     return jsonReplacedMembers(r, replacer, depth);
   }
   if (kind == "array" || kind == "tuple") {
+    // On the visit stack while its elements are walked: met again in them is Node's
+    // circular-structure `TypeError` (any_raw.velt cut it in the view).
+    jsonWalkEnter(identity(v));
     const out = JsonValue.array();
     const n = entryCount(v);
     for (let i: i64 = 0; i < n; i++) {
       const e = replaceJsonAny(entryValue(v, i), `${i}`, view.at(i), replacer, depth + 1, true);
       pushRevived(out, e);
     }
+    jsonWalkLeave();
     return out;
   }
   const members =
@@ -71,7 +77,10 @@ export function replaceJsonAny(
     !holdsJsonValue(v) &&
     t.name != "Date";
   if ((members || kind == "record") && entryCount(v) >= 0) {
-    return replaceMembers(v, view, kind == "record" ? recordOrder(v) : null, replacer, depth);
+    jsonWalkEnter(identity(v));
+    const out = replaceMembers(v, view, kind == "record" ? recordOrder(v) : null, replacer, depth);
+    jsonWalkLeave();
+    return out;
   }
   // A scalar, a `JsonValue` (JSON data: its members are replaced as JSON), a collection's `{}`.
   return jsonReplacedMembers(r, replacer, depth);

@@ -2,19 +2,28 @@
 // it (the dynamic parts of what `writeJsonRaw` writes). As in Node, a replacer gets a value
 // before the `toJSON` of anything in it runs (each runs when the walk reaches its own key), so
 // this writes what any.velt writes, without calling any `toJSON`: a class instance with one is
-// written as its members, a `Date` as `{}` (it has no enumerable own properties).
+// written as its members (a `Date` as its text: its `toJSON` is std's). A value met again inside
+// itself is cut there as `null`: the walk reports the cycle when it reaches it (any_replace.velt).
 
 import { StringBuilder } from "velt/text/string_builder";
 import { appendJsonString } from "velt/encoding/json/append";
 import {
-  enter,
   holdsJsonValue,
   jsonPresent,
   recordOrder,
   unsupported,
   writeJsonAny,
 } from "velt/encoding/json/any";
-import { callToJSON, endVisit, entryCount, entryName, entryValue, typeOf } from "velt/reflect";
+import {
+  beginVisit,
+  callToJSON,
+  endVisit,
+  entryCount,
+  entryName,
+  entryValue,
+  identity,
+  typeOf,
+} from "velt/reflect";
 
 /**
  * Appends the dynamic value `v` (whose key in its parent is `key`) as a replacer sees it: `null`
@@ -31,33 +40,53 @@ export function writeJsonAnyRaw(w: StringBuilder, v: any, key: string): void {
     // A typed proxy converts to the value it stands for: no hook of the program's.
     writeJsonAnyRaw(w, callToJSON(v, key), key);
   } else if (kind == "array" || kind == "tuple") {
-    enter(v);
+    if (!begin(w, v)) {
+      return;
+    }
     writeElements(w, v);
     endVisit();
   } else if (kind == "shared") {
-    enter(v);
+    if (!begin(w, v)) {
+      return;
+    }
     writeJsonAnyRaw(w, entryValue(v, 0), key);
     endVisit();
   } else if (kind == "class" && t.hasHook("toJSON") && !holdsJsonValue(v)) {
     if (t.name == "Date") {
-      w.append("{}");
+      // Its text: its `toJSON` is std's, with nothing the program sees run early.
+      writeJsonAny(w, v, key);
       return;
     }
-    enter(v);
+    if (!begin(w, v)) {
+      return;
+    }
     writeMembers(w, v, null);
     endVisit();
   } else if ((kind == "object" || kind == "class" || kind == "struct") && !holdsJsonValue(v)) {
-    enter(v);
+    if (!begin(w, v)) {
+      return;
+    }
     writeMembers(w, v, null);
     endVisit();
   } else if (kind == "record") {
-    enter(v);
+    if (!begin(w, v)) {
+      return;
+    }
     writeMembers(w, v, recordOrder(v));
     endVisit();
   } else {
     // A scalar, a `JsonValue`, a collection written as `{}`: no `toJSON` of the program's.
     writeJsonAny(w, v, key);
   }
+}
+
+/** Starts writing `v`: false, after writing `null` for it, when it is being written or walked already. */
+function begin(w: StringBuilder, v: any): bool {
+  if (beginVisit(identity(v))) {
+    return true;
+  }
+  w.append("null");
+  return false;
 }
 
 function writeElements(w: StringBuilder, v: any): void {

@@ -1,0 +1,22 @@
+  replacer ""
+  replacer "name"
+  replacer "kids"
+  replacer "0"
+  replacer "name"
+  replacer "kids"
+  replacer "parent"
+tree, logged: TypeError
+tree, no parent: {"name":"root","kids":[{"name":"kid","kids":[]}]}
+derived in a base field: TypeError
+derived, dropped: {"tag":"b","extra":1}
+two objects: TypeError
+through an array: TypeError
+element left out: {"id":1,"next":[null]}
+same value twice: [{"tag":"b","other":null},{"tag":"b","other":null}]
+any array: TypeError
+any array, left out: [1,null]
+tree again: {"name":"root","kids":[{"name":"kid","kids":[]}]}
+  replacer "" {"at":"1970-01-01T00:00:00.000Z","n":1}
+  replacer "at" "1970-01-01T00:00:00.000Z"
+  replacer "n" 1
+{"at":"1970-01-01T00:00:00.000Z","n":1}
