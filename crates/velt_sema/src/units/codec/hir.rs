@@ -596,6 +596,7 @@ enums! {
         224 => StrBorrowedWords,
         225 => CArrived,
         227 => AnyZeroSign,
+        228 => KeyOf,
     }
 }
 

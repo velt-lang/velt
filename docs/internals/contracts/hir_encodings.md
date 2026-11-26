@@ -873,7 +873,10 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   (`keyEq`, JS SameValueZero: `Same` with `NaN` equal to itself and `0` to `-0`) and hash with
   `Intrinsic::Hash`, which agrees with it (objects hash their identity; a type declared with
   `struct`, `AdtDef::declared_struct`, compares and hashes by content, field by field: a struct has
-  no identity, #641). A declared `struct` compares its numbers by their bits under every one of
+  no identity, #641). The key a `Map` stores (a `Set` its element) is `Intrinsic::KeyOf` of it
+  (`keyOf`, additive): an owned copy whose float `-0` is `+0`, as JS stores it: in a float, an
+  option of one, a float member of a union, or a `number` held by `any` / `unknown`; any other
+  value is itself. A declared `struct` compares its numbers by their bits under every one of
   these; a C struct (`AdtDef::c_struct`) compares them as the operation compares numbers (IEEE under
   `Same`, SameValueZero for keys and `includes`). A C struct held in a declared `struct` compares by
   the outer struct's rule, its bits. `Array.includes` compares with `Intrinsic::IncludesEq` (JS
