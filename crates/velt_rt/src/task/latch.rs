@@ -12,7 +12,6 @@ use std::task::{Context, Poll, Waker};
 use parking_lot::Mutex;
 
 use super::leaf::new_inner_leaf;
-use super::local::ticket_pending;
 use super::VeltFut;
 use crate::handle::Handle;
 
@@ -29,8 +28,6 @@ struct Waiter {
     id: u64,
     /// Whom to resume when the latch opens (taken then).
     waker: Option<Waker>,
-    /// Once opened: the microtask the waiter was queued as on its own task (0: woken).
-    ticket: u64,
 }
 
 /// Ids of waits.
@@ -51,10 +48,9 @@ pub unsafe extern "C-unwind" fn velt_rt_latch_free(h: Handle<Latch>) {
     h.release();
 }
 
-/// Opens the latch and resumes every waiter; opening an open latch does nothing. A waiter on the
-/// task that opens it is queued in its microtask queue now, as Node queues a promise's reactions
-/// inside `resolve`, and its wait completes when the queue reaches it (local/micro.rs
-/// `settled`); others are woken.
+/// Opens the latch and wakes every waiter, in the order they started waiting; opening an open
+/// latch does nothing. (Programs on the executor in Velt use its own latch and its microtask
+/// order, std/lang/promise/settle.velt.)
 ///
 /// # Safety
 /// `h` must be a live latch handle.
@@ -65,15 +61,11 @@ pub unsafe extern "C-unwind" fn velt_rt_latch_open(h: Handle<Latch>) {
     if l.open.swap(true, Ordering::AcqRel) {
         return;
     }
-    let mut waiters = std::mem::take(&mut *l.waiters.lock());
-    for w in &mut waiters {
-        if let Some(k) = w.waker.take() {
-            w.ticket = super::local::settled(k);
+    let waiters = std::mem::take(&mut *l.waiters.lock());
+    for w in waiters {
+        if let Some(k) = w.waker {
+            k.wake();
         }
-    }
-    waiters.retain(|w| w.ticket != 0);
-    if !waiters.is_empty() {
-        l.waiters.lock().extend(waiters);
     }
 }
 
@@ -96,11 +88,7 @@ impl Future for Wait {
         let mut ws = latch.waiters.lock();
         let mine = ws.iter().position(|w| w.id == id && id != 0);
         if latch.open.load(Ordering::Acquire) {
-            // Queued on this task when it opened: done once the queue got there.
             if let Some(i) = mine {
-                if ticket_pending(ws[i].ticket, cx.waker()) {
-                    return Poll::Pending;
-                }
                 ws.swap_remove(i);
             }
             self.id = 0;
@@ -118,7 +106,6 @@ impl Future for Wait {
                 ws.push(Waiter {
                     id,
                     waker: Some(cx.waker().clone()),
-                    ticket: 0,
                 });
                 self.id = id;
             }

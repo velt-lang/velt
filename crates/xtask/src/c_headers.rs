@@ -58,7 +58,6 @@ const PATHS: &[&str] = &[
     "std/lang/hooks/sched_io_write.velt",
     "std/lang/hooks/sched_mem.velt",
     "std/lang/hooks/sched_node_loc.velt",
-    "std/lang/hooks/sched_off.velt",
     "std/lang/hooks/sched_peek.velt",
     "std/lang/hooks/sched_read.velt",
     "std/lang/hooks/sched_wake.velt",

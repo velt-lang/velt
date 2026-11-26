@@ -18,9 +18,10 @@ directly awaited calls are embedded state machines.
 (std/lang/hooks/sched*.velt): lowering calls its hooks in place of the task and promise
 functions of §1 and §2 (velt_vir `lower/sched.rs`; the externs std declares are listed in
 velt_common `std_hooks::SCHED_EXTERNS`), and the hooks keep the semantics this file states. The
-executor's workers use the runtime's leaves (§5, §6, §14) through the C waker of §1. Code polled
-off the executor's workers (a C library's callback, a runtime leaf's thread) reaches velt_rt's
-own promise, combinator and timer functions through `declare c` (std/lang/hooks/sched_off.velt).
+executor's workers use the runtime's leaves (§5, §6, §14) through the C waker of §1. On native
+targets velt_rt keeps only the promise functions a program without the executor still calls
+(`velt_rt_fut_share`, `velt_rt_fut_id`, `velt_rt_fut_peek`); a promise shared outside any task (a
+C library's thread) is refused (#3782).
 A WebAssembly program calls the functions of §1 and §2 directly (velt_rt_wasm's executor).
 
 ## 1. Awaitable protocol
@@ -120,10 +121,10 @@ typedef struct VeltCx {                              // what `cx` points to (2 p
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_fut_box` | `(PollFn, DropFn, const void* state, u64 size, u64 align) -> VeltFut*` | moves a compiled initial state into a heap future (for `Promise<T>` values that are stored, put in arrays, returned); result at +16 = state offset 0. `align ≤ 16`. Lazy until polled or started (§1.1). |
-| `velt_rt_fut_start` | `(VeltFut* f, void (*result_drop)(void* slot))` | start a boxed promise now (§1.1); no-op for any other future, or outside a task. `result_drop` disposes of an unclaimed result (null if nothing to do); for a promise that can reject it reports an `Err` like an unhandled rejection. |
+| `velt_rt_fut_box` | `(PollFn, DropFn, const void* state, u64 size, u64 align) -> VeltFut*` | WebAssembly only (velt_rt_wasm) [velt_rt's removed: native programs box, start and hand over promises on the executor in Velt, std/lang/hooks/sched_node.velt, sched_node_transfer.velt]. Moves a compiled initial state into a heap future (for `Promise<T>` values that are stored, put in arrays, returned); result at +16 = state offset 0. `align ≤ 16`. Lazy until polled or started (§1.1). |
+| `velt_rt_fut_start` | `(VeltFut* f, void (*result_drop)(void* slot))` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, as `velt_rt_fut_box`]. Start a boxed promise now (§1.1); no-op for any other future, or outside a task. `result_drop` disposes of an unclaimed result (null if nothing to do); for a promise that can reject it reports an `Err` like an unhandled rejection. |
 | `velt_rt_fut_start_rejecting` | `(VeltFut* f, void (*result_drop)(void* slot))` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, #2196: native programs start, give up and hand promises to combinators on the executor in Velt, std/lang/hooks/sched_node.velt, sched.velt `schedDetach`, `schedHandled`]. `velt_rt_fut_start` for a promise that can reject (its result is a `Result`, tag first; `result_drop` reports an `Err`): when it rejects while its owner does not wait for it, the rejection is reported as uncaught (through `result_drop`; on WebAssembly it then gets 0 from `velt_rt_unhandled_defer`) once the task's microtask queue is drained, unless the owner awaited it, dropped it, or handed it to a combinator or another task by then, as Node reports a rejection without a handler. |
-| `velt_rt_fut_transfer` | `(VeltFut* f, void (*transfer)(void* slot))` | the owner hands `f` to another task: `transfer` (compiled transfer glue, in place; null for a result with nothing counted, which only hands over a holder of a shared promise, §1.2) runs on the result slot on the task that produces the result, as it finishes (at once if a started promise already finished); with or without `transfer`, a started promise's rejection is no longer reported by the task that started it (`velt_rt_fut_start_rejecting`) but claimed or given up by the task holding it (#1497); a race passes it to its children; no-op for join handles (a task transfers its own result: `velt_rt_spawn_transfer`, or the mark of the promise `velt_rt_spawn_fut` runs) and runtime leaves. WebAssembly does the same on its one thread, so values are moved or copied where native targets move or copy them. |
+| `velt_rt_fut_transfer` | `(VeltFut* f, void (*transfer)(void* slot))` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, as `velt_rt_fut_box`]. The owner hands `f` to another task: `transfer` (compiled transfer glue, in place; null for a result with nothing counted, which only hands over a holder of a shared promise, §1.2) runs on the result slot on the task that produces the result, as it finishes (at once if a started promise already finished); with or without `transfer`, a started promise's rejection is no longer reported by the task that started it (`velt_rt_fut_start_rejecting`) but claimed or given up by the task holding it (#1497); a race passes it to its children; no-op for join handles (a task transfers its own result: `velt_rt_spawn_transfer`, or the mark of the promise `velt_rt_spawn_fut` runs) and runtime leaves. WebAssembly does the same on its one thread, so values are moved or copied where native targets move or copy them. |
 | `velt_rt_xfer_begin` / `velt_rt_xfer_end` | `()` | bracket one transfer of a value to another task (the `TransferRoot` glue, a `thread_copy`); nest. The outermost `end` releases the deferred references (`xfer_defer`) and forgets the copies |
 | `velt_rt_xfer_find` | `(const void* obj) -> void*` | the copy of the counted object `obj` made in this transfer, null if none yet, or `1` outside a transfer. The clone glue of a counted object asks it before copying one whose count is above 1, the transfer glue before copying a still-shared one, so an object reached twice is copied once and a cycle is copied as a cycle |
 | `velt_rt_xfer_record` | `(const void* obj, const void* copy)` | `copy` is the copy of `obj` in this transfer, and of itself (a graph just copied and transferred next is not copied again); no-op outside one |
@@ -251,19 +252,15 @@ shares a promise never calls it, and its futures are unchanged.
   the task the promise is shared on holds the lock whenever it runs too: a holder reaches
   module state only through code holding the lock, so the task it is shared on put it there
   or first used it from there, and is a *touched* task from then on, whose every poll takes
-  the lock; the outside home (below) is a touched task in every program with module state. So
+  the lock. So
   the tasks using a holder read from module state (a `Map` of promises in flight), its
   result, and the objects reached from that run one at a time.
-- A holder handed over outside a task (a synchronous `main`) gets its proxy in the *outside
-  home*, a set with a task id of its own that code outside a task enters for each hand-over,
-  so every holder handed over from there is one of the same task. When `main` returns, the
-  home's set moves to an orphan task, which drives it (and keeps the process alive) until its
-  promises finish. In a program with module state the home's polls take the module lock, here
-  and in the orphan, as any touched task's do.
 - On native targets a promise shared on a C library's own thread (in an exported function it
   calls) stops the program with a panic naming #3782, whatever the executor's workers run
   meanwhile and before the executor started too, until such a share can be handed to the
-  executor in Velt (std/lang/hooks/sched_share.velt `offWorker`).
+  executor in Velt (std/lang/hooks/sched_share.velt `offWorker`). velt_rt's own hub serves only
+  a program that runs nothing on the executor: its promises are runtime futures, driven by
+  their first waiter.
 - A started original's result is claimed (`OWNER_DELIVERED`) only under the hub's lock, by the
   hub's waker on the promise's task or by the holder that saw it finish, whichever comes first;
   the other finds it settled.

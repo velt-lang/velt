@@ -9,10 +9,8 @@
 // what happens to the promise from then on is the other task's.
 
 import { fnAddress, inline, noInline, stateDrop } from "velt/lang/intrinsics";
-import * as jn from "./sched_join";
 import * as m from "./sched_mem";
 import * as nd from "./sched_node";
-import * as off from "./sched_off";
 import * as rc from "./sched_race";
 import * as x from "./sched_node_ext";
 import * as al from "./sched_share_alias";
@@ -30,8 +28,8 @@ export const HANDED_OVER: u32 = 2048;
  * promise `f` to another task. A node of this executor keeps `glue` (null: nothing to transfer)
  * for its task to run on the result as it finishes (`transfer`); a spawned task's join handle has
  * nothing to transfer (the task's inputs were); a holder of a shared promise forwards to a proxy
- * (sched_share_hand.velt); the runtime's futures (a holder of its hub, a leaf) are the runtime's
- * to hand over.
+ * (sched_share_hand.velt); a runtime leaf produces nothing to transfer. A holder of the
+ * runtime's hub never gets here: only a program without this executor shares with it.
  */
 export function schedTransfer(f: usize, glue: usize): void {
   if (m.ld(f) === fnAddress(sh.holderPoll)) {
@@ -49,8 +47,9 @@ export function schedTransfer(f: usize, glue: usize): void {
         schedTransfer(k, glue);
       }
     }
-  } else if (!transfer(f, glue, fnAddress(nd.nodePoll)) && !jn.isJoin(f)) {
-    off.transfer(f, glue);
+  } else {
+    // Anything that isn't a node (a join handle, a runtime leaf) has nothing to transfer.
+    transfer(f, glue, fnAddress(nd.nodePoll));
   }
 }
 
