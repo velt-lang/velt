@@ -52,6 +52,8 @@ mod yield_hooks;
 #[macro_use]
 mod weak_hooks;
 #[macro_use]
+mod inspect_layout_hooks;
+#[macro_use]
 mod string_hooks;
 #[macro_use]
 mod module_hooks;
@@ -63,8 +65,7 @@ mod promise_hooks;
 mod tls_hooks;
 pub use module_hooks::BLOCKS_MODULE_ENTRY;
 
-// The table: these rows, then TLS's, promises' through `any`, the decorators', module state's,
-// the string methods' and the weak core's (`*_hooks.rs`), given to `hooks!` together.
+// The table: these rows, then each `*_hooks.rs` file's (the `with_*_hooks!` chain), to `hooks!`.
 with_tls_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
@@ -792,7 +793,7 @@ mod lookup;
 pub use lookup::{find, is_lowered};
 mod on_demand;
 pub mod prebuilt;
-pub use on_demand::{on_demand, INSPECT_SHAPES, ON_DEMAND_FLOAT, ON_DEMAND_MODULES};
+pub use on_demand::*;
 
 #[cfg(test)]
 #[path = "std_hooks_tests.rs"]

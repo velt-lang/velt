@@ -1,0 +1,7 @@
+{
+  first: Tag<a custom inspect's text, long enough to make the value break>,
+  second: [ 1, 2, 3 ],
+  third: Tag<a custom inspect's text, long enough to make the value break>
+}
+[ S, S ]
+{ s: S }
