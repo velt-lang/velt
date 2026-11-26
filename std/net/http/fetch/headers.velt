@@ -26,7 +26,13 @@ import { impliedType } from "velt/net/http/fetch/body";
 import { RequestSource } from "velt/net/http/fetch/source";
 import { arraySwap, arrayTruncate } from "velt/lang/intrinsics";
 import { INSPECT } from "velt/lang/hooks/keys";
-import { isContentType, sameName, sortedHeaders, trimHttp } from "velt/net/http/fetch/header_text";
+import {
+  isContentType,
+  joinedValues,
+  sameName,
+  sortedHeaders,
+  trimHttp,
+} from "velt/net/http/fetch/header_text";
 
 /**
  * `Headers`, an object literal (`{ "content-type": "text/plain" }`), or name-value pairs
@@ -64,12 +70,12 @@ export class Headers {
     }
     if (Array.isArray(init)) {
       for (const [name, value] of init) {
-        this.append(name, value);
+        this.appendEntry(name, value);
       }
       return;
     }
     for (const [name, value] of Object.entries(init)) {
-      this.append(name, value);
+      this.appendEntry(name, value);
     }
   }
 
@@ -178,6 +184,12 @@ export class Headers {
   /** Adds a value; a header that already has one gets another. */
   append(name: string, value: string) {
     this.change();
+    this.appendEntry(name, value);
+  }
+
+  // `append`'s steps on the list. The constructor calls this, not `append`, as in JS: a
+  // subclass's `append` does not see the initial entries.
+  private appendEntry(name: string, value: string) {
     if (!this.one && this.alone(name, false)) {
       this.name0 = name;
       this.value0 = value;
@@ -337,7 +349,7 @@ export class Headers {
     for (let i: usize = implied ? 2 : 0; i < list.length; i += 2) {
       const n = list[i];
       if (out[n] == null) {
-        out[n.clone()] = this.get(n) ?? "";
+        out[n.clone()] = joinedValues(list, n);
       }
     }
     if (implied && list.length >= 2) {

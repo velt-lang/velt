@@ -17,11 +17,14 @@ mod runtime_support;
 mod test_dir;
 mod zig_env;
 
-const HEADER: &str = "#include <stdint.h>\n\nint64_t early_run(void);\n";
+const HEADER: &str =
+    "#include <stdint.h>\n\nint64_t early_run(void);\nint64_t early_start(void);\n";
 
-/// Starts a thread on the export `early_worker` and joins it.
+/// `early_run` starts a thread on the export `early_worker` and joins it; `early_start` starts
+/// one that nothing waits for, which calls the export a moment later.
 const SOURCE: &str = r#"#include "early.h"
 #include <pthread.h>
+#include <unistd.h>
 
 void *early_worker(void *arg);
 
@@ -31,6 +34,18 @@ int64_t early_run(void) {
   if (pthread_create(&t, 0, early_worker, 0) != 0) return -1;
   pthread_join(t, &r);
   return (int64_t)(intptr_t)r;
+}
+
+static void *call_later(void *arg) {
+  usleep(20000);
+  return early_worker(arg);
+}
+
+int64_t early_start(void) {
+  pthread_t t;
+  if (pthread_create(&t, 0, call_later, 0) != 0) return -1;
+  pthread_detach(t);
+  return 0;
 }
 "#;
 
@@ -78,8 +93,83 @@ async function main() {
 }
 "#;
 
+/// A promise shared on the C library's thread (#3782): the export keeps a promise in two places.
+/// Such a share isn't handed to the executor yet, so it stops the program with a message saying
+/// so: never a crash or a hang, and never a share on whichever task worker 0 runs meanwhile.
+const SHARE_LIB: &str = r#"import { Ptr, export as cExport } from "velt/ffi";
+
+declare c("early") function early_run(): i64;
+declare c("early") function early_start(): i64;
+
+async function later(): Promise<i64> {
+  await sleep(1);
+  return 7;
+}
+
+async function report(p: Promise<i64>, q: Promise<i64>): Promise<void> {
+  console.log(`got ${await p} ${await q}`);
+}
+
+/** Runs on the C library's thread: `p` and `q` share one promise. */
+@cExport("early_worker")
+function worker(arg: Ptr<void> | null): Ptr<void> | null {
+  const p = later();
+  const q = p;
+  spawn(report(p, q));
+  return arg;
+}
+
+export function runEarly(): i64 {
+  // SAFETY: it starts a thread on `early_worker` and joins it.
+  return unsafe { early_run() };
+}
+
+export function startEarly(): i64 {
+  // SAFETY: it starts a thread that calls `early_worker`.
+  return unsafe { early_start() };
+}
+"#;
+
+/// The C thread shares while `main`'s task waits in the C call that started it: the task current
+/// on worker 0 is not the thread's.
+const SHARE_BLOCKED: &str = r#"import { runEarly } from "early";
+
+async function main() {
+  await yieldNow();
+  console.log("main");
+  runEarly();
+  await sleep(20);
+  console.log("not reached");
+}
+"#;
+
+/// The C thread shares on its own while `main` goes on and sleeps: whether worker 0 runs a task
+/// or none at that moment, the share is refused.
+const SHARE_ASLEEP: &str = r#"import { startEarly } from "early";
+
+async function main() {
+  console.log("main");
+  startEarly();
+  await sleep(5000);
+  console.log("not reached");
+}
+"#;
+
+/// The same share in the library's initializer: its C thread runs before the executor started.
+const SHARE_BEFORE: &str = r#"import { runEarly } from "early";
+
+async function main() {
+  console.log(`not reached ${typeof runEarly}`);
+}
+"#;
+
 /// `dir/early`, its C library, and `dir/app` (`main`), which allows it.
 fn project(dir: &Path) -> PathBuf {
+    project_with(dir, LIB, MAIN)
+}
+
+/// [`project`] with the library's `lib` and the app's `main`.
+fn project_with(dir: &Path, lib: &str, main: &str) -> PathBuf {
     let pkg = dir.join("early");
     std::fs::create_dir_all(pkg.join("src")).unwrap();
     std::fs::create_dir_all(pkg.join("native")).unwrap();
@@ -88,7 +178,7 @@ fn project(dir: &Path) -> PathBuf {
         "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = { name: \"early\", version: \"0.1.0\", native: { c: { early: { sources: [\"native/early.c\"], headers: [\"native/early.h\"] } } } };\n",
     )
     .unwrap();
-    std::fs::write(pkg.join("src/lib.velt"), LIB).unwrap();
+    std::fs::write(pkg.join("src/lib.velt"), lib).unwrap();
     std::fs::write(pkg.join("native/early.h"), HEADER).unwrap();
     std::fs::write(pkg.join("native/early.c"), SOURCE).unwrap();
     let app = dir.join("app");
@@ -98,7 +188,7 @@ fn project(dir: &Path) -> PathBuf {
         "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = {\n  name: \"app\",\n  version: \"0.1.0\",\n  allowNative: [\"early\"],\n  dependencies: { early: { path: \"../early\" } },\n};\n",
     )
     .unwrap();
-    std::fs::write(app.join("src/main.velt"), MAIN).unwrap();
+    std::fs::write(app.join("src/main.velt"), main).unwrap();
     app
 }
 
@@ -188,5 +278,38 @@ fn a_spawn_on_a_c_thread_before_the_executor_started_leaves_main_on_worker_0() {
         }
         let at = |l: &str| lines.iter().position(|x| *x == l);
         assert!(at("main") < at("slept"), "{out}");
+    }
+}
+
+#[test]
+fn a_promise_shared_on_a_c_thread_stops_the_program_with_its_reason() {
+    let Some(_zig) = zig_env::zig("build C sources calling exported functions") else {
+        return;
+    };
+    reload_support::build_runtime();
+    let dir = test_dir::TestDir::new();
+    let home = home(dir.path());
+    let in_initializer = format!("{SHARE_LIB}\nrunEarly();\n");
+    let cases = [
+        ("blocked", SHARE_LIB, SHARE_BLOCKED),
+        ("asleep", SHARE_LIB, SHARE_ASLEEP),
+        ("before", in_initializer.as_str(), SHARE_BEFORE),
+    ];
+    for (name, lib, main) in cases {
+        let app = project_with(&dir.path().join(name), lib, main);
+        let (code, out) = velt(&app, &home, &["build", "--release"], &[]);
+        assert_eq!(code, Some(0), "{name}: {out}");
+        for env in [&[][..], &[("VELT_THREADS", "1")][..]] {
+            let (code, out) = velt(&app, &home, &["run", "--release"], env);
+            // Stopped by the panic: not killed by the time limit, not a crash. (What `main`
+            // logged before it may still be in its buffer: the panic is another thread's.)
+            assert_eq!(code, Some(101), "{name} {env:?}: {out}");
+            assert!(
+                out.contains("a promise cannot be shared on a C library's own thread yet (#3782)"),
+                "{name} {env:?}: {out}"
+            );
+            assert!(!out.contains("got 7 7"), "{name} {env:?}: {out}");
+            assert!(!out.contains("not reached"), "{name} {env:?}: {out}");
+        }
     }
 }

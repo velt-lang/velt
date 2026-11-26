@@ -52,7 +52,7 @@ pub(crate) struct StdLoad<'a> {
     /// The demanded modules that could not be served in place (velt_loader
     /// `LoadOptions::refuse_out_of_rule`): the driver checks the program again with them loaded
     /// up front (`sema_stage`).
-    pub(super) refused: Vec<String>,
+    pub(crate) refused: Vec<String>,
     /// The prebuilt hook modules' objects the build may link instead of loading the modules
     /// (`std_cache::prebuilt`, `velt_sema::Loads::prebuilt`).
     pub(crate) prebuilt: Option<&'a super::std_cache::Finder>,

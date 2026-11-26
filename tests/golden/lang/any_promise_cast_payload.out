@@ -1,0 +1,8 @@
+await true the value is not a number (it is a string)
+rejected TypeError: the value is not a number (it is a string)
+then ran false
+catch -1
+class the value is not a Pt (it is a string)
+boolean the value is not a boolean (it is a number)
+explicit bad
+explicit true the value is not an Error (it is a string)

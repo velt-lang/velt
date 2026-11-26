@@ -62,7 +62,7 @@ fn one_npm_package_of_a_repository() {
     let locked = lock.get("@demo/signals").unwrap();
     assert_eq!(locked.version, "1.2.3");
     assert!(
-        locked.source.contains("?path=packages/signals#"),
+        locked.source.contains("?path=packages/signals&sparse=1#"),
         "{}",
         locked.source
     );

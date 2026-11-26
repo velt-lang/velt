@@ -21,6 +21,7 @@ import * as l from "./sched_order_list";
 import * as m from "./sched_mem";
 import * as sl from "./sched_sleep";
 import * as t from "./sched_task";
+import * as wk from "./sched_wake";
 
 /**
  * What the last look found: the timer that comes next (0: none), its phase (a pass with `now`
@@ -71,9 +72,9 @@ export const P_FULL: usize = l.O_WAITER + 8;
  * one; and it is marked (`T_SKIPPED`), so that the end of that poll moves the order on
  * (sched_run.velt `timersAfter`): its timer may come next then, and no worker may look before.
  * A poll whose end has begun (`SK_ENDING`, the same word, so the mark and the end are ordered) is
- * not busy. `H_TASK` of a queued timer is a live task under the lock: every way out of the order
- * takes the timer out of its list before its task can be freed (sched_order.velt `leave`), and 0
- * is no task.
+ * not busy. `H_TASK` of a queued timer is a live task under the lock: a timer that leaves the
+ * lists names no task (sched_order_list.velt `take`), and a task that ends while queued timers
+ * still name it unnames them (`forget`, #3822); 0 is no task.
  */
 @inline("always")
 export function busy(b: usize, h: usize): bool {
@@ -92,6 +93,10 @@ function busyTask(b: usize, k: usize): bool {
     if (m.ld(b + P_BUSY + 8 * i) === k) {
       return true;
     }
+  }
+  if (wk.counting() && m.ld(k) !== t.main() + t.E_VT) {
+    // With the block counters on: a freed block's first word is the allocator's (#3822).
+    panic("ICE: a queued timer names a freed task");
   }
   const s = m.load32(k + t.T_STATE);
   if (s !== t.RUNNING && s !== t.NOTIFIED && s !== t.YIELDED) {

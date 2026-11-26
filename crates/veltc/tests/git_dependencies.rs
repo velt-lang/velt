@@ -1,7 +1,8 @@
 //! Git dependencies through the `velt` binary (#1860), in the shape of sigx: a repository that is
 //! a pnpm workspace of TypeScript packages, with a Velt package among them that imports its
 //! siblings. An app depends on the Velt package by `git` and `path`, and builds without anything
-//! installed into `node_modules`.
+//! installed into `node_modules`. The checkout is sparse (#3786): the package's directory and
+//! the workspace around it, not the repository's other files.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -86,7 +87,8 @@ fn app(root: &Path, repo: &Path) -> PathBuf {
 }
 
 /// The upstream repository: `packages/signals` (TypeScript, `@demo/signals`) and
-/// `packages/velt` (the Velt package `demo`, which imports `@demo/signals`).
+/// `packages/velt` (the Velt package `demo`, which imports `@demo/signals`), and `docs/`, which
+/// no package reaches.
 fn upstream(root: &Path, greeting: &str) -> PathBuf {
     let repo = root.join("upstream");
     write(
@@ -119,6 +121,7 @@ fn upstream(root: &Path, greeting: &str) -> PathBuf {
         "packages/velt/src/lib.velt",
         "import { greeting } from \"@demo/signals\";\n\nexport function hello(who: string): string {\n  return greeting(who);\n}\n",
     );
+    write(&repo, "docs/notes.txt", greeting);
     if !repo.join(".git").exists() {
         git(&repo, &["init", "-q", "-b", "main"]);
     }
@@ -145,8 +148,18 @@ fn an_app_builds_against_a_package_of_a_git_monorepo() {
     let lock = std::fs::read_to_string(app.join("velt.lock.json")).unwrap();
     let head = git(&repo, &["rev-parse", "HEAD"]);
     assert!(
-        lock.contains(&format!("?branch=main&path=packages/velt#{head}")),
+        lock.contains(&format!("?branch=main&path=packages/velt&sparse=1#{head}")),
         "{lock}"
+    );
+    // The package and its workspace sibling were checked out, the rest of the commit was not.
+    let checked_out = names(&home.join("cache/git"));
+    assert!(
+        checked_out.contains(&"index.ts".to_string()),
+        "{checked_out:?}"
+    );
+    assert!(
+        !checked_out.contains(&"notes.txt".to_string()),
+        "{checked_out:?}"
     );
 
     // Upstream moves on: the build stays on the locked commit until `velt update`.
@@ -202,6 +215,57 @@ fn git_configuration_and_hooks_change_nothing() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert_eq!(objects(&victim), before);
     assert_eq!(git(&victim, &["status", "--porcelain"]), "A  mine.txt");
+}
+
+/// The names of the files below `dir`, recursively.
+fn names(dir: &Path) -> Vec<String> {
+    let mut out = vec![];
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        match entry.path().is_dir() {
+            true => out.extend(names(&entry.path())),
+            false => out.push(entry.file_name().to_string_lossy().into_owned()),
+        }
+    }
+    out
+}
+
+/// A git package that imports a file of its repository outside its `path` is told that the file
+/// is not part of its checkout, by the file's path in the repository.
+#[test]
+fn a_file_outside_the_package_path_is_named() {
+    let tmp = test_dir::TestDir::new();
+    let root = tmp.path();
+    let home = root.join("home");
+    let repo = root.join("upstream");
+    write(
+        &repo,
+        "packages/velt/package.velt",
+        "export const pkg: Package = { name: \"demo\", version: \"0.1.0\" };\n",
+    );
+    write(
+        &repo,
+        "packages/velt/src/lib.velt",
+        "import { word } from \"../../../shared/words.velt\";\n\nexport function hello(who: string): string {\n  return `${word} ${who}`;\n}\n",
+    );
+    write(
+        &repo,
+        "shared/words.velt",
+        "export const word = \"hello\";\n",
+    );
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-q", "-m", "one"]);
+    let app = app(root, &repo);
+    let o = velt(&home, &app, &["check"]);
+    let err = String::from_utf8_lossy(&o.stderr).into_owned();
+    assert!(!o.status.success(), "{err}");
+    assert!(
+        err.contains("cannot find module `../../../shared/words.velt`")
+            && err
+                .contains("`shared/words.velt` is outside what this git dependency checks out of")
+            && err.contains("that directory alone (`packages/velt`)"),
+        "{err}"
+    );
 }
 
 /// The files below `dir`, recursively.

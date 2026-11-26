@@ -1,6 +1,9 @@
 // velt/lang/hooks (internal): the compiler's hooks for errors (std-layout.md §10b): the first
 // line of Node's report of an error nothing catches (velt_vir `entry.rs`), and the
-// `Error.prototype.toString` text the prelude's `Error` shares with it.
+// `Error.prototype.toString` text the prelude's `Error` shares with it, and the key of the method
+// std's error classes set their `name` with.
+
+import { Symbol } from "velt/lang/symbol";
 
 /** `Error.prototype.toString` of an error with `name` and `message`. */
 export function errorText(name: string, message: string): string {
@@ -31,3 +34,11 @@ export function uncaughtHeader(e: Error, cls: string): string {
   }
   return `${cls} [${name}]${rest}`;
 }
+
+/**
+ * The key of `Error`'s method that writes its name without the `name` accessor, which a
+ * program's subclass may override: std's error classes (`TypeError`, `AggregateError`, …) set
+ * their name with it in their constructors, as JavaScript has it on their prototypes (#3792).
+ * Programs never see the symbol, so they cannot override the method.
+ */
+export const ERROR_NAME = Symbol("errorName");

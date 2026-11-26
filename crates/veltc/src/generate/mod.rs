@@ -53,7 +53,9 @@ pub(crate) fn check(
     let kept = velt_sema::StdLoads::default();
     let more = (&mut more, &kept);
     if sess.no_generators {
-        return check_without_generators(sess, modules, root, opts, more);
+        let program = check_without_generators(sess, modules, root, opts, (more.0, more.1));
+        hand_late_refusals(more.0, &kept);
+        return program;
     }
     let declares = modules.iter().any(declares_generated);
     // Absolute: the offer is the program's, not that of whichever program has the same path
@@ -64,7 +66,9 @@ pub(crate) fn check(
     if let Some(offer) = offer_key.as_ref().and_then(cache::load_offer) {
         let mark = sess.diagnostics.len();
         let files = offer.generator_files.clone();
-        if let Some(p) = check_offered(sess, modules, root, opts, offer, (more.0, more.1)) {
+        let offered = check_offered(sess, modules, root, opts, offer, (more.0, more.1));
+        hand_late_refusals(more.0, &kept);
+        if let Some(p) = offered {
             sess.generator_inputs.extend(files);
             if let Some(h) = &mut sess.pending_kept {
                 h.loads = Some(kept);
@@ -76,7 +80,15 @@ pub(crate) fn check(
         sess.diagnostics.truncate(mark);
     }
     let mut st = Rounds::default();
-    let program = rounds(sess, modules, root, (opts, packages), &mut st, more);
+    let program = rounds(
+        sess,
+        modules,
+        root,
+        (opts, packages),
+        &mut st,
+        (more.0, more.1),
+    );
+    hand_late_refusals(more.0, &kept);
     if let Some(pending) = st.pending.take() {
         sess.pending_kept = Some(KeptHandover {
             pending,
@@ -92,6 +104,20 @@ pub(crate) fn check(
     sess.generator_inputs
         .extend(std::mem::take(&mut st.offer.generator_files));
     Some(program)
+}
+
+/// The modules the check refused after they were served (velt_sema `StdLoads::take_late_refused`)
+/// join the demands the loader refused, which the driver loads up front for the check again
+/// (`driver/sema_stage.rs`).
+fn hand_late_refusals(more: &mut Option<&mut StdLoad>, kept: &velt_sema::StdLoads) {
+    let late = kept.take_late_refused();
+    if let Some(load) = more.as_mut() {
+        for path in late {
+            if !load.refused.contains(&path) {
+                load.refused.push(path);
+            }
+        }
+    }
 }
 
 /// `--no-generators` (docs/internals/design/source-generators.md §11): one check, with no

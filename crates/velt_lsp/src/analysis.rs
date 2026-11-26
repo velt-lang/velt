@@ -202,6 +202,10 @@ fn run_sema(analysis: &mut Analysis, more: Option<MoreLoads>) -> Vec<String> {
     analysis.diagnostics.extend::<Diagnostics>(load_diags);
     match checked {
         Ok(ide) => {
+            // Refused after it was served: checked again with it up front, as a refusal.
+            if let Ok(mut out) = refused.lock() {
+                out.extend(ide.late_refused().iter().cloned());
+            }
             if loaded_cleanly {
                 analysis
                     .diagnostics

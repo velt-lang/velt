@@ -38,7 +38,9 @@ pub(crate) fn infer_all(cx: &mut Ctx) {
         }
     }
     let mut guarded = Guarded::new(cx, &fns);
-    let mut work = Worklist::new(cx, &fns, &groups);
+    // By units, std's functions that the program's proxy traps make throw (`std_trap_callers`).
+    let with_std: Vec<DefId> = fns.iter().copied().chain(cx.std_trap_callers()).collect();
+    let mut work = Worklist::new(cx, &with_std, &groups);
     let mut round = 0;
     loop {
         // The functions to evaluate: all of them at first, and all again after the stored
@@ -162,6 +164,12 @@ impl Worklist {
             let (t, moved) = match guarded.ranges.contains_key(&d) {
                 true => guarded.own_final(cx, d),
                 false => (own_final(cx, d), false),
+            };
+            // A finished unit's function (`std_trap_callers`) only grows: what std's check gave
+            // it stays.
+            let t = match d.0 < cx.unit_base {
+                true => cx.join_errors(cx.fn_throws(d), t),
+                false => t,
             };
             if set_throws(cx, d, t) | moved {
                 changed = true;
@@ -328,7 +336,11 @@ pub(super) fn src_final(cx: &mut Ctx, s: &ThrowSrc) -> Option<TyId> {
 /// `src_final`, where the field defaults of the classes in `visited` are already counted.
 fn src_final_in(cx: &mut Ctx, s: &ThrowSrc, visited: &mut InitsSeen) -> Option<TyId> {
     let (t, args) = match s {
-        ThrowSrc::Direct(t, _) => return cx.canon_error(Some(*t)),
+        ThrowSrc::Direct(t, _) => match cx.trap_call_error(*t) {
+            // By units, std's call of a trap throws what the program's traps throw.
+            Some(e) => return e,
+            None => return cx.canon_error(Some(*t)),
+        },
         ThrowSrc::Indirect(t, site, _) => return cx.indirect_error(*t, *site),
         ThrowSrc::Defaults(d, args, span) => {
             if !visited.enter(&cx.ty, *d, args) {

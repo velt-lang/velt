@@ -114,11 +114,14 @@ impl Ctx<'_> {
     }
 
     /// Does the private field `private_to`/`name` hold data that JSON may skip? Only the
-    /// prelude `Error`'s `#name` (behind `e.name`): it is not a runtime handle, so error classes
-    /// keep their JSON form (written without it, as Node leaves out a `name` from the
-    /// prototype; decoded with its default).
+    /// prelude `Error`'s `#name` (behind `e.name`) and `#stack` (behind `e.stack`): they are no
+    /// runtime handles, so error classes keep their JSON form (written without them, as Node
+    /// leaves out a `name` from the prototype and the non-enumerable `stack`; decoded with their
+    /// defaults).
     pub(crate) fn plain_private(&self, private_to: Option<DefId>, name: &str) -> bool {
-        name == "#name" && private_to.is_some() && private_to == self.prelude_adt("Error")
+        (name == "#name" || name == "#stack")
+            && private_to.is_some()
+            && private_to == self.prelude_adt("Error")
     }
 
     /// An ADT exported by the prelude under `name`, or the compiler hook class with qualified

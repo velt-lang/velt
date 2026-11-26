@@ -5,7 +5,7 @@
 // `catch (e) { e.message }` works either way (every member has `message`). User error classes
 // extend it too.
 
-import { errorText } from "velt/lang/hooks/error";
+import { ERROR_NAME, errorText } from "velt/lang/hooks/error";
 
 /**
  * The base class of errors: what std throws (`IoError`, `JsonError`, …) and what error classes
@@ -16,8 +16,14 @@ export class Error {
   message: string;
 
   // `name`, kept out of what `console.log` and `JSON.stringify` show (as in Node, where it is
-  // on the prototype unless assigned, and then shown by the stack's first line).
+  // on the prototype unless assigned, and then shown by the stack's first line). The built-in
+  // subclasses keep their own (`TypeError`'s "TypeError"): a constructor never assigns `name`
+  // through the accessor, which a program's subclass may override (#3792).
   #name: string = "Error";
+
+  // `stack` once assigned (`undefined` included), in an object made then; `null` until then. An
+  // error that never has its stack assigned, nearly every one, pays one word and no allocation.
+  #stack: AssignedStack | null = null;
 
   /** An error with the given `message`. */
   constructor(message: string = "") {
@@ -37,13 +43,29 @@ export class Error {
     this.#name = value;
   }
 
+  /** Sets `#name` without the accessor a subclass may override (a built-in subclass's name). */
+  [ERROR_NAME](value: string) {
+    this.#name = value;
+  }
+
   /**
-   * The error's stack as Node starts it: `toString()`'s text (with the `name` a subclass
-   * assigned in its constructor). Velt keeps no call frames, so the `    at …` lines Node adds
-   * after it are not there.
+   * The error's stack as Node starts it: `toString()`'s text (with the `name` a subclass assigned
+   * in its constructor), until one is assigned. Velt keeps no call frames, so the `    at …` lines
+   * Node adds after it are not there. Reading it changes nothing, so it can sit beside the error
+   * in one call (`console.error(e, e.stack)`): V8 writes the text on the first read and keeps it,
+   * so a `name` or `message` changed after that read shows here, where Node keeps the old text.
    */
   get stack(): string | undefined {
-    return errorText(this.name, this.message);
+    const assigned = this.#stack;
+    if (assigned === null) {
+      return errorText(this.name, this.message);
+    }
+    return assigned.value;
+  }
+
+  /** Replaces the stack, as assigning Node's own `stack` property does. */
+  set stack(value: string | undefined) {
+    this.#stack = new AssignedStack(value);
   }
 
   /** `"<name>: <message>"`, just the name without a message, or just the message without a name. */
@@ -52,12 +74,23 @@ export class Error {
   }
 }
 
+/** An error's assigned `stack` (`Error`'s `#stack`), made when a program assigns one. */
+class AssignedStack {
+  value: string | undefined;
+
+  constructor(value: string | undefined) {
+    this.value = value;
+  }
+}
+
 /** A value is not of the expected type (thrown by the runtime in JavaScript). */
 export class TypeError extends Error {
   /** An error with the given `message`. */
   constructor(message: string = "") {
     super(message);
-    this.name = "TypeError";
+    // Its `name`, as on its prototype in JavaScript: written to `Error`'s `#name`, never through
+    // the accessor a subclass may override.
+    this[ERROR_NAME]("TypeError");
   }
 }
 
@@ -66,7 +99,9 @@ export class RangeError extends Error {
   /** An error with the given `message`. */
   constructor(message: string = "") {
     super(message);
-    this.name = "RangeError";
+    // Its `name`, as on its prototype in JavaScript: written to `Error`'s `#name`, never through
+    // the accessor a subclass may override.
+    this[ERROR_NAME]("RangeError");
   }
 }
 
@@ -75,7 +110,9 @@ export class SyntaxError extends Error {
   /** An error with the given `message`. */
   constructor(message: string = "") {
     super(message);
-    this.name = "SyntaxError";
+    // Its `name`, as on its prototype in JavaScript: written to `Error`'s `#name`, never through
+    // the accessor a subclass may override.
+    this[ERROR_NAME]("SyntaxError");
   }
 }
 
@@ -84,7 +121,9 @@ export class ReferenceError extends Error {
   /** An error with the given `message`. */
   constructor(message: string = "") {
     super(message);
-    this.name = "ReferenceError";
+    // Its `name`, as on its prototype in JavaScript: written to `Error`'s `#name`, never through
+    // the accessor a subclass may override.
+    this[ERROR_NAME]("ReferenceError");
   }
 }
 
@@ -93,7 +132,9 @@ export class EvalError extends Error {
   /** An error with the given `message`. */
   constructor(message: string = "") {
     super(message);
-    this.name = "EvalError";
+    // Its `name`, as on its prototype in JavaScript: written to `Error`'s `#name`, never through
+    // the accessor a subclass may override.
+    this[ERROR_NAME]("EvalError");
   }
 }
 
@@ -102,6 +143,8 @@ export class URIError extends Error {
   /** An error with the given `message`. */
   constructor(message: string = "") {
     super(message);
-    this.name = "URIError";
+    // Its `name`, as on its prototype in JavaScript: written to `Error`'s `#name`, never through
+    // the accessor a subclass may override.
+    this[ERROR_NAME]("URIError");
   }
 }
