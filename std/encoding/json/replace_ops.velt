@@ -1,0 +1,124 @@
+// velt/encoding/json (internal): the walk of `JSON.stringify(value, replacer)`, as Node walks it
+// (SerializeJSONProperty): for each key, the value's `toJSON(key)` first, then the replacer with
+// what that returned, then the members of what the replacer returned. The replacer gets a value
+// as `writeJsonRaw` writes it, before the `toJSON` of anything in it has run. While it returns
+// the value it got, unedited, the walk goes on through the typed value (the code
+// velt/encoding/json/generate/replace generates, any_replace.velt for dynamic values), so each
+// member's `toJSON` runs at its own key; a value the replacer made is walked as JSON.
+
+import { noInline } from "velt/lang/intrinsics";
+import { JsonValue } from "velt/prelude/json/json_value";
+import { JsonReplacer } from "velt/prelude/json/layout";
+import {
+  JSON_CALLBACK_DEPTH,
+  jsonCallbackTooDeep,
+  pushRevived,
+  setRevived,
+} from "velt/encoding/json/value_ops";
+
+/** Throws Node's stack overflow `RangeError` past the replacer walk's depth limit. */
+export function jsonReplacerDepth(depth: i64): void {
+  if (depth > JSON_CALLBACK_DEPTH) {
+    throw jsonCallbackTooDeep();
+  }
+}
+
+/** The replacer's view of a value: `raw` when its parent's view holds it, else `text` read. */
+export function jsonReplacerView(raw: JsonValue | null, text: string): JsonValue {
+  if (raw != null) {
+    return raw;
+  }
+  let view = JsonValue.of(null);
+  try {
+    // At any depth: `stringify` writes values nested deeper than the default limit too.
+    view = JsonValue.parse(text, { maxDepth: 4294967295 });
+  } catch (e) {
+    // `text` is `writeJsonRaw`'s own output.
+    panic(`ICE: JSON.stringify wrote text it cannot read back: ${e.message}`);
+  }
+  return view;
+}
+
+/** Did the replacer return `view`, the value it got, unedited? */
+export function jsonReplacerKept(r: JsonValue, view: JsonValue): bool {
+  return r.sameNode(view);
+}
+
+/** `value` under `key` replaced, then its members in turn (a value with no `toJSON` left). */
+export function jsonReplaced(
+  key: string,
+  value: JsonValue,
+  replacer: JsonReplacer,
+  depth: i64,
+): JsonValue | undefined {
+  jsonReplacerDepth(depth);
+  const r = replacer(key, value);
+  if (r == undefined) {
+    return undefined;
+  }
+  return jsonReplacedMembers(r, replacer, depth);
+}
+
+/**
+ * Member `key` of the object `view`, plain data, replaced and set in `out` (left out when the
+ * replacer returns `undefined`): one call per plain member of the generated walk.
+ */
+@noInline
+export function jsonReplacedField(
+  out: JsonValue,
+  view: JsonValue,
+  key: string,
+  replacer: JsonReplacer,
+  depth: i64,
+): void {
+  setRevived(out, key, jsonReplaced(key, view.get(key)!, replacer, depth));
+}
+
+/** A `null` under `key` replaced (`raw`: its view in its parent's, if that holds it). */
+export function jsonReplacedNull(
+  key: string,
+  raw: JsonValue | null,
+  replacer: JsonReplacer,
+  depth: i64,
+): JsonValue | undefined {
+  const r = replacer(key, raw ?? JsonValue.of(null));
+  if (r == undefined) {
+    return undefined;
+  }
+  return jsonReplacedMembers(r, replacer, depth);
+}
+
+/** `r`, the replacer's result at `depth`, with its members replaced in turn. */
+export function jsonReplacedMembers(r: JsonValue, replacer: JsonReplacer, depth: i64): JsonValue {
+  if (r.isArray()) {
+    const out = JsonValue.array();
+    const n = r.len();
+    for (let i: i64 = 0; i < n; i++) {
+      const e = jsonReplaced(String(i), r.at(i)!, replacer, depth + 1);
+      pushRevived(out, e);
+    }
+    return out;
+  }
+  if (r.isObject()) {
+    const out = JsonValue.object();
+    for (const k of r.keys()) {
+      const e = jsonReplaced(k, r.get(k)!, replacer, depth + 1);
+      setRevived(out, k, e);
+    }
+    return out;
+  }
+  return r;
+}
+
+/**
+ * The text of `JSON.stringify(value, replacer)` for the replaced value: `undefined` for the
+ * value itself throws a `TypeError` (JavaScript returns `undefined`; this returns a string).
+ */
+export function jsonReplacedText(out: JsonValue | undefined): string {
+  if (out == undefined) {
+    throw new TypeError(
+      "JSON.stringify: the replacer returned undefined for the value itself (JavaScript would return undefined; Velt's JSON.stringify returns a string)",
+    );
+  }
+  return out.stringify();
+}

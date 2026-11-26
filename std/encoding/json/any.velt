@@ -38,7 +38,7 @@ export function checkJsonTop(v: any): void {
   }
 }
 
-function unsupported(): never {
+export function unsupported(): never {
   panic("TypeError: `JSON.stringify` through `any` is not supported for this value yet (#924)");
 }
 
@@ -102,12 +102,12 @@ export function writeJsonAny(w: StringBuilder, v: any, key: string): void {
 }
 
 /** Whether `v` holds a `JsonValue` (a test that leaves the caller's `v` an `any`). */
-function holdsJsonValue(v: any): bool {
+export function holdsJsonValue(v: any): bool {
   return v instanceof JsonValue;
 }
 
 /** Starts writing `v`, which is a cycle when it is being written already. */
-function enter(v: any): void {
+export function enter(v: any): void {
   if (!beginVisit(identity(v))) {
     circular();
   }
@@ -216,7 +216,7 @@ function arrayIndex(s: string): i64 {
  * The entry positions of the record `v` in JavaScript's key order (array indices first,
  * ascending, then the other keys in insertion order), or null for insertion order.
  */
-function recordOrder(v: any): i64[] | null {
+export function recordOrder(v: any): i64[] | null {
   const n = entryCount(v);
   const idx: i64[] = [];
   const rank: i64[] = [];

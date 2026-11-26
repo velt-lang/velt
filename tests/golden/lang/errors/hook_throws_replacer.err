@@ -1,0 +1,11 @@
+hook_throws_replacer.velt:4:3: error: `toJSON` cannot throw (it throws `Error`)
+  = note: `JSON.stringify` calls it, and the error would have nowhere to go
+  = note: catch the error inside `toJSON` and return a value instead
+
+hook_throws_replacer.velt:10:3: error: `toJSON` cannot throw (it throws `MyErr`)
+  = note: `JSON.stringify` calls it, and the error would have nowhere to go
+  = note: catch the error inside `toJSON` and return a value instead
+
+hook_throws_replacer.velt:25:3: error: `toJSON` cannot throw (it throws `RangeError`)
+  = note: `JSON.stringify` calls it, and the error would have nowhere to go
+  = note: catch the error inside `toJSON` and return a value instead

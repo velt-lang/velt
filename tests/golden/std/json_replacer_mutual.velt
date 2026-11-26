@@ -1,0 +1,58 @@
+// `JSON.stringify(value, replacer)` of types that reach each other through `| null` (two
+// interfaces, one through an inline object type, two classes): the walk's generated functions
+// call each other in a cycle, which the compiler's summaries of what each function stores where
+// went round forever on (#3857). The Node twin is json_replacer_mutual.mjs.
+
+interface A {
+  name: string;
+  b: B | null;
+}
+
+interface B {
+  n: number;
+  a: A | null;
+}
+
+interface P {
+  q: Q | null;
+}
+
+interface Q {
+  c: { p: P | null };
+}
+
+class Left {
+  tag = "l";
+  right: Right | null = null;
+}
+
+class Right {
+  tag = "r";
+  left: Left | null = null;
+}
+
+function logged(k: string, v: JsonValue): JsonValue | undefined {
+  console.log(`  replacer ${JSON.stringify(k)}`);
+  return v;
+}
+
+function edited(k: string, v: JsonValue): JsonValue | undefined {
+  if (k === "n") return JsonValue.of(10);
+  if (k === "tag") return undefined;
+  return v;
+}
+
+function main(): void {
+  const a: A = { name: "a", b: { n: 1, a: { name: "inner", b: null } } };
+  console.log(JSON.stringify(a, logged));
+  console.log(JSON.stringify(a, edited));
+  const p: P = { q: { c: { p: { q: null } } } };
+  console.log(JSON.stringify(p, logged));
+  const l = new Left();
+  l.right = new Right();
+  l.right.left = new Left();
+  console.log(JSON.stringify(l, logged));
+  console.log(JSON.stringify(l, edited));
+}
+
+main();

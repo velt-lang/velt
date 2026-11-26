@@ -1,0 +1,87 @@
+// `JSON.stringify(value, replacer)` calls each value's `toJSON(key)` just before the replacer for
+// that key, as Node does (#3774): toJSON, replacer, then the members of what the replacer
+// returned, key by key. So a replacer sees a value before the `toJSON` of anything in it has run
+// (a `Date` member is `{}` until its own key). Typed values, nested objects, arrays, the root
+// key `""`, a `toJSON` on the root, one that returns `this`, a replacer that leaves a member
+// out or returns a new value (whose members are not converted again), and the same through
+// `any`. The Node twin is json_replacer_tojson_order.mjs.
+
+class Hook {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  toJSON(key: string): string {
+    console.log(`  toJSON ${this.name} key=${JSON.stringify(key)}`);
+    return this.name;
+  }
+}
+
+class Inner {
+  c: Hook = new Hook("c");
+  d: Hook[] = [new Hook("d0"), new Hook("d1")];
+}
+
+class Outer {
+  a: Hook = new Hook("a");
+  inner: Inner = new Inner();
+  b: Hook = new Hook("b");
+}
+
+class Top {
+  toJSON(key: string): Outer {
+    console.log(`  toJSON top key=${JSON.stringify(key)}`);
+    return new Outer();
+  }
+}
+
+class Self {
+  x: number = 1;
+  h: Hook = new Hook("h");
+  toJSON(): Self {
+    console.log("  toJSON self");
+    return this;
+  }
+}
+
+class Dated {
+  label: string = "d";
+  when: Date = new Date(0);
+}
+
+function logged(k: string, v: JsonValue): JsonValue | undefined {
+  console.log(`  replacer ${JSON.stringify(k)} ${v.stringify()}`);
+  return v;
+}
+
+function main(): void {
+  console.log("nested:");
+  console.log(JSON.stringify(new Outer(), logged));
+  console.log("root toJSON:");
+  console.log(JSON.stringify(new Top(), logged));
+  console.log("toJSON returning this:");
+  console.log(JSON.stringify(new Self(), logged));
+  console.log("array:");
+  console.log(JSON.stringify([new Hook("p"), new Hook("q")], logged));
+  console.log("date:");
+  console.log(JSON.stringify(new Dated(), logged));
+  console.log("filter:");
+  const drop = (k: string, v: JsonValue): JsonValue | undefined => {
+    console.log(`  replacer ${JSON.stringify(k)}`);
+    return k == "b" || k == "inner" ? undefined : v;
+  };
+  console.log(JSON.stringify(new Outer(), drop));
+  console.log("replaced:");
+  const swap = (k: string, v: JsonValue): JsonValue | undefined => {
+    console.log(`  replacer ${JSON.stringify(k)} ${v.stringify()}`);
+    return k == "inner" ? JsonValue.from({ z: [1] }) : v;
+  };
+  console.log(JSON.stringify(new Outer(), swap));
+  console.log("any:");
+  const o: any = new Outer();
+  console.log(JSON.stringify(o, logged));
+  console.log("spaced:");
+  console.log(JSON.stringify([new Hook("s")], logged, 1));
+}
+
+main();

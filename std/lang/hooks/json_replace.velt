@@ -1,0 +1,18 @@
+// velt/lang/hooks (internal): the compiler's hook for `JSON.stringify(value, replacer)` with a
+// replacer function (std-layout.md §10b), loaded on demand: the prelude's `jsonStringifyReplaced`
+// (std/prelude/json/layout.velt) reaches it with `hookCall`, so only a program that passes a
+// replacer function loads the walk and its generated code (velt/encoding/json/replaced.velt).
+
+import { JsonValue } from "velt/prelude/json/json_value";
+import { replaceJsonTop } from "velt/encoding/json/replaced";
+
+/**
+ * `JSON.stringify(value, replacer)`: `value` walked as JavaScript walks it, its `toJSON(key)`
+ * and the replacer per key (velt/encoding/json/replace_ops.velt).
+ */
+export function jsonStringifyReplaced<T>(
+  value: T,
+  replacer: (key: string, value: JsonValue) => JsonValue | undefined,
+): string throws RangeError | TypeError {
+  return replaceJsonTop<T>(value, replacer);
+}
