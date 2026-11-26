@@ -419,6 +419,14 @@ export class JsonValue {
     return jsonValueEquals(this, other, deep);
   }
 
+  // Is `other` this same value of a parsed document, unedited (an edit makes a tree)? The walk of
+  // `JSON.stringify(value, replacer)` goes on through the typed value while it is.
+  private sameNode(other: JsonValue): bool {
+    const t = this.#tape;
+    const u = other.#tape;
+    return t != null && u != null && t === u && this.#node == other.#node;
+  }
+
   /** Another reference to the same value: O(1) (edits copy on write, so they stay apart). */
   clone(): JsonValue {
     const t = this.#tape;
