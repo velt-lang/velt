@@ -1,4 +1,4 @@
-//! Consuming an iterable (docs/internals/design/iteration.md "#424"): spread into an array
+//! Consuming an iterable (docs/internals/design/iteration.md §7): spread into an array
 //! literal or a rest parameter (`[...gen()]`, `f(...it)`), `Array.from(iterable[, f])`, array
 //! destructuring (`const [a, b] = gen()`) and `new Map(iterable)` / `new Set(iterable)`. Each
 //! is a `for...of` loop over the source built by the existing loop code (`loops.rs`,

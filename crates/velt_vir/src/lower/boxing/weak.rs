@@ -1,6 +1,6 @@
-//! Weak-capable types (docs/internals/design/weak-refs.md, "Rules for the compiler"): the types
-//! whose objects may be weakly held, so their release takes the three-way sequence that tells a
-//! weakly held object apart (rc.rs `release_weak`).
+//! Weak-capable types (docs/internals/design/weak-refs.md, "Weak-capable types and release"):
+//! the types whose objects may be weakly held, so their release takes the three-way sequence
+//! that tells a weakly held object apart (rc.rs `release_weak`).
 //!
 //! They are the counted types of weak keys and `WeakRef` targets, and every counted type
 //! reachable from a weak map's key and value types the way the trace glue walks objects

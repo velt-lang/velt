@@ -1,8 +1,8 @@
-//! Interface upcasts (hir_encodings.md "Interface upcasts"): an `Upcast` of an interface value
-//! `Dyn(A)` to `Dyn(B)`, another interface whose members `A` has, is the same data pointer with
-//! the `B` table of the value's concrete type. Each table of `A` holds the tables of its
-//! targets after its method slots (`Program::upcasts`, in that order), so the conversion is a
-//! load: no copy, and the value stays the same object (`===`).
+//! Interface upcasts (hir_encodings.md "Interface intersections and upcasts"): an `Upcast` of an
+//! interface value `Dyn(A)` to `Dyn(B)`, another interface whose members `A` has, is the same
+//! data pointer with the `B` table of the value's concrete type. Each table of `A` holds the
+//! tables of its targets after its method slots (`Program::upcasts`, in that order), so the
+//! conversion is a load: no copy, and the value stays the same object (`===`).
 
 use velt_sema::hir::{TyId, TyKind};
 

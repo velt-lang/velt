@@ -639,6 +639,6 @@ export class Int32Array extends TypedArray implements Iterable<number> {
 
   /** How `console.log` shows the array, like Node: `Int32Array(2) [ 1, 2 ]`. */
   [INSPECT](): number[] {
-    return this.values();
+    return this.numbers();
   }
 }

@@ -1,4 +1,5 @@
-//! Native libraries in the `velt dev` JIT host (docs/internals/contracts/native_abi.md "velt dev"):
+//! Native libraries in the `velt dev` JIT host (docs/internals/contracts/native_abi.md "Linking
+//! (`velt_link::NativeLink`)"):
 //! each package's shared library is loaded into the host (`dlopen` / `LoadLibraryW`, nothing is
 //! linked) and its exports, init function included, are handed to the JIT like the runtime's
 //! symbols. Libraries are loaded once and never unloaded, so the code pointers they hold stay

@@ -23,11 +23,13 @@ use crate::visit::{self, VisitMut};
 
 impl FnCx<'_, '_> {
     /// `call` (of method `def`, which hands back its receiver, on a receiver of type `to`) as
-    /// the block that runs it and then gives the receiver.
+    /// the block that runs it and then gives the receiver. With `def: None`, a call through a
+    /// type parameter's interface of a method whose result is `this` (`iface_call`): the call
+    /// keeps its own result, which the block drops.
     pub(super) fn hand_back_call(
         &mut self,
         mut call: hir::Expr,
-        def: DefId,
+        def: Option<DefId>,
         to: TyId,
     ) -> hir::Expr {
         let span = call.span;
@@ -42,7 +44,9 @@ impl FnCx<'_, '_> {
         let recv = unconverted(first);
         // The call is an expression statement: nothing to give back.
         if self.discard_at == Some(span) {
-            call.ty = unit;
+            if def.is_some() {
+                call.ty = unit;
+            }
             self.handed_back.insert(span, true);
             let block = hir::Block {
                 stmts: vec![stmt(S::Expr(call), span)],
@@ -62,7 +66,7 @@ impl FnCx<'_, '_> {
             let tmp = self.new_local("<receiver>", ty, true, span, LocalKind::Temp);
             // The temporary is passed as the receiver was: changed when the place was read
             // mutably or the method changes `this`.
-            let mutates = self.this_mode(def) == PassMode::BorrowMut;
+            let mutates = def.is_some_and(|d| self.this_mode(d) == PassMode::BorrowMut);
             let mode = match mutates || place_mode(recv) == Some(UseMode::BorrowMut) {
                 true => UseMode::BorrowMut,
                 false => UseMode::Borrow,
@@ -79,7 +83,9 @@ impl FnCx<'_, '_> {
             ));
             self.mk(H::Local(tmp, UseMode::Move), ty, span)
         };
-        call.ty = unit;
+        if def.is_some() {
+            call.ty = unit;
+        }
         stmts.push(stmt(S::Expr(call), span));
         let ty = if self.cx.ty.is_bottom(value.ty) {
             to

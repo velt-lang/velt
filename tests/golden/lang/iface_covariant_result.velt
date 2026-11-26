@@ -1,0 +1,103 @@
+// check: no leaks
+// A class method implements an interface method whose result its own converts to, as a call
+// converts it (#3771): `this` or the class itself for an interface the class implements, or a
+// subclass for a base class. TypeScript also accepts a class that only matches the interface
+// without declaring `implements`; Velt converts a class to an interface only through
+// `implements`, here as at a call.
+interface Fluent {
+  step(n: number): Fluent;
+  total(): number;
+}
+
+class Counter implements Fluent {
+  n = 0;
+  step(n: number): this {
+    this.n += n;
+    return this;
+  }
+  total(): number {
+    return this.n;
+  }
+}
+
+class Tally implements Fluent {
+  n = 0;
+  step(n: number): Tally {
+    this.n += n * 10;
+    return this;
+  }
+  total(): number {
+    return this.n;
+  }
+}
+
+// An override: the interface reaches it through the vtable.
+class Loud extends Counter {
+  override step(n: number): this {
+    this.n += n * 2;
+    return this;
+  }
+}
+
+class Shape {
+  area(): number {
+    return 0;
+  }
+}
+
+class Square extends Shape {
+  s: number;
+  constructor(s: number) {
+    super();
+    this.s = s;
+  }
+  override area(): number {
+    return this.s * this.s;
+  }
+}
+
+interface Maker {
+  make(): Shape;
+}
+
+class SquareMaker implements Maker {
+  make(): Square {
+    return new Square(3);
+  }
+}
+
+interface Builder<T> {
+  add(x: T): Builder<T>;
+  size(): number;
+}
+
+class Bag<T> implements Builder<T> {
+  items: T[] = [];
+  add(x: T): this {
+    this.items.push(x);
+    return this;
+  }
+  size(): number {
+    return this.items.length;
+  }
+}
+
+function run(f: Fluent): number {
+  return f.step(1).step(2).total();
+}
+
+function main() {
+  console.log(run(new Counter()), run(new Tally()), run(new Loud()));
+  const m: Maker = new SquareMaker();
+  console.log(m.make().area());
+  const b: Builder<string> = new Bag<string>();
+  console.log(b.add("a").add("b").size());
+  // Through the class itself, the result is the class.
+  const c = new Counter().step(5);
+  console.log(c.n);
+  // A result kept through the interface is the same object.
+  const f: Fluent = new Counter();
+  const g = f.step(4);
+  g.step(1);
+  console.log(g.total(), f.total());
+}

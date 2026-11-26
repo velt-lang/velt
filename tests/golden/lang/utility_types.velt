@@ -1,5 +1,5 @@
 // Partial, Required, Readonly, Pick and Omit build object types from a concrete object type
-// (docs/internals/design/shared-models.md, step 3). The results are ordinary object types.
+// (docs/internals/design/shared-models.md "Utility types"). The results are ordinary object types.
 // Declaration order doesn't matter, and Omit accepts a key that isn't a field (a warning), as
 // TypeScript does, so a generic alias can omit a field some of its arguments don't have.
 

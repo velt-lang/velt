@@ -9,9 +9,10 @@
 // worker, with no Rust in between. TLS is the client and server in Velt (std/net/tls/), called by
 // role (`hookCall`) so that a program loads them only when live code listens or connects with TLS,
 // and their handles are ours too; only a program with TLS tests for them (`stdUsed("reactorTls")`,
-// std/net/tls/fd_hook.velt's operations). Their sockets are the reactor's, or the runtime's for listeners
-// under `velt dev` (the supervisor hands them over, `devHandover`) and on an OS without a reactor
-// (std/lang/hooks/reactor_none.velt). `fetch`'s keep-alive pool (`park`/`unpark`) is Velt's for
+// std/net/tls/fd_hook.velt's operations). Their sockets are the reactor's: a listener under
+// `velt dev` is the supervisor's, handed over through the runtime (`devHandover`) and registered
+// here; only connections on an OS without a reactor (std/lang/hooks/reactor_none.velt) are the
+// runtime's. `fetch`'s keep-alive pool (`park`/`unpark`) is Velt's for
 // streams of ours (std/net/tcp_sched_pool.velt) and the runtime's for its handles. What a runtime
 // stream defers (`writeLater`) waits in Velt and is handed to the runtime's `write`
 // (std/net/rt_later.velt): the runtime sends its own deferred bytes only after polls of its own
@@ -41,8 +42,8 @@ import { signalAborted, signalWait } from "velt/task/signal_sched";
 
 /**
  * Whether listeners come from `velt dev`'s supervisor (`VELT_DEV_SOCKET`, velt_rt's `dev::bind`),
- * which keeps the socket across a restart: the runtime asks it for each one, and the listener and
- * its streams are then the runtime's.
+ * which keeps the socket across a restart: the runtime asks it for each one and hands its socket
+ * here, to be registered with the reactor as one of ours.
  */
 function devHandover(): bool {
   const socket = processEnv("VELT_DEV_SOCKET");
@@ -50,17 +51,21 @@ function devHandover(): bool {
 }
 
 export async function velt_rt_tcp_listen(addr: string): Promise<IoResult<u64>> {
-  if (!io.supported() || devHandover()) {
-    return await rt.velt_rt_tcp_listen(addr);
+  if (!io.supported()) {
+    return { code: 12, message: `listen: no sockets on this OS`, value: 0 };
   }
-  return await fs.listenOn(addr);
+  if (!devHandover()) {
+    return await fs.listenOn(addr);
+  }
+  const handed = await rt.velt_rt_tcp_listen(addr);
+  if (handed.code !== 0) {
+    return handed;
+  }
+  return fs.adopt(handed.value as i32, io.F_LISTENER, io.READ);
 }
 
 export function velt_rt_tcp_listener_port(l: u64): u32 {
-  if (!tb.ours(l)) {
-    return rt.velt_rt_tcp_listener_port(l);
-  }
-  // A TLS listener's socket is the reactor's, or the runtime's (`velt dev`, no reactor).
+  // A TLS listener's socket is a plain listener of ours.
   return stdUsed("reactorTls") && isTls(l)
     ? velt_rt_tcp_listener_port(tlsOps.listenerFd(l))
     : fs.portOf(l);
@@ -69,10 +74,8 @@ export function velt_rt_tcp_listener_port(l: u64): u32 {
 export function velt_rt_tcp_listener_close(l: u64) {
   if (stdUsed("reactorTls") && isTls(l)) {
     tlsOps.closeListener(l);
-  } else if (tb.ours(l)) {
-    fs.closeListener(l);
   } else {
-    rt.velt_rt_tcp_listener_close(l);
+    fs.closeListener(l);
   }
 }
 
@@ -98,9 +101,6 @@ export function connectionsSpread(): bool {
 }
 
 export async function velt_rt_tcp_accept(l: u64): Promise<IoResult<u64>> {
-  if (!tb.ours(l)) {
-    return await rt.velt_rt_tcp_accept(l);
-  }
   return stdUsed("reactorTls") && isTls(l) ? await tlsOps.accept(l) : await fs.accept(l);
 }
 
@@ -362,15 +362,15 @@ export async function velt_rt_tcp_listen_tls(
   if (io.supported() && !devHandover()) {
     return await hookCall("sched_tls_listen", addr, cert, key, alpn, 0);
   }
-  // Under `velt dev` the supervisor keeps the listener, as for `listen`: the runtime's plain
-  // listener (also where there is no reactor), with the TLS server in Velt on its streams.
-  const plain = await rt.velt_rt_tcp_listen(addr);
+  // Under `velt dev` the supervisor keeps the listener, as for `listen`: the plain listener it
+  // hands over, on the reactor, with the TLS server in Velt on its streams.
+  const plain = await velt_rt_tcp_listen(addr);
   if (plain.code !== 0) {
     return plain;
   }
   const ours = await hookCall("sched_tls_listen", addr, cert, key, alpn, plain.value);
   if (ours.code !== 0) {
-    rt.velt_rt_tcp_listener_close(plain.value);
+    fs.closeListener(plain.value);
   }
   return ours;
 }

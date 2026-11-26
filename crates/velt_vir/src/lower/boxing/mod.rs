@@ -1,5 +1,5 @@
-//! Counted types (semantics stage 2, docs/design/semantics-stage2.md §3.1): which concrete types
-//! carry a reference count because the program shares their values.
+//! Counted types (docs/internals/design/semantics.md "Which types are counted"): which concrete
+//! types carry a reference count because the program shares their values.
 //!
 //! Lowering records *facts* while it builds functions — every share of a value of type `T`
 //! ([`Cx::note_share`]) and every borrow of a place reached through a value of type `C` that
