@@ -10,7 +10,8 @@
 //! - a place passed `Borrow` must not overlap a place another argument moves;
 //! - no argument may mutate or move (while being evaluated) a place another argument passes by
 //!   reference, except change the inside of a class instance or an array passed so (the callee
-//!   sees the change as JavaScript's would: `this.set(this.src.get(1))`).
+//!   sees the change as JavaScript's would: `this.set(this.src.get(1))`), or change it before
+//!   that argument is evaluated, outside a closure (`console.log(xs.shift(), xs)`, #748).
 //!
 //! An argument that only reads a value JavaScript does not hold by reference (a string, a union,
 //! an object type, `any`) gets a reference of its own instead of a conflict
