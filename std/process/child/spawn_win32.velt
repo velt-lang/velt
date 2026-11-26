@@ -26,6 +26,8 @@ import { freeList, handleList } from "velt/process/child/handle_list_win32";
 import * as pw from "velt/process/child/pipes_win32";
 import * as sp from "velt/process/child/sync_pipe_win32";
 import { CommandSpec } from "velt/process/child/spec";
+import { getEnvRaw } from "#env-sys";
+import { ARGV_VAR, SCRIPT_VAR } from "velt/process/env_hidden";
 
 /** C's `STARTUPINFOW` (also the head of `STARTUPINFOEXW`). */
 declare c type _STARTUPINFOW;
@@ -327,7 +329,9 @@ function launch(
   const app = cl.wide(appUnits);
   const lineUnits = cl.unitsOf(cl.commandLine(spec));
   const line = cl.wide(lineUnits);
-  const setEnv = spec.clearEnv || spec.env.length > 0;
+  // Its own block (else the child inherits this process's whole environment) when the spec
+  // changes it or this process holds a variable velt passed it, which children don't get.
+  const setEnv = spec.clearEnv || spec.env.length > 0 || veltPassed();
   const blockUnits: u16[] = setEnv ? cl.block(env) : [];
   const envBlock = setEnv ? cl.wide(blockUnits) : 0;
   const cwdUnits = cl.unitsOf(spec.cwd);
@@ -384,4 +388,9 @@ function launch(
   if (cwd !== 0) {
     m.release(cwd, cl.wideSize(cwdUnits));
   }
+}
+
+/** Whether this process holds `VELT_SCRIPT` or `VELT_ARGV` (std/process/env_hidden.velt). */
+function veltPassed(): bool {
+  return getEnvRaw(SCRIPT_VAR) !== undefined || getEnvRaw(ARGV_VAR) !== undefined;
 }
