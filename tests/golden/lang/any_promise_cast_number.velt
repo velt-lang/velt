@@ -1,0 +1,10 @@
+// `v as Promise<T>` of an `any` that holds no promise (#924 step 4): a `TypeError` at the cast, as
+// for any other type. Node lets the assertion through and `await` hands the number on (it prints
+// `5`); Velt can't hold a number as a promise, and making it a resolved one would let `.then`
+// run where Node throws `p.then is not a function`.
+async function main(): Promise<void> {
+  const n: any = 5;
+  console.log("before");
+  console.log(await (n as Promise<number>));
+}
+main();

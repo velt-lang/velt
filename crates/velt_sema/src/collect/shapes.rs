@@ -548,7 +548,7 @@ fn layout_fields(cx: &mut Ctx, d: DefId, stack: &mut Vec<DefId>) {
             if f.has_default && !f.optional {
                 let i = all
                     .iter()
-                    .position(|g| cx.plain_private(g.private_to, &g.name))
+                    .position(|g| g.name == "#name" && cx.plain_private(g.private_to, &g.name))
                     .expect("ICE: error class without `#name`");
                 redefined.push(crate::defs::Redefined {
                     field: i,

@@ -1,0 +1,213 @@
+flags ""
+  exec "xab a" at 0: ab@1, lastIndex 0
+test true calls 1 lastIndex 0
+  exec "ab a" at 0: ab@0, lastIndex 0
+test at 0 true calls 1 lastIndex 0
+  exec "xab a" at 0: ab@1, lastIndex 0
+match ["ab","b"] calls 1 lastIndex 0
+  exec "ab a" at 0: ab@0, lastIndex 0
+match at 0 ["ab","b"] calls 1 lastIndex 0
+  exec "xab a" at 0: ab@1, lastIndex 0
+search 1 calls 1 lastIndex 3
+  exec "ab a" at 0: ab@0, lastIndex 0
+replace "[ab|b|| a] a" calls 1 lastIndex 0
+  exec "ab a" at 0: ab@0, lastIndex 0
+replace calling "AB a" calls 1 lastIndex 0
+  exec "xab a" at 0: null, lastIndex 0
+  exec "xab a" at 1: ab@1, lastIndex 3
+  exec "xab a" at 3: null, lastIndex 0
+  exec "xab a" at 4: a@4, lastIndex 5
+split ["x","b"," ","",""] calls 4 lastIndex 1
+  exec "xab a" at 0: null, lastIndex 0
+  exec "xab a" at 1: ab@1, lastIndex 3
+split 2 ["x","b"] calls 2 lastIndex 0
+flags "g"
+  exec "xab a" at 0: ab@1, lastIndex 3
+test true calls 1 lastIndex 3
+  exec "ab a" at 0: ab@0, lastIndex 2
+test at 0 true calls 1 lastIndex 2
+  exec "xab a" at 0: ab@1, lastIndex 3
+  exec "xab a" at 3: a@4, lastIndex 5
+  exec "xab a" at 5: null, lastIndex 0
+match ["ab","a"] calls 3 lastIndex 0
+  exec "ab a" at 0: ab@0, lastIndex 2
+  exec "ab a" at 2: a@3, lastIndex 4
+  exec "ab a" at 4: null, lastIndex 0
+match at 0 ["ab","a"] calls 3 lastIndex 0
+  exec "xab a" at 0: ab@1, lastIndex 3
+search 1 calls 1 lastIndex 3
+  exec "ab a" at 0: ab@0, lastIndex 2
+  exec "ab a" at 2: a@3, lastIndex 4
+  exec "ab a" at 4: null, lastIndex 0
+replace "[ab|b|| a] [a||ab |]" calls 3 lastIndex 0
+  exec "ab a" at 0: ab@0, lastIndex 2
+  exec "ab a" at 2: a@3, lastIndex 4
+  exec "ab a" at 4: null, lastIndex 0
+replace calling "AB A" calls 3 lastIndex 0
+  exec "xab a" at 0: null, lastIndex 0
+  exec "xab a" at 1: ab@1, lastIndex 3
+  exec "xab a" at 3: null, lastIndex 0
+  exec "xab a" at 4: a@4, lastIndex 5
+split ["x","b"," ","",""] calls 4 lastIndex 1
+  exec "xab a" at 0: null, lastIndex 0
+  exec "xab a" at 1: ab@1, lastIndex 3
+split 2 ["x","b"] calls 2 lastIndex 0
+  exec "ab a" at 0: ab@0, lastIndex 2
+  exec "ab a" at 2: a@3, lastIndex 4
+  exec "ab a" at 4: null, lastIndex 0
+matchAll ["ab@0","a@3"] calls 3 lastIndex 0
+  exec "ab a" at 2: a@3, lastIndex 4
+  exec "ab a" at 4: null, lastIndex 0
+matchAll from 2 ["a@3"] calls 2 lastIndex 2
+  exec "ab a" at 0: ab@0, lastIndex 2
+  exec "ab a" at 2: a@3, lastIndex 4
+  exec "ab a" at 4: null, lastIndex 0
+replaceAll "- -" calls 3 lastIndex 0
+  exec "ab a" at 0: ab@0, lastIndex 2
+  exec "ab a" at 2: a@3, lastIndex 4
+  exec "ab a" at 4: null, lastIndex 0
+replaceAll calling "<ab> <a>" calls 3 lastIndex 0
+flags "y"
+  exec "xab a" at 0: null, lastIndex 0
+test false calls 1 lastIndex 0
+  exec "ab a" at 0: ab@0, lastIndex 2
+test at 0 true calls 1 lastIndex 2
+  exec "xab a" at 0: null, lastIndex 0
+match null calls 1 lastIndex 0
+  exec "ab a" at 0: ab@0, lastIndex 2
+match at 0 ["ab","b"] calls 1 lastIndex 2
+  exec "xab a" at 0: null, lastIndex 0
+search -1 calls 1 lastIndex 3
+  exec "ab a" at 0: ab@0, lastIndex 2
+replace "[ab|b|| a] a" calls 1 lastIndex 2
+  exec "ab a" at 0: ab@0, lastIndex 2
+replace calling "AB a" calls 1 lastIndex 2
+  exec "xab a" at 0: null, lastIndex 0
+  exec "xab a" at 1: ab@1, lastIndex 3
+  exec "xab a" at 3: null, lastIndex 0
+  exec "xab a" at 4: a@4, lastIndex 5
+split ["x","b"," ","",""] calls 4 lastIndex 1
+  exec "xab a" at 0: null, lastIndex 0
+  exec "xab a" at 1: ab@1, lastIndex 3
+split 2 ["x","b"] calls 2 lastIndex 0
+flags "gy"
+  exec "xab a" at 0: null, lastIndex 0
+test false calls 1 lastIndex 0
+  exec "ab a" at 0: ab@0, lastIndex 2
+test at 0 true calls 1 lastIndex 2
+  exec "xab a" at 0: null, lastIndex 0
+match null calls 1 lastIndex 0
+  exec "ab a" at 0: ab@0, lastIndex 2
+  exec "ab a" at 2: null, lastIndex 0
+match at 0 ["ab"] calls 2 lastIndex 0
+  exec "xab a" at 0: null, lastIndex 0
+search -1 calls 1 lastIndex 3
+  exec "ab a" at 0: ab@0, lastIndex 2
+  exec "ab a" at 2: null, lastIndex 0
+replace "[ab|b|| a] a" calls 2 lastIndex 0
+  exec "ab a" at 0: ab@0, lastIndex 2
+  exec "ab a" at 2: null, lastIndex 0
+replace calling "AB a" calls 2 lastIndex 0
+  exec "xab a" at 0: null, lastIndex 0
+  exec "xab a" at 1: ab@1, lastIndex 3
+  exec "xab a" at 3: null, lastIndex 0
+  exec "xab a" at 4: a@4, lastIndex 5
+split ["x","b"," ","",""] calls 4 lastIndex 1
+  exec "xab a" at 0: null, lastIndex 0
+  exec "xab a" at 1: ab@1, lastIndex 3
+split 2 ["x","b"] calls 2 lastIndex 0
+  exec "ab a" at 0: ab@0, lastIndex 2
+  exec "ab a" at 2: null, lastIndex 0
+matchAll ["ab@0"] calls 2 lastIndex 0
+  exec "ab a" at 2: null, lastIndex 0
+matchAll from 2 [] calls 1 lastIndex 2
+  exec "ab a" at 0: ab@0, lastIndex 2
+  exec "ab a" at 2: null, lastIndex 0
+replaceAll "- a" calls 2 lastIndex 0
+  exec "ab a" at 0: ab@0, lastIndex 2
+  exec "ab a" at 2: null, lastIndex 0
+replaceAll calling "<ab> a" calls 2 lastIndex 0
+an exec of its own
+test true calls 1 lastIndex 0
+search 2 calls 1 lastIndex 0
+match ["ab"] calls 1 lastIndex 0
+match g ["ab","ab"] calls 3 lastIndex 4
+replace "zz[ab|zz|zz]zz" calls 1 lastIndex 0
+  replacer ab
+  replacer ab
+replace g "zz!zz" calls 3 lastIndex 4
+replace short "z!" calls 1 lastIndex 0
+matchAll ["ab@2","ab@2"] calls 3 lastIndex 0
+split ["zzzzzz"] calls 6 lastIndex 0
+an exec that never matches
+test false calls 1 lastIndex 0
+match null calls 1 lastIndex 0
+search -1 calls 1 lastIndex 0
+replace "aaa" calls 1 lastIndex 0
+split ["aaa"] calls 3 lastIndex 0
+split empty [""] calls 1 lastIndex 0
+matchAll 0 calls 1 lastIndex 0
+empty matches
+  exec "a😀" at 0: @0, lastIndex 0
+  exec "a😀" at 1: @1, lastIndex 1
+  exec "a😀" at 2: @2, lastIndex 2
+  exec "a😀" at 3: @3, lastIndex 3
+  exec "a😀" at 4: null, lastIndex 0
+match g ["","","",""] calls 5 lastIndex 0
+  exec "a😀" at 0: @0, lastIndex 0
+  exec "a😀" at 1: @1, lastIndex 1
+  exec "a😀" at 2: @2, lastIndex 2
+  exec "a😀" at 3: @3, lastIndex 3
+  exec "a😀" at 4: null, lastIndex 0
+replace g "-a-\ud83d-\ude00-" calls 5 lastIndex 0
+  exec "a😀b" at 0: @0, lastIndex 0
+  exec "a😀b" at 1: @1, lastIndex 1
+  exec "a😀b" at 1: @1, lastIndex 1
+  exec "a😀b" at 2: @2, lastIndex 2
+  exec "a😀b" at 2: @2, lastIndex 2
+  exec "a😀b" at 3: @3, lastIndex 3
+  exec "a😀b" at 3: @3, lastIndex 3
+split g [1,1,1,1] calls 7 lastIndex 0
+  exec "😀" at 0: @0, lastIndex 0
+  exec "😀" at 1: @1, lastIndex 1
+  exec "😀" at 2: @2, lastIndex 2
+  exec "😀" at 3: null, lastIndex 0
+matchAll g [0,1,2] calls 4 lastIndex 0
+  exec "a😀" at 0: @0, lastIndex 0
+  exec "a😀" at 1: @1, lastIndex 1
+  exec "a😀" at 3: @3, lastIndex 3
+  exec "a😀" at 4: null, lastIndex 0
+match gu ["","",""] calls 4 lastIndex 0
+  exec "a😀" at 0: @0, lastIndex 0
+  exec "a😀" at 1: @1, lastIndex 1
+  exec "a😀" at 3: @3, lastIndex 3
+  exec "a😀" at 4: null, lastIndex 0
+replace gu "-a-😀-" calls 4 lastIndex 0
+  exec "a😀b" at 0: @0, lastIndex 0
+  exec "a😀b" at 1: @1, lastIndex 1
+  exec "a😀b" at 1: @1, lastIndex 1
+  exec "a😀b" at 3: @3, lastIndex 3
+  exec "a😀b" at 3: @3, lastIndex 3
+split gu [1,2,1] calls 5 lastIndex 0
+  exec "😀" at 0: @0, lastIndex 0
+  exec "😀" at 2: @2, lastIndex 2
+  exec "😀" at 3: null, lastIndex 0
+matchAll gu [0,2] calls 3 lastIndex 0
+  exec "" at 0: @0, lastIndex 0
+split empty subject [] calls 1 lastIndex 0
+  exec "" at 0: null, lastIndex 0
+split empty subject, no match [""] calls 1 lastIndex 0
+a subclass without an exec, and a RegExp
+true 3 [ 'ab', 'a' ] 1 0
+x[ab] [a] [ 'x', 'b', ' ', '', '' ] [ 'x', 'b' ]
+[ 'ab', 'a' ] x- - 0
+true 3 [ 'ab', 'a' ] 1 0
+x[ab] [a] [ 'x', 'b', ' ', '', '' ] [ 'x', 'b' ]
+[ 'ab', 'a' ] x- - 0
+through a RegExp variable
+  exec "abb b" at 0: bb@1, lastIndex 3
+  exec "abb b" at 3: b@4, lastIndex 5
+  exec "abb b" at 5: null, lastIndex 0
+  exec "abb b" at 0: bb@1, lastIndex 3
+count 102 calls 4 lastIndex 3
+count 102 calls 0 lastIndex 3

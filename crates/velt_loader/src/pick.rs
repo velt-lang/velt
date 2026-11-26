@@ -128,6 +128,10 @@ impl Loader<'_, '_> {
             })
             .map(|f| format!("tried `{}`", shown.show(f)))
             .collect();
+        // A file of a git dependency's repository that its checkout leaves out.
+        let outside =
+            (target.candidates.iter().flatten()).find_map(|f| vpm::git::sparse::outside(f));
+        let notes = notes.into_iter().chain(outside).collect();
         self.error(format!("cannot find module `{spec}`"), notes, span);
     }
 

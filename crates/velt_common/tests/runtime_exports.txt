@@ -37,12 +37,9 @@ velt_rt velt_rt_fnprop_len
 velt_rt velt_rt_fnprop_set
 velt_rt velt_rt_free
 velt_rt velt_rt_free_after_reads
-velt_rt velt_rt_fut_box
 velt_rt velt_rt_fut_id
 velt_rt velt_rt_fut_peek
 velt_rt velt_rt_fut_share
-velt_rt velt_rt_fut_start
-velt_rt velt_rt_fut_transfer
 velt_rt velt_rt_host_clone
 velt_rt velt_rt_host_release
 velt_rt velt_rt_keep_alive_acquire

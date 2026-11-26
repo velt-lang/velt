@@ -108,6 +108,106 @@ impl FnLower<'_, '_> {
         self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, same, nans))
     }
 
+    /// `keyOf(v)` (`Intrinsic::KeyOf`): the owned key a `Map` stores for `v` of type `ty`, as JS
+    /// stores it. A float `-0` becomes `+0` (`-0 + 0`; any other float, a `NaN` too, is itself),
+    /// in a float, an option of one, a float member of a union (or of an option of one), or a
+    /// `number` held as `any` / `unknown` (any_exact.rs); any other value is `v` itself.
+    pub(super) fn key_of(&mut self, v: Operand, ty: TyId) -> Operand {
+        // A placeholder's values all have its VIR type: a float one holds only floats.
+        let vt = self.cx.ty(ty);
+        if vt.is_float() {
+            let v = self.zero_plus(v, vt);
+            return self.own_value(v, ty);
+        }
+        // An integer or a bool is the key as it is, with no copy: the code is what storing `v`
+        // itself gives. (A pointer is counted: `own_value` below keeps a moved one owned.)
+        if (vt.is_int() || vt == Ty::Bool) && !self.cx.is_ph(ty) {
+            return v;
+        }
+        // `own_value` copies into a temporary of its own, so the store below never reaches the
+        // caller's variable (`const k: number | string = -0` keeps its `-0`).
+        let owned = self.own_value(v, ty);
+        let Operand::Copy(p) = owned.clone() else {
+            return owned;
+        };
+        if self.dead() {
+            return owned;
+        }
+        // `keyOf`'s one caller, std's `mapAppend`, is never shared by shape (it has an instance
+        // per key type also under `VELT_SHAPES=all`), so a placeholder does not come here; if
+        // one did, its key would be stored as it is, as before `keyOf`.
+        if self.cx.is_ph(ty) {
+            return owned;
+        }
+        self.key_in_place(&p, ty);
+        owned
+    }
+
+    /// `keyOf` of the owned value at `p` (of concrete type `ty`, not a float), rewritten in
+    /// place: an option of a float, a union with a float member, or an `any`.
+    fn key_in_place(&mut self, p: &Place, ty: TyId) {
+        if self.cx.is_dynamic(ty) {
+            self.any_key_of(p, ty);
+            return;
+        }
+        let (opt, inner) = match self.cx.kind(ty) {
+            TyKind::Option(inner, _) => (true, inner),
+            _ => (false, ty),
+        };
+        let it = self.cx.ty(inner);
+        let float = it.is_float();
+        if !float && !(self.is_enum(inner) && self.union_holds_float(inner)) {
+            return;
+        }
+        let p = p.clone();
+        let done = self.new_block();
+        let p = match opt {
+            true => {
+                let some = self.option_is_some(&p, ty);
+                self.when(some, done);
+                self.some_payload(&p, ty)
+            }
+            false => p,
+        };
+        match float {
+            true => {
+                let z = self.zero_plus(Operand::Copy(p.clone()), it);
+                self.assign(p, Rvalue::Use(z));
+            }
+            false => self.for_each_variant(&p, inner, |lw, _, parts| {
+                let [(x, t)] = &parts[..] else {
+                    return;
+                };
+                let xt = lw.cx.ty(*t);
+                if xt.is_float() {
+                    let z = lw.zero_plus(Operand::Copy(x.clone()), xt);
+                    lw.assign(x.clone(), Rvalue::Use(z));
+                }
+            }),
+        }
+        self.goto(done);
+        self.switch_to(done);
+    }
+
+    /// `x + 0.0` for a float `x` of VIR type `t`: `-0` becomes `+0`.
+    fn zero_plus(&mut self, x: Operand, t: Ty) -> Operand {
+        let zero = Operand::Const(Const::Float(0.0), t);
+        self.rvalue_temp(t, Rvalue::Binary(BinOp::Add, x, zero))
+    }
+
+    /// Does a variant of union `ty` hold a single float (what `key_of` rewrites)?
+    fn union_holds_float(&mut self, ty: TyId) -> bool {
+        let TyKind::Adt(d, _) = self.cx.kind(ty) else {
+            return false;
+        };
+        let n = self.cx.enum_def(d).variants.len() as u32;
+        (0..n).any(|v| {
+            let tys = self.cx.variant_tys(ty, v);
+            let parts: Vec<TyId> = tys.into_iter().filter(|&t| !self.cx.is_unit(t)).collect();
+            matches!(&parts[..], [t] if self.cx.ty(*t).is_float())
+        })
+    }
+
     /// Does the union value at `p` (of type `ty`, or an option of a union) hold a `NaN` in one
     /// of its float members (Bool operand)?
     fn holds_nan(&mut self, p: &Place, ty: TyId) -> Operand {

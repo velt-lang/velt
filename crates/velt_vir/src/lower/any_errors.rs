@@ -75,6 +75,15 @@ impl FnLower<'_, '_> {
                 open.pop();
                 shown
             }
+            TyKind::Dyn(d, args) if self.literal_iface(d) => {
+                if open.contains(&d) {
+                    return "...".to_string();
+                }
+                open.push(d);
+                let shown = self.literal_iface_name(d, &args, open);
+                open.pop();
+                shown
+            }
             TyKind::Adt(_, args) | TyKind::Dyn(_, args) if !args.is_empty() => {
                 let name = self.cx.type_name(ty);
                 format!("{name}<{}>", list(self, &args, open))
@@ -113,6 +122,69 @@ impl FnLower<'_, '_> {
                 format!("{name}{q}: {}", self.ts_name(t, open))
             })
             .collect();
+        match parts.is_empty() {
+            true => "{}".to_string(),
+            false => format!("{{ {} }}", parts.join("; ")),
+        }
+    }
+
+    /// Is `d` the interface an object literal with methods implements (velt_sema
+    /// `literal_iface.rs`), named by sema's display of its type (`{ n: f64; get(): f64 }`)?
+    fn literal_iface(&self, d: DefId) -> bool {
+        matches!(self.cx.hir.def(d), Def::Interface(i) if i.name.starts_with('{'))
+    }
+
+    /// An object literal's interface as TypeScript writes its type (`{ n: number; get():
+    /// number }`): its fields at the type arguments `args`, then its methods as the literal's
+    /// implementation declares them (a setter is shown by its getter's field).
+    fn literal_iface_name(&mut self, d: DefId, args: &[TyId], open: &mut Vec<DefId>) -> String {
+        let Def::Interface(i) = self.cx.hir.def(d) else {
+            let t = self.cx.intern(TyKind::Dyn(d, args.to_vec()));
+            return self.cx.type_name(t);
+        };
+        let fields: Vec<(String, TyId)> = i.fields.iter().map(|f| (f.name.clone(), f.ty)).collect();
+        let methods: Vec<String> = i.methods.iter().map(|m| m.name.clone()).collect();
+        let at = |lw: &mut Self, t: TyId| match args.is_empty() {
+            true => t,
+            false => lw.cx.subst(t, args),
+        };
+        let mut parts = vec![];
+        for (name, t) in fields {
+            let t = at(self, t);
+            parts.push(format!("{name}: {}", self.ts_name(t, open)));
+        }
+        let imp = self
+            .cx
+            .hir
+            .impls
+            .iter()
+            .find(|m| m.iface == d && m.generics == 0);
+        let defs = imp.map(|m| m.methods.clone()).unwrap_or_default();
+        for (k, name) in methods.iter().enumerate() {
+            // A setter is shown by its field; a slot the compiler adds (`<n>`, `#x`) by nothing.
+            if name.starts_with("set ") || name.starts_with('<') || name.starts_with('#') {
+                continue;
+            }
+            let sig = defs.get(k).and_then(|&f| match self.cx.hir.def(f) {
+                Def::Fn(f) => {
+                    let ps = f.params.iter().skip(1).map(|p| {
+                        let n = f.body.locals[p.local.0 as usize].name.clone();
+                        (n, p.ty)
+                    });
+                    Some((ps.collect::<Vec<_>>(), f.ret))
+                }
+                _ => None,
+            });
+            let Some((ps, ret)) = sig else {
+                parts.push(format!("{name}(...args: any[]): any"));
+                continue;
+            };
+            let ps: Vec<String> = (ps.into_iter())
+                .map(|(n, t)| format!("{n}: {}", self.ts_name(t, open)))
+                .collect();
+            let ret = self.ts_name(ret, open);
+            parts.push(format!("{name}({}): {ret}", ps.join(", ")));
+        }
         match parts.is_empty() {
             true => "{}".to_string(),
             false => format!("{{ {} }}", parts.join("; ")),

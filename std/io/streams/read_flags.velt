@@ -1,0 +1,76 @@
+// velt/io (internal): a `for await` iterator's read (streams.velt `StreamIterator`) as the
+// spec's read request, without callbacks into the controller.
+//
+// Node's iterator gives the stream a read request whose steps clear the iterator's current
+// promise and, at the end of the loop, let go of the stream. Callbacks over the iterator kept in
+// the controller's pending reads made the iterator, its reader and the controller a cycle, and
+// every closure of those types cycle-capable (#3119). Here the pending read holds the read's
+// promise's resolvers and a `ReadFlags`, which hold nothing: the controller marks the flags and
+// lets go of the stream itself when it answers the read, and the iterator reads the flags at its
+// next step. The promise settles at the same moment as with the callbacks, so the microtask
+// order is Node's as before.
+
+import { CLOSED, ERRORED, ReadableStreamDefaultController } from "velt/io/streams/controller";
+import { ReadableStreamReadResult } from "velt/io/streams/types";
+
+/**
+ * Set by the controller when it answers a `for await` read: `answered` for any answer, and
+ * `finished` when the answer ends the loop (`done`, or an error), after the controller let go of
+ * the stream.
+ */
+export class ReadFlags {
+  /** The read was answered. */
+  answered: bool = false;
+  /** Its answer ends the loop, and the stream was released. */
+  finished: bool = false;
+}
+
+/**
+ * A `for await` read of `c`: settled with `resolve` at once when a chunk is queued (or the stream
+ * has closed), else when one arrives, or with `reject` and the stream's error.
+ */
+export function readFor<R>(
+  c: ReadableStreamDefaultController<R>,
+  resolve: (r: ReadableStreamReadResult<R>) => void,
+  reject: (e: unknown) => void,
+  flags: ReadFlags,
+) {
+  if (c.state == ERRORED) {
+    readAnswered(c, flags, true);
+    // The field itself, not a copy in a local: such a copy is freed too early (#1140).
+    reject(c.stored);
+    return;
+  }
+  if (c.queued() > 0) {
+    const value = c.take();
+    readAnswered(c, flags, false);
+    resolve({ value: value, done: false });
+    return;
+  }
+  if (c.state == CLOSED) {
+    readAnswered(c, flags, true);
+    resolve({ done: true });
+    return;
+  }
+  c.requests.push({ resolve: resolve, reject: reject, flags: flags });
+  c.callPullIfNeeded();
+}
+
+/**
+ * The controller answers a read (`flags` when it is a `for await` read's): `last` when the answer
+ * ends the loop, which lets go of the stream first (the iterator's reader is its own).
+ */
+export function readAnswered<R>(
+  c: ReadableStreamDefaultController<R>,
+  flags: ReadFlags | null,
+  last: bool,
+) {
+  if (flags == null) {
+    return;
+  }
+  flags.answered = true;
+  if (last) {
+    flags.finished = true;
+    c.release();
+  }
+}

@@ -1,0 +1,16 @@
+start: t0 t1 t2 t3 v1 t4 v2 t5 t6 t7 t8 v3 t9 end t10 t11 t12 t13 t14 t15 t16 t17 t18 t19
+sync pull: t0 t1 t2 t3 v1 t4 v2 t5 t6 t7 t8 v3 t9 end t10 t11 t12 t13 t14 t15 t16 t17 t18 t19
+async pull: t0 t1 t2 t3 v1 t4 v2 t5 t6 t7 t8 v3 t9 t10 end t11 t12 t13 t14 t15 t16 t17 t18 t19
+break: v1 cancel locked false after locked false
+error: t0 t1 t2 t3 v1 t4 caught Error: boom locked false t5 t6 t7 t8 t9 t10 t11 t12 t13 t14 t15 t16 t17 t18 t19
+return twice: cancel return 1 return 2 next done true
+pull after 0 microtasks, an await not reached: t0 t1 t2 t3 v1 t4 v2 t5 t6 t7 t8 v3 t9 t10 end t11 t12 t13 t14 t15 t16 t17 t18 t19 t20 t21 t22 t23 t24 t25 t26 t27 t28 t29
+pull after 1 microtask: t0 t1 t2 t3 v1 t4 t5 v2 t6 t7 t8 v3 t9 t10 t11 end t12 t13 t14 t15 t16 t17 t18 t19 t20 t21 t22 t23 t24 t25 t26 t27 t28 t29
+pull after 2 microtasks: t0 t1 t2 t3 t4 v1 t5 t6 t7 v2 t8 t9 t10 t11 v3 t12 t13 t14 t15 end t16 t17 t18 t19 t20 t21 t22 t23 t24 t25 t26 t27 t28 t29
+pull after 3 microtasks: t0 t1 t2 t3 t4 t5 v1 t6 t7 t8 t9 v2 t10 t11 t12 t13 t14 v3 t15 t16 t17 t18 t19 end t20 t21 t22 t23 t24 t25 t26 t27 t28 t29
+concurrent: t0 t1 t2 t3 a 1 t4 t5 t6 b 2 t7 t8 t9 c 3 t10 t11 t12 t13 t14 t15
+throw at 2: t0 t1 t2 t3 v1 t4 v2 t5 cancel t6 t7 t8 t9 caught t10 t11 t12 t13 t14 t15
+throw at 2, async cancel: t0 t1 t2 t3 v1 t4 v2 t5 cancel t6 done t7 t8 t9 t10 t11 caught t12 t13 t14 t15
+break at 1, async cancel: t0 t1 t2 t3 v1 cancel t4 done t5 t6 t7 t8 after t9 t10 t11 t12 t13 t14 t15
+break at 2, async cancel: t0 t1 t2 t3 v1 t4 v2 t5 cancel t6 done t7 t8 t9 t10 t11 after t12 t13 t14 t15
+return inside: t0 t1 t2 t3 cancel t4 t5 t6 t7 returned 1 t8 t9 t10 t11 t12 t13 t14 t15

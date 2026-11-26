@@ -660,10 +660,11 @@ fn checks(dir: &Path, name: &str) -> usize {
 /// default) or fetches an `https:` URL is checked once, not checked again with the client up
 /// front (docs/internals/design/lazy-std.md "Loading on demand"): tcp_sched reaches the TLS
 /// streams through function values the client installs (std/net/tls/fd_hook.velt), the error
-/// classes load up front, and velt/simd, whose `extend`s of the vector types the record layer
-/// uses, a `fetch` program loads up front anyway.
+/// classes load up front, and velt/simd's methods on the vector types, which the record layer
+/// and the crypto use, may be added in the middle of a check. So do `connectTls` and `listenTls`
+/// without `fetch`, which don't load velt/simd up front.
 #[test]
-fn a_fetch_that_reaches_the_tls_client_is_checked_once() {
+fn a_program_that_reaches_tls_is_checked_once() {
     let dir = test_dir::TestDir::new();
     for (name, url) in [
         ("follow", "http://127.0.0.1:9/"),
@@ -671,6 +672,19 @@ fn a_fetch_that_reaches_the_tls_client_is_checked_once() {
     ] {
         let src = format!(
             "async function main() {{\n  try {{\n    console.log((await fetch(\"{url}\")).status);\n  }} catch (e) {{\n    console.log(\"failed\");\n  }}\n}}\n"
+        );
+        std::fs::write(dir.path().join(format!("{name}.velt")), src).unwrap();
+        assert_eq!(checks(dir.path(), name), 1, "`{name}` is checked once");
+    }
+    for (name, call) in [
+        ("connect", r#"connectTls("127.0.0.1:9")"#),
+        (
+            "listen",
+            r#"listenTls("127.0.0.1:0", { cert: "c", key: "k" })"#,
+        ),
+    ] {
+        let src = format!(
+            "import {{ connectTls, listenTls }} from \"velt/net\";\n\nasync function main() {{\n  try {{\n    console.log((await {call}) != null);\n  }} catch (e) {{\n    console.log(\"failed\");\n  }}\n}}\n"
         );
         std::fs::write(dir.path().join(format!("{name}.velt")), src).unwrap();
         assert_eq!(checks(dir.path(), name), 1, "`{name}` is checked once");

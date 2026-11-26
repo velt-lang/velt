@@ -1,0 +1,14 @@
+// velt/lang/typed_array (internal): `NamedInspect`, what `[INSPECT]()` returns for a class that
+// Node prints under the name of the object's own class.
+
+/**
+ * What an `[INSPECT]()` returns for a class that Node prints under `this.constructor.name` (std
+ * only: `URL`, `URLSearchParams`): `console.log` prints the name of the object's class, a
+ * subclass's too, and then `text` (` { 'a' => '1' }`). Past Node's depth limit it prints the name
+ * and `cut` (` {}`; a subclass as `U [URL] {}`), or `[Object]` when `cut` is empty.
+ * crates/velt_vir/src/lower/glue/format.rs knows it by name.
+ */
+export struct NamedInspect {
+  text: string;
+  cut: string;
+}

@@ -1,0 +1,32 @@
+// A fetched response disposed before its body is read (`using`, `[Symbol.dispose]()`) closes its
+// connection at once, and the next fetch opens another; a stream already reading the body keeps
+// it open until it is done (std/net/http/fetch response_cell.velt).
+import { serve } from "http-server";
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(`body of ${new URL(req.url).pathname}`);
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  {
+    using r = await fetch(`${base}/a`);
+    console.log(r.status);
+  }
+  const b = await fetch(`${base}/b`);
+  console.log(b.bodyUsed);
+  b[Symbol.dispose]();
+  const c = await fetch(`${base}/c`);
+  const stream = c.body;
+  c[Symbol.dispose]();
+  if (stream != null) {
+    let n = 0;
+    for await (const chunk of stream) {
+      n += chunk.length;
+    }
+    console.log(n);
+  }
+  console.log(await (await fetch(`${base}/d`)).text());
+  server.close();
+}
+
+await main();

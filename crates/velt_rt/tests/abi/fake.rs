@@ -2,34 +2,44 @@
 //! the simplest async functions, written by hand against the C ABI.
 
 use crate::result::IoResult;
-use crate::task::compiled::{Borrowed, Compiled};
 use crate::task::runtime::{block_on, spawn, JoinHandle};
 use crate::task::{
-    drop_fut, poll_fut, PollFn, SendPtr, VeltFut, FUT_RESULT_OFFSET, PENDING, READY,
+    drop_fut, poll_fut, raw_cx, PollFn, SendPtr, VeltFut, FUT_RESULT_OFFSET, PENDING, READY,
 };
 use crate::VeltStr;
 use std::ffi::c_void;
+use std::future::Future;
 use std::mem::MaybeUninit;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
-/// Drop fn of a state that runs to completion (never cancelled).
-unsafe extern "C-unwind" fn never_dropped(_: *mut u8) {}
+/// A compiled state `(poll, state)` run as a Rust future: each poll of the future polls the state
+/// once, with the task's waker. The state is borrowed: it is never dropped here.
+struct State {
+    poll: PollFn,
+    state: SendPtr<u8>,
+}
+
+impl Future for State {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        // SAFETY: the caller of `spawn_state` keeps the state alive until the task finished.
+        match unsafe { (self.poll)(self.state.0, raw_cx(cx).ptr()) } {
+            PENDING => Poll::Pending,
+            _ => Poll::Ready(()),
+        }
+    }
+}
 
 /// Start the compiled future `(poll, state)` as a task on the runtime's host, as `async main`
 /// started before programs ran on the executor in Velt. `state` stays owned by the caller and
 /// must outlive the task; its result is at offset 0 once the returned handle is joined.
 pub unsafe fn spawn_state(poll: PollFn, state: *mut u8) -> JoinHandle<()> {
-    spawn(Compiled::from_store(
+    spawn(State {
         poll,
-        never_dropped,
-        Borrowed(SendPtr(state)),
-    ))
-}
-
-/// A leaf that completes `ms` milliseconds after this call, with an empty result (what
-/// `sleep(ms)` was before the executor in Velt took timers over).
-pub fn sleep(ms: i64) -> *mut VeltFut {
-    let at = tokio::time::Instant::now() + std::time::Duration::from_millis(ms.max(0) as u64);
-    crate::task::leaf::new_leaf(async move { tokio::time::sleep_until(at).await })
+        state: SendPtr(state),
+    })
 }
 
 /// A leaf that is pending once (waking its task) and ready on the next poll, with an empty

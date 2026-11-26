@@ -58,6 +58,9 @@ pub enum Source {
         commit: String,
         /// [`crate::git::tree_checksum`] of the checkout.
         checksum: String,
+        /// Whether the checkout is `spec.subdir` alone ([`crate::git::sparse`]), not the
+        /// commit's whole tree.
+        sparse: bool,
         /// The package root: the checkout's `spec.subdir`.
         dir: PathBuf,
         /// For a target with no `package.velt`: the npm packages it provides, by name (one, or
