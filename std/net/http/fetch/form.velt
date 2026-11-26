@@ -124,9 +124,10 @@ export class FormData extends ByteSource {
     }
   }
 
+  // The fields in order. In JS this is `entries` itself, so a subclass's `entries` doesn't change it.
   *[Symbol.iterator](): IterableIterator<[string, FormDataEntryValue]> {
-    for (const e of this.entries()) {
-      yield e;
+    for (let i: i64 = 0; i < (this.#names.length as i64); i++) {
+      yield [this.#names[i], this.#values[i]];
     }
   }
 
@@ -164,9 +165,33 @@ export class FormData extends ByteSource {
     return `multipart/form-data; boundary=${this.boundary()}`;
   }
 
-  /** How `console.log` shows a form, like Node: its fields. */
-  [INSPECT]() {
-    return this.entries();
+  /**
+   * How `console.log` shows a form, like Node: `FormData { a: [ '1', '2' ], b: 'x' }`, each name
+   * once, in the order it first appears, with its value, or its values when it repeats.
+   */
+  [INSPECT](): Record<string, FormDataEntryValue | FormDataEntryValue[]> {
+    const all: Record<string, FormDataEntryValue[]> = {};
+    const order: string[] = [];
+    for (let i: i64 = 0; i < (this.#names.length as i64); i++) {
+      const n = this.#names[i];
+      const had = all[n];
+      if (had == null) {
+        all[n] = [this.#values[i]];
+        order.push(n);
+      } else {
+        had.push(this.#values[i]);
+      }
+    }
+    const out: Record<string, FormDataEntryValue | FormDataEntryValue[]> = {};
+    for (const n of order) {
+      const vs = all[n] ?? [];
+      if (vs.length == 1) {
+        out[n] = vs[0];
+      } else {
+        out[n] = vs;
+      }
+    }
+    return out;
   }
 }
 

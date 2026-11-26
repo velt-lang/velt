@@ -12,13 +12,15 @@ use crate::lower::{cint, FnLower};
 use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
 
 /// The std classes Node prints under a fixed name, whatever the object's class: undici's and
-/// Node's own inspects write `Headers`, `Request`, `Response` and `Blob` themselves, where the
-/// other classes' write `this.constructor.name`.
-const FIXED_NAMES: [&str; 4] = [
+/// Node's own inspects write `Headers`, `Request`, `Response`, `FormData`, `Blob` and `File`
+/// themselves, where the other classes' write `this.constructor.name`.
+const FIXED_NAMES: [&str; 6] = [
     concat!(velt_common::std_dir!(net_http_fetch), "headers::Headers"),
     concat!(velt_common::std_dir!(net_http_fetch), "request::Request"),
     concat!(velt_common::std_dir!(net_http_fetch), "response::Response"),
+    concat!(velt_common::std_dir!(net_http_fetch), "form::FormData"),
     concat!(velt_common::std_dir!(net_http_fetch), "blob::Blob"),
+    concat!(velt_common::std_dir!(net_http_fetch), "file::File"),
 ];
 
 impl FnLower<'_, '_> {

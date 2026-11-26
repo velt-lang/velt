@@ -1,0 +1,25 @@
+FormData {}
+FormData { a: [ '1', '2' ], b: 'x y' }
+FormData { a: '1' }
+[ FormData { a: [ '1', '2' ], b: 'x y' } ] { f: FormData { a: [ '1', '2' ], b: 'x y' } }
+FormData {
+  file: File { size: 2, type: 'text/plain', name: 'h.txt', lastModified: 5 }
+}
+FormData {
+  key0: 'value number 0',
+  key1: 'value number 1',
+  key2: 'value number 2',
+  key3: 'value number 3',
+  key4: 'value number 4',
+  key5: 'value number 5',
+  key6: 'value number 6',
+  key7: 'value number 7'
+}
+Blob { size: 2, type: '' } File { size: 2, type: 'text/plain', name: 'h.txt', lastModified: 5 }
+a 1
+b 2
+a 1
+b 2
+FormData { a: '1', b: '2' }
+entries
+2
