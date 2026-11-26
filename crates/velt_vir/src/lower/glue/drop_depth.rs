@@ -32,8 +32,8 @@ use velt_sema::hir::{TyId, TyKind};
 use super::drop_chain::Chain;
 use super::Glue;
 use crate::lower::cint;
-use crate::lower::operand::proj;
 use crate::lower::hook_calls::{self as hooks, ty, HookTy};
+use crate::lower::operand::proj;
 use crate::lower::{cfunc, unit, Cx, FnLower, Work};
 use crate::tls::TlsCall;
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
@@ -164,10 +164,7 @@ impl FnLower<'_, '_> {
         body(self);
         // Nested drops leave the depth as they found it, but may have set the queued bit.
         let now = self.tls_call(state_call(false), vec![]);
-        let m = self.rvalue_temp(
-            Ty::U32,
-            Rvalue::Binary(BinOp::Sub, now, cint(1, Ty::U32)),
-        );
+        let m = self.rvalue_temp(Ty::U32, Rvalue::Binary(BinOp::Sub, now, cint(1, Ty::U32)));
         self.tls_call(state_call(true), vec![m.clone()]);
         let drain = self.rvalue_temp(
             Ty::Bool,

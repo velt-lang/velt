@@ -58,13 +58,14 @@ mod module_hooks;
 #[macro_use]
 mod decorator_hooks;
 #[macro_use]
+mod drop_hooks;
+#[macro_use]
 mod promise_hooks;
 #[macro_use]
 mod tls_hooks;
 pub use module_hooks::BLOCKS_MODULE_ENTRY;
 
-// The table: these rows, then TLS's, promises' through `any`, the decorators', module state's,
-// the string methods' and the weak core's (`*_hooks.rs`), given to `hooks!` together.
+// The table: these rows, then each `*_hooks.rs` file's (`with_tls_hooks!` on), to `hooks!`.
 with_tls_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
@@ -84,15 +85,6 @@ with_tls_hooks! {
     /// a negative exponent gives 0 (1 for the base 1).
     pow_i64 => lang_hooks_pow_int, "powI64", sig((i64, i64) -> i64), lowered, constructs(PowInt),
         replaces("velt_rt_pow_i64"), bench("pow_int");
-
-    // drop_queue.velt: bounded drop nesting (#543; `velt_vir` `lower/glue/drop_depth.rs`), whose
-    // state word lowering reads and writes inline (`STATE`, by name).
-    /// A bracketed drop past the depth limit: `(value, glue)`, dropped when the outermost drop ends.
-    drop_queue => lang_hooks_drop_queue, "dropQueue", sig((usize, usize) -> void), lowered,
-        replaces("velt_rt_drop_queue");
-    /// The outermost bracketed drop's end with a value queued: drops the queue.
-    drop_drain => lang_hooks_drop_queue, "dropDrain", sig(() -> void), lowered,
-        replaces("velt_rt_drop_drain");
 
     // number.velt: numbers as text, and the conversions of a float index.
     /// `n.toString(radix)` of a float (`velt_sema` `builtins.rs`).

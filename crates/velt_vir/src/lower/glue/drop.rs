@@ -352,12 +352,18 @@ impl FnLower<'_, '_> {
             // A dispose that panics leaves the fields and the memory to the pad (cleanup.rs), and
             // so does a field's drop that panics (a dispose further down), the fields after it.
             let held = self.pads.popped.len();
-            self.pads.popped.push(DropEntry::Disposing(p.clone(), ty, 0));
+            self.pads
+                .popped
+                .push(DropEntry::Disposing(p.clone(), ty, 0));
             self.call_dispose(Operand::Copy(p.clone()), ty);
             let tys = self.cx.adt_field_tys(ty);
             for (i, t) in tys.into_iter().enumerate() {
                 let rest = DropEntry::Disposing(p.clone(), ty, i as u32 + 1);
-                *self.pads.popped.last_mut().unwrap_or_else(|| ice("no pad entry")) = rest;
+                *self
+                    .pads
+                    .popped
+                    .last_mut()
+                    .unwrap_or_else(|| ice("no pad entry")) = rest;
                 self.drop_field(&p, ty, i as u32, t, None);
             }
             self.pads.popped.truncate(held);
