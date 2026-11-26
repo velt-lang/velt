@@ -7,7 +7,6 @@
 pub(crate) mod command;
 mod fake;
 mod js_table;
-mod net;
 mod shared;
 mod strings;
 mod text_perf;

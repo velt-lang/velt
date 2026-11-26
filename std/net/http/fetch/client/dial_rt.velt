@@ -1,8 +1,8 @@
 // velt/net/http (internal): `fetch`'s connections in a build without the executor in Velt (not a
 // native one): the `default` variant of `#fetch-dial` (std/imports.velt; the other is
 // dial_sched.velt). conn.velt's `dial` calls `dialPlain` only where std/net/tcp_sched.velt's pool
-// is compiled, never in this build: every connection is the runtime's, and so is the keep-alive
-// pool (crates/velt_rt/src/net/park.rs). The TLS client in Velt needs the executor in Velt, so
+// is compiled, never in this build: every connection is the runtime's (velt_rt_wasm's), and so
+// is the keep-alive pool. The TLS client in Velt needs the executor in Velt, so
 // this build (WebAssembly, which has no network either) has no `https:`.
 
 import { IoError } from "velt/io/error";

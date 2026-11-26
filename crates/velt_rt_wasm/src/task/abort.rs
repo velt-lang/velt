@@ -1,5 +1,5 @@
-//! `velt_rt_signal_*` on the current-thread executor: `AbortController` / `AbortSignal` (see
-//! velt_rt's task/abort.rs). One thread, so a `RefCell` and one waker slot per pending wait
+//! `velt_rt_signal_*` on the current-thread executor: `AbortController` / `AbortSignal` (natively
+//! they are std's, std/task/signal_core.velt). One thread, so a `RefCell` and one waker slot per pending wait
 //! (waiters.rs). `AbortSignal.timeout`'s timer is std's (std/task/signal_timeout.velt), as
 //! natively. A derived signal holds its sources until it is aborted, as natively.
 
