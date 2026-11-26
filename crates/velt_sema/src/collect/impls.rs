@@ -298,8 +298,22 @@ fn impl_method(cx: &mut Ctx, p: &Pair, m: &IfaceMethod) -> Option<DefId> {
             let def = f.def();
             let mut full_args = p.bound.args.clone();
             full_args.push(p.self_ty);
-            let want = check_method_sig(cx, def, &f.owner_args(), m, &full_args, &p.iname);
+            let mut first = None;
+            let shorter = Some(&mut first);
+            let owner_args = f.owner_args();
+            let want = check_method_sig(cx, def, &owner_args, m, &full_args, &p.iname, shorter);
             cx.fn_info_mut(def).fixed_modes = true;
+            // A method taking only the first parameters of the interface's: an entry with all
+            // of them that calls it (`short_overrides`).
+            if let (Some(take), Some(ret)) = (first, want) {
+                let want: Vec<TyId> = (m.params.iter())
+                    .map(|q| cx.subst(q.ty, &full_args))
+                    .collect();
+                let (host, method) = ((p.d, p.self_ty), (def, owner_args));
+                let entry =
+                    super::short_overrides::impl_entry(cx, host, method, (m, &want, ret), take);
+                return Some(entry);
+            }
             let slot = cx.adt(p.d).and_then(|a| a.vslots.get(&m.name).copied());
             Some(match slot {
                 Some(slot) => trampoline(cx, p.d, p.self_ty, &f, (slot, want)),
@@ -416,7 +430,9 @@ fn trampoline(
 }
 
 /// Checks `def` against interface method `m`; returns `m`'s result type in the implementing
-/// type's context (`None` after a mismatch of the type parameters).
+/// type's context (`None` after a mismatch of the type parameters). With `shorter`, `def` may
+/// take only the first of `m`'s parameters, as TypeScript allows: how many is put there, for
+/// the caller to make the entry that drops the rest (`short_overrides`).
 pub(super) fn check_method_sig(
     cx: &mut Ctx,
     def: DefId,
@@ -424,6 +440,7 @@ pub(super) fn check_method_sig(
     m: &IfaceMethod,
     iface_args: &[TyId],
     iname: &str,
+    shorter: Option<&mut Option<usize>>,
 ) -> Option<TyId> {
     let (ps, span, is_getter, is_generator, rest) = {
         let f = cx.fn_info(def);
@@ -470,7 +487,14 @@ pub(super) fn check_method_sig(
     };
     // A rest parameter takes the arguments one by one, an array parameter as one array.
     let rest_ok = rest == m.rest;
-    let ps_ok = cx.same_tys(&ps, &want_ps) && rest_ok;
+    let first = match shorter.is_some() {
+        true => super::short_overrides::implements_first(cx, (def, &ps), (m, &want_ps)),
+        false => None,
+    };
+    let ps_ok = first.is_some() || (cx.same_tys(&ps, &want_ps) && rest_ok);
+    if let (Some(out), true) = (shorter, ps_ok && ret_ok && is_getter == m.is_getter) {
+        *out = first;
+    }
     if !ps_ok || !ret_ok {
         let mut d = Diagnostic::error(message, span);
         if !rest_ok {
