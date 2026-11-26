@@ -102,6 +102,26 @@ export class Uint32Array extends TypedArray implements Iterable<number> {
     return this.buf.bytes.slice(start, start + ((this.len * 4) as i64));
   }
 
+  // A copy of the elements, as `slice()` makes it. JS's `toReversed`, `toSorted` and `with`
+  // copy internally, so a subclass's `slice` doesn't run for them.
+  private copy(): Uint32Array {
+    // Of the elements left (`length`), as `slice`.
+    const n = this.count() as usize;
+    const o = this.off as i64;
+    const bytes = this.buf.bytes.slice(o, o + ((n * 4) as i64));
+    return Uint32Array.view(ArrayBuffer.adopt(bytes), 0, n);
+  }
+
+  // The elements as numbers. JS's `sort` reads them internally, so a subclass's `values`
+  // doesn't run for it.
+  private numbers(): number[] {
+    const out: number[] = [];
+    for (let i: usize = 0; i < this.len; i++) {
+      out.push(this.get(i));
+    }
+    return out;
+  }
+
   override [TYPED_ARRAY_GET](i: usize): number {
     return this.get(i);
   }
@@ -250,11 +270,7 @@ export class Uint32Array extends TypedArray implements Iterable<number> {
 
   /** The elements as numbers (JS returns an iterator). */
   values(): number[] {
-    const out: number[] = [];
-    for (let i: usize = 0; i < this.len; i++) {
-      out.push(this.get(i));
-    }
-    return out;
+    return this.numbers();
   }
 
   /** Whether `pred` holds for every element. */
@@ -505,7 +521,7 @@ export class Uint32Array extends TypedArray implements Iterable<number> {
    * NaN last), or `cmp`'s (negative: `a` first), keeping equal elements in order.
    */
   sort(cmp: ((a: number, b: number) => number) | null = null): Uint32Array {
-    const xs = this.values();
+    const xs = this.numbers();
     if (cmp == null) {
       xs.sort(ascending);
     } else {
@@ -549,29 +565,30 @@ export class Uint32Array extends TypedArray implements Iterable<number> {
 
   /** A reversed copy (ES2023); this array is unchanged. */
   toReversed(): Uint32Array {
-    return this.slice().reverse();
+    return this.copy().reverse();
   }
 
   /** A sorted copy (ES2023, the order of `sort`); this array is unchanged. */
   toSorted(cmp: ((a: number, b: number) => number) | null = null): Uint32Array {
-    return this.slice().sort(cmp);
+    return this.copy().sort(cmp);
   }
 
   /** The elements joined by `,` (what `String(xs)` and `${xs}` give). */
   override toString(): string {
-    return this.join(",");
+    // As JS's `toString`, which calls `join()`: a subclass's `join` runs with its own default.
+    return this.join(undefined);
   }
 
   /** A copy with element `index` (negative counts from the end) set to `value`; `RangeError` out of range. */
   with(position: number, value: number): Uint32Array {
-    // Of the elements left (`length`), as `slice`, which makes the copy.
+    // Of the elements left (`length`), as `copy`, which makes the copy.
     const len = this.count() as usize;
     const index = toInteger(position);
     const i = index < 0 ? index + (len as i64) : index;
     if (i < 0 || (i as usize) >= len) {
       throw new RangeError("Invalid typed array index");
     }
-    const out = this.slice();
+    const out = this.copy();
     out.put(i as usize, value);
     return out;
   }

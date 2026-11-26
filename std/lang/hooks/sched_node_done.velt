@@ -11,11 +11,12 @@
 // for a waiter left on an unsettled hub, and there is none.
 //
 // The reference stays, as before, with a rejection (its report reads the task: sched_node_report
-// .velt) or with a waker of the node still out: a wake racing the finish (sched_node_wake.velt
+// .velt `dropResult` keeps an unclaimed one on the task's list) or a panic, but not for a promise
+// that could reject and fulfilled (#3595), or with a waker of the node still out: a wake racing the finish (sched_node_wake.velt
 // `wakeAway`, after its flag test) pushes the node on the task and wakes the task, which that
 // reference keeps alive.
 
-import { noInline } from "velt/lang/intrinsics";
+import { inline, noInline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as nd from "./sched_node";
 import * as t from "./sched_task";
@@ -24,7 +25,8 @@ import * as t from "./sched_task";
  * Node `n` of task `task` finished, on the task's thread, before the task's own reference to it
  * goes (sched_node.velt `run`, `adoptedDone`): it lets go of the task when its count is `refs`,
  * its owner's (or hub's), the task's and those its caller holds for the run (the woken stack's,
- * a microtask entry's) only, and it is no rejection and not dropped (`DETACHED`).
+ * a microtask entry's) only, it is no rejection or panic (`settledWell`), and not dropped
+ * (`DETACHED`).
  *
  * The count is read sequentially consistent (an acquire would do), and that read sees every
  * waker of `n`: a waker is made only by a poll of `n` with its own cx, on this thread, so its
@@ -39,9 +41,22 @@ import * as t from "./sched_task";
 @noInline
 export function letGo(task: usize, n: usize, refs: usize): void {
   const fl = m.load32(n + nd.N_FLAGS);
-  if (m.load(n + nd.N_REFS) === refs && (fl & (nd.REJECTING | nd.DETACHED)) === 0) {
+  if (m.load(n + nd.N_REFS) === refs && (fl & nd.DETACHED) === 0 && settledWell(n, fl)) {
     m.st(n + nd.N_TASK, 0);
     // Never the last: the executor holds the task while this thread polls it.
     m.dec(task + t.T_REFS);
   }
+}
+
+/**
+ * Did finished node `n` (flags `fl`) settle with nothing for its task to report: it cannot reject,
+ * or it fulfilled (the tag byte of its `Result` is 0, as sched_node_report.velt `watch` reads it)
+ * without a panic? A rejection or a panic keeps the task: its unclaimed drop is reported there.
+ */
+@inline("always")
+function settledWell(n: usize, fl: u32): bool {
+  if ((fl & nd.REJECTING) === 0) {
+    return true;
+  }
+  return (fl & nd.PANICKED) === 0 && (m.ld32(n + nd.N_HEAD + 16) & 0xff) === 0;
 }

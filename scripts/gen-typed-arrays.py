@@ -247,7 +247,7 @@ CLASS_DOC = """\
 //
 // Elements read as numbers and are converted when written, as in JS (`ToUint8`: 300 is 44,
 // `-1` is 255; `Uint8ClampedArray` clamps; `Float32Array` rounds to `f32`). `xs[i]` reads
-// element `i` (std's `[INDEX]`, which sema calls for `xs[i]`: crates/velt_sema/src/body/expr/
+// element `i` (`[Symbol.index]`, which sema calls for `xs[i]`: crates/velt_sema/src/body/expr/
 // indexers.rs) and panics out of range like an array index (JS reads `undefined`); `xs[i] = v`
 // writes it and does nothing out of range, as in JS. `subarray` shares the buffer, `slice`
 // copies.
@@ -313,6 +313,26 @@ export class @C@ extends TypedArray implements Iterable<number> {
     return this.buf.bytes.slice(start, start + ((this.len * @N@) as i64));
   }
 
+  // A copy of the elements, as `slice()` makes it. JS's `toReversed`, `toSorted` and `with`
+  // copy internally, so a subclass's `slice` doesn't run for them.
+  private copy(): @C@ {
+    // Of the elements left (`length`), as `slice`.
+    const n = this.count() as usize;
+    const o = this.off as i64;
+    const bytes = this.buf.bytes.slice(o, o + ((n * @N@) as i64));
+    return @C@.view(ArrayBuffer.adopt(bytes), 0, n);
+  }
+
+  // The elements as numbers. JS's `sort` reads them internally, so a subclass's `values`
+  // doesn't run for it.
+  private numbers(): number[] {
+    const out: number[] = [];
+    for (let i: usize = 0; i < this.len; i++) {
+      out.push(this.get(i));
+    }
+    return out;
+  }
+
   override [TYPED_ARRAY_GET](i: usize): number {
     return this.get(i);
   }
@@ -353,20 +373,15 @@ export class @C@ extends TypedArray implements Iterable<number> {
   }
 
   /** `xs[i]`: element `i`; panics out of range, like an array index (JS reads `undefined`). */
-  [INDEX](i: number): number {
+  [Symbol.index](i: number): number {
 @INDEX_BODY@
-  }
-
-  // `xs[i]` outside the array (cold).
-  private outOfBounds(i: number): never {
-    panic(`index out of bounds: the len is ${this.count()} but the index is ${i}`);
   }
 @GONE@
   /**
    * `xs[i] = v`: writes element `i`, converted; nothing out of range, as in JS (nor past the
    * end of a `u8[]` that became shorter than its `subarray`: `length`).
    */
-  [SET_INDEX](i: number, v: number) {
+  [Symbol.setIndex](i: number, v: number) {
     if (i >= 0 && i < this.count() && i == Math.trunc(i)) {
       // Inside the view and inside its buffer's bytes (`count`).
       const o = this.off + (i as usize) * @N@;
@@ -385,7 +400,7 @@ export class @C@ extends TypedArray implements Iterable<number> {
   }
 
   /** The size of the elements in bytes: `length * BYTES_PER_ELEMENT`. */
-  override get byteLength(): number {
+@BYTE_LENGTH_INLINE@  override get byteLength(): number {
     return this.count() * @N@;
   }
 
@@ -444,11 +459,7 @@ export class @C@ extends TypedArray implements Iterable<number> {
 
   /** The elements as numbers (JS returns an iterator). */
   values(): number[] {
-    const out: number[] = [];
-    for (let i: usize = 0; i < this.len; i++) {
-      out.push(this.get(i));
-    }
-    return out;
+    return this.numbers();
   }
 
   /** Whether `pred` holds for every element. */
@@ -670,9 +681,9 @@ export class @C@ extends TypedArray implements Iterable<number> {
         const o = src.off as i64;
         this.buf.bytes.copyWithin(to as i64, o, o + ((n * @N@) as i64));
       } else if (src.off == 0 && src.len * @N@ == (src.buf.bytes.length as usize)) {
-        this.buf.bytes.set(src.buf.bytes, to);
+        setBytes(this.buf.bytes, src.buf.bytes, to);
       } else {
-        this.buf.bytes.set(src.bytesCopy(), to);
+        setBytes(this.buf.bytes, src.bytesCopy(), to);
       }
       return;
     }
@@ -699,7 +710,7 @@ export class @C@ extends TypedArray implements Iterable<number> {
    * NaN last), or `cmp`'s (negative: `a` first), keeping equal elements in order.
    */
   sort(cmp: ((a: number, b: number) => number) | null = null): @C@ {
-    const xs = this.values();
+    const xs = this.numbers();
     if (cmp == null) {
       xs.sort(ascending);
     } else {
@@ -743,29 +754,30 @@ export class @C@ extends TypedArray implements Iterable<number> {
 
   /** A reversed copy (ES2023); this array is unchanged. */
   toReversed(): @C@ {
-    return this.slice().reverse();
+    return this.copy().reverse();
   }
 
   /** A sorted copy (ES2023, the order of `sort`); this array is unchanged. */
   toSorted(cmp: ((a: number, b: number) => number) | null = null): @C@ {
-    return this.slice().sort(cmp);
+    return this.copy().sort(cmp);
   }
 
   /** The elements joined by `,` (what `String(xs)` and `${xs}` give). */
   override toString(): string {
-    return this.join(",");
+    // As JS's `toString`, which calls `join()`: a subclass's `join` runs with its own default.
+    return this.join(undefined);
   }
 
   /** A copy with element `index` (negative counts from the end) set to `value`; `RangeError` out of range. */
   with(position: number, value: number): @C@ {
-    // Of the elements left (`length`), as `slice`, which makes the copy.
+    // Of the elements left (`length`), as `copy`, which makes the copy.
     const len = this.count() as usize;
     const index = toInteger(position);
     const i = index < 0 ? index + (len as i64) : index;
     if (i < 0 || (i as usize) >= len) {
       throw new RangeError("Invalid typed array index");
     }
-    const out = this.slice();
+    const out = this.copy();
     out.put(i as usize, value);
     return out;
   }
@@ -846,14 +858,15 @@ UINT8_EXTRA = """
 # `xs[i - 1]`; then a read with no check of its own (`count` keeps the element inside the
 # buffer's bytes, even when they are a `u8[]` that became shorter).
 INDEX = """    // One test per branch, so the compiler knows `i` is in range where it converts it.
+    const n = this.count();
     if (!(i >= 0)) {
-      this.outOfBounds(i);
+      indexOutOfBounds(n, i);
     }
-    if (!(i < this.count())) {
-      this.outOfBounds(i);
+    if (!(i < n)) {
+      indexOutOfBounds(n, i);
     }
     if (i != Math.trunc(i)) {
-      this.outOfBounds(i);
+      indexOutOfBounds(n, i);
     }
     // Inside the view, which is inside its buffer's bytes (`count`).
     const o = this.off + (i as usize) * @N@;
@@ -903,7 +916,8 @@ def main():
           BASE_DOC + GENERATED + "\n" + imports(base, BUFFER_NAMES, "velt/lang/typed_array/buffer")
           + 'import { BufferView } from "velt/lang/typed_array/buffer_view";\n'
           + 'import "velt/lang/typed_array/apply_list";\n'
-          + imports(base, KEY_NAMES, "velt/lang/hooks/keys") + "\n" + base)
+          + imports(base, KEY_NAMES, "velt/lang/hooks/keys")
+          + 'import "velt/lang/number/to_fixed";\n' + "\n" + base)
     lay = LAYOUT_BODY
     write(os.path.join(DIR, "layout.velt"),
           LAYOUT_DOC + GENERATED + "\n" + imports(lay, BUFFER_NAMES, "velt/lang/typed_array/buffer")
@@ -921,6 +935,8 @@ def main():
         t = t.replace("@INSIDE@", inside)
         t = t.replace("@GONE@", "" if n == 1 else GONE)
         t = t.replace("@INDEX_BODY@", INDEX)
+        # `Uint8Array.byteLength` is always inlined (#3605: bench/typed_array/page_cells).
+        t = t.replace("@BYTE_LENGTH_INLINE@", '  @inline("always")\n' if c == "Uint8Array" else "")
         write_ = "const x = %s;\n    %s" % (convert, store)
         # `xs[i]` and `xs[i] = v` test `count`, so a byte needs no check of its own there.
         fast_read = read.replace("b[o]", "element8(b, o)")
@@ -935,7 +951,10 @@ def main():
         head = (imports(t, BUFFER_NAMES, "velt/lang/typed_array/buffer")
                 + imports(t, BASE_NAMES, "velt/lang/typed_array/base")
                 + imports(t, LAYOUT_NAMES, "velt/lang/typed_array/layout")
-                + imports(t, KEY_NAMES, "velt/lang/hooks/keys"))
+                + 'import { indexOutOfBounds } from "velt/lang/typed_array/out_of_bounds";\n'
+                + imports(t, KEY_NAMES, "velt/lang/hooks/keys")
+                + 'import { setBytes } from "velt/lang/bytes/copy";\n'
+                + ('import { inline } from "velt/lang/intrinsics";\n' if c == "Uint8Array" else ""))
         write(os.path.join(DIR, snake(c) + ".velt"), doc + GENERATED + "\n" + head + t)
 
     # Two globals: `Uint8Array` with `ArrayBuffer` and `DataView` (what `TextEncoder` and `fetch`

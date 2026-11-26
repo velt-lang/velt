@@ -19,10 +19,9 @@
 // the hub is only ever touched by the task it is shared on. A lazy node is driven by its first
 // waiter. A promise that isn't a node (a spawned task's join handle, a `sleep` kept as a value, a
 // race, a runtime leaf) is shared through a lazy node of this task that drives it, and becomes
-// that node's holder in place (sched_share_leaf.velt). Shared outside any task (a C library's
-// thread), a promise goes to the runtime's hub, whose outside home keeps it on one task
-// (rt_abi_async.md §1.2). Dropping a holder never cancels
-// the promise; the last role drops the settled result, or gives the node back its entries and
+// that node's holder in place (sched_share_leaf.velt). A share on a C library's own thread
+// is refused for now (`offWorker`, #3782): no task is that thread's. Dropping a holder never
+// cancels the promise; the last role drops the settled result, or gives the node back its entries and
 // drops it, so it runs to completion and its own result drop reports an unhandled rejection, as
 // for any dropped promise (sched_share_drop.velt).
 //
@@ -37,7 +36,8 @@
 // so for every holder `f - 8` holds its hub (for the original, the node's `N_HUB` word); a handle
 // handed to another task has a hub word of 0 and its proxy in its forward word.
 
-import { fnAddress, futDrop, futPoll, inline, statePoll } from "velt/lang/intrinsics";
+import { fnAddress, futDrop, futPoll, inline, noInline, statePoll } from "velt/lang/intrinsics";
+import * as pt from "./program_thread";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as nc from "./sched_node_catch";
@@ -112,19 +112,50 @@ export const HUB_HERE: u32 = 65536;
 export const FRONT: usize = 32;
 
 /**
+ * A promise shared where no task can hold it: on a C library's own thread, in an exported
+ * function it calls. Refused until such a share can be handed to the executor (#3782).
+ */
+@noInline
+function refuseOffTask(): void {
+  panic(
+    "a promise cannot be shared on a C library's own thread yet (#3782): " +
+      "share it inside an async function that the call starts",
+  );
+}
+
+/**
+ * The executor block of a share off the workers. A C library's own thread is refused whatever
+ * worker 0 runs meanwhile: the task current there is not this thread's, and a hub is only ever
+ * touched by the task it is shared on. The program's thread before it became worker 0 gets
+ * worker 0's block (0 before the executor started, which `schedShare` refuses too).
+ */
+@noInline
+function offWorker(): usize {
+  if (!pt.isProgramThread()) {
+    refuseOffTask();
+  }
+  return t.exec();
+}
+
+/**
  * `velt_rt_fut_share` (the hook lowering calls under `VELT_SCHEDULER=std`): another holder of
  * promise `f` (0: none), a handle of its own. `size` is the result's size, `share` its
  * `SharePoll` glue (0: copied as it is), `rdrop` its drop glue (0: nothing to drop). On a task,
  * a node of this executor is shared as itself, and any other promise (a join handle, a `sleep`, a
  * race, a runtime leaf) through a lazy node that drives it, whose holder it becomes in place
- * (sched_share_leaf.velt). Outside any task (a C library's thread) the runtime's hub shares it.
+ * (sched_share_leaf.velt). On a C library's own thread, whatever worker 0 runs meanwhile, and
+ * outside any task it is refused ([`offWorker`], [`refuseOffTask`]).
  */
 @inline("always")
 export function schedShare(p: usize, size: u64, share: usize, rdrop: usize): usize {
   if (p === 0) {
     return 0;
   }
-  const task = m.ld(t.exec() + t.E_CURRENT);
+  let e = t.here();
+  if (e === 0) {
+    e = offWorker();
+  }
+  const task = e === 0 ? 0 : m.ld(e + t.E_CURRENT);
   // A loop, not a call of itself: a function that can call itself is not inlined (#3097), and
   // this one is every share's entry point.
   let f = p;
@@ -148,9 +179,7 @@ export function schedShare(p: usize, size: u64, share: usize, rdrop: usize): usi
     f = fwd;
   }
   if (task === 0) {
-    // Shared outside any task (a C library's thread): the runtime's hub, whose identities the
-    // runtime keeps (`schedFutId`).
-    return off.share(f, size, share, rdrop);
+    refuseOffTask();
   }
   let leaf: usize = 0;
   if (m.ld(f) !== fnAddress(nd.nodePoll)) {
