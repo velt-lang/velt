@@ -246,12 +246,6 @@ impl Interp<'_> {
                 self.write_bytes(a[0], &n.to_le_bytes());
                 return Ok((n == 0) as u64);
             }
-            "velt_rt_drop_state" => {
-                self.drops.calls += 1;
-                return Ok(self.drop_state());
-            }
-            "velt_rt_drop_queue" => self.drop_queue(a[0], a[1]),
-            "velt_rt_drop_drain" => self.drop_drain()?,
             m if m.starts_with("velt_atomic_") => return Ok(self.atomic(m, a)),
             m if m.starts_with("velt_tls_") => {
                 let call = crate::tls::TlsCall::of_symbol(m)
@@ -260,8 +254,9 @@ impl Interp<'_> {
                     crate::tls::TlsCall::Get { id, init, .. } => {
                         return Ok(self.tls.get(&id).copied().unwrap_or(init))
                     }
-                    crate::tls::TlsCall::Set { id, .. } => {
-                        self.tls.insert(id, a[0]);
+                    crate::tls::TlsCall::Set { id, init, .. } => {
+                        let old = self.tls.insert(id, a[0]).unwrap_or(init);
+                        self.drops.on_set(id, old, a[0]);
                     }
                 }
             }
