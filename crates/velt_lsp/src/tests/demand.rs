@@ -450,3 +450,39 @@ fn the_editor_checks_again_with_the_tls_client_up_front() {
         assert_eq!(a.modules.iter().any(|m| m.path == client), loads, "{src}");
     }
 }
+
+/// A document that holds a vector through `velt/arch/x86`'s `Vector256` (which loads only part of
+/// velt/simd), adds two of them, and connects with TLS (#3696): the `+` was looked up before the
+/// TLS code brought the rest of velt/simd in the middle of the check, so the check refuses that
+/// module after serving it (velt_sema `collect::vector_extends`, `Analysis::late_refused`) and the
+/// analysis checks again with it up front, as `velt check` does. Without that, the abandoned
+/// check's `+` error would be reported.
+#[test]
+fn the_editor_checks_again_after_a_late_refusal() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("main.velt");
+    let src = r#"import { Vector256 } from "velt/arch/x86";
+import { connectTls } from "velt/net";
+
+async function main() {
+  const bytes: u8[] = [];
+  for (let i = 0; i < 32; i++) {
+    bytes.push(i as u8);
+  }
+  const v = Vector256.loadU8(bytes).lower();
+  const w = v + v;
+  console.log(w.lane(3));
+  const s = await connectTls("localhost:443");
+  s.close();
+}
+"#;
+    let overlay = HashMap::from([(root.clone(), src.to_string())]);
+    let mut folders = Default::default();
+    let a = crate::analysis::analyze(&RealLoader(real_std()), &root, &overlay, &mut folders);
+    let found = errors(&a.diagnostics, &a.sm);
+    assert!(found.is_empty(), "{found:?}");
+    assert!(
+        a.modules.iter().any(|m| m.path == "std/simd/ops_bytes"),
+        "velt/simd's operators were not loaded"
+    );
+}

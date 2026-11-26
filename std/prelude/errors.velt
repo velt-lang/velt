@@ -6,6 +6,7 @@
 // extend it too.
 
 import { ERROR_NAME, errorText } from "velt/lang/hooks/error";
+import { own } from "velt/lang/intrinsics/decorators";
 
 /**
  * The base class of errors: what std throws (`IoError`, `JsonError`, …) and what error classes
@@ -54,7 +55,10 @@ export class Error {
    * Node adds after it are not there. Reading it changes nothing, so it can sit beside the error
    * in one call (`console.error(e, e.stack)`): V8 writes the text on the first read and keeps it,
    * so a `name` or `message` changed after that read shows here, where Node keeps the old text.
+   * It is the instance's own property, as in JavaScript: a subclass's `stack` accessors are never
+   * reached.
    */
+  @own()
   get stack(): string | undefined {
     const assigned = this.#stack;
     if (assigned === null) {
@@ -63,7 +67,10 @@ export class Error {
     return assigned.value;
   }
 
-  /** Replaces the stack, as assigning Node's own `stack` property does. */
+  /**
+   * Replaces the stack, as assigning Node's own `stack` property does (a subclass's `set stack`
+   * is never called, as the getter's note says).
+   */
   set stack(value: string | undefined) {
     this.#stack = new AssignedStack(value);
   }

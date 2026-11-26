@@ -74,8 +74,7 @@ export const imports: Imports = {
     wasi: "./lang/hooks/clock_wasi.velt",
     js: "./lang/hooks/clock_js.velt",
   },
-  // The memory of the transfer map (std/lang/hooks/transfer.velt): the C library's, outside the
-  // leak counters; in the browser, which has no C library, the allocator compiled code uses.
+  // The transfer map's memory (lang/hooks/transfer.velt): the C library's; the browser's allocator.
   "#xfer-mem": { js: "./lang/hooks/xfer_mem_js.velt", default: "./lang/hooks/xfer_mem_c.velt" },
   // The C library calls of the weak core (std/lang/hooks/weak_mem.velt), apart from the
   // executor's so a program without tasks loads none of it: memory, and `sched_yield` or on
@@ -125,7 +124,8 @@ export const imports: Imports = {
   },
   // Whether `Promise.race`'s race settles a microtask after its deciding input, as Node does
   // (std/lang/promise/settle.velt, for `Promise.any`): the executor in Velt's does
-  // (std/lang/hooks/sched_race.velt), the runtime's (WebAssembly) does not.
+  // (std/lang/hooks/sched_race.velt), the runtime's (WebAssembly) does not. Also whether
+  // `Promise.allSettled` can attach to every promise at the call (`settledAtCall`).
   "#promise-race-step": {
     "std-scheduler": "./lang/promise/race_step_sched.velt",
     default: "./lang/promise/race_step_rt.velt",
