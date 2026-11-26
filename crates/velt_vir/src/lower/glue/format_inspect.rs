@@ -41,7 +41,7 @@ impl FnLower<'_, '_> {
         if let Some(restore) = saved.and_then(|s| hooks::inspect_restore(self, ty::U64::arg(s))) {
             _ = restore.emit(self);
         }
-        let name = self.cx.type_name(ty);
+        let (name, base) = self.inspect_name(ty, m);
         if matches!(self.cx.kind(rty), TyKind::Str) {
             self.push_inspect_text(buf, &res);
         } else if self.is_named_inspect(rty) {
@@ -51,9 +51,9 @@ impl FnLower<'_, '_> {
             // `Symbol.toStringTag`), or, when that is empty, `[Object]`.
             let text = self.field_place(&res, rty, 0);
             let cut = self.field_place(&res, rty, 1);
-            let cut_name = match self.std_inspect_owner(m) {
-                Some(base) if base != name => format!("{name} [{base}]"),
-                _ => name.clone(),
+            let cut_name = match &base {
+                Some(base) => format!("{name} [{base}]"),
+                None => name.clone(),
             };
             let cut_text = |lw: &mut Self| {
                 let n = lw.str_len(Operand::Copy(cut.clone()));
@@ -108,8 +108,13 @@ impl FnLower<'_, '_> {
         } else if let TyKind::Array(_) = self.cx.kind(rty) {
             // An array: after the name and its length, as Node prints an array subclass or a
             // typed array (`Uint8Array(3) [ 1, 2, 3 ]`), cut to `[Uint8Array]` past the depth
-            // limit.
-            self.within_depth(buf, depth, &format!("[{name}]"), None, |lw, _| {
+            // limit. A program's subclass of a std class also shows the std class, as Node tags
+            // a typed array's subclass (`V(2) [Int16Array] [ 0, 5 ]`, `[V [Int16Array]]`).
+            let (tag, cut) = match &base {
+                Some(base) => (format!("[{base}] "), format!("[{name} [{base}]]")),
+                None => (String::new(), format!("[{name}]")),
+            };
+            self.within_depth(buf, depth, &cut, None, |lw, _| {
                 let start = lw.temp(Ty::U64);
                 lw.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
                 let start = Operand::Copy(Place::local(start));
@@ -118,7 +123,7 @@ impl FnLower<'_, '_> {
                 lw.push_text(buf, &format!("{name}("));
                 let u64_ = lw.cx.intern(TyKind::Int(velt_sema::hir::IntTy::U64));
                 lw.push_scalar(buf, len, u64_);
-                lw.push_text(buf, ") ");
+                lw.push_text(buf, &format!(") {tag}"));
                 lw.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
                 lw.format_nested(buf, &res, rty, depth);
             });
@@ -128,7 +133,6 @@ impl FnLower<'_, '_> {
             let start = self.temp(Ty::U64);
             self.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
             let start = Operand::Copy(Place::local(start));
-            let name = self.fixed_inspect_name(ty, m).unwrap_or(name);
             self.push_text(buf, &format!("{name} "));
             self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
             self.format_nested(buf, &res, rty, depth);
@@ -136,11 +140,26 @@ impl FnLower<'_, '_> {
         self.drop_glue(res, rty);
     }
 
-    /// The name of the std class that declares `[INSPECT]()` method `m`; `None` for a program's.
-    fn std_inspect_owner(&self, m: DefId) -> Option<String> {
+    /// The name a `ty` object whose `[INSPECT]()` is `m` is printed under, and the std class it
+    /// shows beside it, one decision per class: a class of [`FIXED_NAMES`] prints std's class
+    /// alone (`Headers { … }` for a `class H extends Headers`); any other prints its own class,
+    /// with the std class that declares `m` when that is another class (a program's
+    /// `class V extends Int16Array` prints `V(2) [Int16Array] [ … ]`, a `class U extends URL`
+    /// cuts to `U [URL] {}`).
+    fn inspect_name(&mut self, ty: TyId, m: DefId) -> (String, Option<String>) {
+        if let Some(fixed) = self.fixed_inspect_name(ty, m) {
+            return (fixed, None);
+        }
+        (self.cx.type_name(ty), self.std_inspect_owner(ty, m))
+    }
+
+    /// The name of the std class that declares `[INSPECT]()` method `m`, when it is not `ty`'s own
+    /// class; `None` for a program's method or `ty`'s class's own.
+    fn std_inspect_owner(&self, ty: TyId, m: DefId) -> Option<String> {
         let owner = self.cx.fn_def(m).self_ty?;
-        let name = &self.cx.adt_def(self.class_def(owner)?).name;
-        velt_common::std_modules::is_std(name).then(|| self.cx.type_name(owner))
+        let od = self.class_def(owner)?;
+        let std = velt_common::std_modules::is_std(&self.cx.adt_def(od).name);
+        (std && Some(od) != self.class_def(ty)).then(|| self.cx.type_name(owner))
     }
 
     /// The name a `ty` object is printed under when its `[INSPECT]()` `m` is one of
