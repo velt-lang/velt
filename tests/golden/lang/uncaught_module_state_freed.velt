@@ -1,0 +1,26 @@
+// check: no leaks
+// An uncaught error ends the program with module state holding heap values: written by a function
+// that returned, and by frames the error unwinds through. With the debug counters on, module state
+// is dropped at that exit as at a normal end, so every block is freed (#3878; it was dropped only
+// at exit code 0, and a throwing `main`'s report skipped the drop).
+const seen: string[] = [];
+const byKey = new Map<string, number[]>();
+let last = "";
+
+function note(n: number) {
+  seen.push(`a key long enough for the heap ${n}`);
+  byKey.set(`key ${n}`, [n, n + 1]);
+}
+
+function f(n: number): number throws RangeError {
+  note(n);
+  last = `the last key written, ${n}`;
+  if (n > 2) {
+    throw new RangeError("deep");
+  }
+  return f(n + 1);
+}
+
+note(100);
+console.log("before", seen.length, byKey.size);
+console.log(f(0));

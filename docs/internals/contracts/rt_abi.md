@@ -845,8 +845,9 @@ in Velt's `schedModuleState`, `schedModuleBlock` and `schedModuleReady` (sched_m
 takes the lock below) for a program that runs on it, and module_blocks.velt's `moduleState`,
 `moduleBlock` and `moduleReady` for one that doesn't (no tasks, so no lock); they take the
 descriptor and the block as `usize`. Lowering calls `moduleExit(code)` after a synchronous
-`main` returns, which drops the blocks as below. Everything this section says of the entries
-holds for the hooks.
+`main` returns, also with 1 after reporting the error a throwing `main` left uncaught, which
+drops the blocks as below whatever the code. Everything this section says of the entries holds
+for the hooks.
 
 module_blocks.velt's hooks are `prebuilt` (velt_common `std_hooks/prebuilt.rs`): where the build
 links the module's object, each is a call of its entry point (`velt_hook_module_state`,

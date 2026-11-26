@@ -157,14 +157,12 @@ export function moduleReady(state: usize, n: u64): void {
 }
 
 /**
- * The end of a program without the executor, `main` done with exit code `code`: at a normal end
- * (0) with the debug counters on (`VELT_RC_STATS=1`), the blocks go (`dropAll`), as the runtime's
- * drop at exit did; else they are kept to the end, as in Node.
+ * The end of a program without the executor, `main` done with exit code `code` (1 after an
+ * uncaught error): with the debug counters on (`VELT_RC_STATS=1`), the blocks go (`dropAll`), as
+ * the runtime's drop at exit did, whatever the code (#3878); else they are kept to the end, as in
+ * Node.
  */
 export function moduleExit(code: i32): void {
-  if (code !== 0) {
-    return;
-  }
   if (counting()) {
     dropAll();
   }
