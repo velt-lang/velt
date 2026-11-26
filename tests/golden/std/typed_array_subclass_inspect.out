@@ -1,0 +1,7 @@
+V(2) [Int16Array] [ 0, 5 ]
+[ V(2) [Int16Array] [ 0, 5 ] ]
+{ v: V(2) [Int16Array] [ 0, 5 ] }
+W(3) [Int16Array] [ 0, 0, 0 ]
+Bytes(0) [Uint8Array] []
+Int16Array(2) [ 0, 0 ]
+{ a: { b: { c: [V [Int16Array]] } } }

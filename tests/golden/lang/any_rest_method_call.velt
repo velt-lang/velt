@@ -1,0 +1,76 @@
+// A method with a rest parameter called through `any`: the arguments from its position on are
+// the rest array, as at a typed call (#3812).
+// No argument written is not `undefined` written.
+class Counter {
+  join(...p: any[]): number {
+    return p.length;
+  }
+}
+
+interface Joiner {
+  join(...p: string[]): string;
+}
+
+class C implements Joiner {
+  tag = "c";
+  join(...p: string[]): string {
+    return this.tag + ":" + p.join("+");
+  }
+  sum(first: number, ...more: number[]): number {
+    let s = first;
+    for (const m of more) {
+      s += m;
+    }
+    return s;
+  }
+  count(label: string, flag: boolean, ...rest: any[]): string {
+    return label + flag + rest.length;
+  }
+  async later(...p: number[]): Promise<number> {
+    return p.length;
+  }
+}
+
+class D extends C {
+  override join(...p: string[]): string {
+    return "d(" + super.join(...p) + ")";
+  }
+}
+
+class Box<T> {
+  items: T[] = [];
+  add(...xs: T[]): number {
+    for (const x of xs) {
+      this.items.push(x);
+    }
+    return this.items.length;
+  }
+}
+
+async function main(): Promise<void> {
+  const c: any = new C();
+  console.log(c.join("x", "y"), c.join(), c.join("one"));
+  console.log(c.sum(1), c.sum(1, 2), c.sum(1, 2, 3, 4));
+  console.log(c.count("l", true), c.count("l", false, 1, "two", null));
+  console.log(await c.later(), await c.later(1, 2, 3));
+  const d: any = new D();
+  console.log(d.join("a", "b"), d.join(), d.sum(5, 5));
+  const b: any = new Box<number>();
+  console.log(b.add(), b.add(1), b.add(2, 3), b.items);
+  const j: Joiner = new C();
+  const aj: any = j;
+  console.log(aj.join("i", "j"), aj.join());
+  // An object literal's function value with a rest parameter, as before.
+  const obj = { plain: (...xs: string[]) => xs.join("-") };
+  const lit: any = obj;
+  console.log(lit.plain("p", "q"), lit.plain());
+  const l: any = new Counter();
+  console.log(l.join(), l.join(undefined), l.join(undefined, undefined), l.join(null), l.join("a"));
+  const arr: any = [1, 2];
+  console.log(arr.join(), arr.join(undefined), arr.join("-"));
+  // Through a proxy.
+  const p: any = new Proxy(new C(), {});
+  console.log(p.join("x", "y"), p.join(), p.sum(4, 5));
+}
+
+main();

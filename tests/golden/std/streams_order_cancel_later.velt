@@ -1,0 +1,119 @@
+// check: no leaks
+// When `cancel(reason)`'s promise settles against other microtasks, as Node 22's (#3809), for a
+// `cancel` callback that throws, gives a promise already settled, or gives one a tick reaction
+// (`t0` ... `t9`) resolves or rejects later, at `t0` to `t5`: the cancel settles two microtasks
+// after the later of that settle and `t2`. Through a reader and through the stream, with a pull
+// pending and without. The Node twin is streams_order_cancel_later.mjs.
+
+// at: the tick that settles the callback's promise; -1: settled already; -2: the callback throws.
+async function laterCase(
+  reject: boolean,
+  at: number,
+  pending: boolean,
+  viaStream: boolean,
+): Promise<void> {
+  const log: string[] = [];
+  let open: () => void = () => {};
+  const gate = new Promise<void>((r) => {
+    open = r;
+  });
+  let late: () => void = () => {};
+  let fail: (e: Error) => void = (e: Error) => {};
+  const callback = new Promise<void, Error>((r, j) => {
+    late = r;
+    fail = j;
+  });
+  let p0 = Promise.resolve();
+  for (let i = 0; i < 10; i++) {
+    const k = i;
+    p0 = p0.then(() => {
+      log.push("t" + k);
+      if (k === at) {
+        if (reject) {
+          fail(new Error("late"));
+        } else {
+          late();
+        }
+      }
+    });
+  }
+  const s = new ReadableStream<number>({
+    pull: (c) => {
+      log.push("pull");
+      return pending ? gate : Promise.resolve();
+    },
+    cancel: (reason) => {
+      log.push("cancel callback");
+      if (at === -2) {
+        throw new Error("thrown");
+      }
+      if (at === -1) {
+        const now = new Promise<void, Error>((r, j) => {
+          if (reject) {
+            j(new Error("now"));
+          } else {
+            r();
+          }
+        });
+        return now;
+      }
+      return callback;
+    },
+  });
+  let settled: Promise<void> = Promise.resolve();
+  if (viaStream) {
+    queueMicrotask(() => {
+      log.push("cancel");
+      settled = s.cancel("x").then(
+        () => {
+          log.push("cancel resolved");
+        },
+        (e) => {
+          log.push("cancel rejected " + (e as Error).message);
+        },
+      );
+    });
+  } else {
+    const r = s.getReader();
+    r.read().then((v) => {
+      log.push("read done=" + v.done);
+    });
+    r.closed.then(() => {
+      log.push("closed");
+    });
+    queueMicrotask(() => {
+      log.push("cancel");
+      settled = r.cancel("x").then(
+        () => {
+          log.push("cancel resolved");
+        },
+        (e) => {
+          log.push("cancel rejected " + (e as Error).message);
+        },
+      );
+    });
+  }
+  await p0;
+  await settled;
+  open();
+  console.log(
+    `${reject ? "rej" : "res"} at=${at} pending=${pending} stream=${viaStream}: ${log.join(" ")}`,
+  );
+}
+
+async function main() {
+  for (const viaStream of [false, true]) {
+    for (const pending of [true, false]) {
+      for (const at of [-2, -1, 0, 1, 2, 3, 5]) {
+        for (const reject of [false, true]) {
+          if (at === -2 && reject) {
+            continue;
+          }
+          await laterCase(reject, at, pending, viaStream);
+        }
+      }
+    }
+  }
+}
+
+main();

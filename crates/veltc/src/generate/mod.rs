@@ -120,8 +120,8 @@ fn hand_late_refusals(more: &mut Option<&mut StdLoad>, kept: &velt_sema::StdLoad
     }
 }
 
-/// `--no-generators` (docs/internals/design/source-generators.md §11): one check, with no
-/// generated code offered or generated; each instance that needs code is an error naming the
+/// `--no-generators` (docs/internals/design/source-generators.md "Diagnostics"): one check, with
+/// no generated code offered or generated; each instance that needs code is an error naming the
 /// generator that would write it.
 fn check_without_generators(
     sess: &mut Session,

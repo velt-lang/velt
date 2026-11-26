@@ -370,6 +370,7 @@ pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<FxHashMap<DefId, Vec<DynMember
                 // hands it back (`crate::hand_back`): a method of that name the program calls
                 // through `any` gets a method returning it.
                 let called = cx.method_facts.call_names.contains(&name);
+                let rest = kind == DynMemberKind::Method && cx.fn_info(def).rest;
                 let def = match kind {
                     DynMemberKind::Method if called => crate::hand_back::value_entry(cx, def),
                     _ => def,
@@ -379,6 +380,7 @@ pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<FxHashMap<DefId, Vec<DynMember
                     kind,
                     def,
                     owner,
+                    rest,
                 });
             }
             let Some(base) = base else { break };
@@ -407,6 +409,7 @@ pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<FxHashMap<DefId, Vec<DynMember
                 kind: DynMemberKind::ReadonlyField,
                 def: d,
                 owner: own,
+                rest: false,
             });
         }
         if !members.is_empty() {
@@ -487,6 +490,7 @@ fn literal_accessors(cx: &mut Ctx, d: DefId, members: &mut Vec<DynMember>) {
                 kind: DynMemberKind::Getter,
                 def,
                 owner,
+                rest: false,
             });
         }
     }
@@ -532,6 +536,7 @@ fn literal_accessors(cx: &mut Ctx, d: DefId, members: &mut Vec<DynMember>) {
             kind,
             def,
             owner,
+            rest: false,
         });
     }
 }

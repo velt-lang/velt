@@ -1,6 +1,6 @@
-// `b.append("literal")` is compiled to the builder's fast path inline (string-building.md step 2,
-// #1677): it must still copy a buffer that `toString()` shared, grow a full one, and leave
-// non-ASCII text to the runtime.
+// `b.append("literal")` is compiled to the builder's fast path inline (string-building.md "Inline
+// appends", #1677): it must still copy a buffer that `toString()` shared, grow a full one, and
+// leave non-ASCII text to the runtime.
 function main() {
   const b = new StringBuilder(64);
   b.append("a heap buffer, longer than 23 bytes");

@@ -1,4 +1,5 @@
-//! Field-only interfaces are object types (docs/internals/design/shared-models.md, step 2).
+//! Field-only interfaces are object types (docs/internals/design/shared-models.md "A field-only
+//! interface is an object type").
 //!
 //! An interface that declares at least one field, no methods, getters or setters, and extends
 //! only field-only interfaces describes data. It gets a synthesized struct definition with its
