@@ -8,7 +8,7 @@ import { backtrack, backtrackReset, FAILED, MATCHED, SPENT } from "velt/text/reg
 import { charAt } from "velt/text/regex/decode";
 import { backward } from "velt/text/regex/dfa_backward";
 import { Dfa, GAVE_UP } from "velt/text/regex/dfa";
-import { thaw } from "velt/text/regex/dfa_tables";
+import { DfaTables, thaw } from "velt/text/regex/dfa_tables";
 import { onePass, UNSURE } from "velt/text/regex/one_pass";
 import { pike, pikeReset } from "velt/text/regex/pike";
 import {
@@ -194,7 +194,7 @@ function suffixed(prog: Program, m: Search, s: string, len: usize, from: usize):
   let at = m.reqAt;
   while (at >= 0) {
     const end = (at as usize) + 1;
-    const start = backward(starts, s, end, from);
+    const start = backRun(starts, prog, s, end, from);
     if (start == GAVE_UP) {
       dropStarts(m);
       return GAVE_UP;
@@ -233,7 +233,7 @@ function automaton(prog: Program, m: Search, s: string, len: usize, from: usize,
   // Every match ends where the subject does: where one starts is the backward automaton's
   // answer from there, and the subject is read from its end only as far as a match can reach.
   if (prog.endsAtEnd && !fixed) {
-    const start = backward(startsOf(prog, m), s, len, from);
+    const start = backRun(startsOf(prog, m), prog, s, len, from);
     if (start == GAVE_UP) {
       dropStarts(m);
       return GAVE_UP;
@@ -246,7 +246,7 @@ function automaton(prog: Program, m: Search, s: string, len: usize, from: usize,
   const kept = m.endsKept;
   const ends = m.ends ?? (kept != null ? thaw(prog, false, kept) : new Dfa(prog, false));
   m.ends = ends;
-  const end = ends.forward(m, s, len, from, fixed, slots.length == 0);
+  const end = ends.forward(prog, m, s, len, from, fixed, slots.length == 0);
   if (end < 0 || slots.length == 0) {
     if (end == GAVE_UP) {
       // Full: not kept for the next search.
@@ -265,7 +265,7 @@ function automaton(prog: Program, m: Search, s: string, len: usize, from: usize,
     return MATCHED;
   }
   if (!fixed) {
-    start = backward(startsOf(prog, m), s, end as usize, from);
+    start = backRun(startsOf(prog, m), prog, s, end as usize, from);
     if (start == GAVE_UP) {
       dropStarts(m);
       return GAVE_UP;
@@ -276,12 +276,25 @@ function automaton(prog: Program, m: Search, s: string, len: usize, from: usize,
 
 /** The backward automaton of `m`'s search: kept, or started from the regex's tables. */
 function startsOf(prog: Program, m: Search): Dfa {
-  const back = prog.backward ?? prog;
-  const keptStarts = m.startsKept;
-  const starts =
-    m.starts ?? (keptStarts != null ? thaw(back, true, keptStarts) : new Dfa(back, true));
+  const kept = m.startsKept;
+  // Each program read where it is: `prog.backward ?? prog` would take `prog` (a regex's program
+  // is read in place, frozen, and taken it is copied, #3883).
+  const back = prog.backward;
+  const starts = m.starts ?? (back != null ? backDfa(back, kept) : backDfa(prog, kept));
   m.starts = starts;
   return starts;
+}
+
+/** The backward automaton of `back`, from `kept` tables if there are some. */
+function backDfa(back: Program, kept: shared<DfaTables> | null): Dfa {
+  return kept != null ? thaw(back, true, kept) : new Dfa(back, true);
+}
+
+/** `backward` of `d`, the backward automaton of `prog` (`startsOf`), with the program it was
+ * made for. */
+function backRun(d: Dfa, prog: Program, s: string, end: usize, floor: usize): i64 {
+  const back = prog.backward;
+  return back != null ? backward(d, back, s, end, floor) : backward(d, prog, s, end, floor);
 }
 
 /** The backward automaton filled up: not kept, nor its tables. */
