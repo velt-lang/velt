@@ -144,22 +144,33 @@ export class DataView extends BufferView {
 
   /** Writes `value` as a 16-bit integer (wrapped). */
   setInt16(byteOffset: number, value: number, littleEndian: bool = false) {
-    this.setUint16(byteOffset, value, littleEndian);
+    this.put16(byteOffset, value, littleEndian);
   }
 
   /** Writes `value` as a 16-bit unsigned integer (wrapped). */
   setUint16(byteOffset: number, value: number, littleEndian: bool = false) {
-    const x = toUint32(value) as u16;
-    store16(this.buf.bytes, this.at(byteOffset, 2), littleEndian ? x : swap16(x));
+    this.put16(byteOffset, value, littleEndian);
   }
 
   /** Writes `value` as a 32-bit integer (wrapped). */
   setInt32(byteOffset: number, value: number, littleEndian: bool = false) {
-    this.setUint32(byteOffset, value, littleEndian);
+    this.put32(byteOffset, value, littleEndian);
   }
 
   /** Writes `value` as a 32-bit unsigned integer (wrapped). */
   setUint32(byteOffset: number, value: number, littleEndian: bool = false) {
+    this.put32(byteOffset, value, littleEndian);
+  }
+
+  // Writes `value` as 16 bits (wrapped), for the signed and the unsigned setter: JS's don't call
+  // each other, so a subclass's `setUint16` doesn't run for `setInt16`.
+  private put16(byteOffset: number, value: number, littleEndian: bool) {
+    const x = toUint32(value) as u16;
+    store16(this.buf.bytes, this.at(byteOffset, 2), littleEndian ? x : swap16(x));
+  }
+
+  // Writes `value` as 32 bits (wrapped), as `put16`.
+  private put32(byteOffset: number, value: number, littleEndian: bool) {
     const x = toUint32(value);
     store32(this.buf.bytes, this.at(byteOffset, 4), littleEndian ? x : swap32(x));
   }

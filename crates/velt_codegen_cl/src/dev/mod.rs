@@ -44,8 +44,11 @@ const MAX_SWAPS: u32 = 200;
 /// The symbol a version imports the running module state descriptor under (`Naming::Dev`).
 const SHARED_MODULE_DESC: &str = "velt_dev_module_desc";
 
-/// A JIT session: owns every version it loaded (and so the code's memory), the slots and
-/// trampolines, and the facts of the running version.
+/// A JIT session: owns every version it loaded, the slots and trampolines, and the facts of the
+/// running version. What the loaded code runs on is never freed, also when the session is
+/// dropped: the code's memory (cranelift keeps finalized memory), the slots, and the words below.
+/// `velt dev` drops its session when the supervisor closes the reload channel, while the program
+/// still finishes its requests.
 pub struct DevSession {
     runtime: Vec<(String, usize)>,
     versions: Vec<JITModule>,
@@ -59,12 +62,13 @@ pub struct DevSession {
     debug_info: bool,
     /// The slot of each `ThreadLocal`'s operating-system key, by its id (`velt_vir::tls`): one
     /// per constant for the whole session, which every version imports, so code of different
-    /// versions reads and writes the same value. Never freed (code may use it until the end).
-    tls_keys: FxHashMap<u64, Box<std::sync::atomic::AtomicU64>>,
+    /// versions reads and writes the same value. Never freed (code may use it until the end):
+    /// leaked.
+    tls_keys: FxHashMap<u64, &'static std::sync::atomic::AtomicU64>,
     /// The word of each static atomic, by its id (`vir::StaticData::mutable`): one per constant
     /// for the whole session, starting as the first version's value, which every version
-    /// imports. Never freed.
-    static_atomics: FxHashMap<u64, Box<std::sync::atomic::AtomicU64>>,
+    /// imports. Never freed: leaked.
+    static_atomics: FxHashMap<u64, &'static std::sync::atomic::AtomicU64>,
     /// The address of the running version's module state descriptor, which the runtime keys
     /// its block by: a version whose module state has the same key imports it, so its code
     /// reads and writes the values the running code does (`classify::shares_module_state`).
@@ -102,7 +106,14 @@ fn descriptor_functions(program: &vir::Program, desc: usize) -> Vec<usize> {
         .collect()
 }
 
-/// A program loaded by [`DevSession::load`]; valid as long as its session lives.
+/// A word the loaded code reads and writes for the rest of the process, starting as `value`
+/// (like a function's slot, `trampoline::Slot`).
+fn leaked(value: u64) -> &'static std::sync::atomic::AtomicU64 {
+    Box::leak(Box::new(std::sync::atomic::AtomicU64::new(value)))
+}
+
+/// A program loaded by [`DevSession::load`]: its code runs for the rest of the process, also
+/// after its session is dropped.
 #[derive(Clone, Copy, Debug)]
 pub struct JitProgram {
     main: usize,
@@ -353,8 +364,8 @@ impl DevSession {
             let Some(call) = velt_vir::tls::TlsCall::of_symbol(&e.symbol) else {
                 continue;
             };
-            let slot = self.tls_keys.entry(call.id()).or_default();
-            let address = &**slot as *const std::sync::atomic::AtomicU64 as usize;
+            let slot = *self.tls_keys.entry(call.id()).or_insert_with(|| leaked(0));
+            let address = slot as *const std::sync::atomic::AtomicU64 as usize;
             let name = velt_vir::tls::key_symbol(call.id());
             if !out.iter().any(|(n, _)| *n == name) {
                 out.push((name, address));
@@ -370,13 +381,13 @@ impl DevSession {
             let Some(id) = s.mutable else {
                 continue;
             };
-            let word = self.static_atomics.entry(id).or_insert_with(|| {
+            let word = *self.static_atomics.entry(id).or_insert_with(|| {
                 let mut start = [0u8; 8];
                 let n = s.bytes.len().min(8);
                 start[..n].copy_from_slice(&s.bytes[..n]);
-                Box::new(u64::from_le_bytes(start).into())
+                leaked(u64::from_le_bytes(start))
             });
-            let address = &**word as *const std::sync::atomic::AtomicU64 as usize;
+            let address = word as *const std::sync::atomic::AtomicU64 as usize;
             out.push((velt_vir::atomic::static_symbol(id), address));
         }
         out

@@ -77,9 +77,31 @@ export function taskRead(): void {
   pause(TASK_PAUSE.load("relaxed"));
 }
 
+/**
+ * The longest a pause lasts, in nanoseconds per turn asked for. A turn takes a few microseconds
+ * when nothing else wants the core, so a pause on an idle machine gives all its turns. On a busy
+ * one (more workers than cores, other processes) each turn hands the core to someone else for far
+ * longer, the window is as open after a few of them, and a program that pauses hundreds of times
+ * would not end in a test's time (#3845: 480,000 turns in one run, over a minute on three cores).
+ */
+const TURN_NS: u64 = 5000;
+
+/** Gives the core away `n` times, or until `n` turns' time (`TURN_NS`) has passed. */
 @noInline
 function pause(n: u64): void {
+  if (n === 0) {
+    return;
+  }
+  const end = now() + n * TURN_NS;
   for (let i: u64 = 0; i < n; i++) {
     m.yieldCore();
+    if (now() >= end) {
+      return;
+    }
   }
+}
+
+/** The monotonic clock, in nanoseconds since the process started. */
+function now(): u64 {
+  return (performance.now() * 1000000.0) as u64;
 }

@@ -178,6 +178,7 @@ impl FnCx<'_, '_> {
     /// over `extend<T> Array<T[]>` over `extend<T> Array<T>`). Several equally specific blocks are ambiguous
     /// ([`FnCx::check_extension_ambiguity`] reports it at the call); the first is used then.
     fn extension_method(&mut self, recv: TyId, name: &str) -> Option<Resolved> {
+        self.note_vector_lookup(recv, name);
         let candidates = self.applicable_extensions(recv, name);
         let (i, owner) = self
             .most_specific(&candidates)
@@ -249,20 +250,31 @@ impl FnCx<'_, '_> {
         ));
     }
 
+    /// Records the lookup of `name` through `extend` blocks on `recv` when it is a built-in vector
+    /// type, whether a block answers it or not (`ExtensionLookup::vector_lookups`).
+    pub(super) fn note_vector_lookup(&mut self, recv: TyId, name: &str) {
+        if matches!(self.cx.ty.kind(recv), TyKind::Simd(_)) {
+            self.cx
+                .ext_lookup
+                .vector_lookups
+                .insert((recv, name.to_string()));
+        }
+    }
+
     /// `extend` blocks with a method `name` that apply to `recv`, with their type arguments.
     fn applicable_extensions(&mut self, recv: TyId, name: &str) -> Vec<(usize, Vec<TyId>)> {
         let mut out = vec![];
         let n = self.cx.extensions.len();
-        if self.cx.extension_names.0 != n {
+        if self.cx.ext_lookup.names.0 != n {
             let mut names: rustc_hash::FxHashMap<String, Vec<usize>> = Default::default();
             for (i, x) in self.cx.extensions.iter().enumerate() {
                 for k in x.methods.keys() {
                     names.entry(k.clone()).or_default().push(i);
                 }
             }
-            self.cx.extension_names = (n, names);
+            self.cx.ext_lookup.names = (n, names);
         }
-        let Some(found) = self.cx.extension_names.1.get(name) else {
+        let Some(found) = self.cx.ext_lookup.names.1.get(name) else {
             return out;
         };
         for i in found.clone() {

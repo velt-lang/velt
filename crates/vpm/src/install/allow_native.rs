@@ -359,6 +359,7 @@ mod tests {
             },
             commit: "abc".to_string(),
             checksum: String::new(),
+            sparse: false,
             dir: PathBuf::new(),
             npm,
         };

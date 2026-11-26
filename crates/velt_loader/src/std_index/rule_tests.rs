@@ -155,7 +155,9 @@ fn modules_that_may_not_be_served_in_place() {
             base: "Error".into()
         }]
     );
-    // An `export type i8x16 = i8x16;` line does not make a built-in vector type the module's own.
+    // velt/simd only adds methods to the built-in vector types (`extend u8x16 { … }`, no type
+    // parameters, no `implements`), which may be served in place (#3634; the checker checks
+    // they shadow nothing: velt_sema `collect::vector_extends`).
     for path in [
         "std/simd/bytes",
         "std/simd/floats",
@@ -164,13 +166,7 @@ fn modules_that_may_not_be_served_in_place() {
     ] {
         let m = path_of(path);
         assert!(!m.extends.is_empty(), "{path}");
-        assert!(
-            m.violations
-                .iter()
-                .any(|v| matches!(v, Violation::ExtendsForeignType { .. })),
-            "{path}: {:?}",
-            m.violations
-        );
+        assert!(m.in_place(), "{path}: {:?}", m.violations);
     }
     // A global's import line, and the hook modules, are served in place.
     for path in ["std/prelude/global/to_fixed", "std/lang/hooks/any_record"] {
@@ -212,6 +208,14 @@ fn each_reason_of_the_rule() {
                 Violation::ExtendsForeignType { ty: "*".into() },
                 Violation::ExtendsForeignType { ty: "Array".into() },
             ],
+        ),
+        (
+            // Methods added to a built-in vector type are allowed; with `implements` they are
+            // not (an interface implementation changes what other code sees).
+            "extend_vector",
+            "extend u8x16 { a(): void {} }\nextend mask8x16 { b(): void {} }\n\
+             extend i32x4 implements I { c(): void {} }\n",
+            vec![Violation::ExtendsForeignType { ty: "i32x4".into() }],
         ),
         (
             "subclass",

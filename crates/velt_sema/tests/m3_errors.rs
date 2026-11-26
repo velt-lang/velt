@@ -264,3 +264,21 @@ fn with_summaries_follow_a_self_recursive_call_that_swaps_its_arguments() {
         );
     }
 }
+
+/// Reading an error's `stack` modifies nothing, so the error and its stack can be arguments of
+/// one call, as `console.error(err, err.stack)` is written everywhere (#3808: a stack cached on
+/// its first read made the read a modification of the error, which the call then refused).
+#[test]
+fn an_errors_stack_is_read_beside_the_error() {
+    ok_src(
+        "function report(e: Error, stack: string | undefined): number { return (stack ?? \"\").length + e.message.length; }
+         function main() {
+           const e = new Error(\"m\");
+           console.log(e, e.stack);
+           console.error(e, e.stack);
+           console.log(report(e, e.stack));
+           const t = new TypeError(\"t\");
+           console.log(t, t.stack);
+         }",
+    );
+}

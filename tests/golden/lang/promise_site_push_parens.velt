@@ -1,0 +1,28 @@
+// A rejecting promise pushed to an array of `Promise<T>` (written without an error type) in
+// parentheses, `xs.push((p))`: stored into the site the array's element type is, as without them
+// (velt_sema `throws::promise_sites`), so awaiting the element throws what the promise rejects
+// with, as in Node.
+async function fails(m: string): Promise<number> {
+  throw new Error(m);
+}
+
+async function main(): Promise<void> {
+  const xs: Promise<number>[] = [];
+  xs.push((fails("first")));
+  xs.unshift(((fails("second"))));
+  for (const p of xs) {
+    try {
+      await p;
+    } catch (e) {
+      console.log("caught", (e as Error).message);
+    }
+  }
+  const m = new Map<string, Promise<number>>();
+  m.set("k", (fails("third")));
+  try {
+    await m.get("k");
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+}
+main();

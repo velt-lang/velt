@@ -1,0 +1,41 @@
+// A class that extends `RegExp` and declares one of the methods JavaScript's string methods
+// call on a regex (`[Symbol.match]`, `[Symbol.matchAll]`, `[Symbol.replace]`, `[Symbol.search]`,
+// `[Symbol.split]`) is refused where it declares it: Velt's string methods would not call it
+// (#3823), and `"xax".split(new S("a"))` would answer `[ 'x', 'x' ]` where Node answers
+// `[ 'custom', 'xax' ]`. An accessor of that name and a class further down are refused too; a
+// class that does not extend `RegExp` may declare them.
+import { RegExpMatch } from "velt/text";
+
+class S extends RegExp {
+  [Symbol.split](s: string, limit?: number): string[] {
+    return ["custom", s];
+  }
+  [Symbol.match](s: string): string[] | null {
+    return ["custom-match"];
+  }
+  [Symbol.replace](s: string, r: string): string {
+    return "custom-replace";
+  }
+  [Symbol.search](s: string): number {
+    return 42;
+  }
+}
+
+class Plain extends RegExp {}
+
+class Below extends Plain {
+  [Symbol.matchAll](s: string): RegExpMatch[] {
+    return [];
+  }
+  get [Symbol.search](): number {
+    return 1;
+  }
+}
+
+class Other {
+  [Symbol.split](s: string): string[] {
+    return [s];
+  }
+}
+
+console.log("xax".split(new S("a", "g")), new Below("a").source, new Other()[Symbol.split]("a"));

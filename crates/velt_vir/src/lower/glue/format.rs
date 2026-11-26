@@ -387,7 +387,7 @@ impl FnLower<'_, '_> {
     }
 
     /// [`Self::within_depth`], with `cut` writing what is printed past the limit.
-    fn within_depth_by(
+    pub(super) fn within_depth_by(
         &mut self,
         buf: &Operand,
         depth: &Operand,
@@ -501,85 +501,6 @@ impl FnLower<'_, '_> {
         self.terminate(Terminator::Return(unit()));
     }
 
-    /// Print the class object `obj` through its `[INSPECT]()` method `m`, as Node prints a custom
-    /// inspect: a string result raw, any other value after the class name, at the object's depth
-    /// (`Headers { a: '1' }`).
-    fn format_inspect(&mut self, buf: &Operand, obj: Operand, ty: TyId, m: DefId, depth: &Operand) {
-        // The method is user code: what it prints is numbered on its own (std's `inspectSave`),
-        // with custom inspect pieces of its own (`inspectAtomsSave`).
-        let saved = hooks::inspect_save(self).map(|save| save.emit(self).op());
-        let atoms = hooks::inspect_atoms_save(self).map(|save| save.emit(self).op());
-        let (res, rty) = self.call_hook(m, obj, ty, None);
-        if let Some(restore) =
-            atoms.and_then(|s| hooks::inspect_atoms_restore(self, ty::U64::arg(s)))
-        {
-            _ = restore.emit(self);
-        }
-        if let Some(restore) = saved.and_then(|s| hooks::inspect_restore(self, ty::U64::arg(s))) {
-            _ = restore.emit(self);
-        }
-        let name = self.cx.type_name(ty);
-        if matches!(self.cx.kind(rty), TyKind::Str) {
-            self.push_inspect_text(buf, &res);
-        } else if self.is_native_inspect(rty) {
-            // What Node prints for one of its own objects (`ArrayBuffer`, `URL`): the text, cut
-            // past the depth limit to the struct's `cut` (`URL {}`), or, when that is empty, to
-            // `[ArrayBuffer]`, as Node cuts its objects.
-            let text = self.field_place(&res, rty, 0);
-            let cut = self.field_place(&res, rty, 1);
-            let cut_text = |lw: &mut Self| {
-                let n = lw.str_len(Operand::Copy(cut.clone()));
-                let given =
-                    lw.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, n, cint(0, Ty::U64)));
-                let (given_bb, named_bb, done) = (lw.new_block(), lw.new_block(), lw.new_block());
-                lw.branch(given, given_bb, named_bb);
-                lw.switch_to(given_bb);
-                let a = lw.addr(cut.clone());
-                lw.push_str(buf, a);
-                lw.goto(done);
-                lw.switch_to(named_bb);
-                lw.push_text(buf, &format!("[{name}]"));
-                lw.goto(done);
-                lw.switch_to(done);
-            };
-            self.within_depth_by(buf, depth, cut_text, None, |lw, _| {
-                lw.push_inspect_text(buf, &text);
-            });
-        } else if let TyKind::Array(_) = self.cx.kind(rty) {
-            // An array: after the name and its length, as Node prints an array subclass or a
-            // typed array (`Uint8Array(3) [ 1, 2, 3 ]`), cut to `[Uint8Array]` past the depth
-            // limit.
-            self.within_depth(buf, depth, &format!("[{name}]"), None, |lw, _| {
-                let start = lw.builder_len(buf);
-                let arr = lw.content(&res, rty);
-                let len = Operand::Copy(proj(&arr, Proj::Field(1)));
-                lw.push_text(buf, &format!("{name}("));
-                let u64_ = lw.cx.intern(TyKind::Int(velt_sema::hir::IntTy::U64));
-                lw.push_scalar(buf, len, u64_);
-                lw.push_text(buf, ") ");
-                lw.inspect_atom(buf, start);
-                lw.format_nested(buf, &res, rty, depth);
-            });
-        } else {
-            // The string, or the name before the value, is kept as one piece when the value is
-            // broken across lines: node inserts a custom inspect's text as it is.
-            let start = self.builder_len(buf);
-            self.push_text(buf, &format!("{name} "));
-            self.inspect_atom(buf, start);
-            self.format_nested(buf, &res, rty, depth);
-        }
-        self.drop_glue(res, rty);
-    }
-
-    /// The string at `text` (a custom inspect's), kept as one piece when the value around it is
-    /// broken across lines: node inserts a custom inspect's text as it is.
-    fn push_inspect_text(&mut self, buf: &Operand, text: &Place) {
-        let start = self.builder_len(buf);
-        let a = self.addr(text.clone());
-        self.push_str(buf, a);
-        self.inspect_atom(buf, start);
-    }
-
     /// The text from byte `start` to the end of the builder `buf` is a custom inspect's: std's
     /// `inspectAtom` (std/lang/hooks/inspect_layout_text.velt) keeps it as one piece when the
     /// value is broken across lines. Unchecked where nothing is broken across lines.
@@ -598,13 +519,6 @@ impl FnLower<'_, '_> {
             _ => crate::lower::ice("a builder address that is not a place"),
         };
         self.str_bytes(&p)
-    }
-
-    /// Is `ty` std's `NativeInspect` (std/lang/typed_array/native_inspect.velt), the result of an `[INSPECT]()`
-    /// that prints one of Node's own objects?
-    fn is_native_inspect(&self, ty: TyId) -> bool {
-        matches!(self.cx.kind(ty), TyKind::Adt(d, _)
-            if self.cx.adt_def(d).name == velt_common::std_item!(lang_typed_array_native_inspect, "NativeInspect"))
     }
 
     /// The start of a top-level value: std's `inspectBegin` (std/lang/hooks/inspect_cycles.velt)

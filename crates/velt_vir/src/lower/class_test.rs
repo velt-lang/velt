@@ -155,10 +155,38 @@ impl Cx<'_> {
     }
 }
 
+impl Cx<'_> {
+    /// Can a value of type `ty` be an object of a class that extends `ty`'s
+    /// (`Intrinsic::IsExactClass`)? Only a class some class of the program extends.
+    pub(super) fn may_be_subclass(&mut self, ty: TyId) -> bool {
+        match self.kind(ty) {
+            TyKind::Adt(d, _) if self.adt_def(d).kind == AdtKind::Class => self.has_subclasses(d),
+            _ => super::ice("isExactClass of a value that is not of a class type"),
+        }
+    }
+}
+
 impl FnLower<'_, '_> {
-    /// `place` (a class object or an interface value of type `ty`) is an instance of `class`.
-    pub(super) fn instance_test(&mut self, place: &Place, ty: TyId, class: DefId) -> Operand {
-        let id = match self.cx.kind(ty) {
+    /// `Intrinsic::IsExactClass` of `x`: `true`, without evaluating `x`, when nothing extends
+    /// its class; else its class id is its class's own (the first of the class's range).
+    pub(super) fn exact_class_test(&mut self, x: &hir::Expr) -> Operand {
+        let ty = self.sub(x.ty);
+        if !self.cx.may_be_subclass(ty) {
+            return Operand::Const(crate::vir::Const::Bool(true), Ty::Bool);
+        }
+        let TyKind::Adt(class, _) = self.cx.kind(ty) else {
+            super::ice("isExactClass of a value that is not of a class type")
+        };
+        let v = self.expr(x);
+        let place = self.place_of(v, ty);
+        let id = self.class_id_of(&place, ty);
+        let own = cint(self.cx.class_range(class).0 as i128, Ty::U64);
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, id, own))
+    }
+
+    /// The class id of the object at `place`, a class object or an interface value of type `ty`.
+    fn class_id_of(&mut self, place: &Place, ty: TyId) -> Operand {
+        match self.cx.kind(ty) {
             TyKind::Dyn(..) => {
                 let place = self.through_adapters(place, ty);
                 self.dyn_class_id(&place, self.cx.has_proxies())
@@ -174,7 +202,12 @@ impl FnLower<'_, '_> {
                 let vt = self.obj_vtable(Operand::Copy(place.clone()), ty);
                 self.vtable_class_id(vt)
             }
-        };
+        }
+    }
+
+    /// `place` (a class object or an interface value of type `ty`) is an instance of `class`.
+    pub(super) fn instance_test(&mut self, place: &Place, ty: TyId, class: DefId) -> Operand {
+        let id = self.class_id_of(place, ty);
         let (lo, hi) = self.cx.class_range(class);
         let lo_c = cint(lo as i128, Ty::U64);
         if lo == hi {

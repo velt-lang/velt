@@ -20,6 +20,7 @@ import * as wn from "./sched_node_woken";
 import * as rp from "./sched_node_report";
 import * as nc from "./sched_node_catch";
 import * as order from "./sched_order";
+import * as ol from "./sched_order_list";
 import * as q from "./sched_queue";
 import * as sl from "./sched_sleep";
 import * as sc from "./sched_sleep_carry";
@@ -417,6 +418,7 @@ function rootDone(e: usize, k: usize): void {
 
 /** Task `k` is done: its root and the promises it drives. */
 function finish(e: usize, k: usize): void {
+  ol.ended(k);
   if ((m.ld32(k + t.T_FLAGS) & (t.ROOT | t.COUNTED)) === t.ROOT) {
     me.mainFinish(e, k);
     return;
