@@ -5,12 +5,13 @@
 //! leave_levels.rs) call std's hooks through these.
 //!
 //! Sema demands the hooks where live code has a construct that can start a transfer
-//! (`Construct::Transfer`, velt_sema `lazy_std/live_walk.rs`). Only a begin opens one, so a begin
-//! is a call for that construct, which stops with an ICE where sema did not demand it (a site
-//! `transfer_sites` in velt_vir's tests lists, whose construct sema does not mark). Every other
-//! call runs only in glue that may be reached outside a transfer: where the hooks were not
-//! demanded no transfer is ever open, so it is its answer outside one, as in a program built
-//! without std (velt_vir's own tests on hand-built HIR).
+//! (`Construct::Transfer`, velt_sema `lazy_std/live_walk.rs`); `transfer_sites` in velt_vir's
+//! tests lists every place lowering starts one with the construct that covers it. Where the
+//! hooks were not demanded, no transfer can start: each call is then its answer outside a
+//! transfer, as in a program built without std (velt_vir's own tests on hand-built HIR), and a
+//! begin is left out. Such a begin is in glue no transfer reaches: a closure's environment
+//! carries its transfer entry whether or not anything transfers it, and with std loaded up
+//! front (`VELT_EAGER_STD`) the map's module is in the program though nothing demanded it.
 
 use velt_common::std_hooks::hook_index;
 
@@ -23,35 +24,30 @@ pub(in crate::lower) const NO_TRANSFER: i128 = 1;
 
 impl FnLower<'_, '_> {
     /// Can a transfer be open where this call runs? Not in a program built without std, nor in
-    /// one whose live code starts none (sema demanded no transfer hook): then each call but a
-    /// begin is its answer outside a transfer.
+    /// one whose live code starts none (sema demanded no transfer hook): then each call is its
+    /// answer outside a transfer, and a begin is left out (module docs).
     fn has_xfer(&mut self) -> bool {
-        self.has_std_xfer() && (self.cx.hir.hooks_demanded).contains(hook_index::xfer_begin)
-    }
-
-    /// Is std's transfer map in the program at all (not a program built without std)? A begin
-    /// in one is a call for `Construct::Transfer`, which sema must have demanded.
-    fn has_std_xfer(&mut self) -> bool {
-        (self.cx.prelude_def(velt_common::std_hook!(xfer_begin))).is_some()
+        (self.cx.hir.hooks_demanded).contains(hook_index::xfer_begin)
+            && (self.cx.prelude_def(velt_common::std_hook!(xfer_begin))).is_some()
     }
 
     /// The start of a transfer (nested ones nest).
     pub(in crate::lower) fn xfer_begin(&mut self) {
-        if self.has_std_xfer() {
+        if self.has_xfer() {
             _ = hooks::xfer_begin(self, Construct::Transfer).emit(self);
         }
     }
 
     /// The start of a transfer keeping what a `read` callback's caller holds (caller_stores.rs).
     pub(in crate::lower) fn xfer_keep_begin(&mut self) {
-        if self.has_std_xfer() {
+        if self.has_xfer() {
             _ = hooks::xfer_keep_begin(self, Construct::Transfer).emit(self);
         }
     }
 
     /// The start of a transfer keeping what a `read` callback made (leave_levels.rs).
     pub(in crate::lower) fn xfer_share_begin(&mut self) {
-        if self.has_std_xfer() {
+        if self.has_xfer() {
             _ = hooks::xfer_share_begin(self, Construct::Transfer).emit(self);
         }
     }

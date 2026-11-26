@@ -367,23 +367,28 @@ fn a_program_that_transfers_nothing_loads_no_transfer_map() {
     );
 }
 
+/// A function value whose environment holds a cell (a captured variable that is assigned): its
+/// transfer entry copies the cell in a transfer of its own, which nothing in the program starts.
+const CLOSURE_TRANSFERS_NOTHING: &str = "class W {\n  seen: number[] = [];\n}\n\
+    function main() {\n  const w = new W();\n  let n = 0;\n  \
+    const tick = (k: number) => {\n    n += k;\n    w.seen.push(n);\n  };\n  \
+    const fs: ((k: number) => void)[] = [tick];\n  fs[0](2);\n  \
+    console.log(n, w.seen.length);\n}\n";
+
 #[test]
-#[should_panic(expected = "ICE: hook xfer_begin reached by lowering but not demanded by sema")]
-fn a_transfer_sema_did_not_demand_is_an_ice() {
-    let p: hir::Program = std_src::check_src(SPAWNS_A_GRAPH);
-    // Every hook sema demanded but the transfer map's.
-    let mut demanded = velt_common::std_hooks::HookSet::default();
-    for (i, h) in velt_common::std_hooks::HOOKS.iter().enumerate() {
-        let xfer = h
-            .constructs
-            .contains(&velt_common::std_hooks::Construct::Transfer);
-        if p.hooks_demanded.contains(i) && !xfer {
-            demanded.insert(i);
-        }
-    }
-    let p = hir::Program {
-        hooks_demanded: demanded,
-        ..p
-    };
-    lower_ok(&p);
+fn a_closure_in_a_program_that_transfers_nothing_begins_no_transfer() {
+    // `check_src` loads std up front (no `demand_std`), so the map's module is in the program
+    // though sema demanded none of its hooks: the closure's transfer entry begins nothing (a
+    // begin there stopped with an ICE, as `VELT_EAGER_STD=1` builds of two goldens did).
+    let p: hir::Program = std_src::check_src(CLOSURE_TRANSFERS_NOTHING);
+    let xfer = velt_common::std_hooks::hook_index::xfer_begin;
+    assert!(
+        !p.hooks_demanded.contains(xfer),
+        "sema demanded the transfer map for a program that transfers nothing"
+    );
+    let v = lower_ok(&p);
+    assert!(
+        !v.funcs.iter().any(|f| f.symbol.contains("xferBegin")),
+        "a transfer begun in a program that transfers nothing:\n{v}"
+    );
 }
