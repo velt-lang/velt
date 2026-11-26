@@ -1,0 +1,20 @@
+// velt/lang/map (internal): a live walk's place in a prelude `Map` (std/prelude/map.velt), shared
+// by the compiler's `for...of` over a map and the iterator of a `Set` (velt/collections).
+
+/**
+ * A live `for...of` loop's place in a map (`Map.[MAP_ADVANCE]`), which `[MAP_ADVANCE]` moves in
+ * place: an object type, not a `struct` (a struct value is never changed).
+ */
+export type MapCursor = {
+  // The next position to look at.
+  pos: usize;
+  // The position of the entry the loop is at.
+  at: usize;
+  // The sequence number after that entry's: where to go on after renumbering.
+  next: usize;
+  // The map's `renumbers` when `pos` was set.
+  renumbers: u64;
+  // The current segment's offset and end (`Map.segmentOf`).
+  off: usize;
+  segEnd: usize;
+};

@@ -40,6 +40,8 @@ import {
   mapLivePositions,
   mapValues,
 } from "velt/lang/map/live";
+import { MapCursor } from "velt/lang/map/cursor";
+import { ReadonlySetLike } from "./set_like";
 import { COMPACT_MIN_DEAD, FIB, INITIAL_SLOTS, NULL_PROTO, POS_MASK } from "velt/lang/map/layout";
 
 /**
@@ -50,7 +52,7 @@ import { COMPACT_MIN_DEAD, FIB, INITIAL_SLOTS, NULL_PROTO, POS_MASK } from "velt
  * a key changed in place keeps its entry. Unlike JS, tuples compare part by part, as `===` does
  * (a tuple key is hashed when inserted: don't change it while it is in a map).
  */
-export class Map<K, V> {
+export class Map<K, V> implements ReadonlySetLike<K> {
   // Number of live entries (read through the `size` getter; kept up to date by the mutating
   // methods).
   private _size: usize = 0;
@@ -453,21 +455,3 @@ export class Map<K, V> {
     return s;
   }
 }
-
-/**
- * A live `for...of` loop's place in a map (`Map.[MAP_ADVANCE]`), which `[MAP_ADVANCE]` moves in
- * place: an object type, not a `struct` (a struct value is never changed).
- */
-type MapCursor = {
-  // The next position to look at.
-  pos: usize;
-  // The position of the entry the loop is at.
-  at: usize;
-  // The sequence number after that entry's: where to go on after renumbering.
-  next: usize;
-  // The map's `renumbers` when `pos` was set.
-  renumbers: u64;
-  // The current segment's offset and end (`Map.segmentOf`).
-  off: usize;
-  segEnd: usize;
-};

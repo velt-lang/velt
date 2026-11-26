@@ -1,0 +1,36 @@
+// velt/collections (internal): the iterator of a `Set` (std/collections/set.velt), which walks
+// the set's map live, as JS walks a set.
+
+import { MAP_ADVANCE, MAP_CURSOR, MAP_KEY_AT } from "velt/lang/hooks/keys";
+import { MapCursor } from "velt/lang/map/cursor";
+
+/**
+ * A set's iterator (JS's `SetIterator`): it reads the set as it is at each `next()`, so an
+ * element added while it runs is visited and one deleted before it is reached is not, as in JS.
+ * It holds the set's map (another reference, not a copy); once it reported `done` it stays done.
+ */
+export class SetIterator<T> implements IterableIterator<T>, IteratorObject<T> {
+  private items: Map<T, bool>;
+  private at: MapCursor;
+  private finished: bool = false;
+
+  /** An iterator over the keys of `items`, from the first. */
+  constructor(items: Map<T, bool>) {
+    this.items = items;
+    this.at = items[MAP_CURSOR]();
+  }
+
+  /** The next element, or a `done` result past the end. */
+  next(): IteratorResult<T> {
+    if (this.finished || !this.items[MAP_ADVANCE](this.at)) {
+      this.finished = true;
+      return { done: true };
+    }
+    return { value: this.items[MAP_KEY_AT](this.at), done: false };
+  }
+
+  /** The iterator itself. */
+  [Symbol.iterator](): Iterator<T> {
+    return this;
+  }
+}

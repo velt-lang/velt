@@ -1,0 +1,5 @@
+// `Set`'s algebra takes elements of the set's own type: TypeScript's `union<U>`, giving a
+// `Set<T | U>`, is not supported (the note says so; velt_sema's iface_notes).
+const a = new Set<number>([1, 2, 3]);
+const mixed = a.union(new Set<string>(["x"]));
+console.log(mixed.size);
