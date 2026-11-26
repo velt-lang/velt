@@ -5,3 +5,153 @@ F { message: 'from the getter', extra: 1, hint: undefined }
 [ E { message: 'from the getter' }, E { message: 'o' } ]
 { inner: F { message: 'f', extra: 1, hint: undefined } }
 TypeError { message: '' } Error { message: 'plain' }
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 0'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 1'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 2'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 3'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 4'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 5'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 6'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 7'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 8'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 9'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 10'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 11'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 12'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 13'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 14'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 15'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 16'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 17'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 18'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 19'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 20'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 21'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 22'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 23'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 24'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 25'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 26'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 27'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 28'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 29'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 30'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 31'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 32'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 33'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 34'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 35'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 36'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 37'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 38'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 39'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 40'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 41'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 42'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 43'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 44'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 45'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 46'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 47'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 48'
+}
+Long {
+  message: 'a message long enough to be made on the heap, a message long enough to be made on the heap, 49'
+}

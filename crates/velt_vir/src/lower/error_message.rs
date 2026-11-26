@@ -39,13 +39,15 @@ impl FnLower<'_, '_> {
     /// [`hooked`](Self::error_message_hooked)), at depth `child`: `errorMessage(e)`, so an error
     /// made without a message shows the getter's text, as `e.message` gives it.
     pub(super) fn format_error_message(&mut self, buf: &Operand, value: &Place, child: &Operand) {
-        // The glue has no scope of its own: the call's result is dropped when this one closes.
+        // The glue has no scope of its own, which the call needs; its result is this code's,
+        // dropped once printed.
         self.push_scope(super::ScopeKind::Block);
         let e = ty::Error::arg(Operand::Copy(value.clone()));
         let text = hooks::error_message(self, Construct::ErrorMessage, e).emit_std(self);
         let str_ty = self.cx.str_ty();
         let tp = self.place_of(text, str_ty);
         self.format_nested(buf, &tp, str_ty, child);
+        self.drop_glue(tp, str_ty);
         self.pop_scope();
     }
 }
