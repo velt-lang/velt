@@ -1,0 +1,8 @@
+error_message_getter_refused.velt:12:7: error: `set message()` on a class extending `Error` is not supported yet
+  = note: `get message()` alone is: it gives the errors made without a message theirs
+error_message_getter_refused.velt:16:1: error: cannot assign to `message`: `E` declares only `get message()`
+  = note: a property with only a getter is read-only (TypeScript's TS2540); an error keeps the message it was made with
+error_message_getter_refused.velt:17:1: error: cannot assign to `message`: `E` declares only `get message()`
+  = note: a property with only a getter is read-only (TypeScript's TS2540); an error keeps the message it was made with
+error_message_getter_refused.velt:18:14: error: `message` of a `E` can't be taken apart here: a class extending `Error` declares `get message()`
+  = note: read it as `e.message`, or destructure in a declaration (`const { message } = e`)

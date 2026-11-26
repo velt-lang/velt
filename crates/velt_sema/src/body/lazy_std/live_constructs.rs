@@ -441,8 +441,9 @@ fn held(cx: &mut Ctx, t: TyId, insts: &Insts) -> Option<Vec<TyId>> {
 /// needs (and a source generator must not reach); so are `PowFloat`, std's `pow`, `PowInt`, its
 /// integer `powI64`, `Clock`,
 /// `Weak`: it demands the weak core, which only a program with weak collections needs, and which
-/// prints nothing, `Mutex`, std's inline lock, and `MutexHeld`, its count in a `velt dev` build
-/// (a program that prints a number must not load it). `TextFloat` is its own too, which `Dynamic`
+/// prints nothing, `Mutex`, std's inline lock, `MutexHeld`, its count in a `velt dev` build
+/// (a program that prints a number must not load it), and `ErrorMessage`, std's `errorMessage`
+/// for the `any` glue of a program with `get message()` on an error class. `TextFloat` is its own too, which `Dynamic`
 /// implies: a numeric key read through `any` is a float's text. A program that converts, formats or
 /// prints nothing that may hold a float checks no float hook. `WriteFloat`, `console.log`'s float
 /// writers, is its own as well, so that a program that prints only floats checks none of the text
@@ -455,7 +456,8 @@ pub(super) fn demanded_for(present: ConstructSet) -> ConstructSet {
         | Construct::Clock.bit()
         | Construct::Weak.bit()
         | Construct::Mutex.bit()
-        | Construct::MutexHeld.bit();
+        | Construct::MutexHeld.bit()
+        | Construct::ErrorMessage.bit();
     let (text, write) = (Construct::TextFloat.bit(), Construct::WriteFloat.bit());
     let own = alone | text | write;
     let integer = match present & !own {

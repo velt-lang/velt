@@ -613,6 +613,10 @@ with_tls_hooks! {
     // error.velt: the first line of the report of an uncaught error (`velt_vir` `entry.rs`).
     /// The first line of Node's report of an uncaught error (`E [TypeError]: m`).
     uncaught_header => lang_hooks_error, "uncaughtHeader", sig((&Error, &string) -> string), lowered;
+    /// `Error`'s default message where a class declares `get message()` (`velt_sema` `error_message.rs`).
+    error_no_message => lang_hooks_error, "noMessage", sig(() -> string);
+    /// `e.message` there: its own, else the getter's (`velt_sema`, `velt_vir` `error_message.rs`).
+    error_message => lang_hooks_error, "errorMessage", sig((&Error) -> string), lowered, constructs(ErrorMessage);
 
     // string.velt: the characters a `for...of` over a string iterates.
     /// The code points `for (const c of s)` iterates (`velt_sema` `loops.rs`).

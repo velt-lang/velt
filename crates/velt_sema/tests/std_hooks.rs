@@ -398,8 +398,8 @@ fn every_hook_resolves_with_its_signature() {
 
 /// Lazy std checks the lowered hooks of the values a program has: lowering calls them
 /// (`velt_common` `hook_sig.rs`). This program holds an `any`, arrays and functions, and has no
-/// class object, no reference to a host value, no `**`, no `catchUnwind` and no weak collection,
-/// which the unchecked hooks wait for. Its `any` may hold a float, so the float writers are
+/// class object, no reference to a host value, no `**`, no `catchUnwind`, no weak collection and
+/// no `get message()` on an error class, which the unchecked hooks wait for. Its `any` may hold a float, so the float writers are
 /// checked (`TextFloat`).
 #[test]
 fn lazy_std_checks_the_lowered_hooks_of_the_values_a_program_has() {
@@ -419,6 +419,9 @@ fn lazy_std_checks_the_lowered_hooks_of_the_values_a_program_has() {
             "pow_i64",
             "panic_raise",
             "class_object",
+            // An error's `message` through `any` where a class declares `get message()`
+            // (`Construct::ErrorMessage`).
+            "error_message",
             "host_ref_handle",
             // A `Mutex`'s count, lowered in a `velt dev` build only (`Construct::MutexHeld`).
             "mutex_held_locked",

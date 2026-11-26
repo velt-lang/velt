@@ -32,6 +32,7 @@ impl FnCx<'_, '_> {
             }
         }
         d.span = span;
+        let d = self.fold_no_message(d);
         self.adopt_detached(d)
     }
 

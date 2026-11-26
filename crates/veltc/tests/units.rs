@@ -880,3 +880,34 @@ fn std_s_unit_on_disk_serves_another_program() {
     let again = std::fs::read(&saved[0]).unwrap();
     assert_ne!(again[at], bytes[at], "the damaged unit was saved again");
 }
+
+/// `get message()` on a class extending `Error` (#3792): a whole-program check reads every
+/// `message` of an error through it, but a check by units checks std's bodies (`toString`,
+/// `stack`) before the program's classes are known, so both modes refuse it rather than give
+/// those reads another answer.
+#[test]
+fn a_get_message_override_of_error_is_refused_by_units() {
+    let src = "class E extends Error {\n  get message(): string {\n    return \"g\";\n  }\n}\nconsole.log(String(new E()));\n";
+    let whole = check_in(None, src);
+    assert!(
+        whole.status.success(),
+        "{}",
+        String::from_utf8_lossy(&whole.stderr)
+    );
+    for units in ["1", "2"] {
+        let out = check_in(Some(units), src);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !out.status.success(),
+            "VELT_UNITS={units}: accepted\n{stderr}"
+        );
+        let errors: Vec<&str> = stderr.lines().filter(|l| l.contains("error:")).collect();
+        assert_eq!(errors.len(), 1, "VELT_UNITS={units}:\n{stderr}");
+        assert!(
+            errors[0].contains(
+                "`get message()` on a class extending `Error` is not supported in a check by units"
+            ),
+            "VELT_UNITS={units}:\n{stderr}"
+        );
+    }
+}
