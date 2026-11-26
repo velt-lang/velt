@@ -104,3 +104,8 @@ tests/golden/std/shared_fn_panic_caught_resource_interface.velt    #2943 units
 tests/golden/std/shared_fn_spawn_after_caught_transfer_panic.velt  #2943 units
 tests/golden/std/shared_fn_walk_after_caught_transfer_panic.velt   #2943 units
 tests/golden/std/simd_half_range.velt                              #2943 units
+
+# Fails by units on main c016f2513 too (std never calls the subclass's exec there): std's calls of a
+# program's throwing override now reach it, but std's callers of the method (RegExp.test) keep
+# the throws std's unit gave them.
+tests/golden/std/regex_subclass_exec_throws.velt                   #3684 units
