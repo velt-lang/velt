@@ -35,17 +35,6 @@ velt_rt velt_rt_fnprop_len
 velt_rt velt_rt_fnprop_set
 velt_rt velt_rt_free
 velt_rt velt_rt_free_after_reads
-velt_rt velt_rt_fs_open_read
-velt_rt velt_rt_fs_open_read_range
-velt_rt velt_rt_fs_open_write
-velt_rt velt_rt_fs_reader_close
-velt_rt velt_rt_fs_reader_opened_stats
-velt_rt velt_rt_fs_reader_read
-velt_rt velt_rt_fs_writer_close
-velt_rt velt_rt_fs_writer_flush
-velt_rt velt_rt_fs_writer_free
-velt_rt velt_rt_fs_writer_write
-velt_rt velt_rt_fs_writer_write_bytes
 velt_rt velt_rt_fut_id
 velt_rt velt_rt_fut_peek
 velt_rt velt_rt_fut_share

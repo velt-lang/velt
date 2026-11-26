@@ -1,0 +1,65 @@
+// velt/fs (internal): file streams where std has none (WebAssembly, std/fs/rt.velt re-exports
+// these): every open fails with `ENOTSUP`, so no reader or writer exists, and the other functions
+// see only handles no stream has (`EBADF`). The names and signatures are std/fs/stream_sched.velt's.
+
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+import { Stats } from "velt/fs/stats";
+
+function unsupported(): IoStatus {
+  return { code: 12, message: "operation not supported on this platform" };
+}
+
+function closed(): IoStatus {
+  return { code: 16, message: "handle is closed" };
+}
+
+export async function velt_rt_fs_open_read(path: string): Promise<IoResult<u64>> {
+  const s = unsupported();
+  return { code: s.code, message: s.message, value: 0 };
+}
+
+export async function velt_rt_fs_open_read_range(
+  path: string,
+  start: u64,
+  end: u64,
+): Promise<IoResult<u64>> {
+  const s = unsupported();
+  return { code: s.code, message: s.message, value: 0 };
+}
+
+export function velt_rt_fs_reader_opened_stats(r: u64): IoResult<Stats> {
+  const s = closed();
+  const none: Stats = { size: 0, mtimeMs: 0, file: false, dir: false, symlink: false };
+  return { code: s.code, message: s.message, value: none };
+}
+
+export async function velt_rt_fs_reader_read(r: u64, max: u64): Promise<IoResult<u8[]>> {
+  const s = closed();
+  return { code: s.code, message: s.message, value: [] };
+}
+
+export function velt_rt_fs_reader_close(r: u64) {}
+
+export async function velt_rt_fs_open_write(path: string, append: bool): Promise<IoResult<u64>> {
+  const s = unsupported();
+  return { code: s.code, message: s.message, value: 0 };
+}
+
+export async function velt_rt_fs_writer_write(w: u64, data: string): Promise<IoStatus> {
+  return closed();
+}
+
+export async function velt_rt_fs_writer_write_bytes(w: u64, data: u8[]): Promise<IoStatus> {
+  return closed();
+}
+
+export async function velt_rt_fs_writer_flush(w: u64): Promise<IoStatus> {
+  return closed();
+}
+
+export async function velt_rt_fs_writer_close(w: u64): Promise<IoStatus> {
+  return { code: 0, message: "" };
+}
+
+export function velt_rt_fs_writer_free(w: u64) {}

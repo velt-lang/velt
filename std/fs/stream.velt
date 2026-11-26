@@ -13,11 +13,7 @@ import { unwrapIo } from "velt/native/result";
 import { FileReader } from "velt/fs/file_reader";
 import { FileWriter } from "velt/fs/file_writer";
 import { OpenReadOptions } from "velt/fs/open_read_options";
-import {
-  velt_rt_fs_open_read,
-  velt_rt_fs_open_read_range,
-  velt_rt_fs_open_write,
-} from "velt/fs/rt";
+import { velt_rt_fs_open_read, velt_rt_fs_open_read_range, velt_rt_fs_open_write } from "#fs-rt";
 import { checkPathArg } from "velt/fs/path_arg";
 import { streamError, streamPath } from "#fs-stream-path";
 
