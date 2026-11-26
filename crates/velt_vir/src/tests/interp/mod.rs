@@ -32,7 +32,7 @@ pub(super) struct Outcome {
     pub frees: usize,
     /// Heap blocks allocated, freed or not.
     pub allocations: usize,
-    /// Calls of `velt_rt_drop_state`: the drops bracketed for the depth limit.
+    /// The drops bracketed for the depth limit that were reached: run or queued (drops.rs).
     pub drop_states: usize,
 }
 
@@ -78,7 +78,7 @@ struct Interp<'p> {
     throw_loc: u64,
     /// Emulated async runtime (async_rt.rs, net.rs).
     exec: async_rt::Exec,
-    /// Bounded drop nesting (drops.rs).
+    /// The bracketed drops counted (drops.rs).
     drops: drops::Drops,
     /// The function `velt_rt_statics`'s table handed over, which releases the references the
     /// program's static atomics hold: called at a normal exit, before leaks are counted.
