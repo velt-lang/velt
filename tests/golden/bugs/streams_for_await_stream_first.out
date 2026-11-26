@@ -1,0 +1,6 @@
+chain first, waits 0: t0 t1 t2 t3 v1 t4 v2 t5 t6 t7 t8 v3 t9 t10 end t11 t12 t13 t14 t15 t16 t17 t18 t19 t20 t21 t22 t23 t24 t25 t26 t27 t28 t29
+stream first, waits 0: t0 t1 t2 t3 v1 t4 v2 t5 t6 t7 t8 v3 t9 end t10 t11 t12 t13 t14 t15 t16 t17 t18 t19 t20 t21 t22 t23 t24 t25 t26 t27 t28 t29
+chain first, waits 1: t0 t1 t2 t3 v1 t4 t5 v2 t6 t7 t8 v3 t9 t10 t11 end t12 t13 t14 t15 t16 t17 t18 t19 t20 t21 t22 t23 t24 t25 t26 t27 t28 t29
+stream first, waits 1: t0 t1 t2 t3 v1 t4 v2 t5 t6 t7 v3 t8 t9 t10 end t11 t12 t13 t14 t15 t16 t17 t18 t19 t20 t21 t22 t23 t24 t25 t26 t27 t28 t29
+chain first, waits 2: t0 t1 t2 t3 t4 v1 t5 t6 t7 v2 t8 t9 t10 t11 v3 t12 t13 t14 t15 end t16 t17 t18 t19 t20 t21 t22 t23 t24 t25 t26 t27 t28 t29
+stream first, waits 2: t0 t1 t2 t3 v1 t4 t5 t6 v2 t7 t8 t9 t10 v3 t11 t12 t13 t14 end t15 t16 t17 t18 t19 t20 t21 t22 t23 t24 t25 t26 t27 t28 t29

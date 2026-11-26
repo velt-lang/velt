@@ -346,8 +346,8 @@ fn wrong_packages_refs_and_checkouts_are_errors() {
     // A checkout changed in the cache no longer matches the lock.
     let app = e.app(&format!("lib: {{ git: \"{url}\", path: \"lib\" }}"));
     e.install(&app, false).unwrap();
-    let checkout = repository_dir(&e.loc, &url).join(&commit);
-    std::fs::write(checkout.join("README.md"), "tampered").unwrap();
+    let checkout = checkout_dir(&e.loc, &url, &commit, Some("lib"));
+    std::fs::write(checkout.join("lib/src/lib.velt"), "tampered").unwrap();
     let err = e.install(&app, false).unwrap_err();
     assert!(err.contains("checksum mismatch for commit"), "{err}");
 }
@@ -386,7 +386,7 @@ fn a_path_dependency_of_a_git_package_is_locked_with_it() {
     let sib = lock.get("sib").unwrap();
     assert_eq!(
         sib.source,
-        format!("git+{url}?rev={commit}&path=sib#{commit}")
+        format!("git+{url}?rev={commit}&path=sib&sparse=1#{commit}")
     );
     assert!(sib.checksum.is_some());
     // Without the repository, the lock still holds.
@@ -571,9 +571,7 @@ fn a_repository_with_a_link_out_of_it_is_refused() {
     );
     // Nothing was put in the cache.
     let commit = e.upstream.git(&["rev-parse", "HEAD"]);
-    assert!(!repository_dir(&e.loc, &e.upstream.url())
-        .join(commit)
-        .exists());
+    assert!(!checkout_dir(&e.loc, &e.upstream.url(), &commit, Some("lib")).exists());
 }
 
 /// A copy of `from` in `to` with every symbolic link replaced by a file holding its text.
@@ -615,7 +613,7 @@ fn a_link_hashes_as_the_repository_stores_it() {
     e.install(&app, false).unwrap();
     let locked = Lockfile::read(&app).unwrap().unwrap();
     let checksum = locked.get("lib").unwrap().checksum.clone().unwrap();
-    let checkout = repository_dir(&e.loc, &url).join(&commit);
+    let checkout = checkout_dir(&e.loc, &url, &commit, Some("lib"));
     if cfg!(windows) {
         let alias = std::fs::symlink_metadata(checkout.join("lib/alias")).unwrap();
         assert!(alias.is_file(), "a file holding the link's text on Windows");
@@ -625,7 +623,7 @@ fn a_link_hashes_as_the_repository_stores_it() {
     assert_eq!(tree_checksum(&copy).unwrap(), checksum);
 }
 
-/// The commit's links are listed beside the checkout, and on Windows a package with one is told
+/// The links checked out are listed beside the checkout, and on Windows a package with one is told
 /// why importing through it fails.
 #[test]
 fn a_package_with_links_is_told_about_them_on_windows() {
@@ -646,8 +644,8 @@ fn a_package_with_links_is_told_about_them_on_windows() {
     let url = e.upstream.url();
     let app = e.app(&format!("lib: {{ git: \"{url}\", path: \"lib\" }}"));
     let installed = e.install(&app, false).unwrap();
-    let checkout = repository_dir(&e.loc, &url).join(&commit);
-    assert_eq!(links(&checkout), ["lib/src/alias.velt", "other/alias.velt"]);
+    let checkout = checkout_dir(&e.loc, &url, &commit, Some("lib"));
+    assert_eq!(links(&checkout), ["lib/src/alias.velt"]);
     let warnings = link_warnings(&checkout, &url, Some("lib"), true);
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     assert!(
@@ -663,3 +661,4 @@ fn a_package_with_links_is_told_about_them_on_windows() {
 
 mod npm;
 mod sources;
+mod sparse;

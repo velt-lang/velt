@@ -94,3 +94,17 @@ fn hot_swap_keeps_one_word_per_constant() {
         assert_eq!(call_capturing(loaded.main()), (0, "504\n".to_string()));
     }
 }
+
+/// The word outlives the session: `velt dev` drops its session when the reload channel closes,
+/// while the program still runs. Whatever is allocated after the drop does not take the word's
+/// place (the allocations below would, word by word, if the session freed it).
+#[test]
+fn a_dropped_session_leaves_the_word_to_its_code() {
+    let mut session = DevSession::new(&stub_symbols());
+    let loaded = session.load(&dev_program(100, false)).expect("load");
+    assert_eq!(call_capturing(loaded.main()), (0, "102\n".to_string()));
+    drop(session);
+    let others: Vec<Box<u64>> = (0..100_000).map(|_| Box::new(5_000_000)).collect();
+    assert_eq!(call_capturing(loaded.main()), (0, "103\n".to_string()));
+    drop(others);
+}

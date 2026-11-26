@@ -132,8 +132,8 @@ pub(crate) fn too_late(cx: &mut Ctx, assumed: &mut Assumed) -> bool {
     let mut todo = thrown;
     while let Some(t) = todo.pop() {
         if seen.insert(t) {
-            let kind = cx.ty.kind(t);
-            match kind {
+            let kind = cx.ty.kind(t).clone();
+            match &kind {
                 // Not an object type's or a body's: those have no stable `DefId`, and no
                 // deferred methods.
                 TyKind::Adt(d, _)
@@ -145,15 +145,20 @@ pub(crate) fn too_late(cx: &mut Ctx, assumed: &mut Assumed) -> bool {
                 }
                 _ => {}
             }
-            todo.extend(crate::types::contents(kind));
+            todo.extend(crate::types::contents(&kind));
+            // A union's value is one of its members: what is thrown is theirs.
+            todo.extend(cx.union_members(t).into_iter().flatten());
         }
     }
     classes.sort();
     classes.dedup();
-    added |= format || !classes.is_empty();
-    let named = classes
-        .into_iter()
-        .filter_map(|d| Some((d, def_name(cx, d)?)));
+    // Only what is recorded counts as added: the next round finds a definition again by its
+    // name, and a union's enum (`throws RangeError | TypeError`) or a declared one has none here
+    // and no deferred methods. Counted, it would be late again in every round, for ever (#3807).
+    let named: Vec<_> = (classes.into_iter())
+        .filter_map(|d| Some((d, def_name(cx, d)?)))
+        .collect();
+    added |= format || !named.is_empty();
     assumed.defs.extend(named);
     added
 }

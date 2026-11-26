@@ -87,7 +87,7 @@ fn srcs_now_in(cx: &mut Ctx, srcs: &[ThrowSrc], visited: &mut Visited) -> Option
     let mut acc = None;
     for s in srcs {
         let t = match s {
-            ThrowSrc::Direct(t, _) => Some(*t),
+            ThrowSrc::Direct(t, _) => cx.trap_call_error(*t).unwrap_or(Some(*t)),
             ThrowSrc::Indirect(t, site, _) => cx.indirect_error(*t, *site),
             ThrowSrc::Call(g, targs, _) => {
                 let t = def_now(cx, *g, visited);

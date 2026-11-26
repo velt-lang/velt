@@ -11,8 +11,9 @@ import { Fetched } from "#http-transport";
 import { BodyKind, ResponseParts } from "velt/net/http/fetch/parts";
 import { tee } from "velt/net/http/fetch/tee";
 import { Response } from "velt/net/http/fetch/response";
+import { BodyCell } from "velt/net/http/fetch/response_cell";
 
-/** Where a response's body is (`Response.bodySource`); the first four are a `BodyKind` (parts.velt). */
+/** Where a response's body is (`BodyCell.source`, response_cell.velt); the first four are a `BodyKind` (parts.velt). */
 export const NONE: i64 = 0;
 export const TEXT: i64 = 1;
 export const BYTES: i64 = 2;
@@ -22,19 +23,19 @@ export const RUNTIME: i64 = 4;
 
 /** `res.clone()` (`Response.clone`). */
 export function cloneResponse(res: Response): Response throws IoError {
-  if (res.bodyRead) {
+  if (res.cell.read) {
     throw new IoError("EINVAL", "Response.clone: Body has already been consumed.");
   }
   const r = new Response();
   r.headCode = res.headCode;
   r.headRemote = res.headRemote;
-  r.bodySource = res.bodySource;
-  r.bodyText = res.bodyText;
-  const data = res.bodyBytes;
+  r.cell.source = res.cell.source;
+  r.cell.text = res.cell.text;
+  const data = res.cell.bytes;
   if (data != null) {
-    r.bodyBytes = data.slice();
+    r.cell.bytes = data.slice();
   }
-  const f = res.bodyFetched;
+  const f = res.cell.fetched;
   if (f != null) {
     // Both read the head from here on; the body (if any) goes to both through a tee, which
     // now owns the connection.
@@ -46,8 +47,8 @@ export function cloneResponse(res: Response): Response throws IoError {
     const h = Headers.adopt(res.headers.raw());
     h.frozen = true;
     r.headFields = h;
-    res.bodyFetched = null;
-    if (res.bodySource == RUNTIME) {
+    res.cell.fetched = null;
+    if (res.cell.source == RUNTIME) {
       split(res, r, bodyOf(new Held(f)));
     }
     return r;
@@ -59,9 +60,9 @@ export function cloneResponse(res: Response): Response throws IoError {
   } else {
     r.headImplied = res.headImplied;
   }
-  const s = res.bodyStream;
-  res.bodyStream = null;
-  if (res.bodySource == STREAM && s != null) {
+  const s = res.cell.stream;
+  res.cell.stream = null;
+  if (res.cell.source == STREAM && s != null) {
     split(res, r, s[Symbol.asyncIterator]());
   }
   return r;
@@ -70,27 +71,27 @@ export function cloneResponse(res: Response): Response throws IoError {
 /** The body `chunks` teed between `res` and its clone `r`, both now streamed. */
 function split(res: Response, r: Response, chunks: AsyncIterator<u8[], IoError | AbortError>) {
   const [mine, theirs] = tee(chunks);
-  res.bodySource = STREAM;
-  res.bodyStream = BodyStream.adopt(mine);
-  r.bodySource = STREAM;
-  r.bodyStream = BodyStream.adopt(theirs);
+  res.cell.source = STREAM;
+  res.cell.stream = BodyStream.adopt(mine);
+  r.cell.source = STREAM;
+  r.cell.stream = BodyStream.adopt(theirs);
 }
 
 /** `res.text()`: the body as text (invalid UTF-8 becomes U+FFFD, as in JS). */
 export async function responseText(r: Response): Promise<string, IoError | AbortError> {
   r.claim();
-  const f = r.bodyFetched;
-  if (r.bodySource == RUNTIME && f != null) {
+  const f = r.cell.fetched;
+  if (r.cell.source == RUNTIME && f != null) {
     return await f.text();
   }
-  if (r.bodySource == TEXT) {
-    return r.bodyText;
+  if (r.cell.source == TEXT) {
+    return r.cell.text;
   }
-  let d = r.bodyBytes ?? [];
+  let d = r.cell.bytes ?? [];
   // Taken out: the body is read once (and a borrow of the field here reads freed memory, #1115).
-  const s = r.bodyStream;
-  r.bodyStream = null;
-  if (r.bodySource == STREAM && s != null) {
+  const s = r.cell.stream;
+  r.cell.stream = null;
+  if (r.cell.source == STREAM && s != null) {
     d = await collect(s);
   }
   // A leading byte order mark is not text, as in JS.
@@ -101,35 +102,38 @@ export async function responseText(r: Response): Promise<string, IoError | Abort
 /** The body of `r` as Velt's byte array. */
 export async function responseBytes(r: Response): Promise<u8[], IoError | AbortError> {
   r.claim();
-  const f = r.bodyFetched;
-  if (r.bodySource == RUNTIME && f != null) {
+  const f = r.cell.fetched;
+  if (r.cell.source == RUNTIME && f != null) {
     return await f.bytes();
   }
-  if (r.bodySource == TEXT) {
-    return utf8Encode(r.bodyText);
+  if (r.cell.source == TEXT) {
+    return utf8Encode(r.cell.text);
   }
   // Taken out: the body is read once (and a borrow of the field here reads freed memory, #1115).
-  const s = r.bodyStream;
-  r.bodyStream = null;
-  if (r.bodySource == STREAM && s != null) {
+  const s = r.cell.stream;
+  r.cell.stream = null;
+  if (r.cell.source == STREAM && s != null) {
     return await collect(s);
   }
-  return r.bodyBytes ?? [];
+  return r.cell.bytes ?? [];
 }
 
 /** The body of `r` chunk by chunk, for `BodyStream`; reading them uses the body up. */
 export function responseChunks(r: Response): AsyncIterator<u8[], IoError | AbortError> {
-  return new ResponseChunks(r);
+  const b = r.cell;
+  b.shared = true;
+  return new ResponseChunks(b);
 }
 
 // `responseChunks`. A stream body's chunks are its own, so that ending them reaches its source
-// also while a `next` waits: a `ReadableStream`'s `cancel` runs at once.
+// also while a `next` waits: a `ReadableStream`'s `cancel` runs at once. They hold the body, not
+// the response, which a stream of them reaches (response_cell.velt).
 class ResponseChunks implements AsyncIterator<u8[], IoError | AbortError> {
-  private response: Response;
+  private body: BodyCell;
   private chunks: AsyncIterator<u8[], IoError | AbortError> | null = null;
 
-  constructor(response: Response) {
-    this.response = response;
+  constructor(body: BodyCell) {
+    this.body = body;
   }
 
   private open(): AsyncIterator<u8[], IoError | AbortError> throws IoError {
@@ -137,32 +141,54 @@ class ResponseChunks implements AsyncIterator<u8[], IoError | AbortError> {
     if (made != null) {
       return made;
     }
-    const r = this.response;
-    r.claim();
-    const s = r.bodySource == STREAM ? r.bodyStream : null;
-    r.bodyStream = s == null ? r.bodyStream : null;
-    const opened = s != null ? s[Symbol.asyncIterator]() : otherChunks(r);
+    const b = this.body;
+    let opened: AsyncIterator<u8[], IoError | AbortError>;
+    if (b.read) {
+      // Drained by another stream (read to its end, or cancelled): nothing more, as Node's one
+      // closed stream; read any other way (`text()`, a stream still reading): locked.
+      if (!b.drained) {
+        throw new IoError("EINVAL", "Invalid state: ReadableStream is locked");
+      }
+      opened = noChunks();
+    } else {
+      b.claim();
+      const s = b.source == STREAM ? b.stream : null;
+      b.stream = s == null ? b.stream : null;
+      opened = s != null ? s[Symbol.asyncIterator]() : otherChunks(b);
+    }
     this.chunks = opened;
     return opened;
   }
 
   async next(): Promise<IteratorResult<u8[]>, IoError | AbortError> {
-    return await this.open().next();
+    const r = await this.open().next();
+    if (r.done) {
+      this.body.drained = true;
+    }
+    return r;
   }
 
   async return(): Promise<IteratorResult<u8[]>> {
+    let opened: AsyncIterator<u8[], IoError | AbortError> | null = null;
     try {
-      await this.open().return();
+      opened = this.open();
     } catch (e) {
-      // Already read: nothing to end.
+      // Used by another read: nothing of this stream's to end.
+    }
+    if (opened != null) {
+      await opened.return();
+      this.body.drained = true;
     }
     return { done: true };
   }
 }
 
-async function* otherChunks(r: Response): AsyncGenerator<u8[], IoError | AbortError> {
-  const f = r.bodyFetched;
-  if (r.bodySource == RUNTIME && f != null) {
+// A drained body's chunks: none.
+async function* noChunks(): AsyncGenerator<u8[], IoError | AbortError> {}
+
+async function* otherChunks(b: BodyCell): AsyncGenerator<u8[], IoError | AbortError> {
+  const f = b.fetched;
+  if (b.source == RUNTIME && f != null) {
     while (true) {
       const chunk = await f.chunk();
       if (chunk.length == 0) {
@@ -172,12 +198,12 @@ async function* otherChunks(r: Response): AsyncGenerator<u8[], IoError | AbortEr
     }
   }
   // Taken out: the body is read once (and a borrow of the field here reads freed memory, #1115).
-  const s = r.bodyStream;
-  r.bodyStream = null;
-  if (r.bodySource == TEXT) {
-    yield utf8Encode(r.bodyText);
+  const s = b.stream;
+  b.stream = null;
+  if (b.source == TEXT) {
+    yield utf8Encode(b.text);
   } else {
-    const d = r.bodyBytes;
+    const d = b.bytes;
     if (d != null && d.length > 0) {
       yield d;
     }
@@ -190,7 +216,7 @@ async function* otherChunks(r: Response): AsyncGenerator<u8[], IoError | AbortEr
  * passed on without what only held for the message it came in (`passedOn`).
  */
 export function serverParts(r: Response): ResponseParts throws IoError {
-  const source = r.bodySource;
+  const source = r.cell.source;
   let headers: string[] = [];
   let implied = r.headImplied;
   const fields = r.headFields;
@@ -198,7 +224,7 @@ export function serverParts(r: Response): ResponseParts throws IoError {
     const [list, type] = fields.serverFlat();
     headers = list;
     implied = type;
-  } else if (r.bodyFetched != null) {
+  } else if (r.cell.fetched != null) {
     headers = r.headers.raw();
   }
   if (r.headRemote != null) {
@@ -206,13 +232,13 @@ export function serverParts(r: Response): ResponseParts throws IoError {
   }
   let stream: BodyStream | null = null;
   if (source == STREAM || source == RUNTIME) {
-    if (r.bodyRead) {
+    if (r.cell.read) {
       throw new IoError("EINVAL", "Body is unusable: Body has already been read");
     }
     if (source == STREAM) {
-      r.bodyRead = true;
-      stream = r.bodyStream;
-      r.bodyStream = null;
+      r.cell.read = true;
+      stream = r.cell.stream;
+      r.cell.stream = null;
     } else {
       // `chunks` marks the body used when it starts.
       stream = BodyStream.adopt(r.chunks());
@@ -223,8 +249,8 @@ export function serverParts(r: Response): ResponseParts throws IoError {
     headers: headers,
     type: impliedType(implied),
     kind: kindOf(source == RUNTIME ? STREAM : source),
-    text: r.bodyText,
-    bytes: r.bodyBytes ?? [],
+    text: r.cell.text,
+    bytes: r.cell.bytes ?? [],
     stream: stream,
   };
 }

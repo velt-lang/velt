@@ -1,0 +1,7 @@
+union: has-hook 1,2,3,4,9,10 | keys-hook 1,2,3,4,9 | clearing 1,2,3,4 | late 1,2,3,4,5,6,7,8,20
+intersection: has-hook 1,3,4,9 | keys-hook 9 | clearing 1 | late 2,4,20,6
+difference: has-hook 2 | keys-hook 1,3,4 | clearing 2,3 | late 1,3,5
+symmetricDifference: has-hook 9,10 | keys-hook 1,3,4,2 | clearing 4 | late 1,3,6,7,8,20
+isSubsetOf: has-hook true | keys-hook false | clearing true | late false
+isSupersetOf: has-hook false | keys-hook false | clearing false | late false
+isDisjointFrom: has-hook false | keys-hook false | clearing false | late false

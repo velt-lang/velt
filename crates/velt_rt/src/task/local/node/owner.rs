@@ -29,10 +29,6 @@ pub(super) unsafe extern "C-unwind" fn started_poll(f: *mut VeltFut, cx: *mut c_
             return PENDING;
         }
     }
-    if h.flags.load(Ordering::Acquire) & super::PANICKED != 0 {
-        // It panicked: so does the await (panic.rs).
-        super::panicked::raise(f);
-    }
     h.owner.set(OWNER_DELIVERED);
     // Its error, if it rejected, was thrown where the node says (loc.rs).
     super::loc::claim(f);
@@ -87,9 +83,7 @@ unsafe fn drive_adopted(set: *mut LocalSet, f: *mut VeltFut, cx: *mut c_void, fl
         with_context(cx, |c| h.awaiter.register(c.waker()));
     }
     (*set).adopting += 1;
-    let done = super::super::set::polling(set, f, || {
-        super::panicked::caught(f, || (h.poll)(state(f), cx) == READY)
-    });
+    let done = super::super::set::polling(set, f, || (h.poll)(state(f), cx) == READY);
     (*set).adopting -= 1;
     if !done {
         return false;

@@ -62,6 +62,46 @@ impl FnLower<'_, '_> {
         Operand::Copy(out)
     }
 
+    /// `keyOf` of the owned `any` at `p` (type `ty`, `same.rs` `key_of`): a `number` (`f64`)
+    /// zero is replaced by a new `any` holding `+0`, after one compare of the descriptor and one
+    /// of the value (`-0 == 0`). Its box may be shared with another `any` (`shared_dyn_box`),
+    /// so it is dropped rather than written. An `object` or `Function` holds no number.
+    pub(super) fn any_key_of(&mut self, p: &Place, ty: TyId) {
+        if self.cx.is_narrow_dynamic(ty) {
+            return;
+        }
+        let (data, desc) = (
+            Operand::Copy(proj(p, Proj::Field(0))),
+            Operand::Copy(proj(p, Proj::Field(1))),
+        );
+        let f64_ = self.cx.intern(TyKind::Float(hir::FloatTy::F64));
+        let imp = self.cx.hir.any_impl.unwrap_or(0);
+        let want = self.vtable_addr(VtableKey::Impl(imp, f64_));
+        let is_f64 = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, desc, want.clone()));
+        let (num, zero, done) = (self.new_block(), self.new_block(), self.new_block());
+        self.branch(is_f64, num, done);
+        self.switch_to(num);
+        let d = self.copy_to_temp(data, Ty::Ptr);
+        let vp = self.any_value_place(d, f64_);
+        let z = Operand::Const(Const::Float(0.0), Ty::F64);
+        let is_zero = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, Operand::Copy(vp), z.clone()),
+        );
+        self.branch(is_zero, zero, done);
+        self.switch_to(zero);
+        // Written into `p`'s two words, as `value_to_dyn` builds an `f64`'s `any`: an aggregate
+        // temporary would be registered for a drop on every path, this one included.
+        self.drop_glue(p.clone(), ty);
+        let b = self.dyn_box_alloc(f64_);
+        let bp = self.operand_place(b.clone(), Ty::Ptr);
+        self.store(proj(&bp, Proj::Deref(Ty::F64)), z);
+        self.assign(proj(p, Proj::Field(0)), Rvalue::Use(b));
+        self.assign(proj(p, Proj::Field(1)), Rvalue::Use(want));
+        self.goto(done);
+        self.switch_to(done);
+    }
+
     /// `out` = the zero sign of the `f64` `x` (`1`, `-1` or left `0`), on to `done`. The bits
     /// without the sign bit are tested first, so one compare rules out every number but a zero;
     /// a second then tells `0` (no bit set) from `-0` (the sign bit).

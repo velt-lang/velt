@@ -104,8 +104,7 @@ function caught() {
     }
   }
   // Where the unwound frames had no cleanup pads (Windows) what they owned leaks and the counts
-  // don't balance: say so where the leak check reads them (std/test/plan.velt `leakedBlocks`), as
-  // the runtime's `panics caught=` does for its own catch.
+  // don't balance: say so where the leak check reads them (std/test/plan.velt `leakedBlocks`).
   if (!unwoundFramesDrop() && processEnv("VELT_RC_STATS") == "1") {
     velt_rt_write_str(2, "rc stats: std caught a panic\n");
   }

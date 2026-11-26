@@ -14,6 +14,7 @@ fn git_source(url: &str) -> Source {
         },
         commit: "abc".to_string(),
         checksum: String::new(),
+        sparse: false,
         dir: PathBuf::new(),
         npm: BTreeMap::new(),
     }

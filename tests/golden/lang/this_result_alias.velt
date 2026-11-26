@@ -1,0 +1,58 @@
+// check: no leaks
+// A method returning `this` may return a `const` holding `this`, or holding the result of a
+// `this`-returning call on `this`: TypeScript types such a `const` as `this` (#3772).
+class A {
+  n = 0;
+  bump(): this {
+    const r = this;
+    r.n++;
+    return r;
+  }
+  twice(): this {
+    const r = this.bump();
+    return r.bump();
+  }
+  thrice(): this {
+    const me = this;
+    if (me.n > 100) {
+      return me;
+    }
+    me.twice();
+    return me.bump();
+  }
+  // Written as `this`, in parentheses, or through `as this`: still `this`.
+  typed(): this {
+    const r: this = this;
+    const p = (this);
+    const q = this.bump() as this;
+    r.n++;
+    p.n++;
+    return q;
+  }
+  // Cast to the class and back to `this`.
+  back(): this {
+    return (this as A) as this;
+  }
+  // Next to a binding with a default, one without is still `this`.
+  besideDefault(o: A): this {
+    const [q = o, r] = [this, this];
+    q.n++;
+    return r;
+  }
+}
+
+class B extends A {
+  tag = "b";
+}
+
+function main() {
+  console.log(new A().bump().bump().n);
+  const b = new B().twice();
+  console.log(b.n, b.tag);
+  const c = new B().thrice().bump();
+  console.log(c.n, c.tag);
+  const d = new B().typed().back().typed();
+  console.log(d.n, d.tag);
+  const e = new B().besideDefault(new A()).bump();
+  console.log(e.n, e.tag);
+}

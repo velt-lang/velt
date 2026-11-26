@@ -177,6 +177,7 @@ table! {
     lang_bytes_range_text => "lang/bytes/range_text",
     lang_typed_array_core => "lang/typed_array/core",
     lang_typed_array_native_inspect => "lang/typed_array/native_inspect",
+    lang_typed_array_named_inspect => "lang/typed_array/named_inspect",
 
     // Modules and their files that lowering and the checks know.
     collections => "collections",
@@ -212,6 +213,8 @@ table! {
     net_dns_lookup_sched => "net/dns/lookup_sched",
     net_tls_fd_client => "net/tls/fd_client",
     net_tls_fd_server => "net/tls/fd_server",
+    /// The folder of the `fetch` classes (`Headers`, `Request`, `Response`, `Blob`).
+    net_http_fetch => "net/http/fetch",
     net_http_fetch_response => "net/http/fetch/response",
     /// `velt/ops/operators`, the interfaces of the operator methods `velt/ops` exports (sema
     /// `collect/operators.rs`).

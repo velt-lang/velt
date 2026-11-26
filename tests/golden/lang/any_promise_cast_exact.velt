@@ -1,0 +1,17 @@
+// check: heap blocks at most 2000
+// `v as Promise<T>` of an `any` holding a typed `Promise<T>` (#924 step 4), the commonest cast:
+// the promise is taken out of its `any` box and widened to the cast's type (which may reject),
+// one wrapper per cast, not the two of a conversion through `Promise<unknown>`. 200 casts.
+async function main(): Promise<void> {
+  const held: any[] = [];
+  for (let i = 0; i < 200; i++) {
+    const p: Promise<number> = Promise.resolve(i);
+    held.push(p);
+  }
+  let sum = 0;
+  for (const p of held) {
+    sum += await (p as Promise<number>);
+  }
+  console.log(sum);
+}
+main();

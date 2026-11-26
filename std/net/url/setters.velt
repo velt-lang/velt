@@ -2,6 +2,7 @@
 
 import { removeTabNewline } from "velt/net/url/parse";
 import { UrlRecord } from "velt/net/url/record";
+import { defaultPort } from "velt/net/url/scheme";
 
 /**
  * A host setter's value: tabs and newlines removed, cut at the first `/`, `?` or `#` (or `\`
@@ -26,4 +27,33 @@ export function portColon(text: string): i64 {
 /** Whether `r` has credentials or a port (then its host cannot be emptied). */
 export function userinfoOrPort(r: UrlRecord): bool {
   return r.username.length > 0 || r.password.length > 0 || r.port.length > 0;
+}
+
+/**
+ * The port setter's steps on the record, shared by `URL`'s `port` and `host` setters: takes the
+ * leading digits of `value` ("" clears the port); ignored when out of range or when the URL
+ * cannot have a port (no host, or `file:`).
+ */
+export function setPort(r: UrlRecord, value: string) {
+  if (r.host.length == 0 || r.scheme == "file") {
+    return;
+  }
+  const v = removeTabNewline(value);
+  let n: i64 = 0;
+  let digits: i64 = 0;
+  while (digits < (v.length as i64) && v.charCodeAt(digits) >= 48 && v.charCodeAt(digits) <= 57) {
+    n = n * 10 + v.charCodeAt(digits) - 48;
+    digits++;
+    if (n > 65535) {
+      return;
+    }
+  }
+  if (digits == 0) {
+    if (v.length == 0) {
+      r.port = "";
+    }
+    return;
+  }
+  const port = `${n}`;
+  r.port = port == defaultPort(r.scheme) ? "" : port;
 }
