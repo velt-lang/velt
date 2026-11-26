@@ -1,0 +1,37 @@
+// A custom inspect's text is kept as one piece in a value broken across lines, also when another
+// custom inspect in the same value prints something itself: what it prints is laid out with its
+// own pieces, and the outer value keeps its own (Node formats each `console.log` on its own).
+// Output from node 22.
+
+const custom = Symbol.for("nodejs.util.inspect.custom");
+
+class Tag {
+  [custom](): string {
+    return "Tag { list: [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22 ] }";
+  }
+}
+
+class Loud {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+  [custom](): string {
+    console.log({ inside: [1, 2, 3], n: this.n, text: "a long string so that this breaks too" });
+    return "Loud(" + this.n + ")";
+  }
+}
+
+class Nested {
+  [custom](): string {
+    console.log([new Tag(), new Loud(9)]);
+    return "Nested";
+  }
+}
+
+function main() {
+  console.log({ first: new Tag(), third: "c" });
+  console.log({ first: new Tag(), second: new Loud(2), third: "c" });
+  console.log([new Tag(), new Loud(3), new Tag()]);
+  console.log({ outer: new Tag(), nested: new Nested(), after: new Tag() });
+}

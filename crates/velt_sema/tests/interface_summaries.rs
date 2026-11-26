@@ -343,7 +343,8 @@ fn calling_a_generators_throw_changes_the_flags() {
              function main() {{ f(); }}"
         )
     };
-    let before = program("console.log(it.next().value);");
+    // Both print what they catch, so both reach the same std (`console.log`'s line breaking).
+    let before = program("try { it.next(); } catch (e) { console.log(e); }");
     let after = program("try { it.throw(new Error(\"x\")); } catch (e) { console.log(e); }");
     assert_eq!(changes(&before, &after), vec![Change::Fact("flags")]);
 }
