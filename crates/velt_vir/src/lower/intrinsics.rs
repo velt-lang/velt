@@ -392,6 +392,7 @@ impl FnLower<'_, '_> {
                 let t = self.sub(a.ty);
                 Operand::Const(crate::vir::Const::Bool(!self.cx.unique_refs(t)), Ty::Bool)
             }
+            (I::IsExactClass, [a]) => self.exact_class_test(a),
             (I::HoldsNull, [a]) => {
                 let t = self.sub(a.ty);
                 let holds = matches!(self.cx.kind(t), hir::TyKind::Option(..));

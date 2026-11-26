@@ -1,13 +1,12 @@
 // velt/task (internal): `catchPanic`'s catch (std/task/panic.velt), the runtime's: the default
-// variant of `#task-catch` (under `VELT_SCHEDULER=std`, the executor in Velt's: catch_sched.velt).
+// variant of `#task-catch`, which only WebAssembly builds use (velt_rt_wasm's catch; native builds
+// use the executor in Velt's, catch_sched.velt).
 
-import {
-  velt_rt_catch_arm,
-  velt_rt_catch_free,
-  velt_rt_catch_message,
-  velt_rt_catch_settled,
-  velt_rt_catch_take,
-} from "velt/task/rt";
+declare function velt_rt_catch_arm();
+declare function velt_rt_catch_take(): u64;
+declare async function velt_rt_catch_settled(h: u64): Promise<bool>;
+declare function velt_rt_catch_message(h: u64): string;
+declare function velt_rt_catch_free(h: u64);
 
 /**
  * `take`'s answer when no promise took the arming, which the runtime's catch doesn't tell: its

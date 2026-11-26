@@ -149,6 +149,7 @@ fn keeps_nothing(i: Intrinsic) -> bool {
             | Intrinsic::ToAny
             | Intrinsic::InspectNested
             | Intrinsic::IsTypedProxy
+            | Intrinsic::IsExactClass
             | Intrinsic::AnyReflectInfo
             | Intrinsic::AnyReflectCount
             | Intrinsic::AnyReflectName

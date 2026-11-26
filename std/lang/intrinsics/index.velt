@@ -141,6 +141,7 @@ export { threadLocalGet, threadLocalSet } from "velt/lang/intrinsics/thread_loca
 export {
   fnCapturesNothing,
   holdsNull,
+  isExactClass,
   mayAlias,
   needsDrop,
   needsTransfer,

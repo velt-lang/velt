@@ -649,6 +649,7 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::ModuleStateUsed
         | I::MayAlias
         | I::HoldsNull
+        | I::IsExactClass
         | I::NullAs
         | I::Truthy
         | I::IsNull

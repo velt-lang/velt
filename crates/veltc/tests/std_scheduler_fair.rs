@@ -3,9 +3,9 @@
 //! used to keep its poll going for as long as that lasted, holding back the rest of its task (a
 //! server that drives every connection from one task, as http-server's `acceptAll`) and the rest
 //! of its worker (a server task pinned beside it). No clock decides a verdict: a client first
-//! writes a backlog that sits in the socket buffers, a ping connects only after it, and the server
-//! records whether the ping was answered before its drain reached the end of the backlog (without
-//! a budget the drain reads it all in one go). The accept loop's test queues connections before
+//! writes a backlog that sits in the socket buffers, a ping connects only after it, the server
+//! waits until the ping's bytes are readable, and records whether the ping was answered before its
+//! drain reached the end of the backlog (without a budget the drain reads it all in one go). The accept loop's test queues connections before
 //! the server accepts any. Built with `VELT_SCHEDULER=std`, run with `VELT_THREADS=4`.
 
 use std::path::Path;
@@ -122,7 +122,9 @@ async function hot(port: i64, written: Channel<i64>, done: Channel<i64>): Promis
   c.close();
 }
 
-// Sends its ping in full before the server starts to read either connection.
+// Sends its ping before the server starts to read either connection. A write that returned says
+// nothing about when the bytes are readable at the other end, so the server waits for them
+// (`serve`, #3854).
 async function ping(port: i64, pinged: Channel<i64>): Promise<bool> {
   const c = await connect(`127.0.0.1:${port}`);
   await c.write("ping");
@@ -165,6 +167,8 @@ async function serve(l: TcpListener, pinged: Channel<i64>): Promise<void> {{
   const a = await l.accept();
   const b = await l.accept();
   await pinged.receive();
+  // The ping's bytes are here: from now on turn order alone decides who reads first.
+  await b.readable();
   const started = channel<i64>(1);
   const hotDrain = drain(a, started);
   const cold = pong(b);
@@ -192,6 +196,8 @@ async function serve(l: TcpListener, pinged: Channel<i64>): Promise<void> {{
   const a = await l.accept();
   const b = await l.accept();
   await pinged.receive();
+  // The ping's bytes are here: from now on turn order alone decides who reads first.
+  await b.readable();
   const started = channel<i64>(1);
   const hotDrain = spawn(drain(a, started), {{ worker: 0 }});
   await started.receive();

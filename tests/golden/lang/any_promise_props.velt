@@ -1,0 +1,24 @@
+// check: no leaks
+// A promise's own properties read through `any`, as in Node (#3749): a name it doesn't have is
+// `undefined` (a literal name, a computed one, through `unknown`), `[Symbol.toStringTag]` is
+// `"Promise"`, its text `[object Promise]`, `Object.keys` lists none, and `in` finds `then`. Its
+// methods read as values (`toString`, `hasOwnProperty`) are still the #924 TypeError, as a
+// string's and an array's are.
+async function main(): Promise<void> {
+  const v: any = Promise.resolve(1);
+  console.log(v.foo, v.bar === undefined, typeof v.baz);
+  const k = "missing";
+  console.log(v[k]);
+  const u: unknown = v;
+  console.log((u as any).other);
+  console.log(v[Symbol.toStringTag]);
+  console.log(Object.keys(v), Object.keys(v).length);
+  console.log("foo" in v, "then" in v);
+  // Its text, as `Object.prototype.toString` writes it from the tag; a plain object has none.
+  console.log(String(v), `${v}`, "" + v);
+  console.log(Object.prototype.toString.call(v));
+  const o: any = { a: 1 };
+  console.log(String(o), `${o}`, Object.prototype.toString.call(o));
+  console.log(await v);
+}
+main();

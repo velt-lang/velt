@@ -13,3 +13,5 @@ export const SEARCH = Symbol("search");
 export const SPLIT = Symbol("split");
 /** `s.replace(re, f)` with a replacer the compiler adapted. */
 export const REPLACE_CALLING = Symbol("replaceCalling");
+/** The regex's cursor, which holds its own `lastIndex` (exec_calls.velt). */
+export const CURSOR = Symbol("cursor");
