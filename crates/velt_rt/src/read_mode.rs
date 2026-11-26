@@ -18,7 +18,6 @@
 //!   readers read it at the same time (sema rejects the writes it can see).
 
 use std::cell::{Cell, RefCell};
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::hazard::{FREES_WAIT, READER};
 
@@ -101,44 +100,6 @@ pub(crate) fn free_waiting() {
         // SAFETY: `velt_rt_free_after_reads` took it with its count at 1 and its drop glue.
         unsafe { drop(&mut slot) };
     }
-}
-
-/// Set when the program makes its first `RwLock` (before that no thread is in read mode).
-static RWLOCKS: AtomicBool = AtomicBool::new(false);
-
-/// An `RwLock` is made (`velt_rt_rwlock_init`).
-pub(crate) fn rwlock_made() {
-    if !RWLOCKS.load(Ordering::Relaxed) {
-        RWLOCKS.store(true, Ordering::Relaxed);
-    }
-}
-
-/// A promise or task starts: in read mode it stops the program. What it holds would outlive
-/// the callback without leaving through its result, so objects the callback made (counted by
-/// read mode's rules) or shares with the store could reach other threads and writers.
-/// Inline it is one load and a branch: a program without an `RwLock` starts each promise without
-/// reading this thread's reader state (which the compiler would otherwise read ahead of the test).
-#[inline(always)]
-pub(crate) fn refuse_tasks_in_read() {
-    if RWLOCKS.load(Ordering::Relaxed) {
-        refuse_tasks_with_rwlocks();
-    }
-}
-
-/// [`refuse_tasks_in_read`] once the program has made an `RwLock`.
-#[inline(never)]
-fn refuse_tasks_with_rwlocks() {
-    if in_read() {
-        tasks_in_read();
-    }
-}
-
-#[cold]
-#[inline(never)]
-fn tasks_in_read() -> ! {
-    crate::panic::fatal(
-        "a promise or task cannot start inside a `read` callback: what it holds would outlive the callback, which shares the `RwLock`'s value without counting it (start it after `read`, with what `read` returns)",
-    )
 }
 
 /// A `with` or `write` (`method`) is about to lock: in read mode it stops the program.

@@ -1,0 +1,212 @@
+// check: no leaks
+// More results an implementation converts to the interface's, as a call converts them (#3771):
+// a generic method's, an interface extending the wanted one, a `this` result inherited from a
+// base class that doesn't implement the interface, a nullable subclass, a nullable class or
+// interface for a nullable interface, a result class that implements the interface through its
+// base class, and the iterator shapes.
+class Shape {
+  name(): string {
+    return "shape";
+  }
+}
+
+class Sq extends Shape {
+  s: string;
+  constructor(s: string) {
+    super();
+    this.s = s;
+  }
+  override name(): string {
+    return "sq " + this.s;
+  }
+}
+
+// A method with type parameters of its own.
+interface Maker {
+  make<U>(x: U, f: (u: U) => string): Shape;
+}
+
+class SqMaker implements Maker {
+  make<U>(x: U, f: (u: U) => string): Sq {
+    return new Sq(f(x));
+  }
+}
+
+interface Fluent {
+  step(n: number): Fluent;
+  total(): number;
+}
+
+// An interface result that extends the wanted one.
+interface Sub extends Fluent {
+  extra(): number;
+}
+
+class Tot implements Sub {
+  n = 0;
+  step(n: number): Sub {
+    this.n += n;
+    return this;
+  }
+  total(): number {
+    return this.n;
+  }
+  extra(): number {
+    return 1;
+  }
+}
+
+// A `this` result declared by a base class that doesn't implement `Fluent`.
+class Base {
+  n = 0;
+  step(n: number): this {
+    this.n += n;
+    return this;
+  }
+}
+
+class Derived extends Base implements Fluent {
+  total(): number {
+    return this.n;
+  }
+}
+
+// A result class implementing `Fluent` through its base class.
+class BaseF implements Fluent {
+  n = 0;
+  step(n: number): Fluent {
+    this.n += n;
+    return this;
+  }
+  total(): number {
+    return this.n;
+  }
+}
+
+class K extends BaseF {}
+
+class KMaker implements Fluent {
+  n = 0;
+  step(n: number): K {
+    const k = new K();
+    k.n = this.n + n;
+    return k;
+  }
+  total(): number {
+    return this.n;
+  }
+}
+
+// A nullable subclass for a nullable base class.
+interface Finder {
+  find(n: number): Shape | null;
+}
+
+class SqFinder implements Finder {
+  find(n: number): Sq | null {
+    return n > 0 ? new Sq("f" + n) : null;
+  }
+}
+
+// A nullable class for a nullable interface, and a nullable interface extending it.
+interface Chain {
+  link(n: number): Fluent | null;
+}
+
+class ClassLinker implements Chain {
+  link(n: number): Derived | null {
+    if (n > 0) {
+      const d = new Derived();
+      d.n = n;
+      return d;
+    }
+    return null;
+  }
+}
+
+class SubLinker implements Chain {
+  link(n: number): Sub | null {
+    if (n > 0) {
+      const t = new Tot();
+      t.n = n * 10;
+      return t;
+    }
+    return null;
+  }
+}
+
+function linked(c: Chain, n: number): string {
+  const f = c.link(n);
+  return f === null ? "none" : String(f.step(1).total());
+}
+
+// An iterator class for `Iterable`, and `this` for `IterableIterator`.
+class RangeIter implements Iterator<number> {
+  i: number;
+  end: number;
+  constructor(i: number, end: number) {
+    this.i = i;
+    this.end = end;
+  }
+  next(): IteratorResult<number> {
+    if (this.i < this.end) {
+      const v = this.i;
+      this.i++;
+      return { done: false, value: v };
+    }
+    return { done: true, value: undefined };
+  }
+}
+
+class Span implements Iterable<number> {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+  [Symbol.iterator](): RangeIter {
+    return new RangeIter(0, this.n);
+  }
+}
+
+class Countdown implements IterableIterator<number> {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+  [Symbol.iterator](): this {
+    return this;
+  }
+  next(): IteratorResult<number> {
+    if (this.n > 0) {
+      return { done: false, value: this.n-- };
+    }
+    return { done: true, value: undefined };
+  }
+}
+
+function sum(it: Iterable<number>): number {
+  let s = 0;
+  for (const v of it) {
+    s += v;
+  }
+  return s;
+}
+
+function run(f: Fluent): number {
+  return f.step(2).step(3).total();
+}
+
+function main() {
+  const m: Maker = new SqMaker();
+  console.log(m.make(5, (n: number) => "n" + n).name());
+  console.log(m.make("a", (s: string) => s + s).name());
+  console.log(run(new Tot()), run(new Derived()), run(new KMaker()));
+  const f: Finder = new SqFinder();
+  const a = f.find(1);
+  const b = f.find(0);
+  console.log(a === null ? "null" : a.name(), b === null ? "null" : b.name());
+  console.log(sum(new Span(4)), sum(new Countdown(3)));
+  const cl = new ClassLinker();
+  const sl = new SubLinker();
+  console.log(linked(cl, 2), linked(cl, 0), linked(sl, 3), linked(sl, 0));
+}
