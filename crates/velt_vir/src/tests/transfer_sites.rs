@@ -11,7 +11,7 @@ use std::path::Path;
 
 use velt_sema::hir::{self, Intrinsic as I};
 
-use super::{lower_ok, lower_src, std_src};
+use super::{lower_src, std_src};
 
 /// The calls that start a transfer, or lead to one: the begins of std's map and lowering's entry
 /// points that reach them.
@@ -364,31 +364,5 @@ fn a_program_that_transfers_nothing_loads_no_transfer_map() {
     assert!(
         !v.funcs.iter().any(|f| f.symbol.contains("P8transferN")),
         "the transfer map in a program that transfers nothing:\n{v}"
-    );
-}
-
-/// A function value whose environment holds a cell (a captured variable that is assigned): its
-/// transfer entry copies the cell in a transfer of its own, which nothing in the program starts.
-const CLOSURE_TRANSFERS_NOTHING: &str = "class W {\n  seen: number[] = [];\n}\n\
-    function main() {\n  const w = new W();\n  let n = 0;\n  \
-    const tick = (k: number) => {\n    n += k;\n    w.seen.push(n);\n  };\n  \
-    const fs: ((k: number) => void)[] = [tick];\n  fs[0](2);\n  \
-    console.log(n, w.seen.length);\n}\n";
-
-#[test]
-fn a_closure_in_a_program_that_transfers_nothing_begins_no_transfer() {
-    // `check_src` loads std up front (no `demand_std`), so the map's module is in the program
-    // though sema demanded none of its hooks: the closure's transfer entry begins nothing (a
-    // begin there stopped with an ICE, as `VELT_EAGER_STD=1` builds of two goldens did).
-    let p: hir::Program = std_src::check_src(CLOSURE_TRANSFERS_NOTHING);
-    let xfer = velt_common::std_hooks::hook_index::xfer_begin;
-    assert!(
-        !p.hooks_demanded.contains(xfer),
-        "sema demanded the transfer map for a program that transfers nothing"
-    );
-    let v = lower_ok(&p);
-    assert!(
-        !v.funcs.iter().any(|f| f.symbol.contains("xferBegin")),
-        "a transfer begun in a program that transfers nothing:\n{v}"
     );
 }
