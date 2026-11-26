@@ -29,6 +29,7 @@ export function renderLayout(l: Layout, src: string, out: u8[]): void {
   // The writer reads the text through one address: `src`, this function's parameter, keeps its
   // bytes there while it runs (the scanner's address was good while it ran).
   l.data = strDataAddress(src);
+  l.wNodes = (l.node.length as u64) / NODE_WORDS;
   l.wNode = 0;
   l.wSplit = 0;
   range(l, l.topStart, l.topEnd, 0, out);
@@ -39,7 +40,7 @@ function range(l: Layout, a: u64, b: u64, indent: u64, out: u8[]): void {
   const never: u64 = 0xffffffffffffffff;
   let pos = a;
   while (true) {
-    const nodeAt = l.wNode < nodeCount(l) ? l.node[l.wNode * NODE_WORDS + N_OPEN] : never;
+    const nodeAt = l.wNode < l.wNodes ? l.node[l.wNode * NODE_WORDS + N_OPEN] : never;
     const splitAt = l.wSplit < (l.splitText.length as u64) ? l.splitAt[l.wSplit * 2] : never;
     const next = nodeAt < splitAt ? nodeAt : splitAt;
     if (next >= b) {
@@ -65,7 +66,7 @@ function range(l: Layout, a: u64, b: u64, indent: u64, out: u8[]): void {
 function entry(l: Layout, p: u64, indent: u64, out: u8[]): void {
   const a = l.ent[p];
   const b = l.ent[p + 1];
-  const nodeAt = l.wNode < nodeCount(l) ? l.node[l.wNode * NODE_WORDS + N_OPEN] : b;
+  const nodeAt = l.wNode < l.wNodes ? l.node[l.wNode * NODE_WORDS + N_OPEN] : b;
   const splitAt = l.wSplit < (l.splitText.length as u64) ? l.splitAt[l.wSplit * 2] : b;
   if (nodeAt >= b && splitAt >= b) {
     gap(l, a, b, indent, out);
@@ -122,9 +123,9 @@ function rows(l: Layout, r: u64, first: u64, count: u64, pad: u64, out: u8[]): v
   const shown = count - more;
   const cols = l.node[r + N_COLUMNS];
   const at = l.node[r + N_WIDEST];
-  for (let j: u64 = 0; j < shown; j++) {
+  let column: u64 = 0;
+  for (let j: u64 = 0; j < shown; j++, column = column + 1 == cols ? 0 : column + 1) {
     const p = (first + j) * ENT_WORDS;
-    const column = j % cols;
     const lastInRow = column + 1 == cols || j + 1 == shown;
     if (j > 0 && column == 0) {
       out.push(0x2c);
@@ -148,9 +149,4 @@ function rows(l: Layout, r: u64, first: u64, count: u64, pad: u64, out: u8[]): v
     newline(out, pad);
     entry(l, (first + shown) * ENT_WORDS, pad, out);
   }
-}
-
-/** How many containers `l` holds. */
-function nodeCount(l: Layout): u64 {
-  return (l.node.length as u64) / NODE_WORDS;
 }

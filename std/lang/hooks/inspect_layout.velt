@@ -6,6 +6,8 @@
 
 import { hookCall, noInline, strByteLen } from "velt/lang/intrinsics";
 
+declare function velt_rt_strbuf_adopt(part: string, head: string, cap: u64, out: string): u8;
+declare function velt_rt_strbuf_drop(buf: string);
 declare function velt_rt_strbuf_finish(buf: string, out: string);
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
 declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
@@ -18,9 +20,21 @@ export function inspectLayout(buf: string, start: u64): void {
   }
 }
 
-/** The builder `buf` with its bytes from `start` on replaced by `text`. */
+/**
+ * The builder `buf` with its bytes from `start` on replaced by `text`. A value printed first in
+ * its line (`start` 0, most of them) makes `text`'s buffer the builder's, copying nothing.
+ */
 @noInline
 function replaceTail(buf: string, start: u64, text: string): void {
+  if (start == 0) {
+    velt_rt_strbuf_drop(buf);
+    const head = "";
+    // `text` is the builder now when its buffer is its own (it is left empty), else it is copied.
+    if (velt_rt_strbuf_adopt(text, head, 0, buf) == 0) {
+      velt_rt_strbuf_push_str(buf, text);
+    }
+    return;
+  }
   let whole: string = "";
   velt_rt_strbuf_finish(buf, whole);
   const head = velt_rt_str_byte_slice(whole, 0, start);

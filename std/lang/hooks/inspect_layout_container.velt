@@ -89,8 +89,9 @@ export class Layout {
   eMore: bool = false;
   /** Raw line breaks in the last container read (exact only). */
   nodeBreaks: u64 = 0;
-  /** The writer's next container and next split string. */
+  /** The writer's next container and next split string, and how many containers there are. */
   wNode: u64 = 0;
+  wNodes: u64 = 0;
   wSplit: u64 = 0;
   /**
    * A lower bound on the capacity of `ent`, which grows only by `reserve`: that makes exactly the
@@ -227,9 +228,9 @@ function measureGrouped(
   const pad = indent + 2;
   let units = openUnits + 1 + pad;
   let width = openWidth + pad;
-  for (let j: u64 = 0; j < shown; j++) {
+  let column: u64 = 0;
+  for (let j: u64 = 0; j < shown; j++, column = column + 1 == cols ? 0 : column + 1) {
     const p = base + j * PEND_WORDS;
-    const column = j % cols;
     const lastInRow = column + 1 == cols || j + 1 == shown;
     if (j > 0 && column == 0) {
       units += 2 + pad;
