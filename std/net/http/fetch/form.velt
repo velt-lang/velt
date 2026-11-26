@@ -124,7 +124,10 @@ export class FormData extends ByteSource {
     }
   }
 
-  // The fields in order. In JS this is `entries` itself, so a subclass's `entries` doesn't change it.
+  /**
+   * The fields in order. In JS this is `entries` itself, so a subclass's `entries` doesn't change
+   * it.
+   */
   *[Symbol.iterator](): IterableIterator<[string, FormDataEntryValue]> {
     for (let i: i64 = 0; i < (this.#names.length as i64); i++) {
       yield [this.#names[i], this.#values[i]];
