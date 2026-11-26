@@ -73,6 +73,8 @@ pub(crate) fn run(cx: &mut Ctx) {
     if !(has_modules || cx.gen.generate.is_some()) || !cx.has_generated_fns() {
         return;
     }
+    // The std modules loaded on demand are here by now, for what was generated for them.
+    crate::generating::add_waiting(cx);
     let mut pending: Vec<(usize, String)> = match &cx.gen.input {
         Some(gen) => (gen.modules.iter())
             .filter(|gm| !cx.gen.binding.collected.contains(&gm.path))
@@ -143,6 +145,12 @@ pub(crate) fn run(cx: &mut Ctx) {
         let Some(generator) = cx.gen.generate else {
             break;
         };
+        // One that stopped the check (it failed, or made code the check cannot add) is not asked
+        // again by the check's later rounds: its answer stands (`generating::stopped`), and each
+        // call would run the generators once more for it.
+        if generator.stopped() {
+            break;
+        }
         let bound = std::mem::take(&mut cx.gen.binding.bound);
         let demand = super::demand_with_keys(cx, &found, &bound, &keyed);
         cx.gen.binding.bound = bound;
@@ -166,8 +174,9 @@ fn index(cx: &Ctx, path: &str) -> Option<usize> {
 }
 
 /// Have the driver generate the code `demand` asks for, and add its modules to the check
-/// (pending collection): false when it could not, or made code that needs the source rewrites a
-/// check makes before it starts (`needs_rewrite`), so the driver checks again with it.
+/// (pending collection): false when it could not or made none, or made code that needs the
+/// source rewrites a check makes before it starts (`needs_rewrite`), so the driver checks again
+/// with it.
 fn generate<'m>(
     cx: &mut Ctx<'m>,
     generator: &'m super::Generator<'m>,
@@ -182,6 +191,12 @@ fn generate<'m>(
         generator.state.borrow_mut().restart = true;
         return false;
     }
+    // No module for the demand (the driver does not know the module that declares the function):
+    // asked again it would answer the same, for ever. The instances stay without code, which
+    // the check then returns as its demand.
+    if batch.sources.is_empty() {
+        return false;
+    }
     for src in batch.sources {
         let declaring = (batch.input.modules.iter())
             .find(|g| g.path == src.path)
@@ -191,7 +206,7 @@ fn generate<'m>(
             return false;
         };
         let path = src.path.clone();
-        let Some(kept) = generator.keep(src, declaring) else {
+        let Some(kept) = generator.keep(src) else {
             generator.state.borrow_mut().restart = true;
             return false;
         };

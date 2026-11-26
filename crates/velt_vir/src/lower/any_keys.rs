@@ -11,8 +11,8 @@
 //!   table is handed to its own class's glue;
 //! - a `Record<string, V>`: its `[RECORD_KEY_NAMES]()` (insertion order);
 //! - arrays, tuples and strings: their indexes as strings;
-//! - booleans, numbers, symbols, functions and the standard library's classes (a `Map`, a
-//!   `Set`, an `Error`): none;
+//! - booleans, numbers, symbols, functions, promises and the standard library's classes (a
+//!   `Map`, a `Set`, an `Error`): none;
 //! - a proxy: `Proxy[PROXY_KEYS]()` (std/lang/proxy/index.velt), which runs its `ownKeys` and
 //!   `getOwnPropertyDescriptor` traps;
 //! - `JsonValue`: not yet.
@@ -135,6 +135,7 @@ impl FnLower<'_, '_> {
             | TyKind::Float(_)
             | TyKind::Symbol
             | TyKind::Map(..)
+            | TyKind::Promise(..)
             | TyKind::FnPtr { .. }
             | TyKind::Closure(_) => {
                 let v = self.array_lit(&[], sa);

@@ -262,16 +262,19 @@ impl Ctx<'_> {
             parts.push((f.span.lo, format!("{}: {}", key(&f.name), ty(f.ty))));
         }
         for m in &i.methods {
+            let last = m.params.len().saturating_sub(1);
             let params: Vec<String> = m
                 .params
                 .iter()
-                .map(|p| {
+                .enumerate()
+                .map(|(k, p)| {
                     // The setter `Object.defineProperty` adds (`crate::defined_accessors`).
                     let name = match p.name == crate::defined_accessors::ADDED_SETTER_PARAM {
                         true => "v",
                         false => &p.name,
                     };
-                    format!("{name}: {}", ty(p.ty))
+                    let dots = if m.rest && k == last { "..." } else { "" };
+                    format!("{dots}{name}: {}", ty(p.ty))
                 })
                 .collect();
             let s = match (m.is_getter, m.name.strip_prefix("set ")) {

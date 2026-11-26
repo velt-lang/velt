@@ -1,0 +1,105 @@
+// #3792: the built-in errors' constructors never write `name` through the accessor a subclass may
+// override (Node keeps it on the prototype), and `stack`'s first line is written on its first read
+// and kept, as V8 does.
+
+function first(s: string | undefined): string {
+  return String(s).split("\n")[0];
+}
+
+class R1 extends TypeError {
+  override get name(): string {
+    return "R1";
+  }
+}
+class R2 extends RangeError {
+  override get name(): string {
+    return "R2";
+  }
+}
+class R3 extends SyntaxError {
+  override get name(): string {
+    return "R3";
+  }
+}
+class R4 extends ReferenceError {
+  override get name(): string {
+    return "R4";
+  }
+}
+class R5 extends EvalError {
+  override get name(): string {
+    return "R5";
+  }
+}
+class R6 extends URIError {
+  override get name(): string {
+    return "R6";
+  }
+}
+class R7 extends DOMException {
+  override get name(): string {
+    return "R7";
+  }
+}
+
+function show(e: Error): void {
+  console.log(e.name, String(e), e.message, first(e.stack));
+}
+
+// A getter-only `name`: no constructor writes it.
+show(new R1("r1"));
+show(new R2("r2"));
+show(new R3("r3"));
+show(new R4("r4"));
+show(new R5("r5"));
+show(new R6("r6"));
+show(new R7("r7", "AbortError"));
+
+// A setter of its own: no constructor calls it.
+class P extends RangeError {
+  override get name(): string {
+    return "P";
+  }
+  override set name(v: string) {
+    console.log("setter called with", v);
+  }
+}
+const p = new P("pp");
+show(p);
+p.name = "Q";
+
+// The built-in names, and an assigned one.
+show(new TypeError("t"));
+show(new URIError("u"));
+const t = new TypeError("renamed");
+t.name = "Renamed";
+show(t);
+const d = new DOMException("dm", "InvalidCharacterError");
+console.log(d.name, d.code, String(d));
+
+// The stack's first line: a name assigned in a constructor, or before the first read, shows.
+class App extends Error {
+  constructor(m: string) {
+    super(m);
+    this.name = "AppError";
+  }
+}
+console.log(first(new App("m").stack));
+const late = new Error("late");
+late.name = "Later";
+console.log(first(late.stack));
+
+// Reading the stack changes nothing, so it can sit beside the error in one call.
+function report(e: Error, stack: string | undefined): number {
+  return first(stack).length + e.message.length;
+}
+const r = new Error("m");
+console.log(report(r, r.stack));
+
+// An assigned stack replaces it, `undefined` included.
+const own = new Error("own");
+own.stack = "custom stack";
+console.log(own.stack);
+const g = new Error("g");
+g.stack = undefined;
+console.log(g.stack === undefined, String(g));

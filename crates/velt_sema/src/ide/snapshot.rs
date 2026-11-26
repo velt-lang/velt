@@ -67,6 +67,7 @@ pub(super) fn build(mut cx: Ctx) -> Analysis {
     let Recorder { types, params, .. } = rec;
     Analysis {
         diagnostics: std::mem::take(&mut cx.diags),
+        late_refused: vec![],
         refs,
         types,
         contexts: params,

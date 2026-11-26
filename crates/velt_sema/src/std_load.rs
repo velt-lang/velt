@@ -76,12 +76,36 @@ pub struct StdLoads {
     /// A demand was refused (`StdBatch::refused`): the driver throws this check away and checks
     /// again with the module up front, so the check stops where it is (`Ctx::load_refused`).
     refused: std::sync::atomic::AtomicBool,
+    /// Modules the check refused after they were served (`refuse_served`): what the driver
+    /// loads up front for the check again, besides the demands its loader refused.
+    late: Mutex<Vec<String>>,
 }
 
 impl StdLoads {
     /// What tells one `StdLoads` from another, also after it moves: the address of its slots.
     pub(crate) fn id(&self) -> usize {
         self.slots.as_ptr() as usize
+    }
+
+    /// Refuses module `path` after it was served: a std block it adds would change code checked
+    /// before it (`collect::vector_extends`). The check stops, as for a refused demand, and the
+    /// driver checks again with `path` up front ([`StdLoads::take_late_refused`]).
+    pub(crate) fn refuse_served(&self, path: &str) {
+        self.refused
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Ok(mut late) = self.late.lock() {
+            if !late.iter().any(|p| p == path) {
+                late.push(path.to_string());
+            }
+        }
+    }
+
+    /// The modules [`StdLoads::refuse_served`] refused, for the driver to load up front.
+    pub fn take_late_refused(&self) -> Vec<String> {
+        self.late
+            .lock()
+            .map(|mut l| std::mem::take(&mut *l))
+            .unwrap_or_default()
     }
 
     /// Was a demand of a check on these loads refused?
@@ -104,6 +128,7 @@ impl Default for StdLoads {
             slots: (0..SLOTS).map(|_| OnceLock::new()).collect(),
             served: Default::default(),
             refused: Default::default(),
+            late: Default::default(),
         }
     }
 }

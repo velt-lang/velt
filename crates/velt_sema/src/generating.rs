@@ -91,16 +91,42 @@ pub(crate) fn install<'m>(
         add_sources(cx, Some(gen));
     }
     if let Some(generator) = generator {
-        let state = generator.state.borrow();
-        input.extend(state.input.clone());
-        let declaring = state.filled.clone();
-        drop(state);
-        for (m, d) in generator.kept().zip(declaring).filter(|_| !std_unit) {
-            cx.add_module(m, d);
+        input.extend(generator.state.borrow().input.clone());
+        for m in generator.kept().filter(|_| !std_unit) {
+            add_generated(cx, m, &input);
         }
     }
     cx.gen.input = Some(std::rc::Rc::new(input));
     cx.gen.generate = generator;
+}
+
+/// Add generated module `m` (one of `input`'s) to `cx`, after the module it was generated for,
+/// found by its path: a module's index is not the same in every context of a check. A std
+/// module loaded on demand (`std_load`) is not in a fresh context: what was generated for one
+/// waits until it is ([`add_waiting`]).
+fn add_generated<'m>(
+    cx: &mut crate::ctx::Ctx<'m>,
+    m: &'m SourceModule,
+    input: &generated::GenInput,
+) {
+    let Some(gm) = input.modules.iter().find(|gm| gm.path == m.path) else {
+        return;
+    };
+    match cx.modules.iter().position(|d| d.path == gm.declaring) {
+        Some(d) => _ = cx.add_module(m, d),
+        None => cx.gen.waiting.push((m, gm.declaring.clone())),
+    }
+}
+
+/// Add the generated modules that waited for the module they were generated for
+/// ([`add_generated`]), when the check has loaded it by now.
+pub(crate) fn add_waiting(cx: &mut crate::ctx::Ctx) {
+    for (m, declaring) in std::mem::take(&mut cx.gen.waiting) {
+        match cx.modules.iter().position(|d| d.path == declaring) {
+            Some(d) => _ = cx.add_module(m, d),
+            None => cx.gen.waiting.push((m, declaring)),
+        }
+    }
 }
 
 /// Add the generated modules given apart from the program's (`GenArgs::sources`) to `cx`, each
@@ -111,12 +137,7 @@ pub(crate) fn add_sources<'m>(cx: &mut crate::ctx::Ctx<'m>, gen: Option<generate
         return;
     };
     for m in gen.sources {
-        let declaring = (gen.input.modules.iter())
-            .find(|gm| gm.path == m.path)
-            .and_then(|gm| cx.modules.iter().position(|d| d.path == gm.declaring));
-        if let Some(d) = declaring {
-            cx.add_module(m, d);
-        }
+        add_generated(cx, m, gen.input);
     }
 }
 

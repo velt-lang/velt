@@ -132,9 +132,11 @@ pub struct Carried {
     pub dev_program: Option<(velt_vir::vir::Program, velt_opt::DebugKept)>,
 }
 
-/// Whether `velt dev` keeps a check to reload body edits from (`VELT_DEV_WARM=off` turns it off).
+/// Whether `velt dev` keeps a check to reload body edits from: `VELT_DEV_WARM=1` (or `on`)
+/// turns it on. Off by default until #3822 is fixed: a JIT host that reloads warm now and then
+/// crashes in the reload's check (memory the kept check or lowering reads is gone).
 pub fn warm_enabled() -> bool {
-    std::env::var("VELT_DEV_WARM").map_or(true, |v| v != "off" && v != "0")
+    std::env::var("VELT_DEV_WARM").is_ok_and(|v| v == "1" || v == "on")
 }
 
 /// What `-v` says of a kept check: its size, and the process's memory with it kept.

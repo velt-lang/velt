@@ -85,9 +85,6 @@ struct HubState {
     /// The waiting holders (by address) in the order they started waiting, with their wakers
     /// and the microtask ticket each was queued as when the promise settled (0: not queued).
     waiters: Vec<(usize, Waker, u64)>,
-    /// The original panicked (`catchPanic`, panic.rs): it settled with this message and no
-    /// result, and every holder's await raises it.
-    panic: Option<Box<[u8]>>,
 }
 
 /// The hubs of the shared original futures, by address.
@@ -174,7 +171,6 @@ pub unsafe extern "C-unwind" fn velt_rt_fut_share(
                 result: Vec::new(),
                 loc: ThrowLoc::NONE,
                 waiters: Vec::new(),
-                panic: None,
             }),
         });
         HUBS.lock()
@@ -479,35 +475,13 @@ unsafe fn poll_holder(h: &Arc<Hub>, f: *mut VeltFut, cx: *mut c_void) -> u32 {
             }
             drop(st);
             // The first waiter drives the original future (no lock held: it runs compiled
-            // code). A panic in it settles the promise for every holder (each one's await
-            // raises it), not only for the driver, whose poll it unwinds.
-            if crate::panic::catching() {
-                match crate::panic::catch(|| (h.poll)(h.orig, cx)) {
-                    Ok(r) if r != READY => return PENDING,
-                    Ok(_) => {}
-                    Err(msg) => {
-                        let mut st = h.st.lock();
-                        st.panic = Some(msg.clone());
-                        st.done = true;
-                        let wake: Vec<Waker> = std::mem::take(&mut st.waiters)
-                            .into_iter()
-                            .filter(|(x, ..)| *x != me)
-                            .map(|(_, w, _)| w)
-                            .collect();
-                        drop(st);
-                        wake.into_iter().for_each(Waker::wake);
-                        crate::panic::raise(&msg)
-                    }
-                }
-            } else {
-                // Velt's own raise (the executor in Velt's catch, #2667) may unwind through
-                // here: the next waiter then drives, not waiting for a driver that is gone.
-                let guard = DriverGone { h: h.as_ref(), me };
-                let r = (h.poll)(h.orig, cx);
-                std::mem::forget(guard);
-                if r != READY {
-                    return PENDING;
-                }
+            // code). Velt's own raise (the executor in Velt's catch, #2667) may unwind through
+            // here: the next waiter then drives, not waiting for a driver that is gone.
+            let guard = DriverGone { h: h.as_ref(), me };
+            let r = (h.poll)(h.orig, cx);
+            std::mem::forget(guard);
+            if r != READY {
+                return PENDING;
             }
             st = h.st.lock();
         }
@@ -528,9 +502,6 @@ unsafe fn poll_holder(h: &Arc<Hub>, f: *mut VeltFut, cx: *mut c_void) -> u32 {
             .map(|(x, k, _)| (x, k.clone(), super::local::settled(k)))
             .filter(|(.., t)| *t != 0)
             .collect();
-        if now && !queued.is_empty() {
-            super::local::grant_step();
-        }
         st = h.st.lock();
         st.waiters = queued;
     }
@@ -539,11 +510,6 @@ unsafe fn poll_holder(h: &Arc<Hub>, f: *mut VeltFut, cx: *mut c_void) -> u32 {
             return PENDING;
         }
         st.waiters.remove(i);
-    }
-    if let Some(msg) = st.panic.clone() {
-        // The lock goes before the unwind (it would be poisoned otherwise).
-        drop(st);
-        crate::panic::raise(&msg)
     }
     let result = st.result.as_ptr() as *const u8;
     let loc = st.loc;
@@ -580,15 +546,6 @@ impl Drop for DriverGone<'_> {
 /// both.
 unsafe fn keep_result(h: &Hub, st: &mut HubState) {
     // A started original keeps where it threw; one its first waiter drove threw on this thread.
-    if h.node {
-        if let Some(msg) = super::local::node_panic(h.orig) {
-            // It panicked: no result to keep; each holder's await raises the panic.
-            super::local::deliver_unadopted(h.orig);
-            st.panic = Some(msg);
-            st.done = true;
-            return;
-        }
-    }
     st.loc = if h.node {
         super::local::deliver_unadopted(h.orig);
         super::local::node_loc(h.orig)
@@ -660,8 +617,7 @@ unsafe fn release(h: Arc<Hub>, f: *mut VeltFut) {
         }
         return;
     }
-    // A panicked original left no result to drop.
-    let done = st.done && st.panic.is_none();
+    let done = st.done;
     let mut result = std::mem::take(&mut st.result);
     let loc = st.loc;
     drop(st);
@@ -715,9 +671,8 @@ pub(crate) unsafe fn peek(f: *mut VeltFut) -> bool {
         settle(&h);
     }
     let st = h.st.lock();
-    // A panicked original has no result to show: it reads as pending.
-    if st.done && st.panic.is_none() {
+    if st.done {
         std::ptr::copy_nonoverlapping(st.result.as_ptr() as *const u8, slot(f), h.size);
     }
-    st.done && st.panic.is_none()
+    st.done
 }
