@@ -318,8 +318,8 @@ pub(super) fn reads_buffer(cx: &Ctx, callee: &Callee, args: &[Expr]) -> bool {
     let method = match callee {
         Callee::Def(d, _) => Some(*d),
         Callee::Virtual { slot } => cx
-            .adt(*class)
-            .and_then(|a| a.vtable.get(*slot as usize).copied()),
+            .vtable_of(*class)
+            .and_then(|v| v.get(*slot as usize).copied()),
         _ => None,
     };
     method

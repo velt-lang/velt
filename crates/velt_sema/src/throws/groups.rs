@@ -305,16 +305,19 @@ fn link_vtables(
         let DefInfo::Adt(a) = &cx.info[i] else {
             continue;
         };
-        let vtable = a.vtable.clone();
-        let base_vtable = a
-            .base
-            .and_then(|b| cx.class_of(b))
-            .and_then(|(bd, _)| cx.adt(bd).map(|b| b.vtable.clone()))
+        // Slots a vtable the program extended only pads are none (`Ctx::vtable_entries`).
+        let base_vtable = (a.base.and_then(|b| cx.class_of(b)))
+            .map(|(bd, _)| cx.vtable_entries(bd))
             .unwrap_or_default();
-        for (slot, &m) in vtable.iter().enumerate() {
+        let vtable = cx.vtable_entries(DefId(i as u32));
+        let own = vtable
+            .iter()
+            .enumerate()
+            .filter_map(|(s, m)| Some((s, (*m)?)));
+        for (slot, m) in own {
             uf.id(Node::Def(m));
-            match base_vtable.get(slot) {
-                Some(&b) => uf.union(Node::Def(b), Node::Def(m)),
+            match base_vtable.get(slot).copied().flatten() {
+                Some(b) => uf.union(Node::Def(b), Node::Def(m)),
                 None => {
                     let decl = cx.try_fn(m).and_then(|f| f.declared_throws);
                     if let Some(decl) = decl.or_else(|| written_rejection(cx, m)) {
