@@ -333,10 +333,14 @@ impl FnLower<'_, '_> {
             self.terminate(Terminator::Return(unit()));
             return;
         }
+        // Moved out and the box freed first: a drop that panics (a `[Symbol.dispose]()` caught by
+        // `catchPanic`) leaves nothing of this frame's behind.
         let place = self.deref_param(b, ty);
-        self.drop_glue(place, ty);
         let vt = self.cx.ty(ty);
+        let v = Place::local(self.temp(vt));
+        self.assign(v.clone(), Rvalue::Use(Operand::Copy(place)));
         self.free(Operand::Copy(Place::local(b)), vt);
+        self.drop_glue(v, ty);
         self.terminate(Terminator::Return(unit()));
     }
 }

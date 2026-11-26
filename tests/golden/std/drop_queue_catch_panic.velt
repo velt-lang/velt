@@ -1,0 +1,75 @@
+// check: no leaks
+// requires: unix
+// (A caught panic drops what the unwound frames held through their cleanup pads, which exist
+// where panics unwind as Itanium exceptions: Linux and macOS.)
+// A panic in a `[Symbol.dispose]()` while the queue of drops past the depth limit is drained
+// (#543, std/lang/hooks/drop_queue.velt), caught by `catchPanic`: the unwound drops never lowered
+// the depth they had raised, and the drain they cut short left this thread's drop state
+// draining. The catch puts the state back and drops what was still queued, so every node is
+// disposed and freed, and later deep drops on the thread are bounded and drained again; without
+// that, each later drop past the limit stayed queued (and leaked) forever.
+import { catchPanic, PanicError } from "velt/task";
+
+class Log {
+  count: number = 0;
+}
+
+class Node {
+  id: number;
+  log: Log;
+  failAt: number;
+  kids: Node[] = [];
+
+  constructor(id: number, log: Log, failAt: number) {
+    this.id = id;
+    this.log = log;
+    this.failAt = failAt;
+  }
+
+  [Symbol.dispose]() {
+    this.log.count++;
+    if (this.id == this.failAt) {
+      panic(`node ${this.id} failed`);
+    }
+  }
+}
+
+function chain(n: number, log: Log, failAt: number): Node {
+  let head = new Node(n - 1, log, failAt);
+  for (let i = n - 2; i >= 0; i--) {
+    const b = new Node(i, log, failAt);
+    b.kids.push(head);
+    head = b;
+  }
+  return head;
+}
+
+/** Makes a chain of `n` whose node `failAt` panics (-1: none) and drops it. */
+async function makeAndDrop(n: number, log: Log, failAt: number): Promise<number> {
+  const c = chain(n, log, failAt);
+  return c.id + n;
+}
+
+/** `makeAndDrop` inside `catchPanic`. */
+async function dropCaught(n: number, failAt: number): Promise<void> {
+  const log = new Log();
+  try {
+    const made = await catchPanic(() => makeAndDrop(n, log, failAt));
+    console.log(`made ${made}, ${log.count} of ${n} disposed`);
+  } catch (e) {
+    console.log(`caught ${e instanceof PanicError}, ${log.count} of ${n} disposed`);
+  }
+}
+
+async function main() {
+  // Past the limit (in the drain), then before it (in the nested drops), then none.
+  await dropCaught(1000, 700);
+  await dropCaught(1000, 40);
+  await dropCaught(1000, -1);
+  // A deep drop on the thread afterwards is bounded and drained as before.
+  const log = new Log();
+  {
+    const c = chain(300000, log, -1);
+  }
+  console.log(`after: ${log.count} disposed`);
+}

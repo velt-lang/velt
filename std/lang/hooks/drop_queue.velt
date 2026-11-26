@@ -13,7 +13,7 @@
 // allocates on its first queued value and gives back when the drain ends, so a thread keeps
 // nothing between drops and leaves nothing behind when it ends.
 
-import { addressLoad, addressStore, rawAlloc, rawFree } from "velt/lang/intrinsics";
+import { addressLoad, addressStore, noInline, rawAlloc, rawFree } from "velt/lang/intrinsics";
 import { stateDrop } from "velt/lang/intrinsics/future";
 
 /**
@@ -80,7 +80,11 @@ function grow(): void {
 /**
  * Drops `value` with `glue` (drop glue that takes it over) when the outermost drop ends: called
  * by a bracketed drop past the depth limit with the last reference to `value`.
+ *
+ * Kept out of line, as `dropDrain`: the drop glue that calls them stays as small as it was without
+ * the queue, its common path a load and store of the state word on each side of the drop.
  */
+@noInline
 export function dropQueue(value: usize, glue: usize): void {
   const len = LEN.get();
   if (len === CAP.get()) {
@@ -97,6 +101,7 @@ export function dropQueue(value: usize, glue: usize): void {
  * Drops the queued values, which may queue more, in the order they were queued: called by the
  * outermost drop when it ends with `QUEUED` set. The ring goes when the queue is empty.
  */
+@noInline
 export function dropDrain(): void {
   STATE.set(DRAINING);
   while (LEN.get() !== 0) {
