@@ -1,4 +1,4 @@
-//! Shape dictionaries (docs/internals/design/shape-sharing.md, section 2).
+//! Shape dictionaries (docs/internals/design/shape-sharing.md "Dictionaries").
 
 use crate::vir::{Callee, Const, Operand, Program, StaticId, Terminator};
 use crate::LowerOptions;

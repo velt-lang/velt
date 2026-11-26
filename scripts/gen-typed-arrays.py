@@ -825,7 +825,7 @@ export class @C@ extends TypedArray implements Iterable<number> {
 
   /** How `console.log` shows the array, like Node: `@C@(2) [ 1, 2 ]`. */
   [INSPECT](): number[] {
-    return this.values();
+    return this.numbers();
   }
 @EXTRA@}
 """

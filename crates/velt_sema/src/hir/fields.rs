@@ -68,6 +68,10 @@ pub struct DynMember {
     /// The type declaring it, in terms of the type's own parameters (`Base<T>` for a method a
     /// class inherits from `Base<T>`): its type arguments are the method's leading ones.
     pub owner: TyId,
+    /// A method whose last parameter is a rest parameter (`join(...parts: string[])`): a call
+    /// by name packs the arguments from its position on into that array, as a typed call site
+    /// does (the `Def::Fn` does not say which parameter is one).
+    pub rest: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
