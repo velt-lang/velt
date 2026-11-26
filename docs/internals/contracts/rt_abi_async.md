@@ -430,25 +430,30 @@ exit for the leak counters.
 
 ### 2.3 Abort signals (`velt/task`)
 
-Each signal's `u64` handle (an `Arc`) is owned by a private `shared` cell in std/task/signal.velt
-and released once, at the cell's last reference; no handle is public. Aborting sets a flag, stores
-the reason and wakes the waiters; it never cancels anything itself. No code pointers are stored.
+Each signal's `u64` handle is owned by a private `shared` cell in std/task/signal.velt and released
+once, at the cell's last reference; no handle is public. Aborting sets a flag, stores the reason and
+wakes the waiters; it never cancels anything itself. No code pointers are stored.
 `AbortSignal.timeout`'s timer is std's, one of Node's timers (`velt_rt_timer_*`,
 std/task/signal_timeout.velt): its promise holds a reference to the signal until the delay is up and
-aborts it with `velt_rt_signal_abort` and a message carrying the delay, and std passes `timed` to a
-wait for it. A signal made by `any` holds strong references to its sources until it is aborted (they
-hold weak ones back).
+aborts it with a message carrying the delay, and std passes `timed` to a wait for it. A signal made
+by `any` holds references to its sources until it is aborted (they reach it only through links it
+owns).
 
-| Symbol | Signature | Notes |
+Natively the signals are std's (`#task-signal`: std/task/signal_sched.velt over signal_core.velt,
+in raw memory; a wait is a heap future linked into its signal, woken in the order the waits
+began). velt_rt keeps `velt_rt_signal_wait`, `_reason` and `_free` for one signal of its own, the
+graceful stop's (§13.2), until that stop is std's too. WebAssembly's runtime keeps its own:
+
+| Symbol (velt_rt_wasm) | Signature | Notes |
 |---|---|---|
-| `velt_rt_signal_new` | `() -> u64` | a signal that is not aborted |
-| `velt_rt_signal_retain` | `(u64 s) -> u64` | another reference to it (a scope's child task holds one) |
-| `velt_rt_signal_free` | `(u64 s)` | releases a handle |
-| `velt_rt_signal_abort` | `(u64 s, const VeltStr* reason)` | aborts it and the signals derived from it (`any`); a no-op if aborted |
-| `velt_rt_signal_aborted` | `(u64 s) -> bool` | |
-| `velt_rt_signal_reason` | `(u64 s, VeltStr* out)` | the reason (`""` while not aborted) |
-| `velt_rt_signal_wait` | `(u64 s, bool timed) -> VeltFut*` | completes (unit) once aborted; `timed` (a timer may abort it): the wait keeps the process alive |
-| `velt_rt_signal_any` | `(const VeltArray<u64>* signals) -> u64` | aborted with the first of `signals` that is (its reason); keeps them alive until then |
+| `velt_rt_signal_new` | `() -> u64` | WebAssembly only. A signal that is not aborted |
+| `velt_rt_signal_retain` | `(u64 s) -> u64` | WebAssembly only. Another reference to it (a scope's child task holds one) |
+| `velt_rt_signal_free` | `(u64 s)` | releases a handle (velt_rt too: its stop signal's) |
+| `velt_rt_signal_abort` | `(u64 s, const VeltStr* reason)` | WebAssembly only. Aborts it and the signals derived from it (`any`); a no-op if aborted |
+| `velt_rt_signal_aborted` | `(u64 s) -> bool` | WebAssembly only |
+| `velt_rt_signal_reason` | `(u64 s, VeltStr* out)` | the reason (`""` while not aborted) (velt_rt too: its stop signal's) |
+| `velt_rt_signal_wait` | `(u64 s, bool timed) -> VeltFut*` | completes (unit) once aborted; `timed` (a timer may abort it): the wait keeps the process alive (velt_rt too: its stop signal's) |
+| `velt_rt_signal_any` | `(const VeltArray<u64>* signals) -> u64` | WebAssembly only. Aborted with the first of `signals` that is (its reason); keeps them alive until then |
 
 ### 2.4 Task groups (`taskScope`)
 
@@ -1087,7 +1092,7 @@ joins through velt/dev's `joinStop` and `drained` (std/dev/stop.velt), on:
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_dev_server_stop` | `() -> VeltSignal` | a signal (the `AbortSignal` handles of §2; the caller owns it) aborted once a stop request arrives; null outside dev mode. The process waits for the server until it reports itself drained (up to 1 s) |
+| `velt_rt_dev_server_stop` | `() -> VeltSignal` | a runtime signal (§2.3; the caller owns it) aborted once a stop request arrives; null outside dev mode. std waits for it and aborts the server's own `AbortSignal`. The process waits for the server until it reports itself drained (up to 1 s) |
 | `velt_rt_dev_server_drained` | `()` | the server that joined stopped accepting and finished its requests |
 
 The stop request is:

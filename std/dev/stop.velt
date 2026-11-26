@@ -4,8 +4,15 @@
 // next version), answers its in-flight requests, and says it `drained`; the runtime exits once
 // every server that joined did (or after a bounded wait). Outside `velt dev` nothing joins.
 
-import { velt_rt_dev_server_drained, velt_rt_dev_server_stop } from "velt/dev/rt";
+import {
+  velt_rt_dev_server_drained,
+  velt_rt_dev_server_stop,
+  velt_rt_signal_free,
+  velt_rt_signal_reason,
+  velt_rt_signal_wait,
+} from "velt/dev/rt";
 import { AbortSignal } from "velt/task";
+import { signalAbort, signalFree, signalNew, signalRetain } from "#task-signal";
 
 /**
  * Joins the graceful stop of `velt dev`: a signal aborted once the program is asked to stop
@@ -14,8 +21,38 @@ import { AbortSignal } from "velt/task";
  * `velt dev`, where nothing waits.
  */
 export function joinStop(): AbortSignal | null {
-  const handle = velt_rt_dev_server_stop();
-  return handle == 0 ? null : AbortSignal.adopt(handle);
+  const stop = velt_rt_dev_server_stop();
+  if (stop == 0) {
+    return null;
+  }
+  const handle = signalNew();
+  const task = spawn(abortOnStop(new Held(stop, signalRetain(handle))));
+  return AbortSignal.adopt(handle);
+}
+
+// The runtime's stop signal and the stop's own reference to the server's signal, both given back
+// when the stop came or its task is dropped.
+class Held {
+  stop: u64;
+  signal: u64;
+
+  constructor(stop: u64, signal: u64) {
+    this.stop = stop;
+    this.signal = signal;
+  }
+
+  [Symbol.dispose]() {
+    velt_rt_signal_free(this.stop);
+    signalFree(this.signal);
+  }
+}
+
+// Waits for the stop request (the runtime aborts its signal), then aborts the server's signal
+// with the runtime's reason.
+async function abortOnStop(held: Held): Promise<void> {
+  using h = held;
+  await velt_rt_signal_wait(h.stop, false);
+  signalAbort(h.signal, velt_rt_signal_reason(h.stop));
 }
 
 /** What joined the graceful stop (`joinStop`) finished. */
