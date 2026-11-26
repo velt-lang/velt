@@ -47,15 +47,13 @@ const PURE_RUNTIME: &[&str] = &[
     "module",
     "mutex",
     "panic",
-    "param",
     "parse",
     "pow",
     "proxy",
     "race",
     "rc",
     "realloc",
-    // Reading rows by column: a driver's cursor (reached through its native code, which counts)
-    // or a `RowSource` written in Velt.
+    // Reading rows by column from a `RowSource` written in Velt.
     "rows",
     "rwlock",
     "set",
@@ -99,7 +97,6 @@ const RUNTIME_REACH: &[(&str, &str)] = &[
     ("memory", "the environment"),
     ("worker", "the environment"),
     ("current", "the environment"),
-    ("native", NATIVE_SUPPORT),
 ];
 
 /// C library functions std calls that touch only the program's memory or this thread's error
@@ -182,12 +179,10 @@ const DESCRIPTOR_C: &[&str] = &[
     "NtCreateFile",
 ];
 
-/// What the runtime's support for native packages (`velt_rt_native_*`) reaches.
-const NATIVE_SUPPORT: &str = "native code";
-
 /// Velt's own functions besides the runtime's that touch nothing outside: SIMD, the field
-/// operations, atomics, thread-local storage, CPU feature checks and catching a Velt panic (with the underscore, and no `__`: a package's
-/// exports are `velt_<package>__…`, and a package may be called `simdjson` or `atomic_ops`).
+/// operations, atomics, thread-local storage, CPU feature checks and catching a Velt panic (with
+/// the underscore, and no `__`: a C library's function may be called `velt_simdjson__parse` or
+/// `velt_atomic_ops__cas`).
 const PURE_OWN: &[&str] = &[
     "velt_simd_",
     "velt_field_",
@@ -250,11 +245,6 @@ fn describe(program: &Program, skip: &dyn Fn(&str) -> bool) -> String {
         .collect();
     reasons.sort();
     reasons.dedup();
-    // The runtime's support for native packages (`velt_rt_native_*`) comes with a package's
-    // code, which names what it is.
-    if reasons.iter().any(|r| r.starts_with("native code of")) {
-        reasons.retain(|r| r != NATIVE_SUPPORT);
-    }
     match reasons.is_empty() {
         true => "-".to_string(),
         false => reasons.join(", "),
@@ -360,8 +350,7 @@ const MIMALLOC: [&str; 6] = [
 ];
 
 /// What calling the extern `symbol` reaches, if anything. Only what is known to be pure is
-/// inside; a C function (`open`, `CreateFileW`), a native package's function and anything
-/// else unknown is outside.
+/// inside; a C function (`open`, `CreateFileW`) and anything else unknown is outside.
 fn reason(symbol: &str) -> Option<String> {
     // The allocator release builds call directly (std/lang/hooks/heap.velt), as pure as the
     // runtime's (`velt_rt_alloc`).
@@ -393,11 +382,8 @@ fn reason(symbol: &str) -> Option<String> {
             None => format!("a runtime function `{symbol}`"),
         });
     }
-    if let Some((package, _)) = rest.split_once("__") {
-        return Some(format!("native code of `{package}`"));
-    }
-    if let Some(package) = rest.strip_prefix("native_init_") {
-        return Some(format!("native code of `{package}`"));
+    if rest.contains("__") {
+        return Some(format!("a C function `{symbol}`"));
     }
     if PURE_OWN.iter().any(|p| symbol.starts_with(p)) {
         return None;
@@ -620,8 +606,8 @@ mod tests {
         assert_eq!(outside("velt_rt_memory_rss"), "the environment");
         assert_eq!(outside("velt_rt_isatty"), "the environment");
         assert_eq!(outside("velt_rt_worker_count"), "the environment");
-        // C functions, native packages (also those named like Velt's own prefixes), and
-        // runtime functions not listed as pure.
+        // C functions (also those named like Velt's own prefixes), and runtime functions not
+        // listed as pure.
         assert_eq!(outside("open"), "the file system");
         assert_eq!(outside("CreateFileW"), "the file system");
         assert_eq!(outside("opendir"), "the file system");
@@ -629,15 +615,14 @@ mod tests {
         assert_eq!(outside("FindFirstFileExW"), "the file system");
         assert_eq!(outside("gethostname"), "a C function `gethostname`");
         assert_eq!(outside("read"), "a C function `read`");
-        assert_eq!(outside("velt_sqlite__open"), "native code of `sqlite`");
-        assert_eq!(outside("velt_sigx__get"), "native code of `sigx`");
-        assert_eq!(outside("velt_simdjson__parse"), "native code of `simdjson`");
+        assert_eq!(
+            outside("velt_simdjson__parse"),
+            "a C function `velt_simdjson__parse`"
+        );
         assert_eq!(
             outside("velt_atomic_ops__cas"),
-            "native code of `atomic_ops`"
+            "a C function `velt_atomic_ops__cas`"
         );
-        assert_eq!(outside("velt_native_init_sigx"), "native code of `sigx`");
-        assert_eq!(outside("velt_rt_native_api"), "native code");
         assert_eq!(
             outside("velt_rt_newthing_x"),
             "a runtime function `velt_rt_newthing_x`"

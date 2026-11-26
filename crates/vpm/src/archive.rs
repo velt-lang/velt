@@ -282,12 +282,11 @@ mod tests {
             let bad = [MAGIC, format!("{path}\n1\nx").as_bytes()].concat();
             assert!(entries(&bad).unwrap_err().contains("disallowed"), "{path}");
         }
-        // A native crate directory is allowed only when the manifest names it.
-        let manifest =
-            "export const pkg: Package = { name: \"p\", version: \"1.0.0\", native: {} };";
+        // The native sources' directory is allowed only when the manifest has C `sources`.
+        let manifest = "export const pkg: Package = { name: \"p\", version: \"1.0.0\", native: { c: { x: { sources: [\"native/x.c\"], unchecked: true } } } };";
         let with_native = [
             MAGIC,
-            b"native/Cargo.toml\n0\n",
+            b"native/x.c\n0\n",
             format!("package.velt\n{}\n{manifest}", manifest.len()).as_bytes(),
         ]
         .concat();

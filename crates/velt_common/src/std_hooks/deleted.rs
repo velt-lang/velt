@@ -145,7 +145,6 @@ pub const DELETED: &[&str] = &[
     "velt_rt_strbuf_push_json_f64",
     "velt_rt_write_f64",
     "velt_rt_bytes_put_f64",
-    // #3530: JSON string escaping, std's (std/encoding/json/writer.velt): velt/db's rows text is
-    // read with `velt_rt_rows_str` and escaped by std's writer.
+    // #3530: JSON string escaping, std's (std/encoding/json/writer.velt).
     "velt_rt_strbuf_push_json_str",
 ];

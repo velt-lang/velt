@@ -166,7 +166,6 @@ source becomes NEON or SSE2 code. The writer (`writer.velt`) escapes as `JSON.st
 | `JSON`, `JsonValue`, `JsonError`, options, replacer layout | `std/prelude/json/` (loaded only when a module names one of them: `std/prelude/global/json.velt`) |
 | Per-type decoders and writers | generators in `std/encoding/json/generate/` (`read*.velt`, `write.velt`, `check.velt`), declared in `std/encoding/json/generated.velt` |
 | Scanner, pull reader, writer | `std/encoding/json/scan*.velt`, `reader*.velt`, `writer*.velt` |
-| Reader of a native driver's rows (`decodeRows<T>` of a row type not read by column) | `std/encoding/json/rows_reader.velt`, `rows_cells.velt` |
 | Tape | `std/encoding/json/tape*.velt` |
 | Node's syntax-error messages (computed only after a failure) | `std/encoding/json/node_syntax.velt` |
 | `JSON.stringify(value, keys, space)` | `std/encoding/json/relayout.velt` |
@@ -174,10 +173,7 @@ source becomes NEON or SSE2 code. The writer (`writer.velt`) escapes as `JSON.st
 | Numbers | `std/lang/number/`, `std/lang/hooks/number_parse.velt` |
 
 No JSON code is left in the runtime (#3318, #3530): no parsing, reading, writing or escaping.
-What std calls there is the string builder's (appending bytes and strings) and velt/db's rows
-functions (`velt_rt_rows_*`, [rt_abi_async.md §12.1](../contracts/rt_abi_async.md)), through
-which `rows_reader.velt` reads a driver's cursor: a JSON cell's text and a text cell's string,
-which std escapes.
+What std calls there is the string builder's (appending bytes and strings).
 
 ## Compatibility
 

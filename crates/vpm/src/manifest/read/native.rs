@@ -4,10 +4,7 @@
 use super::{Reader, Value, ValueKind};
 use std::collections::BTreeMap;
 
-use crate::manifest::{
-    check_native_path, check_native_target, check_native_wasm, default_native_path, CLibraryConfig,
-    NativeConfig, C_SOURCES_DIR,
-};
+use crate::manifest::{check_native_target, CLibraryConfig, C_SOURCES_DIR};
 
 /// The longest C library key and system library name: well inside every linker's limits. A name
 /// of some thousands of characters makes `link.exe` lose track of its arguments.
@@ -26,62 +23,57 @@ fn check_name_length(name: &str) -> Result<(), String> {
 }
 
 impl Reader<'_> {
-    /// `native: { path?: string; targets?: string[]; wasm?: boolean; c?: … }`: the Rust crate
-    /// (`None` when the object has only `c`, or C `sources` with `targets`), the C libraries, and
-    /// the `targets` of a package whose libraries are `sources`.
+    /// `native: { c: …; targets?: string[] }`: the C libraries, and the `targets` a package whose
+    /// libraries are C `sources` publishes them for.
     pub(super) fn native(
         &mut self,
         value: &Value,
-    ) -> (
-        Option<NativeConfig>,
-        Option<BTreeMap<String, CLibraryConfig>>,
-        Vec<String>,
-    ) {
-        let mut config = NativeConfig {
-            path: default_native_path(),
-            targets: Vec::new(),
-            wasm: false,
-        };
+    ) -> (Option<BTreeMap<String, CLibraryConfig>>, Vec<String>) {
         let mut libraries = None;
+        let mut targets = None;
         let Some(fields) = self.object(value, "`native`") else {
-            return (None, libraries, Vec::new());
+            return (None, Vec::new());
         };
-        let only_c = !fields.is_empty() && fields.iter().all(|(k, _)| k.name == "c");
         for (key, v) in fields {
             match key.name.as_str() {
                 "c" => libraries = Some(self.c_libraries(v)),
-                "path" => {
-                    if let Some(s) = self.string(v, "path") {
-                        self.check(check_native_path(s), v.span);
-                        config.path = s.to_string();
-                    }
-                }
-                "targets" => config.targets = self.native_targets(v),
-                "wasm" => config.wasm = self.native_wasm(v),
-                _ => self.unknown_key(key, crate::manifest::schema::NATIVE),
-            }
-        }
-        let sources = libraries
-            .iter()
-            .flatten()
-            .any(|(_, lib): (&String, &CLibraryConfig)| !lib.sources.is_empty());
-        if sources {
-            // `path` and `wasm` are the crate's; `targets` is also what `sources` publish.
-            for (key, _) in fields
-                .iter()
-                .filter(|(k, _)| k.name == "path" || k.name == "wasm")
-            {
-                self.error(
+                "targets" => targets = Some((self.native_targets(v), key.span)),
+                // A Rust crate's library (the old native ABI, removed in velt-lang/velt#2563).
+                "path" | "wasm" => self.error(
                     format!(
-                        "`{}` is a Rust crate's, and a package with C `sources` has no crate yet: move the crate to a package of its own",
+                        "`native.{}` was a Rust crate's, and velt no longer builds Rust crates: \
+                         declare the package's C functions with `declare c` and their libraries \
+                         in `native.c`",
                         key.name
                     ),
                     key.span,
-                );
+                ),
+                _ => self.unknown_key(key, crate::manifest::schema::NATIVE),
             }
-            return (None, libraries, config.targets);
         }
-        ((!only_c).then_some(config), libraries, Vec::new())
+        let Some(libraries) = libraries else {
+            self.error(
+                "`native` has no `c`: a package's native code is C libraries, declared with \
+                 `declare c` and listed in `native.c` (a Rust crate's library is no longer \
+                 supported)",
+                value.span,
+            );
+            return (None, Vec::new());
+        };
+        let sources = libraries.values().any(|lib| !lib.sources.is_empty());
+        let targets = match targets {
+            Some((targets, span)) if !sources && !targets.is_empty() => {
+                self.error(
+                    "`targets` is what `velt publish` builds C `sources` for, and no library here \
+                     has `sources`",
+                    span,
+                );
+                Vec::new()
+            }
+            Some((targets, _)) => targets,
+            None => Vec::new(),
+        };
+        (Some(libraries), targets)
     }
 
     /// `c: { <library>: { system?: Record<string, string>, headers?: string[], unchecked?:
@@ -285,25 +277,6 @@ impl Reader<'_> {
             }
         }
         targets
-    }
-
-    fn native_wasm(&mut self, value: &Value) -> bool {
-        match value.kind {
-            ValueKind::Bool(wasm) => {
-                self.check(
-                    check_native_wasm(wasm).map_err(|e| format!("`wasm: true` {e}")),
-                    value.span,
-                );
-                wasm
-            }
-            ref other => {
-                self.error(
-                    format!("`wasm` must be a boolean, not {}", other.describe()),
-                    value.span,
-                );
-                false
-            }
-        }
     }
 }
 

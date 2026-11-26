@@ -137,12 +137,7 @@ export class Manifest {
     if (this.define.size > 0) {
       out.push(`"define":${stringMap(this.define)}`);
     }
-    const native = this.native;
-    if (native != null) {
-      out.push(
-        `"native":{"path":${quote(native.path)},"targets":${strings(native.targets)},"wasm":${native.wasm}}`,
-      );
-    }
+    // `native` is never in an accepted manifest: registry-core doesn't read `native.c` yet.
     if (this.tsCompat.length > 0) {
       out.push(`"tsCompat":${strings(this.tsCompat)}`);
     }
