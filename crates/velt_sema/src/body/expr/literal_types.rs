@@ -3,7 +3,8 @@
 //! literal members — takes that literal type; its HIR value is `Lit(Unit)` (literal types are
 //! zero-sized). Everywhere else literals keep their base types (TS widening, simplified).
 //! Literal-typed values convert to their base type where the base is expected, and are widened
-//! for operators (`widen_value`).
+//! for operators (`widen_value`). A number literal, integer ones included, is a `number`
+//! (`literal_as_number`).
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -170,12 +171,41 @@ impl FnCx<'_, '_> {
         (float(self, l), float(self, r))
     }
 
+    /// `h`, of a number literal type or a union of them (`5`, `0 | 1`, `1.5 | 2.5`: an `i64` or
+    /// an `f64` underneath), as the `number` it is in TypeScript: what a value of such a type is
+    /// wherever a `number` takes it (a conversion, the operand of `x += n`, an element spread
+    /// into a `number[]`, the receiver of `n.toFixed(1)`; #3867). One literal is the `number`
+    /// constant it denotes. `Err(h)` for any other value (`string` literals, sized ones such as
+    /// `1u8`, which convert as their base does).
+    fn literal_as_number(&mut self, h: hir::Expr) -> Result<hir::Expr, hir::Expr> {
+        if !self.number_literal_type(h.ty) {
+            return Err(h);
+        }
+        if let Some(hir::LitValue::Int(..)) = self.cx.lit_value(h.ty) {
+            return Ok(self.int_literal_as_number(h));
+        }
+        let (f64, i64) = (self.cx.ty.f64, self.cx.ty.i64);
+        let original = h.clone();
+        let value = self.widen_value(h);
+        match value.ty {
+            t if t == f64 => Ok(value),
+            t if t == i64 => Ok(self.int_to_float(value, f64)),
+            _ => Err(original),
+        }
+    }
+
+    /// Is `t` a number literal type or a union of them, of `i64`s or `f64`s (`1 | 2`, `2.5`)?
+    pub(super) fn number_literal_type(&mut self, t: TyId) -> bool {
+        let w = self.cx.widened(t);
+        w != t && (w == self.cx.ty.f64 || w == self.cx.ty.i64)
+    }
+
     /// `h`, of an integer literal type or a union of them (`5`, `0 | 1`: an `i64` underneath),
-    /// as the `number` it is in TypeScript, converted to `exp` from there: `number` itself, a
-    /// union holding `number` (`string | number`), or a `number | null`. Tried after the other
-    /// conversions, so a union that holds the literals themselves keeps them. `Err(h)` when `h`
-    /// is no such type or the `number` converts to `exp` no better. One literal is the `number`
-    /// constant [`int_literal_as_number`](Self::int_literal_as_number) makes of it.
+    /// as the `number` it is ([`literal_as_number`](Self::literal_as_number)) converted to `exp`
+    /// from there: `number` itself, a union holding `number` (`string | number`), or a
+    /// `number | null`. Tried after the other conversions, so a union that holds the literals
+    /// themselves keeps them (and a float one has converted as its base). `Err(h)` when `h` is
+    /// no such type or the `number` converts to `exp` no better (#3747).
     pub(super) fn int_literal_to(
         &mut self,
         h: hir::Expr,
@@ -186,34 +216,22 @@ impl FnCx<'_, '_> {
             return Err(h);
         }
         let original = h.clone();
-        let number = match self.cx.lit_value(h.ty) {
-            Some(hir::LitValue::Int(..)) => self.int_literal_as_number(h),
-            _ => {
-                let int = self.widen_value(h);
-                if int.ty != self.cx.ty.i64 {
-                    return Err(original);
-                }
-                self.int_to_float(int, f64)
-            }
-        };
-        if number.ty != f64 {
-            return Err(original);
-        }
+        let number = self.literal_as_number(h)?;
         match exp == f64 {
             true => Ok(number),
             false => self.try_coerce(number, exp).map_err(|_| original),
         }
     }
 
-    /// `v`, the operand of a compound assignment to a place of type `place`: a value of an
-    /// integer literal type or a union of them as the `number` it is when the place is a `number`
-    /// (`x += n`, `x |= n` with `n: 0 | 1`), else `v` as it is. Taken before the bitwise path,
-    /// which takes `number`s (#3747).
+    /// `v`, the operand of a compound assignment to a place of type `place`: a value of a number
+    /// literal type or a union of them as the `number` it is when the place is a `number`
+    /// (`x += n`, `x |= n` with `n: 0 | 1`, `x *= k` with `k: 1.5 | 2.5`), else `v` as it is.
+    /// Taken before the bitwise path, which takes `number`s (#3747, #3867).
     pub(super) fn compound_literal_operand(&mut self, place: TyId, v: hir::Expr) -> hir::Expr {
         if place != self.cx.ty.f64 {
             return v;
         }
-        self.int_literal_to(v, place).unwrap_or_else(|v| v)
+        self.literal_as_number(v).unwrap_or_else(|v| v)
     }
 
     /// Can a `number` convert to `t`: `number` itself, or a union or an option holding one
@@ -267,7 +285,8 @@ impl FnCx<'_, '_> {
 
     /// Members of a literal type or a union of literals are its base type's (`l.length`,
     /// `kind.toUpperCase()` on `"lo" | "mid"`), unless the union itself has the member (an
-    /// `extend` block on it).
+    /// `extend` block on it). A number literal's are `number`'s (`n.toFixed(1)` on `n: 0 | 1`,
+    /// #3867), and an integer one keeps `i64`'s methods `number` has not.
     pub(crate) fn widen_literal_receiver(&mut self, h: hir::Expr, name: &str) -> hir::Expr {
         if !self.cx.has_literal_member(h.ty) || self.cx.widened(h.ty) == h.ty {
             return h;
@@ -275,6 +294,14 @@ impl FnCx<'_, '_> {
         if self.cx.lit_value(h.ty).is_none() && self.method_exists(h.ty, name) {
             return h;
         }
+        let f64 = self.cx.ty.f64;
+        let h = match self.method_exists(f64, name) {
+            true => match self.literal_as_number(h) {
+                Ok(number) => return number,
+                Err(h) => h,
+            },
+            false => h,
+        };
         self.widen_value(h)
     }
 
