@@ -172,8 +172,11 @@ export function mapAppend<K, V>(m: Map<K, V>, key: K, value: V, p: u64, s: i64) 
     panic("Map: too many entries");
   }
   const word = (p & ~POS_MASK) | (m.entryKeys.length as u64 + 1);
-  // JS stores a `-0` key as `0` (`keyEq` finds it either way).
-  m.entryKeys.push(keyOf(key));
+  // JS stores a `-0` key as `0` (`keyEq` finds it either way). Computed first: with a call as
+  // `push`'s argument, `m.entryKeys` would be copied before the call, one more copy of a record's
+  // entries a spread shares.
+  const k = keyOf(key);
+  m.entryKeys.push(k);
   m.entryValues.push(value);
   shiftIn(m.slots, (-s - 1) as usize, word);
   m._size++;
