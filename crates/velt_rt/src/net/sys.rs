@@ -108,24 +108,3 @@ impl AsyncWrite for TcpStream {
         Pin::new(&mut self.get_mut().0).poll_shutdown(cx)
     }
 }
-
-/// A listening TCP socket, registered with the host's reactor.
-pub struct TcpListener(tokio::net::TcpListener);
-
-impl TcpListener {
-    /// From a bound, listening standard socket.
-    pub fn from_std(l: std::net::TcpListener) -> io::Result<TcpListener> {
-        tokio::net::TcpListener::from_std(l).map(TcpListener)
-    }
-
-    /// The socket, out of the host's reactor (still non-blocking), for the caller to own: a
-    /// descriptor, or a `SOCKET` on Windows.
-    pub fn into_raw(self) -> io::Result<u64> {
-        let l = self.0.into_std()?;
-        #[cfg(unix)]
-        let raw = std::os::fd::IntoRawFd::into_raw_fd(l) as u64;
-        #[cfg(windows)]
-        let raw = std::os::windows::io::IntoRawSocket::into_raw_socket(l);
-        Ok(raw)
-    }
-}

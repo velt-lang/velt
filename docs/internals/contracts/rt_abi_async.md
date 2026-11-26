@@ -658,7 +658,7 @@ read while another writes. TLS is Velt's, over these streams or the reactor's so
 
 | Symbol | Signature | Result slot / notes |
 |---|---|---|
-| `velt_rt_tcp_listen` | `(const VeltStr* addr) -> VeltFut*` | `IoResult<u64>`: the listening socket (a non-blocking descriptor, or a `SOCKET` on Windows), which the caller owns; `addr` = `"host:port"`, port 0 = any free port. Only std/net/tcp_sched.velt calls it, under `velt dev` (§13.1), and registers the socket with the executor's reactor; listeners are std's |
+| `velt_rt_tcp_listen` | `(const VeltStr* addr) -> VeltFut*` | `IoResult<u64>`: the listening socket (a non-blocking descriptor, or a `SOCKET` on Windows), which the caller owns; `addr` = `"host:port"`, port 0 = any free port. Only std/net/tcp_sched.velt calls it, under `velt dev` (§13.1), and registers the socket with the executor's reactor; listeners are std's. Outside `velt dev` it fails (unsupported): the runtime binds nothing itself |
 | `velt_rt_tcp_connect` | `(const VeltStr* addr) -> VeltFut*` | `IoResult<VeltStream>` |
 | `velt_rt_tcp_read` | `(VeltStream s, u64 max) -> VeltFut*` | `IoResult<VeltBytes>` 1..max bytes, empty = EOF; `max == 0` ⇒ 64 KiB |
 | `velt_rt_tcp_read_string` | `(VeltStream s, u64 max) -> VeltFut*` | `IoResult<VeltStr>` next chunk as UTF-8 (split characters are completed on the next call, invalid bytes → U+FFFD), `""` = EOF |
@@ -1076,7 +1076,7 @@ Nothing here changes the ABI generated code uses; it is how the runtime behaves 
 `VELT_DEV_SOCKET` names the supervisor's dev channel: a Unix socket path, or on Windows a local
 named pipe (`\\.\pipe\velt-dev-<pid>-<n>`, byte mode; a program retries for up to 5 s while every
 pipe instance is busy). Each request is one connection. When the variable is set,
-`velt_rt_tcp_listen` does not bind itself: it connects, sends
+`velt_rt_tcp_listen` connects, sends
 `listen <addr>\n` (the address exactly as the program passed it) and receive the listening
 socket, or `err <message>\n` (the operation then fails with that message):
 - Unix: `ok\n` with the socket's descriptor attached (`SCM_RIGHTS`);

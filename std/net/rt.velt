@@ -13,9 +13,24 @@ import { velt_rt_worker_count } from "velt/task/rt";
  * Windows), which std/net/tcp_sched.velt registers with the reactor. No other build has it.
  */
 export declare async function velt_rt_tcp_listen(addr: string): Promise<IoResult<u64>>;
-export declare function velt_rt_tcp_listener_port(l: u64): u32;
-export declare function velt_rt_tcp_listener_close(l: u64);
-export declare async function velt_rt_tcp_accept(l: u64): Promise<IoResult<u64>>;
+
+/**
+ * A build that takes this file (WebAssembly) has no sockets, so no listener: this and the two
+ * below are what velt/net's listener calls through `#net-tcp`, and nothing reaches them with a
+ * real handle.
+ */
+export function velt_rt_tcp_listener_port(l: u64): u32 {
+  return 0;
+}
+
+/** Nothing to close: no listener in this build. */
+export function velt_rt_tcp_listener_close(l: u64) {}
+
+/** Fails with `ENOTSUP`: no listener in this build. */
+export async function velt_rt_tcp_accept(l: u64): Promise<IoResult<u64>> {
+  return { code: 12, message: "accept: no sockets on this OS", value: 0 };
+}
+
 export declare async function velt_rt_tcp_connect(addr: string): Promise<IoResult<u64>>;
 export declare async function velt_rt_tcp_read(s: u64, max: u64): Promise<IoResult<u8[]>>;
 export declare async function velt_rt_tcp_read_string(s: u64, max: u64): Promise<IoResult<string>>;
