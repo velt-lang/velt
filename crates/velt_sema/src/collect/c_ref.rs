@@ -106,6 +106,25 @@ fn program_alias<'c, 'm>(
     }
 }
 
+/// Whether the written type `t` (in `module`) is a read-only array, as written
+/// (`readonly S[]`, `ReadonlyArray<S>`) or through the program's aliases of one
+/// (`type Flags = readonly Flag[]`): an array of C structs C only reads (#2187).
+pub(super) fn written_readonly_array(cx: &Ctx, module: usize, t: &ast::TypeExpr) -> bool {
+    readonly_in(cx, module, t, 0)
+}
+
+fn readonly_in(cx: &Ctx, module: usize, t: &ast::TypeExpr, depth: u32) -> bool {
+    if super::sigs::written_readonly(t) {
+        return true;
+    }
+    let ast::TypeExprKind::Named { path, .. } = &t.kind else {
+        return false;
+    };
+    depth < MAX_DEPTH
+        && program_alias(cx, module, path)
+            .is_some_and(|a| readonly_in(cx, a.module, &a.decl.ty, depth + 1))
+}
+
 /// Whether velt/ffi's `Ref` is written anywhere in `t` (in `module`): in it, its type
 /// arguments or the program's aliases it names. Where `t` is no [`written_ref`], such a `Ref`
 /// would cross as the struct it resolves to.

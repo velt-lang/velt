@@ -309,14 +309,29 @@ fn impl_method(
             let def = f.def();
             let mut full_args = p.bound.args.clone();
             full_args.push(p.self_ty);
+            let mut first = None;
+            let shorter = Some(&mut first);
             let owner_args = f.owner_args();
             let imp = super::covariant::Imp {
                 def,
                 owner_args: &owner_args,
                 self_ty: p.self_ty,
             };
-            let want = check_method_sig(cx, def, &owner_args, m, &full_args, &p.iname, Some(imp));
+            let names = (m, p.iname.as_str());
+            let want =
+                check_method_sig(cx, def, &owner_args, names, &full_args, Some(imp), shorter);
             cx.fn_info_mut(def).fixed_modes = true;
+            // A method taking only the first parameters of the interface's: an entry with all
+            // of them that calls it (`short_overrides`).
+            if let (Some(take), Some(ret)) = (first, want) {
+                let want: Vec<TyId> = (m.params.iter())
+                    .map(|q| cx.subst(q.ty, &full_args))
+                    .collect();
+                let (host, method) = ((p.d, p.self_ty), (def, owner_args));
+                let entry =
+                    super::short_overrides::impl_entry(cx, host, method, (m, &want, ret), take);
+                return Some(entry);
+            }
             let slot = cx.adt(p.d).and_then(|a| a.vslots.get(&m.name).copied());
             let entry = match slot {
                 Some(slot) => trampoline(cx, p.d, p.self_ty, &f, (slot, want)),
@@ -446,23 +461,26 @@ fn trampoline(
 }
 
 /// Checks `def` against interface method `m`; returns `m`'s result type in the implementing
-/// type's context (`None` after a mismatch of the type parameters).
+/// type's context (`None` after a mismatch of the type parameters). With `shorter`, `def` may
+/// take only the first of `m`'s parameters, as TypeScript allows: how many is put there, for
+/// the caller to make the entry that drops the rest (`short_overrides`).
 pub(super) fn check_method_sig(
     cx: &mut Ctx,
     def: DefId,
     owner_args: &[TyId],
-    m: &IfaceMethod,
+    (m, iname): (&IfaceMethod, &str),
     iface_args: &[TyId],
-    iname: &str,
     covariant: Option<super::covariant::Imp>,
+    shorter: Option<&mut Option<usize>>,
 ) -> Option<TyId> {
-    let (ps, span, is_getter, is_generator) = {
+    let (ps, span, is_getter, is_generator, rest) = {
         let f = cx.fn_info(def);
         (
             f.params.iter().map(|p| p.ty).collect::<Vec<_>>(),
             f.name_span,
             f.is_getter,
             f.is_generator,
+            f.rest,
         )
     };
     super::unsafe_methods::implements(cx, def, &format!("`{iname}.{}`", m.name));
@@ -477,6 +495,7 @@ pub(super) fn check_method_sig(
     let want_ret = cx.subst(m.ret, iface_args);
     let name = &m.name;
     let message = format!("method `{name}` has a different signature than required by `{iname}`");
+    let mut converts = false;
     let ret_ok = if is_generator {
         // A generator's signature keeps its result with `E = never` and a written `E` as its
         // `throws` (collect/generator_sig.rs): compare the result as written. A generator's
@@ -493,19 +512,38 @@ pub(super) fn check_method_sig(
             let r = cx.subst(ret, owner_args);
             cx.same_ty(r, want_ret)
         }
-    } else if promise_results_unify(cx, def, owner_args, m, want_ret) {
+    } else if promise_results_unify(cx, (def, owner_args), m, iface_args, want_ret) {
         true
     } else if covariant.is_some_and(|imp| super::covariant::conversion(cx, imp, want_ret).is_some())
     {
         // The table entry converts the result (`super::covariant`).
+        converts = true;
         true
     } else {
         super::ret_infer::impl_ret(cx, (def, owner_args), want_ret, (span, message.clone()))
     };
-    let ps_ok = cx.same_tys(&ps, &want_ps);
+    // A rest parameter takes the arguments one by one, an array parameter as one array.
+    let rest_ok = rest == m.rest;
+    // An entry that drops parameters does not convert the result too: such a method has to
+    // take all of the interface's parameters.
+    let first = match shorter.is_some() && !converts {
+        true => super::short_overrides::implements_first(cx, (def, &ps), (m, &want_ps)),
+        false => None,
+    };
+    let ps_ok = first.is_some() || (cx.same_tys(&ps, &want_ps) && rest_ok);
+    if let (Some(out), true) = (shorter, ps_ok && ret_ok && is_getter == m.is_getter) {
+        *out = first;
+    }
     if !ps_ok || !ret_ok {
         let mut d = Diagnostic::error(message, span);
-        if is_generator && ps_ok {
+        if !rest_ok {
+            let decl = format!("`{iname}.{name}`");
+            let (has, lacks) = match m.rest {
+                true => (decl.as_str(), "this method"),
+                false => ("this method", decl.as_str()),
+            };
+            d = d.with_note(format!("{has} ends in a rest parameter (`...xs: T[]`) and {lacks} does not: one takes the arguments one by one, the other one array"));
+        } else if is_generator && ps_ok {
             let want = cx.display(want_ret);
             d = d.with_note(format!("declare the generator's result as `{want}`: its error type is part of the result type"));
         } else if name == "return" && ps_ok && matches!(iname, "Iterator" | "AsyncIterator") {
@@ -591,24 +629,29 @@ fn own_generics_match(
     Some(args)
 }
 
-/// A method returning a `Promise<T>` written without an error type implements an interface
-/// method returning one: the two reject with what either is given (`throws::promise_sites`).
+/// A method returning a `Promise<T>` implements an interface method returning one: with the
+/// interface's error written out (`next(): Promise<IteratorResult<T>, E>` without `async`), or
+/// without an error type, when the two reject with what either is given (`throws::promise_sites`).
 fn promise_results_unify(
     cx: &mut Ctx,
-    def: DefId,
-    owner_args: &[TyId],
+    (def, owner_args): (DefId, &[TyId]),
     m: &IfaceMethod,
+    iface_args: &[TyId],
     want: TyId,
 ) -> bool {
     let (ret, ret_span) = (cx.fn_info(def).ret, cx.fn_info(def).ret_span);
     let have_site = ret_span.and_then(|s| cx.site_in(s, ret));
     let have = cx.subst(ret, owner_args);
-    // The interface method's promise error is its `throws` (`collect::sigs::promise_throws`).
+    // The interface method's promise error is its `throws` (`collect::sigs::promise_throws`),
+    // in the implementing type's context (`AsyncIterator<T, E>.next()` rejects with its `E`).
     let want = match (cx.ty.promise_payload(want), m.throws.and_then(|t| t.ty)) {
-        (Some(v), Some(e)) => cx.ty.promise_rejecting(v, e),
+        (Some(v), Some(e)) => {
+            let e = cx.subst(e, iface_args);
+            cx.ty.promise_rejecting(v, e)
+        }
         _ => want,
     };
-    if have_site.is_some() && have == want {
+    if have == want {
         return true;
     }
     let want_site = cx.written_promise_site(m.span, want);

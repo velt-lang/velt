@@ -1,0 +1,18 @@
+// An object literal's `this`-method read off an `any` and called alone has no object: Velt stops
+// where it reads `this`, naming the literal's type as TypeScript writes it (#3773). Node runs it
+// with `this` the global object here (`undefined` in a module's strict code, a TypeError).
+const o: any = {
+  n: 4,
+  get() {
+    return this.n;
+  },
+  add(k: number, s: string) {
+    return this.n + k + s.length;
+  },
+  async later() {
+    return this.n;
+  },
+};
+console.log("before");
+const g = o.get;
+console.log(g());

@@ -12,6 +12,15 @@ import { intrinsic } from "./decorators";
 export declare function holdsNull<T>(probe: T): bool;
 
 /**
+ * Whether `value`, of the class type `T`, is an object of `T` itself and not of a class that
+ * extends it. A constant `true` when no class of the program extends `T`, and an `if` then lowers
+ * only that branch: a built-in keeps its own code for its own objects, and calls the methods a
+ * subclass may override, where JavaScript's specification does, only for a subclass's objects.
+ */
+@intrinsic
+export declare function isExactClass<T>(value: T): bool;
+
+/**
  * `null` as a `T` that holds null (`holdsNull`). For any other `T` it stops the program with an
  * internal error: std reaches it only behind a `holdsNull` test.
  */

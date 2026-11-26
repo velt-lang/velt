@@ -1,0 +1,41 @@
+flags ""
+test short true calls 1 lastIndex 0
+test threw Error: subject too long calls 1 lastIndex 0
+match threw Error: subject too long calls 1 lastIndex 0
+search threw Error: subject too long calls 1 lastIndex 0
+replace threw Error: subject too long calls 1 lastIndex 0
+replace calling threw Error: subject too long calls 1 lastIndex 0
+split threw Error: subject too long calls 1 lastIndex 0
+flags "g"
+test short true calls 1 lastIndex 2
+test threw Error: subject too long calls 1 lastIndex 0
+match threw Error: subject too long calls 1 lastIndex 0
+search threw Error: subject too long calls 1 lastIndex 0
+replace threw Error: subject too long calls 1 lastIndex 0
+replace calling threw Error: subject too long calls 1 lastIndex 0
+split threw Error: subject too long calls 1 lastIndex 0
+matchAll threw Error: subject too long calls 1 lastIndex 0
+replaceAll threw Error: subject too long calls 1 lastIndex 0
+flags "y"
+test short false calls 1 lastIndex 0
+test threw Error: subject too long calls 1 lastIndex 0
+match threw Error: subject too long calls 1 lastIndex 0
+search threw Error: subject too long calls 1 lastIndex 0
+replace threw Error: subject too long calls 1 lastIndex 0
+replace calling threw Error: subject too long calls 1 lastIndex 0
+split threw Error: subject too long calls 1 lastIndex 0
+the second call throws
+split threw RangeError: second call calls 2 lastIndex 3
+  then exec: b@4 lastIndex 5
+matchAll threw RangeError: second call calls 2 lastIndex 3
+  then exec: b@4 lastIndex 5
+match threw RangeError: second call calls 2 lastIndex 2
+  then exec: b@4 lastIndex 5
+replace threw RangeError: second call calls 2 lastIndex 2
+  then exec: b@4 lastIndex 5
+search threw RangeError: second call calls 2 lastIndex 0
+  then exec: b@1 lastIndex 2
+split, no flag threw RangeError: second call calls 2 lastIndex 0
+  then exec: b@1 lastIndex 0
+a replacer throws
+replace threw Error: replacer b calls 3 lastIndex 0

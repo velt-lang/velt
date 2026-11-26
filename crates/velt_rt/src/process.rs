@@ -117,12 +117,6 @@ pub unsafe extern "C" fn velt_rt_process_node_argv(out: *mut VeltStrArray) {
     out.write(VeltStrArray::from_strings(node_argv()));
 }
 
-/// The moment the runtime's timers count from (process start; std's `performance.now()` keeps
-/// its own, std/lang/hooks/clock.velt).
-pub(crate) fn clock_origin() -> Instant {
-    *ORIGIN.get_or_init(Instant::now)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -6,9 +6,8 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 use velt_common::{Diagnostic, Diagnostics, Span};
 use velt_sema::generated::{spell, Demand, GenInstance};
-use velt_sema::SourceModule;
 
-use super::{cache, host, process, Described, Generated, GeneratedText};
+use super::{cache, host, process, Declaring, Described, Generated, GeneratedText};
 use crate::driver::Session;
 
 /// One instance the host generated.
@@ -24,7 +23,7 @@ struct Written {
 /// Run the generators for `demand`; `None` with the errors in `sess`.
 pub(super) fn run(
     sess: &mut Session,
-    modules: &[SourceModule],
+    modules: Declaring,
     demand: &Demand,
     round: u32,
     packages: Option<&vpm::PackageGraph>,
@@ -42,14 +41,15 @@ pub(super) fn run(
         .map(|f| (f.module.as_str(), f.generator.as_str()))
         .collect();
     for f in &demand.functions {
-        let decl = modules.iter().find(|m| m.path == f.module);
-        let Some(decl) = decl.filter(|_| requested.contains(&(&f.module, &f.generator))) else {
+        let decl = modules.find(&f.module);
+        let Some((file, _)) = decl.filter(|_| requested.contains(&(&f.module, &f.generator)))
+        else {
             fn_keys.push(String::new());
             continue;
         };
         // Absolute: the host's root is put beside it, and the caches key hosts by that root, so
         // two projects' `main.velt` run from their own directories never share a host.
-        let decl_path = vpm::relpath::absolute(&sess.sm.get(decl.file).path);
+        let decl_path = vpm::relpath::absolute(&sess.sm.get(file).path);
         let Some((file, dir, spec)) = locate_generator(&decl_path, &f.generator, packages) else {
             let msg = format!("cannot find the generator module `{}`", f.generator);
             super::report(sess, Diagnostic::error(msg, f.generator_span));

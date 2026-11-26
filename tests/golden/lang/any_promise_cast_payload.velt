@@ -1,0 +1,73 @@
+// check: no leaks
+// `v as Promise<T>` of an `any` holding a promise whose value is not a `T` (#924 step 4). Node
+// hands the value on whatever its type; Velt checks it when the promise settles, where it enters
+// typed code, and a value `T` can never hold (a string for a `number`) rejects the promise with
+// a `TypeError`: the `await` throws it, a `then` callback doesn't run and its rejection callback
+// does, and `catch` gets it. This is where Velt differs from Node, which prints `string s`,
+// `then ran true`, `catch z`, `class undefined` and `boolean 0` instead of the `TypeError` lines.
+// A written error type (`Promise<T, E>`, a Velt extension) checks the reason the same way.
+class Pt {
+  x: number;
+  constructor(x: number) {
+    this.x = x;
+  }
+}
+
+async function str(s: string): Promise<string> {
+  return s;
+}
+
+async function num(n: number): Promise<number> {
+  return n;
+}
+
+async function fails(): Promise<number> {
+  throw new Error("bad");
+}
+
+async function main(): Promise<void> {
+  const s: any = str("s");
+  try {
+    const v = await (s as Promise<number>);
+    console.log(typeof v, v);
+  } catch (e) {
+    console.log("await", e instanceof TypeError, (e as Error).message);
+  }
+  const s2: any = str("y");
+  let ran = false;
+  await (s2 as Promise<number>).then(
+    () => {
+      ran = true;
+    },
+    (e) => console.log("rejected", String(e)),
+  );
+  console.log("then ran", ran);
+  const s3: any = str("z");
+  console.log("catch", await (s3 as Promise<number>).catch((e) => -1));
+  const s4: any = str("p");
+  try {
+    console.log("class", (await (s4 as Promise<Pt>)).x);
+  } catch (e) {
+    console.log("class", (e as Error).message);
+  }
+  const n: any = num(0);
+  try {
+    console.log("boolean", await (n as Promise<boolean>));
+  } catch (e) {
+    console.log("boolean", (e as Error).message);
+  }
+  // A rejection of an explicit error type: an `Error` passes, a string doesn't.
+  const f: any = fails();
+  try {
+    await (f as Promise<number, Error>);
+  } catch (e) {
+    console.log("explicit", e.message);
+  }
+  const r: any = Promise.reject("text");
+  try {
+    await (r as Promise<number, Error>);
+  } catch (e) {
+    console.log("explicit", e instanceof TypeError, e.message);
+  }
+}
+main();

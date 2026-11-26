@@ -73,6 +73,9 @@ impl FnLower<'_, '_> {
                 _ => {}
             }
         }
+        if let Some(v) = self.await_any_promise_cast(inner) {
+            return v;
+        }
         let fut = self.take_promise(inner);
         let pty = self.sub(inner.ty);
         self.await_heap(fut, pty)
@@ -326,7 +329,8 @@ impl FnLower<'_, '_> {
     fn await_yield(&mut self) -> Operand {
         let cx = self.poll_cx();
         let std = self.std_sched();
-        // The yield's record on its task's list (#3687), kept across the suspension: the resume
+        // The yield's token (its record on its task's list, or none: rt_abi_async.md
+        // `velt_rt_yield_now`, #3687), kept across the suspension: the resume
         // asks by it whose turn came (the children of an inline `Promise.all` share their
         // parent's cx, and a resume may poll with another cx than the yield's), and the cancel
         // drops it.
@@ -405,7 +409,7 @@ impl FnLower<'_, '_> {
     /// `await` of a heap future `fut` (owned) of promise type `pty`: its result moves out of
     /// the slot (`+16`) before the future is freed; a rejection is rethrown. (An async extern's
     /// foreign slot was adopted by its wrapper already, async_fn/foreign_promise.rs.)
-    fn await_heap(&mut self, fut: Operand, pty: TyId) -> Operand {
+    pub(in crate::lower) fn await_heap(&mut self, fut: Operand, pty: TyId) -> Operand {
         let ty = self.cx.promise_result(pty);
         let err = self.cx.promise_error(pty);
         let f = self.copy_to_temp(fut, Ty::Ptr);

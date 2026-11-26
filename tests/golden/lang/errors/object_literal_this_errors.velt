@@ -32,8 +32,8 @@ function main(): void {
     },
   };
 
-  // `any` (TypeScript types `this` as `any` here too).
-  const a: any = {
+  // `unknown`: TypeScript types `this` as `{}` (TS2339); `any` is accepted (#3773).
+  const u: unknown = {
     x: 1,
     m() {
       return this.x;

@@ -1,0 +1,135 @@
+// A body is read once, as in Node, also a received request's, which has nothing left after the
+// first read: a second read throws "Body is unusable". `body` behaves as Node's one stream: read
+// to its end (or cancelled), it gives nothing more; a stream taken before `text()` is locked by
+// it; `body` after `text()` is a used stream; `cancel()` uses the body up.
+import { IoError } from "velt/io";
+import { AbortError } from "velt/task";
+import { serve } from "http-server";
+
+async function second(label: string, read: () => Promise<string, IoError | AbortError>) {
+  try {
+    console.log(label, await read());
+  } catch (e) {
+    console.log(label, "threw:", e.message);
+  }
+}
+
+// Reads `body` to its end, printing how much it held or what its read threw.
+async function readAll(label: string, body: ReadableStream<Uint8Array> | null) {
+  if (body == null) {
+    console.log(label, "no body");
+    return;
+  }
+  try {
+    let n = 0;
+    for await (const chunk of body) {
+      n += chunk.length;
+    }
+    console.log(label, `${n} bytes`);
+  } catch (e) {
+    console.log(label, "threw:", e instanceof Error ? e.message : "?");
+  }
+}
+
+// Cancels `body`, then prints whether `used`, what `text` reads, and what a new `body` stream
+// (`again`) holds: nothing, as the cancel drained the body.
+async function cancelThenText(
+  label: string,
+  body: ReadableStream<Uint8Array> | null,
+  used: () => bool,
+  text: () => Promise<string, IoError | AbortError>,
+  again: () => ReadableStream<Uint8Array> | null,
+) {
+  if (body != null) {
+    try {
+      await body.cancel();
+    } catch (e) {
+      console.log(label, "cancel threw");
+    }
+  }
+  console.log(label, "used after cancel:", used());
+  await second(`${label} text`, text);
+  await readAll(`${label} body after cancel`, again());
+}
+
+// The same orders on a request and a response made here.
+async function made() {
+  const r1 = new Request("http://example.com/", { method: "POST", body: "made" });
+  const a1 = r1.body;
+  const b1 = r1.body;
+  await readAll("made request a", a1);
+  await readAll("made request b", b1);
+  await readAll("made request again", r1.body);
+  const r2 = new Request("http://example.com/", { method: "POST", body: "made" });
+  await cancelThenText(
+    "made request",
+    r2.body,
+    () => r2.bodyUsed,
+    async () => await r2.text(),
+    () => r2.body,
+  );
+  const s1 = new Response("made");
+  const a2 = s1.body;
+  const b2 = s1.body;
+  await readAll("made response a", a2);
+  await readAll("made response b", b2);
+  await readAll("made response again", s1.body);
+  const s2 = new Response("made");
+  await cancelThenText(
+    "made response",
+    s2.body,
+    () => s2.bodyUsed,
+    async () => await s2.text(),
+    () => s2.body,
+  );
+}
+
+async function main() {
+  await made();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const path = new URL(req.url).pathname;
+    if (path == "/two") {
+      const a = req.body;
+      const b = req.body;
+      await readAll("two a", a);
+      await readAll("two b", b);
+    } else if (path == "/again") {
+      await readAll("again first", req.body);
+      await readAll("again second", req.body);
+      await second("again text", async () => await req.text());
+    } else if (path == "/cancel") {
+      await cancelThenText(
+        "received",
+        req.body,
+        () => req.bodyUsed,
+        async () => await req.text(),
+        () => req.body,
+      );
+    } else {
+      const taken = path == "/stream" ? req.body : null;
+      console.log(path, "first:", await req.text(), req.bodyUsed);
+      if (path == "/text") {
+        await second("text again", async () => await req.text());
+      } else if (path == "/stream") {
+        // A stream taken before the read: `text()` holds its lock.
+        await readAll("stream taken first", taken);
+      } else if (path == "/after") {
+        // The body after the read is a used stream, not null.
+        const body = req.body;
+        console.log("body after the read is null:", body == null);
+        await readAll("stream after", body);
+      } else {
+        await second("arrayBuffer", async () => `${(await req.arrayBuffer()).byteLength} bytes`);
+      }
+    }
+    console.log(path, "bodyUsed:", req.bodyUsed);
+    return new Response("ok");
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  for (const path of ["/text", "/buffer", "/stream", "/after", "/two", "/again", "/cancel"]) {
+    console.log(await (await fetch(`${base}${path}`, { method: "POST", body: "hello" })).text());
+  }
+  server.close();
+}
+
+await main();

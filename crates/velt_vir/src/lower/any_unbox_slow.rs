@@ -128,6 +128,8 @@ impl FnLower<'_, '_> {
             self.any_type_error(desc, ty);
             return;
         }
+        // A promise of another type, converted when it settles (any_promise_cast.rs).
+        self.any_to_promise(p, from, ty, out, done);
         // A record built by `{} as D` (sema's `empty_as_deferred`) where `D` is an object type.
         self.any_record_fill(p, from, ty, out, done);
         // A generic function value held as `unknown` (glue/vtable.rs `ClosureAny`).

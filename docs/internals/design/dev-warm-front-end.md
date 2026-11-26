@@ -48,7 +48,8 @@ cache key or format version.
 
 ### When a save takes the warm path
 
-Warm reloads are on by default in `velt dev`; `VELT_DEV_WARM=off` turns them off. Every cold build
+Warm reloads are off by default in `velt dev` until #3822 is fixed (a JIT host that reloads warm
+now and then crashes in the reload's check); `VELT_DEV_WARM=1` turns them on. Every cold build
 in `velt dev` keeps its state for the next save. The warm path helps only while the program keeps
 running: a program that exits is started again as a new process, with a full build.
 

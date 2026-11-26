@@ -67,9 +67,10 @@ pub enum CTy {
     /// `StrBytes` (velt/ffi; parameters only): a `string`'s UTF-8 bytes, borrowed for the call,
     /// without a NUL; one that may hold a lone surrogate is passed as a copy with U+FFFD.
     StrBytes,
-    /// An array of numbers (`u8[]`, `readonly f64[]`; parameters only): the address of its first
-    /// element, borrowed for the call. `readonly`: C only reads it. A `u8[]` parameter also
-    /// takes a view of bytes (a typed array, a `DataView`, a `subarray`).
+    /// An array of numbers (`u8[]`, `readonly f64[]`) or of C structs (`readonly S[]`, #2187;
+    /// parameters only): the address of its first element, borrowed for the call. `readonly`: C
+    /// only reads it. A `u8[]` parameter also takes a view of bytes (a typed array, a
+    /// `DataView`, a `subarray`).
     Buf {
         readonly: bool,
     },

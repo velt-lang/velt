@@ -16,7 +16,7 @@ use std::sync::atomic::Ordering;
 
 use parking_lot::Mutex;
 
-use super::{head, state, LOC, REJECTABLE};
+use super::{head, LOC};
 use crate::panic::ThrowLoc;
 use crate::task::VeltFut;
 
@@ -51,11 +51,6 @@ pub(in crate::task::local) unsafe fn polled(f: *mut VeltFut, poll: impl FnOnce()
 #[cold]
 pub(in crate::task::local) unsafe fn keep(f: *mut VeltFut, loc: ThrowLoc) {
     let h = head(f);
-    let fl = h.flags.load(Ordering::Relaxed);
-    // A promise that can reject and resolved threw nothing that leaves it.
-    if fl & REJECTABLE != 0 && *state(f) == 0 {
-        return;
-    }
     shard(f)
         .lock()
         .get_or_insert_with(HashMap::new)

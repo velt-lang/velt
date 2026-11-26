@@ -179,6 +179,17 @@ struct Run<'d> {
 }
 
 fn run_case(case: &Path, mode: Mode) -> Result<(), String> {
+    run_case_with(case, mode, &[], &[]).map(drop)
+}
+
+/// [`run_case`] with `velt dev` given `flags` besides the mode's and `env`: the transcript.
+fn run_case_with(
+    case: &Path,
+    mode: Mode,
+    flags: &[&str],
+    env: &[(&str, &str)],
+) -> Result<String, String> {
+    let args: Vec<&str> = mode.flags().iter().chain(flags).copied().collect();
     let dir = TestDir::new();
     let mut dev: Option<Dev> = None;
     let mut probe = None;
@@ -193,7 +204,7 @@ fn run_case(case: &Path, mode: Mode) -> Result<(), String> {
             std::thread::sleep(Duration::from_millis(50));
         }
         apply(step, dir.path());
-        let dev = dev.get_or_insert_with(|| Dev::start(dir.path(), mode.flags()));
+        let dev = dev.get_or_insert_with(|| Dev::start_with_env(dir.path(), &args, env));
         let mut run = Run {
             dev,
             mode,
@@ -214,7 +225,18 @@ fn run_case(case: &Path, mode: Mode) -> Result<(), String> {
             return Err(format!("{refused} connections were refused during reloads"));
         }
     }
-    Ok(())
+    Ok(dev.map(|d| d.transcript()).unwrap_or_default())
+}
+
+/// Warm reloads stay exercised while `velt dev` leaves them off by default (#3822): a server's
+/// body edit, with `VELT_DEV_WARM=1`, is checked from the kept check and swapped in.
+#[test]
+fn a_body_edit_reloads_warm_when_turned_on() {
+    reload_support::build_runtime();
+    let case = root().join("tests/reload/hello_server");
+    let log = run_case_with(&case, Mode::Jit, &["-v"], &[("VELT_DEV_WARM", "1")])
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert!(log.contains("sema (warm)"), "no warm reload:\n{log}");
 }
 
 impl Run<'_> {

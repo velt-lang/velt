@@ -13,37 +13,20 @@
 //! Directly awaited calls never get here: `await f()` embeds `f`'s state in the caller's (no
 //! allocation), and `spawn(f())` gives `f` its own task.
 
-mod catch;
-mod gate;
-mod losers;
 mod micro;
 mod node;
-mod order;
 mod set;
-mod timers;
-mod unhandled;
 
-pub use catch::{
-    velt_rt_catch_arm, velt_rt_catch_free, velt_rt_catch_message, velt_rt_catch_settled,
-    velt_rt_catch_take,
-};
-pub use gate::{velt_rt_task_gate, velt_rt_task_gate_free, velt_rt_task_gate_wait};
-pub use losers::velt_rt_fut_detach;
-pub(crate) use micro::{grant_step, settled, step_free, ticket_pending};
-pub use micro::{velt_rt_await_ready, velt_rt_await_tick, velt_rt_microtask};
-pub use order::{velt_rt_timer_again, velt_rt_timer_free, velt_rt_timer_new, velt_rt_timer_turn};
+pub(crate) use micro::{settled, step_free, ticket_pending};
 
 use std::cell::Cell;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 
-use self::gate::Gate;
 use self::set::LocalSet;
-use self::timers::Timers;
 use super::ResultDropFn;
 use super::{DropFn, PollFn, VeltFut};
-use std::sync::Arc;
 
 /// What `velt_rt_fut_start` needs from the task being polled.
 struct TaskCx {
@@ -53,18 +36,12 @@ struct TaskCx {
     waker: *const Waker,
     /// The task's id for [`task_key`] (0 until first asked for).
     id: *mut u64,
-    /// The task's timers (none until its first `sleep`; timers.rs).
-    timers: *mut Option<Arc<Timers>>,
     /// Which poll of the task this is ([`next_turn`]): a promise created during this same poll
-    /// can only have been woken by the poll's own code, never by a timer or another event.
+    /// can only have been woken by the poll's own code, never by another event.
     turn: u32,
-    /// Microtask jobs under way, one inside the other (micro.rs `timer_turn_free`).
-    micro_jobs: Cell<u32>,
     /// The task's await word (micro.rs): its queued microtasks plus the synchronous runs under
     /// way. Generated code reads it through `cx` (`await_word`).
     word: Cell<u32>,
-    /// The microtask being run is a waiter's step already (micro.rs).
-    credit: Cell<bool>,
 }
 
 thread_local! {
@@ -132,19 +109,6 @@ fn next_turn(turn: u32) -> u32 {
     }
 }
 
-/// Run `f` with the timers of the task being polled, created on first use; `None` outside a task.
-/// `f` also gets the task's waker and context.
-fn with_timers<R>(f: impl FnOnce(&Arc<Timers>, &Waker, &TaskCx) -> R) -> Option<R> {
-    let tcx = CURRENT.with(Cell::get);
-    if tcx.is_null() {
-        return None;
-    }
-    // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`); `timers` points into the
-    // task's own `SetPtr`, which only this task's polls touch.
-    let (timers, task, tcx) = unsafe { (&mut *(*tcx).timers, &*(*tcx).waker, &*tcx) };
-    Some(f(timers.get_or_insert_with(Default::default), task, tcx))
-}
-
 /// Run local promise `f` of the task being polled now (queued if it is being polled already, or
 /// outside a task).
 pub(super) unsafe fn run_here(f: *mut VeltFut) {
@@ -155,14 +119,6 @@ pub(super) unsafe fn run_here(f: *mut VeltFut) {
         return;
     }
     set::run_now(set, &*tcx, f);
-}
-
-/// Run `f` with the gate of the task being polled, created on first use (with the task's set,
-/// which keeps it); `None` outside a task.
-fn with_gate<R>(f: impl FnOnce(&Arc<Gate>) -> R) -> Option<R> {
-    // SAFETY: the set of the task being polled, used only by this task's polls.
-    let set = unsafe { current_set_or_new().as_mut() }?;
-    Some(f(set.gate.get_or_insert_with(Gate::new_busy)))
 }
 
 /// Makes a task's set current for the duration of a poll (restores the previous one on drop).
@@ -180,16 +136,16 @@ impl Drop for Enter {
     }
 }
 
-/// Owned pointer to a task's local set (null = none yet), its id, its timers and its turn.
-struct SetPtr(*mut LocalSet, u64, Option<Arc<Timers>>, u32);
+/// Owned pointer to a task's local set (null = none yet), its id and its turn.
+struct SetPtr(*mut LocalSet, u64, u32);
 
-const _: () = assert!(std::mem::size_of::<SetPtr>() == 32);
+const _: () = assert!(std::mem::size_of::<SetPtr>() == 24);
 
 // SAFETY: the set moves with its task between workers and is only used by that task's polls.
 unsafe impl Send for SetPtr {}
 
 impl SetPtr {
-    const NONE: SetPtr = SetPtr(std::ptr::null_mut(), 0, None, 0);
+    const NONE: SetPtr = SetPtr(std::ptr::null_mut(), 0, 0);
 
     /// Poll with this set current: drain its woken promises (resuming the task's root with
     /// `root` when a promise it awaits finishes), then poll the root once more if a promise ran
@@ -198,35 +154,22 @@ impl SetPtr {
     /// # Safety
     /// `waker` must stay valid during the call.
     unsafe fn enter(&mut self, waker: *const Waker, root: &mut dyn FnMut()) {
-        self.3 = next_turn(self.3);
+        self.2 = next_turn(self.2);
         let tcx = TaskCx {
             set: &mut self.0,
             waker,
             id: &mut self.1,
-            timers: &mut self.2,
-            turn: self.3,
-            micro_jobs: Cell::new(0),
+            turn: self.2,
             word: Cell::new(self.0.as_ref().map_or(0, |s| s.micro.len() as u32)),
-            credit: Cell::new(false),
         };
         let _enter = Enter::new(&tcx);
-        if let Some(g) = self.0.as_ref().and_then(|s| s.gate.as_ref()) {
-            g.enter();
-        }
-        let timers = self.2.as_deref();
-        if self.0.is_null() {
-            // Only the root can wait for timers here; it is polled below.
-            if let Some(t) = timers {
-                t.fire(&*waker);
-            }
-        } else {
+        if !self.0.is_null() {
             // A live set owned by this task; compiled code run from the drain reaches it only
             // through `tcx`.
             set::drain(&mut set::Driver {
                 set: self.0,
                 task: &*waker,
                 root,
-                timers,
                 word: tcx.word.as_ptr(),
             });
         }
@@ -237,21 +180,8 @@ impl SetPtr {
                 set: self.0,
                 task: &*waker,
                 root,
-                timers: None,
                 word: tcx.word.as_ptr(),
             });
-        }
-        // Rejections nobody handles, reported once the queue is drained (unhandled.rs).
-        if !self.0.is_null() && unhandled::waiting(self.0) {
-            unhandled::flush(self.0);
-        }
-        // The due timers this poll held back, if any are left, get a poll of their own.
-        if let Some(t) = timers {
-            t.end_poll(&*waker);
-        }
-        // The poll is over: timers this task created may run their callbacks (gate.rs).
-        if let Some(g) = self.0.as_ref().and_then(|s| s.gate.as_ref()) {
-            g.leave();
         }
     }
 
@@ -372,21 +302,10 @@ pub unsafe extern "C-unwind" fn velt_rt_fut_start(
     f: *mut VeltFut,
     result_drop: Option<ResultDropFn>,
 ) {
-    start(f, result_drop, false);
+    start(f, result_drop);
 }
 
-/// [`velt_rt_fut_start`] for a promise that can reject (its result is a `Result`, tag first): a
-/// rejection its owner has not claimed by the next microtask checkpoint is reported as uncaught
-/// then, as in Node (unhandled.rs).
-#[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_fut_start_rejecting(
-    f: *mut VeltFut,
-    result_drop: Option<ResultDropFn>,
-) {
-    start(f, result_drop, true);
-}
-
-unsafe fn start(f: *mut VeltFut, result_drop: Option<ResultDropFn>, rejecting: bool) {
+unsafe fn start(f: *mut VeltFut, result_drop: Option<ResultDropFn>) {
     if !node::is_lazy(f) {
         return;
     }
@@ -398,22 +317,11 @@ unsafe fn start(f: *mut VeltFut, result_drop: Option<ResultDropFn>, rejecting: b
     let set = task_set(&*tcx);
     node::stamp(f, (*tcx).turn);
     node::mark_started(f, &(*set).shared, result_drop);
-    if rejecting {
-        node::mark_rejectable(f);
-    }
-    // Started inside a poll that catches panics, or by `catchPanic`: it catches its own
-    // (node/panicked.rs, catch.rs).
-    node::catches_here(f);
-    catch::take_arming(f);
     // The creator goes on after this first run, so the run's `await`s take their steps through
     // the queue (micro.rs).
     let t = &*tcx;
     micro::sync_enter(t);
-    // The credit of a waiter being resumed (micro.rs) is its own step: not one of the promise
-    // it starts, whose `await`s take steps of their own.
-    let credit = t.credit.replace(false);
     let finished = node::poll_first(f, t.word.as_ptr());
-    t.credit.set(credit);
     micro::sync_exit(t);
     if finished {
         // Finished before its first suspension: nobody awaits it yet, nothing to resume.
@@ -489,11 +397,6 @@ pub(crate) unsafe fn await_unadopted(f: *mut VeltFut, cx: *mut std::ffi::c_void)
     node::poll_unadopted(f, cx)
 }
 
-/// The panic message of started promise `f` if it panicked (node/panicked.rs): it has no result.
-pub(crate) unsafe fn node_panic(f: *mut VeltFut) -> Option<Box<[u8]>> {
-    node::panicked_message(f)
-}
-
 /// The owner of finished started promise `f` claims its result.
 pub(crate) unsafe fn deliver_unadopted(f: *mut VeltFut) {
     node::deliver_unadopted(f)
@@ -540,20 +443,4 @@ pub(crate) fn outside_done() {
 /// Has started promise `f` finished?
 pub(crate) unsafe fn node_done(f: *mut VeltFut) -> bool {
     node::is_done(f)
-}
-
-/// The `n` futures in `futs` are handled by a combinator (`Promise.race`, `any`, `all`): a
-/// started promise among them that is dropped unfinished and rejects later is not reported as an
-/// unhandled rejection, like in JS; `quiet_drop` disposes of its result slot (null if nothing to
-/// drop). Call before handing the futures over.
-#[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_futs_handled(
-    futs: *const *mut VeltFut,
-    n: u64,
-    quiet_drop: Option<ResultDropFn>,
-) {
-    for i in 0..n as usize {
-        let f = *futs.add(i);
-        node::mark_handled(f, quiet_drop);
-    }
 }

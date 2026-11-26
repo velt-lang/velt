@@ -5,7 +5,7 @@
 //
 // A `sleep(ms)` is a heap future (rt_abi_async.md §1) due at its deadline, taken when it is
 // created (nanoseconds of the clock `performance.now()` reads), and numbered then. It resumes in
-// timer order, as the runtime's (velt_rt task/local/timers.rs) and Node's: by deadline, then in
+// timer order, as the runtime's Rust timers it replaced and Node's: by deadline, then in
 // the order the timers were created; never just because its deadline passed (#589), so the code
 // after `await sleep(0)` runs after the synchronous code that started it.
 // - Polled the first time, it joins the block's list of pending sleeps, sorted by (deadline,

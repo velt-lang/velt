@@ -1,0 +1,64 @@
+// velt/lang/hooks (tests): the counted check of a wake by value (sched_node_wake.velt `taskHeld`,
+// which `wakeAway` makes in counted runs) on nodes and tasks built by hand, after
+// sched_node_done.velt `letGo` ran on them. No program in std reaches the window it guards (a
+// finish letting go of its task while a wake by value of the node is under way), so the check
+// is made to fire here: on a node whose finish let go of its task, it is an ICE.
+import { describe, expect, it } from "velt/test";
+import { canCatchPanics, catchVeltPanic } from "velt/task/unwind";
+import * as m from "velt/lang/hooks/sched_mem";
+import * as nd from "velt/lang/hooks/sched_node";
+import * as dn from "velt/lang/hooks/sched_node_done";
+import * as nw from "velt/lang/hooks/sched_node_wake";
+import * as t from "velt/lang/hooks/sched_task";
+
+/** The bytes of a hand-built node and task: past the fields `letGo` reads. */
+const BLOCK: usize = 256;
+
+/** A finished node of task `k` with `refs` references. */
+function node(k: usize, refs: usize): usize {
+  const n = m.zeroed(BLOCK);
+  m.st(n + nd.N_TASK, k);
+  m.st(n + nd.N_REFS, refs);
+  m.st32(n + nd.N_FLAGS, nd.STARTED | nd.FINISHED);
+  return n;
+}
+
+/** A task with `refs` references. */
+function task(refs: usize): usize {
+  const k = m.zeroed(BLOCK);
+  m.st(k + t.T_REFS, refs);
+  return k;
+}
+
+/** Frees hand-built node `n` and task `k`. */
+function free(n: usize, k: usize): void {
+  m.release(n, BLOCK);
+  m.release(k, BLOCK);
+}
+
+describe("a wake by value's counted check", () => {
+  it("passes while the finish keeps the task for the waker that is out", () => {
+    const k = task(5);
+    // Its owner's, its task's, the woken stack's and the waker's that is being woken.
+    const n = node(k, 3);
+    m.inc(n + nd.N_REFS);
+    dn.letGo(k, n, 3);
+    expect(catchVeltPanic(() => nw.taskHeld(k, n))).toBe(null);
+    m.dec(n + nd.N_REFS);
+    free(n, k);
+  });
+
+  it("is an ICE once the finish let go of the task", () => {
+    if (!canCatchPanics()) {
+      return;
+    }
+    const k = task(5);
+    // No waker counted: the finish lets go, as it would if a wake by value were not counted.
+    const n = node(k, 3);
+    dn.letGo(k, n, 3);
+    expect(m.ld(n + nd.N_TASK)).toBe(0);
+    const msg = catchVeltPanic(() => nw.taskHeld(k, n)) ?? "";
+    expect(msg.startsWith("ICE: a promise let go of its task")).toBe(true);
+    free(n, k);
+  });
+});

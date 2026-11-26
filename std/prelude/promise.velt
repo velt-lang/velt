@@ -2,6 +2,7 @@
 // `Promise.allSettled(ps)` and `Promise.any(ps)` to calls of `promiseAllSettled` / `promiseAny`.
 
 import { anyIsPromise, firstFulfilled, holdsDynamic } from "velt/lang/intrinsics";
+import { ERROR_NAME } from "velt/lang/hooks/error";
 import {
   PromiseSlot,
   raceTakesStep,
@@ -20,7 +21,9 @@ export class AggregateError extends Error {
   /** An error with the given `message`. */
   constructor(message: string) {
     super(message);
-    this.name = "AggregateError";
+    // Its `name`, as on its prototype in JavaScript: written to `Error`'s `#name`, never through
+    // the accessor a subclass may override.
+    this[ERROR_NAME]("AggregateError");
   }
 }
 
