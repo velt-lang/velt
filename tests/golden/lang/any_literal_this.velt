@@ -1,0 +1,70 @@
+// check: no leaks
+// An object literal's method that reads `this`, called through `any`, gets the object, as in
+// Node (#3773): plain, async and promise-returning methods, a getter, a method that changes the
+// object and one that calls another through `this`, a literal held in an array, in another
+// literal, as a parameter or as an `unknown` cast from `any`, and one first typed and then held
+// as `any`.
+function show(x: any): void {
+  console.log("param", x.twice());
+}
+
+function local(): void {
+  const o: any = { n: 4, get() { return this.n; } };
+  console.log("local", o.get());
+}
+
+async function main(): Promise<void> {
+  const o: any = { n: 4, get() { return this.n; } };
+  console.log(o.get());
+  const p: any = { n: 5, add(x: number) { return this.n + x; } };
+  console.log(p.add(2));
+  const a: any = { n: 6, async get() { return this.n; } };
+  console.log(await a.get());
+  const b: any = { n: 7, later() { return Promise.resolve(this.n); } };
+  console.log(await b.later());
+  local();
+
+  const lit = { n: 4, get() { return this.n; } };
+  const held: any = lit;
+  console.log(held.get(), lit.get());
+  const alit = { n: 6, async get() { return this.n; } };
+  const aheld: any = alit;
+  console.log(await aheld.get());
+
+  const c: any = {
+    n: 1,
+    get v() {
+      return this.n * 10;
+    },
+    inc() {
+      this.n++;
+      return this.n;
+    },
+    twice() {
+      return this.inc() + this.inc();
+    },
+  };
+  console.log(c.inc(), c.n, c.v);
+  console.log(c.twice(), c.n);
+  show(c);
+  const u: unknown = { n: 2, get() { return this.n; } } as any;
+  console.log((u as any).get());
+  const xs: any[] = [{ n: 3, get() { return this.n; } }];
+  console.log(xs[0].get());
+  const nest: any = { inner: { n: 4, get() { return this.n; } } };
+  console.log(nest.inner.get());
+  const q: any = { n: 5, get() { return this.n; } };
+  console.log(typeof q.get, Object.keys(q), JSON.stringify(q));
+  console.log(q);
+  const d: any = {
+    n: 6,
+    async get() {
+      return this.n;
+    },
+    later() {
+      return Promise.resolve(this.n + 1);
+    },
+  };
+  console.log(await d.get(), await d.later());
+}
+main();

@@ -1,0 +1,128 @@
+await, resolved, gap -1: attach resolve t0 v1 t1 t2 t3 t4 t5 t6 t7 t8
+await, resolved, gap 0: resolve attach t0 v1 t1 t2 t3 t4 t5 t6 t7 t8
+await, resolved, gap 1: resolve t0 attach t1 v1 t2 t3 t4 t5 t6 t7 t8
+await, resolved, gap 2: resolve t0 t1 attach t2 v1 t3 t4 t5 t6 t7 t8
+await, resolved, gap 3: resolve t0 t1 t2 attach t3 v1 t4 t5 t6 t7 t8
+await, rejected, gap -1: attach reject t0 e:no t1 t2 t3 t4 t5 t6 t7 t8
+await, rejected, gap 0: reject attach t0 e:no t1 t2 t3 t4 t5 t6 t7 t8
+await, rejected, gap 1: reject t0 attach t1 e:no t2 t3 t4 t5 t6 t7 t8
+await, rejected, gap 2: reject t0 t1 attach t2 e:no t3 t4 t5 t6 t7 t8
+await, rejected, gap 3: reject t0 t1 t2 attach t3 e:no t4 t5 t6 t7 t8
+then, resolved, gap -1: attach resolve t0 v1 t1 t2 t3 t4 t5 t6 t7 t8
+then, resolved, gap 0: resolve attach t0 v1 t1 t2 t3 t4 t5 t6 t7 t8
+then, resolved, gap 1: resolve t0 attach t1 v1 t2 t3 t4 t5 t6 t7 t8
+then, resolved, gap 2: resolve t0 t1 attach t2 v1 t3 t4 t5 t6 t7 t8
+then, resolved, gap 3: resolve t0 t1 t2 attach t3 v1 t4 t5 t6 t7 t8
+then, rejected, gap -1: attach reject t0 t1 e:no t2 t3 t4 t5 t6 t7 t8
+then, rejected, gap 0: reject attach t0 t1 e:no t2 t3 t4 t5 t6 t7 t8
+then, rejected, gap 1: reject t0 attach t1 t2 e:no t3 t4 t5 t6 t7 t8
+then, rejected, gap 2: reject t0 t1 attach t2 t3 e:no t4 t5 t6 t7 t8
+then, rejected, gap 3: reject t0 t1 t2 attach t3 t4 e:no t5 t6 t7 t8
+then, 2 callbacks, resolved, gap -1: attach resolve t0 v1 t1 t2 t3 t4 t5 t6 t7 t8
+then, 2 callbacks, resolved, gap 0: resolve attach t0 v1 t1 t2 t3 t4 t5 t6 t7 t8
+then, 2 callbacks, resolved, gap 1: resolve t0 attach t1 v1 t2 t3 t4 t5 t6 t7 t8
+then, 2 callbacks, resolved, gap 2: resolve t0 t1 attach t2 v1 t3 t4 t5 t6 t7 t8
+then, 2 callbacks, resolved, gap 3: resolve t0 t1 t2 attach t3 v1 t4 t5 t6 t7 t8
+then, 2 callbacks, rejected, gap -1: attach reject t0 e:no t1 t2 t3 t4 t5 t6 t7 t8
+then, 2 callbacks, rejected, gap 0: reject attach t0 e:no t1 t2 t3 t4 t5 t6 t7 t8
+then, 2 callbacks, rejected, gap 1: reject t0 attach t1 e:no t2 t3 t4 t5 t6 t7 t8
+then, 2 callbacks, rejected, gap 2: reject t0 t1 attach t2 e:no t3 t4 t5 t6 t7 t8
+then, 2 callbacks, rejected, gap 3: reject t0 t1 t2 attach t3 e:no t4 t5 t6 t7 t8
+catch, resolved, gap -1: attach resolve t0 t1 v1 t2 t3 t4 t5 t6 t7 t8
+catch, resolved, gap 0: resolve attach t0 t1 v1 t2 t3 t4 t5 t6 t7 t8
+catch, resolved, gap 1: resolve t0 attach t1 t2 v1 t3 t4 t5 t6 t7 t8
+catch, resolved, gap 2: resolve t0 t1 attach t2 t3 v1 t4 t5 t6 t7 t8
+catch, resolved, gap 3: resolve t0 t1 t2 attach t3 t4 v1 t5 t6 t7 t8
+catch, rejected, gap -1: attach reject t0 e:no t1 v-1 t2 t3 t4 t5 t6 t7 t8
+catch, rejected, gap 0: reject attach t0 e:no t1 v-1 t2 t3 t4 t5 t6 t7 t8
+catch, rejected, gap 1: reject t0 attach t1 e:no t2 v-1 t3 t4 t5 t6 t7 t8
+catch, rejected, gap 2: reject t0 t1 attach t2 e:no t3 v-1 t4 t5 t6 t7 t8
+catch, rejected, gap 3: reject t0 t1 t2 attach t3 e:no t4 v-1 t5 t6 t7 t8
+finally, resolved, gap -1: attach resolve t0 finally t1 t2 t3 v1 t4 t5 t6 t7 t8
+finally, resolved, gap 0: resolve attach t0 finally t1 t2 t3 v1 t4 t5 t6 t7 t8
+finally, resolved, gap 1: resolve t0 attach t1 finally t2 t3 t4 v1 t5 t6 t7 t8
+finally, resolved, gap 2: resolve t0 t1 attach t2 finally t3 t4 t5 v1 t6 t7 t8
+finally, resolved, gap 3: resolve t0 t1 t2 attach t3 finally t4 t5 t6 v1 t7 t8
+finally, rejected, gap -1: attach reject t0 finally t1 t2 t3 e:no t4 t5 t6 t7 t8
+finally, rejected, gap 0: reject attach t0 finally t1 t2 t3 e:no t4 t5 t6 t7 t8
+finally, rejected, gap 1: reject t0 attach t1 finally t2 t3 t4 e:no t5 t6 t7 t8
+finally, rejected, gap 2: reject t0 t1 attach t2 finally t3 t4 t5 e:no t6 t7 t8
+finally, rejected, gap 3: reject t0 t1 t2 attach t3 finally t4 t5 t6 e:no t7 t8
+async return, resolved, gap -1: attach resolve t0 t1 t2 v1 t3 t4 t5 t6 t7 t8
+async return, resolved, gap 0: resolve attach t0 t1 t2 v1 t3 t4 t5 t6 t7 t8
+async return, resolved, gap 1: resolve t0 attach t1 t2 t3 v1 t4 t5 t6 t7 t8
+async return, resolved, gap 2: resolve t0 t1 attach t2 t3 t4 v1 t5 t6 t7 t8
+async return, resolved, gap 3: resolve t0 t1 t2 attach t3 t4 t5 v1 t6 t7 t8
+async return, rejected, gap -1: attach reject t0 t1 t2 e:no t3 t4 t5 t6 t7 t8
+async return, rejected, gap 0: reject attach t0 t1 t2 e:no t3 t4 t5 t6 t7 t8
+async return, rejected, gap 1: reject t0 attach t1 t2 t3 e:no t4 t5 t6 t7 t8
+async return, rejected, gap 2: reject t0 t1 attach t2 t3 t4 e:no t5 t6 t7 t8
+async return, rejected, gap 3: reject t0 t1 t2 attach t3 t4 t5 e:no t6 t7 t8
+then returns it, resolved, gap -1: attach resolve t0 t1 t2 t3 v1 t4 t5 t6 t7 t8
+then returns it, resolved, gap 0: resolve attach t0 t1 t2 t3 v1 t4 t5 t6 t7 t8
+then returns it, resolved, gap 1: resolve t0 attach t1 t2 t3 t4 v1 t5 t6 t7 t8
+then returns it, resolved, gap 2: resolve t0 t1 attach t2 t3 t4 t5 v1 t6 t7 t8
+then returns it, resolved, gap 3: resolve t0 t1 t2 attach t3 t4 t5 t6 v1 t7 t8
+then returns it, rejected, gap -1: attach reject t0 t1 t2 t3 e:no t4 t5 t6 t7 t8
+then returns it, rejected, gap 0: reject attach t0 t1 t2 t3 e:no t4 t5 t6 t7 t8
+then returns it, rejected, gap 1: reject t0 attach t1 t2 t3 t4 e:no t5 t6 t7 t8
+then returns it, rejected, gap 2: reject t0 t1 attach t2 t3 t4 t5 e:no t6 t7 t8
+then returns it, rejected, gap 3: reject t0 t1 t2 attach t3 t4 t5 t6 e:no t7 t8
+all, resolved, gap -1: attach resolve t0 t1 v1 t2 t3 t4 t5 t6 t7 t8
+all, resolved, gap 0: resolve attach t0 t1 v1 t2 t3 t4 t5 t6 t7 t8
+all, resolved, gap 1: resolve t0 attach t1 t2 v1 t3 t4 t5 t6 t7 t8
+all, resolved, gap 2: resolve t0 t1 attach t2 t3 v1 t4 t5 t6 t7 t8
+all, resolved, gap 3: resolve t0 t1 t2 attach t3 t4 v1 t5 t6 t7 t8
+all, rejected, gap -1: attach reject t0 t1 e:no t2 t3 t4 t5 t6 t7 t8
+all, rejected, gap 0: reject attach t0 t1 e:no t2 t3 t4 t5 t6 t7 t8
+all, rejected, gap 1: reject t0 attach t1 t2 e:no t3 t4 t5 t6 t7 t8
+all, rejected, gap 2: reject t0 t1 attach t2 t3 e:no t4 t5 t6 t7 t8
+all, rejected, gap 3: reject t0 t1 t2 attach t3 t4 e:no t5 t6 t7 t8
+race, resolved, gap -1: attach resolve t0 t1 v1 t2 t3 t4 t5 t6 t7 t8
+race, resolved, gap 0: resolve attach t0 t1 v1 t2 t3 t4 t5 t6 t7 t8
+race, resolved, gap 1: resolve t0 attach t1 t2 v1 t3 t4 t5 t6 t7 t8
+race, resolved, gap 2: resolve t0 t1 attach t2 t3 v1 t4 t5 t6 t7 t8
+race, resolved, gap 3: resolve t0 t1 t2 attach t3 t4 v1 t5 t6 t7 t8
+race, rejected, gap -1: attach reject t0 t1 e:no t2 t3 t4 t5 t6 t7 t8
+race, rejected, gap 0: reject attach t0 t1 e:no t2 t3 t4 t5 t6 t7 t8
+race, rejected, gap 1: reject t0 attach t1 t2 e:no t3 t4 t5 t6 t7 t8
+race, rejected, gap 2: reject t0 t1 attach t2 t3 e:no t4 t5 t6 t7 t8
+race, rejected, gap 3: reject t0 t1 t2 attach t3 t4 e:no t5 t6 t7 t8
+allSettled, resolved, gap -1: attach resolve t0 t1 fulfilled t2 t3 t4 t5 t6 t7 t8
+allSettled, resolved, gap 0: resolve attach t0 t1 fulfilled t2 t3 t4 t5 t6 t7 t8
+allSettled, resolved, gap 1: resolve t0 attach t1 t2 fulfilled t3 t4 t5 t6 t7 t8
+allSettled, resolved, gap 2: resolve t0 t1 attach t2 t3 fulfilled t4 t5 t6 t7 t8
+allSettled, resolved, gap 3: resolve t0 t1 t2 attach t3 t4 fulfilled t5 t6 t7 t8
+allSettled, rejected, gap -1: attach reject t0 t1 rejected t2 t3 t4 t5 t6 t7 t8
+allSettled, rejected, gap 0: reject attach t0 t1 rejected t2 t3 t4 t5 t6 t7 t8
+allSettled, rejected, gap 1: reject t0 attach t1 t2 rejected t3 t4 t5 t6 t7 t8
+allSettled, rejected, gap 2: reject t0 t1 attach t2 t3 rejected t4 t5 t6 t7 t8
+allSettled, rejected, gap 3: reject t0 t1 t2 attach t3 t4 rejected t5 t6 t7 t8
+any, resolved, gap -1: attach resolve t0 t1 v1 t2 t3 t4 t5 t6 t7 t8
+any, resolved, gap 0: resolve attach t0 t1 v1 t2 t3 t4 t5 t6 t7 t8
+any, resolved, gap 1: resolve t0 attach t1 t2 v1 t3 t4 t5 t6 t7 t8
+any, resolved, gap 2: resolve t0 t1 attach t2 t3 v1 t4 t5 t6 t7 t8
+any, resolved, gap 3: resolve t0 t1 t2 attach t3 t4 v1 t5 t6 t7 t8
+any, rejected, gap -1: attach reject t0 t1 any failed t2 t3 t4 t5 t6 t7 t8
+any, rejected, gap 0: reject attach t0 t1 any failed t2 t3 t4 t5 t6 t7 t8
+any, rejected, gap 1: reject t0 attach t1 t2 any failed t3 t4 t5 t6 t7 t8
+any, rejected, gap 2: reject t0 t1 attach t2 t3 any failed t4 t5 t6 t7 t8
+any, rejected, gap 3: reject t0 t1 t2 attach t3 t4 any failed t5 t6 t7 t8
+several, resolved: a waits b waits settle settled c waits t0 a got 1 b got 1 then 1 c got 1 t1 t2 t3 t4 t5
+several, rejected: a waits b waits settle settled c waits t0 a caught no b caught no then caught c caught no t1 t2 t3 t4 t5
+settled alone: t0 first 1 t1 second caught t2 t3
+one waiting, resolved: settle settled t0 got 1 goes on t1 t2 t3
+one waiting, rejected: settle settled t0 caught no goes on t1 t2 t3
+one waiting, nested, resolved: settle settled t0 inner got 1 t1 got 1 goes on t2 t3
+one waiting, nested, rejected: settle settled t0 t1 caught no goes on t2 t3
+resolved inside an awaited call: resolver started t0 resolve resolved t1 got 1 goes on resolver done t2 t3 t4
+resolved inside an awaited call, nested: resolver started t0 resolve resolved t1 inner got 1 resolver done t2 got 1 goes on t3 t4
+combinators: r1 r2 any allSettled race all r3 r4
+pairs over 1: all/allSettled AB, all/race AB, all/any AB, all/then BA, all/loop AB, allSettled/all AB, allSettled/race AB, allSettled/any AB, allSettled/then BA, allSettled/loop AB, race/all AB, race/allSettled AB, race/any AB, race/then BA, race/loop AB, any/all AB, any/allSettled AB, any/race AB, any/then BA, any/loop AB, then/all AB, then/allSettled AB, then/race AB, then/any AB, then/loop AB, loop/all AB, loop/allSettled AB, loop/race AB, loop/any AB, loop/then BA
+pairs over 2: all/allSettled AB, all/race BA, all/any BA, all/then BA, all/loop AB, allSettled/all AB, allSettled/race BA, allSettled/any BA, allSettled/then BA, allSettled/loop AB, race/all AB, race/allSettled AB, race/any AB, race/then BA, race/loop AB, any/all AB, any/allSettled AB, any/race AB, any/then BA, any/loop AB, then/all AB, then/allSettled AB, then/race AB, then/any AB, then/loop AB, loop/all BA, loop/allSettled BA, loop/race BA, loop/any BA, loop/then BA
+pairs over 3: all/allSettled AB, all/race BA, all/any BA, all/then BA, all/loop AB, allSettled/all AB, allSettled/race BA, allSettled/any BA, allSettled/then BA, allSettled/loop AB, race/all AB, race/allSettled AB, race/any AB, race/then BA, race/loop AB, any/all AB, any/allSettled AB, any/race AB, any/then BA, any/loop AB, then/all AB, then/allSettled AB, then/race AB, then/any AB, then/loop AB, loop/all BA, loop/allSettled BA, loop/race BA, loop/any BA, loop/then BA
+combinators again: r1 r2 any allSettled race all r3 r4
+async fn, adopted: t0 p1 t1 t2 t3 v1 t4 t5 t6 t7 t8 t9
+job, adopted: t0 p1 t1 t2 t3 v1 t4 t5 t6 t7 t8 t9
+async fn, direct: t0 p1 t1 v1 t2 t3 t4 t5 t6 t7 t8 t9
+job, direct: t0 p1 t1 v1 t2 t3 t4 t5 t6 t7 t8 t9

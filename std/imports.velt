@@ -122,7 +122,8 @@ export const imports: Imports = {
   },
   // Whether `Promise.race`'s race settles a microtask after its deciding input, as Node does
   // (std/lang/promise/settle.velt, for `Promise.any`): the executor in Velt's does
-  // (std/lang/hooks/sched_race.velt), the runtime's (WebAssembly) does not.
+  // (std/lang/hooks/sched_race.velt), the runtime's (WebAssembly) does not. Also whether
+  // `Promise.allSettled` can attach to every promise at the call (`settledAtCall`).
   "#promise-race-step": {
     "std-scheduler": "./lang/promise/race_step_sched.velt",
     default: "./lang/promise/race_step_rt.velt",

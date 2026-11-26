@@ -123,6 +123,9 @@ pub enum Intrinsic {
     /// `(a: borrow T, b: borrow T) -> bool` JS SameValueZero (`keyEq`, `Map`/`Set` keys): `Same`,
     /// but float `NaN` equals itself and `0` equals `-0`; objects by identity (as `Hash` does).
     KeyEq,
+    /// `(x: own T) -> T` the key a `Map` stores for `x` (`keyOf`): a float `-0` becomes `+0`, as JS
+    /// stores a `Map` key or `Set` element (`KeyEq` already finds either); any other value is `x`.
+    KeyOf,
     /// `(a: borrow T, b: borrow T) -> bool` JS `Array.prototype.includes` (`includesEq`): `Same`,
     /// except that a number `NaN` equals `NaN` (a number held by an `any` or an option too). Tuples
     /// and the other parts compare as `Same` does.
@@ -193,6 +196,13 @@ pub enum Intrinsic {
     /// `null` a value of `T` (is `T` an option, `X | null`, once substituted)? Then a generic `T |
     /// null` is `T` itself and its `null` is a `T`. The probe is not evaluated.
     HoldsNull,
+    /// std only: `isExactClass<T>(value: borrow T) -> bool`, `T` a class: is `value` an object of
+    /// `T` itself, not of a class that extends it? A constant `true` (the value is not evaluated)
+    /// when no class of the program extends `T`, so the code a subclass needs is lowered only
+    /// then; else one compare of the object's class id (class_test.rs). A built-in keeps its
+    /// own code path for its own objects and calls a subclass's overrides, as JavaScript's
+    /// specification says, only for a subclass's (std/text/regex/regexp.velt). Additive.
+    IsExactClass,
     /// std only (std/prelude/map.velt): `nullAs<T>() -> T`, `null` as a nullable `T` (`HoldsNull`).
     /// Any other `T` stops the program (internal error): std reaches it only behind `HoldsNull`.
     NullAs,

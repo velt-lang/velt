@@ -26,6 +26,18 @@ pub(crate) enum Target {
     Default(DefId, Vec<TyId>),
     /// Vtable slot of the receiver's class.
     Slot(u32),
+    /// Vtable slot `slot` of the receiver's class, which holds `def` or an override of it, with
+    /// the first `take` parameters only: an override that takes fewer parameters than the method
+    /// it overrides (`super::short_overrides`).
+    SlotFirst { slot: u32, def: DefId, take: usize },
+    /// Method `def` with these type args and the first `take` parameters only: a method without
+    /// a vtable slot that implements an interface method taking more
+    /// (`super::short_overrides`).
+    First {
+        def: DefId,
+        targs: Vec<TyId>,
+        take: usize,
+    },
     /// Generator method `def` with these type args, whose generator (of type `gen`) becomes
     /// the result interface value through `Program::impls[impl_index]`.
     Generator {
@@ -122,7 +134,26 @@ pub(crate) fn synth_method(
     let mut wrap = None;
     let mut this_arg = None;
     let mut recv = None;
+    let mut take = params.len();
     let callee = match target {
+        Target::SlotFirst {
+            slot,
+            def: m,
+            take: n,
+        } => {
+            cx.fn_info_mut(def).throw_srcs = vec![ThrowSrc::Call(m, vec![], span)];
+            take = n;
+            Callee::Virtual { slot }
+        }
+        Target::First {
+            def: m,
+            targs,
+            take: n,
+        } => {
+            cx.fn_info_mut(def).throw_srcs = vec![ThrowSrc::Call(m, targs.clone(), span)];
+            take = n;
+            Callee::Def(m, targs)
+        }
         Target::Default(dd, targs) => {
             cx.fn_info_mut(def).throw_srcs = vec![ThrowSrc::Call(dd, targs.clone(), span)];
             Callee::Def(dd, targs)
@@ -227,7 +258,7 @@ pub(crate) fn synth_method(
         }
     };
     let call = (callee, wrap, this_arg, recv);
-    let body = forward_body(cx, self_ty, this_mode, &params, ret, call, span);
+    let body = forward_body(cx, self_ty, this_mode, (&params, take), ret, call, span);
     let fndef = hir::FnDef {
         name,
         generics: generics.len() as u32,
@@ -256,11 +287,36 @@ pub(crate) fn synth_method(
     def
 }
 
+/// Give synthesized method `def` the result type `ret`: it was made before the result of the
+/// method it forwards to was inferred (`RetWant::Given`).
+pub(crate) fn set_result(cx: &mut Ctx, def: DefId, ret: TyId) {
+    let unit = cx.ty.unit;
+    cx.fn_info_mut(def).ret = ret;
+    let Some(Def::Fn(f)) = &mut cx.defs[def.0 as usize] else {
+        return;
+    };
+    f.ret = ret;
+    for s in &mut f.body.block.stmts {
+        let kind = std::mem::replace(&mut s.kind, hir::StmtKind::Return(None));
+        s.kind = match kind {
+            hir::StmtKind::Return(Some(mut call)) | hir::StmtKind::Expr(mut call) => {
+                call.ty = ret;
+                match ret == unit {
+                    true => hir::StmtKind::Expr(call),
+                    false => hir::StmtKind::Return(Some(call)),
+                }
+            }
+            other => other,
+        };
+    }
+}
+
 /// A type and an implementation index (`Program::impls`): the interface value a call result
 /// becomes, or the receiver passed as one.
 type AsDyn = Option<(TyId, u32)>;
 
-/// `return callee(this, p1, .., pn);` (with `wrap = Some((ty, impl))`, the call has type `ty`
+/// `return callee(this, p1, .., pn);` with the first `take` of `params` (with
+/// `wrap = Some((ty, impl))`, the call has type `ty`
 /// and its result becomes an interface value through `impl`). An indirect call passes no
 /// receiver, unless `this_arg` says how to pass it (`Target::Field`); `recv` is the receiver
 /// of a call through a field (`Target::GenericField`).
@@ -268,7 +324,7 @@ fn forward_body(
     cx: &mut Ctx,
     self_ty: TyId,
     this_mode: PassMode,
-    params: &[ParamSig],
+    (params, take): (&[ParamSig], usize),
     ret: TyId,
     (callee, wrap, this_arg, recv): (Callee, AsDyn, AsDyn, Option<hir::Expr>),
     span: Span,
@@ -309,6 +365,9 @@ fn forward_body(
     }
     for (i, p) in params.iter().enumerate() {
         locals.push(local(&p.name, p.ty));
+        if i >= take {
+            continue;
+        }
         let mode = if cx.is_copy(p.ty) {
             UseMode::Copy
         } else {

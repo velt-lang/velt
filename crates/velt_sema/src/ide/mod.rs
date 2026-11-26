@@ -63,6 +63,8 @@ pub struct Analysis {
     type_index: OnceLock<FxHashMap<Span, usize>>,
     /// Exact span → first index in `refs`, built on the first [`Analysis::def_of`].
     ref_index: OnceLock<FxHashMap<Span, usize>>,
+    /// The std modules the check refused after serving them ([`Analysis::late_refused`]).
+    late_refused: Vec<String>,
 }
 
 /// Check `modules` for an editor: like [`crate::check`], but errors never stop other items from
@@ -107,10 +109,12 @@ fn check_on_current_thread(
         prebuilt: None,
     });
     // As in `crate::check_with`: script variables module state refused move into `main`.
-    crate::script_locals::check(modules, root, |m| {
+    let mut analysis = crate::script_locals::check(modules, root, |m| {
         let (analysis, _, refused) = analyze(m, root, loads, stack_budget);
         (analysis, refused)
-    })
+    });
+    analysis.late_refused = kept.take_late_refused();
+    analysis
 }
 
 /// The analysis, whether the program was checked again with held closures sharing, and the
@@ -212,6 +216,13 @@ impl Analysis {
     /// Every diagnostic of the program (all modules), warnings included.
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
+    }
+
+    /// The std modules the check refused after they were served (velt_sema
+    /// `collect::vector_extends`: a vector method that would answer a lookup checked before it).
+    /// The check stopped there; check again with them loaded up front, as `velt check` does.
+    pub fn late_refused(&self) -> &[String] {
+        &self.late_refused
     }
 
     /// The definition the name at `offset` of `file` denotes (a use or the declaration itself).

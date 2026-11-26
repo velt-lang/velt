@@ -1,0 +1,61 @@
+// A `Map` stores a `-0` key as `0`, and a `Set` a `-0` element, as JS does (#3820): iteration
+// shows `0` (`1 / k` is `Infinity`). Either finds the other, and `NaN` stays `NaN`.
+
+function sign(x: number): string {
+  return 1 / x > 0 ? "+0" : "-0";
+}
+
+const m = new Map<number, string>([[-0, "neg"]]);
+const k = [...m.keys()][0];
+console.log(sign(k), m.get(0), m.get(-0), m.size);
+m.set(0, "pos");
+console.log(sign([...m.keys()][0]), m.get(-0), m.size);
+
+const s = new Set<number>([-0]);
+console.log(sign([...s][0]), s.has(0), s.has(-0));
+s.add(0);
+console.log(s.size);
+
+const u = new Set<number>([1]).union(new Set<number>([-0]));
+console.log([...u].map((x) => (x == 0 ? sign(x) : `${x}`)).join(","));
+
+const f = new Map<f32, number>();
+f.set(-0 as f32, 1);
+console.log(sign([...f.keys()][0] as number));
+
+const n = new Map<number, number>([[NaN, 1]]);
+console.log(Number.isNaN([...n.keys()][0]), n.get(NaN));
+
+const t = new Map<string, number>([["-0", 1]]);
+console.log([...t.keys()][0]);
+
+// A key of a union or an option type, and a number held as `any` or `unknown`: the stored key
+// is `+0`, the caller's value keeps its `-0`.
+function show(x: number | string | undefined): string {
+  return typeof x === "number" && x == 0 ? sign(x) : `${x}`;
+}
+
+const uk: number | string = -0;
+const um = new Map<number | string, number>([[uk, 1], ["a", 2]]);
+console.log([...um.keys()].map(show).join(","), sign(uk as number), um.get(0), um.get(-0));
+
+const o = new Set<number | undefined>([-0, undefined]);
+console.log([...o].map(show).join(","), o.has(0));
+
+const b = new Set<number | boolean>([true, -0]);
+console.log([...b].map((x) => (typeof x === "number" ? sign(x) : `${x}`)).join(","));
+
+const ak: any = -0;
+const am = new Map<any, number>([[ak, 1], ["s", 2], [0, 3], [true, 4]]);
+console.log(sign([...am.keys()][0] as number), sign(ak as number), am.get(0), am.size);
+console.log([...am.keys()].map((x) => `${x}`).join(","), [...am.values()].join(","));
+
+const nk: unknown = -0;
+const ns = new Set<unknown>([nk, NaN, 5, { k: -0 }]);
+console.log(sign([...ns][0] as number), sign(nk as number), ns.has(0), ns.size);
+console.log(sign(([...ns][3] as any).k as number));
+
+function single<T>(x: T): T[] {
+  return [...new Set<T>([x])];
+}
+console.log(sign(single(-0)[0]));

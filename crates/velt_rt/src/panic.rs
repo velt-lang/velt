@@ -144,16 +144,6 @@ impl ThrowLoc {
         }
     }
 
-    /// Forget this thread's location (a task poll starts with none).
-    pub(crate) fn clear() {
-        velt_rt_set_throw_loc(std::ptr::null());
-    }
-
-    /// This thread's location, which is forgotten (one thread-local access).
-    pub(crate) fn take() -> ThrowLoc {
-        ThrowLoc(THROW_LOC.with(|c| c.replace(std::ptr::null())))
-    }
-
     /// Make it this thread's location and return the one it replaces.
     pub(crate) fn replace(self) -> ThrowLoc {
         ThrowLoc(THROW_LOC.with(|c| c.replace(self.0)))

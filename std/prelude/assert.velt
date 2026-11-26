@@ -3,6 +3,7 @@
 // elsewhere it is an uncaught error like any other (exit code 1).
 
 import { inspect } from "velt/lang/intrinsics";
+import { ERROR_NAME } from "velt/lang/hooks/error";
 import { equalByContent } from "velt/lang/equal/generated";
 
 /** What a failed `assert`, `assertEq` or `assertThrows` throws (Node's `AssertionError`). */
@@ -10,7 +11,9 @@ export class AssertionError extends Error {
   /** An `AssertionError` with `message`, named `"AssertionError"`. */
   constructor(message: string) {
     super(message);
-    this.name = "AssertionError";
+    // Its `name`, as on its prototype in JavaScript: written to `Error`'s `#name`, never through
+    // the accessor a subclass may override.
+    this[ERROR_NAME]("AssertionError");
   }
 }
 

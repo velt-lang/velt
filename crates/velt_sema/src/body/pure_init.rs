@@ -632,6 +632,7 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::ArrayTruncate
         | I::Hash
         | I::KeyEq
+        | I::KeyOf
         | I::IncludesEq
         | I::Same
         | I::SameValue
@@ -648,6 +649,7 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::ModuleStateUsed
         | I::MayAlias
         | I::HoldsNull
+        | I::IsExactClass
         | I::NullAs
         | I::Truthy
         | I::IsNull

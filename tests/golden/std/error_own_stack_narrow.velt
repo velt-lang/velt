@@ -1,0 +1,19 @@
+// A subclass's `stack` getter may narrow the type to `string`, as TypeScript allows for an
+// accessor that overrides: Error's own `stack` hides it (error_own_stack.velt), so there is no
+// override whose signature could differ.
+
+class Narrow extends Error {
+  get stack(): string {
+    return "narrow";
+  }
+}
+
+class Narrower extends Narrow {
+  override get stack(): string {
+    return "narrower";
+  }
+}
+
+const e = new Narrower("n");
+console.log((e.stack ?? "").split("\n")[0], String(e));
+console.log((new Narrow("m").stack ?? "").split("\n")[0]);

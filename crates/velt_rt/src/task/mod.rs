@@ -8,17 +8,14 @@
 //! * Everything the runtime produces (fs/net/http operations, boxed compiled futures) is a heap `VeltFut`: a 16-byte header `{ poll, drop }` followed by the result slot at
 //!   offset 16. Awaiting one is `poll_fut(f, cx)` then reading the slot, then
 //!   `drop_fut(f)`.
-//! * `cx` is a [`VeltCx`]: the task's await word (local/micro.rs) and its waker, a pointer to a
+//! * `cx` is a [`VeltCx`]: the task's await word and its waker, a pointer to a
 //!   header starting with a table of C functions (waker.rs), passed through as an opaque
 //!   pointer. Runtime leaves get a Rust `Context` for it with [`with_context`].
 
 pub mod abort;
-pub mod compiled;
-pub mod coop;
 pub mod identity;
 pub mod latch;
 pub mod leaf;
-pub mod local;
 pub(crate) mod quiet;
 pub mod runtime;
 pub mod shared;
@@ -71,18 +68,14 @@ unsafe impl<T> Send for SendPtr<T> {}
 // SAFETY: shared read-only use (e.g. the HTTP handler environment) is the contract of the ABI.
 unsafe impl<T> Sync for SendPtr<T> {}
 
-/// `cx` for handing a Rust `Context` to generated code, with the await word of the task being
-/// polled (`.ptr()` is the opaque pointer).
+/// The await word of every poll the runtime makes: always 0, since no task of the executor in
+/// Velt is being polled there (an `await` goes straight on).
+static NO_WORD: u32 = 0;
+
+/// `cx` for handing a Rust `Context` to generated code (`.ptr()` is the opaque pointer).
 #[inline]
 pub(crate) fn raw_cx<'a>(cx: &'a mut Context<'_>) -> RustCx<'a> {
-    raw_cx_with(cx, local::await_word())
-}
-
-/// [`raw_cx`] with the await word the caller holds already (the task being polled: no
-/// thread-local read).
-#[inline]
-pub(crate) fn raw_cx_with<'a>(cx: &'a mut Context<'_>, word: *const u32) -> RustCx<'a> {
-    RustCx::new(word, cx)
+    RustCx::new(&NO_WORD, cx)
 }
 
 /// Poll a heap future: `(f->poll)(f, cx)`. The runtime's own; compiled code calls through the

@@ -8,12 +8,15 @@
 //!
 //! A branch, a tag or the default branch is resolved to a commit (`git ls-remote`) once, and
 //! `velt.lock.json` records the commit with a checksum of the checkout: builds use the locked
-//! commit without the network, `velt update` moves it. A checkout is the commit's whole tree
-//! (without `.git`), fetched with the `git` command (so the machine's credentials and SSH keys
-//! apply), stored once per commit under `<cache>/git/<repository>/<commit>/` and never changed.
-//! The whole tree is hashed, not only the package's files: a package's npm sources may live
-//! beside it in the repository (sigx's Velt half imports its sibling TypeScript packages).
-//! Nothing in the checkout runs.
+//! commit without the network, `velt update` moves it. A checkout is fetched with the `git`
+//! command (so the machine's credentials and SSH keys apply), stored once under
+//! `<cache>/git/<repository>/` and never changed. Nothing in it runs.
+//!
+//! A dependency with a `path` checks out that directory alone (and what its symbolic links lead
+//! to), not the commit's whole tree: [`sparse`]. Its lock source says so (`&sparse=1`) and its
+//! checksum covers exactly the files checked out. A dependency on the repository's root, and a
+//! lock written before sparse checkouts, has the commit's whole tree (without `.git`) in
+//! `<commit>/`, all of it hashed.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -50,9 +53,15 @@ pub struct GitSpec {
 pub const GIT_SOURCE: &str = "git";
 
 impl GitSpec {
-    /// The lockfile's `source` for this spec at `commit`:
+    /// The lockfile's `source` for this spec at `commit`, checked out whole:
     /// `git+<url>?branch=main&path=packages/x#<commit>`.
     pub fn source(&self, commit: &str) -> String {
+        self.locked_source(commit, false)
+    }
+
+    /// [`GitSpec::source`], with `&sparse=1` when the checkout is the spec's `path` alone
+    /// ([`sparse`]).
+    pub fn locked_source(&self, commit: &str, sparse: bool) -> String {
         let mut query = vec![];
         match &self.reference {
             GitRef::Default => {}
@@ -63,6 +72,9 @@ impl GitSpec {
         if let Some(dir) = &self.subdir {
             query.push(format!("path={}", encode(dir)));
         }
+        if sparse {
+            query.push("sparse=1".to_string());
+        }
         let query = match query.is_empty() {
             true => String::new(),
             false => format!("?{}", query.join("&")),
@@ -70,8 +82,16 @@ impl GitSpec {
         format!("{GIT_SOURCE}+{}{query}#{commit}", self.url)
     }
 
-    /// The spec and commit of a lockfile `source` written by [`GitSpec::source`].
+    /// The spec and commit of a lockfile `source` written by [`GitSpec::source`] or
+    /// [`GitSpec::locked_source`].
     pub fn parse_source(source: &str) -> Option<(GitSpec, String)> {
+        Self::parse_locked(source).map(|(spec, commit, _)| (spec, commit))
+    }
+
+    /// The spec, the commit, and whether the checkout is sparse, of a lockfile `source` written
+    /// by [`GitSpec::locked_source`].
+    pub fn parse_locked(source: &str) -> Option<(GitSpec, String, bool)> {
+        let mut sparse = false;
         let rest = source.strip_prefix(GIT_SOURCE)?.strip_prefix('+')?;
         let (rest, commit) = rest.rsplit_once('#')?;
         let (url, query) = match rest.split_once('?') {
@@ -91,10 +111,13 @@ impl GitSpec {
                 "tag" => spec.reference = GitRef::Tag(value),
                 "rev" => spec.reference = GitRef::Rev(value),
                 "path" => spec.subdir = Some(value),
+                "sparse" if value == "1" => sparse = true,
                 _ => return None,
             }
         }
-        is_commit(commit).then(|| (spec, commit.to_string()))
+        // Only a `path` is checked out alone.
+        let known = is_commit(commit) && (!sparse || spec.subdir.is_some());
+        known.then(|| (spec, commit.to_string(), sparse))
     }
 
     /// How the spec reads in messages: `https://github.com/x/y (branch main)`.
@@ -221,18 +244,23 @@ fn describe_ref(reference: &GitRef) -> String {
 }
 
 /// The checkout of `commit` of the repository at `url`: from the cache, else fetched into it.
+/// With `only`, the checkout holds that directory of the commit alone ([`sparse`]), at its place
+/// under the returned root; without, the commit's whole tree.
 /// When `checksum` is given (from the lockfile), the checkout must hash to it. A fetched commit's
 /// links are checked once, before it enters the cache ([`check_links`]); a checkout already in the
 /// cache is trusted as it is (only this velt writes `<cache>/git`).
 pub fn checkout(
     loc: &Locations,
     url: &str,
-    commit: &str,
+    (commit, only): (&str, Option<&str>),
     (checksum, depth): (Option<&str>, crate::tree_stamp::TreeCheck),
 ) -> Result<PathBuf, String> {
-    let dir = repository_dir(loc, url).join(commit);
+    let dir = checkout_dir(loc, url, commit, only);
     if !dir.is_dir() {
-        fetch(url, commit, &dir)?;
+        match only {
+            Some(path) => sparse::fetch(url, commit, path, &dir)?,
+            None => fetch(url, commit, &dir)?,
+        }
     }
     if checksum.is_some() {
         // From its stamp while the checkout is unchanged (`crate::tree_stamp`).
@@ -299,9 +327,14 @@ pub fn link_warnings(
         .collect()
 }
 
-/// Where commit `commit` of `url` is checked out in the cache.
-pub fn checkout_dir(loc: &Locations, url: &str, commit: &str) -> PathBuf {
-    repository_dir(loc, url).join(commit)
+/// Where commit `commit` of `url` is checked out in the cache: `<commit>` for the whole tree,
+/// `<commit>-<hash of the path>` for directory `only` alone.
+pub fn checkout_dir(loc: &Locations, url: &str, commit: &str, only: Option<&str>) -> PathBuf {
+    let name = match only {
+        Some(path) => format!("{commit}-{}", sparse::path_hash(path)),
+        None => commit.to_string(),
+    };
+    repository_dir(loc, url).join(name)
 }
 
 /// `<cache>/git/<repository>`: named by a hash of the URL, so two URLs never share checkouts.
@@ -500,6 +533,11 @@ fn git(dir: Option<&Path>, args: &[&str]) -> Result<String, String> {
 }
 
 fn git_with(config: Config, dir: Option<&Path>, args: &[&str]) -> Result<String, String> {
+    output(command(config, dir, args).output())
+}
+
+/// The git command [`git_with`] runs.
+fn command(config: Config, dir: Option<&Path>, args: &[&str]) -> Command {
     let mut cmd = Command::new("git");
     for var in LOCAL_ENV {
         cmd.env_remove(var);
@@ -517,7 +555,12 @@ fn git_with(config: Config, dir: Option<&Path>, args: &[&str]) -> Result<String,
     cmd.args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("LC_ALL", "C");
-    let out = cmd.output().map_err(|e| match e.kind() {
+    cmd
+}
+
+/// A finished git command's stdout, or git's error as the error.
+fn output(out: std::io::Result<std::process::Output>) -> Result<String, String> {
+    let out = out.map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => {
             "git dependencies need the `git` command (https://git-scm.com)".to_string()
         }
@@ -672,5 +715,6 @@ pub(crate) fn check_fields(name: &str, d: &DetailedDependency) -> Result<(), Str
     Ok(())
 }
 
+pub mod sparse;
 #[cfg(test)]
 mod tests;

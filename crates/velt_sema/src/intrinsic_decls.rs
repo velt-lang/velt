@@ -75,6 +75,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("hash", Op(I::Hash)),
     ("includesEq", Op(I::IncludesEq)),
     ("keyEq", Op(I::KeyEq)),
+    ("keyOf", Op(I::KeyOf)),
     // generator.velt
     ("asyncGeneratorDispose", Op(I::AsyncGeneratorDispose)),
     ("asyncGeneratorResume", Op(I::AsyncGeneratorResume)),
@@ -181,6 +182,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     // types.velt
     ("fnCapturesNothing", Op(I::FnCapturesNothing)),
     ("holdsNull", Op(I::HoldsNull)),
+    ("isExactClass", Op(I::IsExactClass)),
     ("mayAlias", Op(I::MayAlias)),
     ("isUnique", Op(I::IsUnique)),
     ("needsDrop", Op(I::NeedsDrop)),

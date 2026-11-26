@@ -73,6 +73,27 @@ describe("a finished promise's task reference", () => {
   it("stays with a rejection, whose report reads the task", () => {
     const k = task(5);
     const n = node(k, 3, nd.REJECTING);
+    // The tag byte of its `Result`: an error.
+    m.st32(n + nd.N_HEAD + 16, 1);
+    dn.letGo(k, n, 3);
+    expect(m.ld(n + nd.N_TASK)).toBe(k);
+    expect(m.ld(k + t.T_REFS)).toBe(5);
+    free(n, k);
+  });
+
+  it("goes back when it could reject but fulfilled", () => {
+    const k = task(5);
+    // Tag byte 0: a value.
+    const n = node(k, 3, nd.REJECTING);
+    dn.letGo(k, n, 3);
+    expect(m.ld(n + nd.N_TASK)).toBe(0);
+    expect(m.ld(k + t.T_REFS)).toBe(4);
+    free(n, k);
+  });
+
+  it("stays with a panic, whatever its tag byte", () => {
+    const k = task(5);
+    const n = node(k, 3, nd.REJECTING | nd.PANICKED);
     dn.letGo(k, n, 3);
     expect(m.ld(n + nd.N_TASK)).toBe(k);
     expect(m.ld(k + t.T_REFS)).toBe(5);
