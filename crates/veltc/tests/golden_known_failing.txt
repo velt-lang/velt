@@ -29,14 +29,7 @@ tests/golden/std/db_rows_source_throws.velt                        #2943 units
 
 # Fail in a run by units, from the whole suite (the nightly's golden-units, run 45498934030 on
 # 5d06f3628, all eight shards), and of the goldens main added or changed since, run by units
-# with main merged in (78ed9bf63). std's own calls of a std method a program's override gives a
-# slot (#3684):
-tests/golden/lang/std_virtual_override_writes.velt                 #3684 units
-tests/golden/std/date_subclass_text.velt                           #3684 units
-tests/golden/std/error_name_getter.velt                            #3684 units
-tests/golden/std/error_name_getter_uncaught.velt                   #3684 units
-tests/golden/std/set_ctor_subclass_add.velt                        #3684 units
-# The others (#2943's U6 list):
+# with main merged in (78ed9bf63) (#2943's U6 list):
 tests/golden/lang/any_not_fn_catch.velt                            #2943 units
 tests/golden/lang/any_operators_objects.velt                       #2943 units
 tests/golden/lang/any_promise_cast_optional.velt                   #2943 units
