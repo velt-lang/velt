@@ -65,9 +65,7 @@ mod promise_hooks;
 mod tls_hooks;
 pub use module_hooks::BLOCKS_MODULE_ENTRY;
 
-// The table: these rows, then TLS's, promises' through `any`, the decorators', module state's,
-// the string methods', the weak core's, the transfer map's and the yields' (`*_hooks.rs`), given
-// to `hooks!` together.
+// The table: these rows, then those of the `*_hooks.rs` modules above, given to `hooks!` together.
 with_tls_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
