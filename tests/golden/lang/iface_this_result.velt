@@ -1,0 +1,158 @@
+// check: no leaks
+// An interface method may return `this` (#3771): through an interface value the result is the
+// interface; through a type parameter bounded by it, the parameter's own type (the receiver
+// itself, so a chain keeps the class). Implementations return `this`, as TypeScript requires.
+interface Fluent {
+  step(n: number): this;
+  total(): number;
+}
+
+class Counter implements Fluent {
+  n = 0;
+  step(n: number): this {
+    this.n += n;
+    return this;
+  }
+  total(): number {
+    return this.n;
+  }
+}
+
+class Loud extends Counter {
+  override step(n: number): this {
+    this.n += n * 2;
+    return this;
+  }
+}
+
+function twice<T extends Fluent>(t: T): T {
+  return t.step(1).step(1);
+}
+
+// A method that doesn't return `this`, called through `T`: its own result.
+function totalOf<T extends Fluent>(t: T): number {
+  return t.step(1).total() + t.total();
+}
+
+// A `: this` method inherited from a base class that doesn't implement `Fluent`.
+class Base {
+  n = 0;
+  step(n: number): this {
+    this.n += n;
+    return this;
+  }
+}
+
+class Derived extends Base implements Fluent {
+  total(): number {
+    return this.n;
+  }
+  tag(): string {
+    return "d";
+  }
+}
+
+// An interface extending `Fluent`: through a type parameter bounded by it, `step` gives `T`, and
+// on a value of it, the interface itself.
+interface Totalled extends Fluent {
+  half(): number;
+}
+
+class Halves extends Counter implements Totalled {
+  half(): number {
+    return this.n / 2;
+  }
+}
+
+function twiceTotalled<T extends Totalled>(t: T): T {
+  return t.step(1).step(1);
+}
+
+// A `: this` method with type parameters of its own.
+interface Each {
+  each<U>(f: (n: number) => U): this;
+}
+
+class Seq implements Each {
+  n = 4;
+  each<U>(f: (n: number) => U): this {
+    f(this.n);
+    return this;
+  }
+}
+
+function eachT<T extends Each>(t: T): T {
+  return t.each((n: number) => {
+    console.log("again", n);
+    return n;
+  });
+}
+
+// A generic interface: through `B extends Builder<V>`, reassigned in a loop, and with `B`
+// instantiated as the interface itself.
+interface Builder<V> {
+  add(v: V): this;
+  size(): number;
+}
+
+class Bag<V> implements Builder<V> {
+  items: V[] = [];
+  add(v: V): this {
+    this.items.push(v);
+    return this;
+  }
+  size(): number {
+    return this.items.length;
+  }
+}
+
+function addAll<V, B extends Builder<V>>(b: B, vs: V[]): B {
+  let cur = b;
+  for (const v of vs) {
+    cur = cur.add(v);
+  }
+  return cur;
+}
+
+function addTwo<B extends Builder<string>>(b: B): B {
+  return b.add("one").add("two");
+}
+
+function viaIface(f: Fluent): number {
+  return f.step(1).step(2).total();
+}
+
+function main() {
+  const c = twice(new Counter());
+  console.log(c.n, c.total());
+  const l = twice(new Loud());
+  console.log(l.n);
+  console.log(viaIface(new Counter()), viaIface(new Loud()));
+  const f: Fluent = new Counter();
+  const g = f.step(5);
+  g.step(1);
+  console.log(g.total(), f.total());
+  console.log(totalOf(new Counter()), totalOf(new Loud()));
+  const d = twice(new Derived());
+  console.log(d.n, d.tag(), d.total());
+  const df: Fluent = new Derived();
+  console.log(df.step(1).step(2).total());
+  const h = twiceTotalled(new Halves());
+  console.log(h.n, h.half());
+  // On a `Totalled` value, `step` gives a `Totalled` too.
+  const tv: Totalled = new Halves();
+  const tr = tv.step(2).step(2);
+  console.log(tr.half(), tv.step(4).half(), tv.total());
+  const e: Each = new Seq();
+  e.each((n: number) => {
+    console.log("at", n);
+    return "x";
+  });
+  console.log(eachT(new Seq()).n);
+  const bag = addAll(new Bag<number>(), [1, 2, 3]);
+  console.log(bag.items.length, bag.size());
+  console.log(addTwo(new Bag<string>()).items.join(","));
+  const iface: Builder<string> = new Bag<string>();
+  const r = addTwo<Builder<string>>(iface);
+  console.log(r.size(), iface.size());
+}

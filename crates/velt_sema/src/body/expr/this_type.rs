@@ -41,7 +41,7 @@ impl FnCx<'_, '_> {
             self.this_calls.insert(call.span);
         }
         if crate::hand_back::hands_back(self.cx, def) {
-            return self.hand_back_call(call, def, to);
+            return self.hand_back_call(call, Some(def), to);
         }
         // A receiver of a type parameter bounded by the class (`x: T` with `T extends Base`)
         // gives `T`, as in TypeScript: each instance downcasts to its own class.
