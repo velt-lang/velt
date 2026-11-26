@@ -10,8 +10,7 @@ use crate::graph::PackageGraph;
 use crate::locations::Locations;
 use crate::lockfile::{LockedPackage, Lockfile, LOCK_FILE, REGISTRY_SOURCE, WORKSPACE_SOURCE};
 use crate::manifest::Manifest;
-use crate::native::build::{build, cargo_available, BuildRequest};
-use crate::native::{missing_target_message, NativeLib, NativeOrigin};
+use crate::native::{NativeLib, NativeOrigin};
 use crate::relpath;
 use crate::resolve::{Resolution, ResolvedPackage, Source};
 use crate::workspace::{Workspace, WorkspaceFile};
@@ -347,9 +346,6 @@ fn natives<'r>(
         return Ok(Natives::default());
     };
     if let Some((dir, manifest)) = root {
-        if let Some(lib) = native_from_source(dir, manifest, target)? {
-            natives.insert(manifest.package.name.clone(), lib);
-        }
         if let Some(out) = c_sources::local_out(dir, manifest, target) {
             c_sources.insert(manifest.package.name.clone(), out);
         }
@@ -364,25 +360,18 @@ fn natives<'r>(
                 if let Some(out) = c_sources::registry_out(loc, id, dir, &published, target)? {
                     c_sources.insert(pkg.name.clone(), out);
                 }
-                registry_native(
-                    loc,
-                    (&pkg.name, &pkg.version),
-                    dir,
-                    &published,
-                    *native_abi,
-                    target,
-                )?
+                registry_native(loc, id, dir, &published, *native_abi, target)?
             }
             Source::Path { dir } => {
                 // Built where the package really is: through a symlinked path (a test's copy of an
-                // app linking the repository's packages), its crate's own relative paths and its
+                // app linking the repository's packages), its sources' own relative paths and its
                 // build directory are the package's, not the link's.
                 let real = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.clone());
                 let m = Manifest::from_dir(&real)?;
                 if let Some(out) = c_sources::local_out(&real, &m, target) {
                     c_sources.insert(pkg.name.clone(), out);
                 }
-                native_from_source(&real, &m, target)?
+                None
             }
             // npm packages from git have no native code.
             Source::Git { npm, .. } if !npm.is_empty() => None,
@@ -391,7 +380,8 @@ fn natives<'r>(
             } => {
                 let from = format!("{} (a git dependency)", spec.describe());
                 let work = loc.cache.join("git-native").join(&pkg.name).join(commit);
-                remote_native(&pkg.name, dir, (&from, &work), &mut c_sources, target)?
+                remote_native(&pkg.name, dir, (&from, &work), &mut c_sources, target)?;
+                None
             }
             Source::Url { dir, spec, .. } => {
                 let from = format!("{} (a url dependency)", spec.describe());
@@ -401,7 +391,8 @@ fn natives<'r>(
                     None => key,
                 };
                 let work = loc.cache.join("url-native").join(&pkg.name).join(key);
-                remote_native(&pkg.name, dir, (&from, &work), &mut c_sources, target)?
+                remote_native(&pkg.name, dir, (&from, &work), &mut c_sources, target)?;
+                None
             }
         };
         if let Some(lib) = lib {
@@ -422,64 +413,9 @@ fn from_source_allowed() -> bool {
     std::env::var(FROM_SOURCE_VAR).is_ok_and(|v| v == "1")
 }
 
-/// Native libraries cannot be used for WebAssembly yet (no `native.wasm` support).
-fn check_not_wasm(name: &str, target: &str) -> Result<(), String> {
-    if target.starts_with("wasm32") {
-        return Err(format!(
-            "package `{name}` has native code, which cannot be used for WebAssembly ({target})"
-        ));
-    }
-    Ok(())
-}
-
-/// A path package (or the root package) with native code: built from its sources with cargo, into
-/// `<package>/target/velt-native/<triple>/`.
-fn native_from_source(
-    dir: &Path,
-    manifest: &Manifest,
-    target: &str,
-) -> Result<Option<NativeLib>, String> {
-    native_from_source_in(
-        dir,
-        manifest,
-        target,
-        &dir.join("target").join("velt-native"),
-    )
-}
-
-/// [`native_from_source`], building in `work` (a git checkout in the cache stays as fetched).
-fn native_from_source_in(
-    dir: &Path,
-    manifest: &Manifest,
-    target: &str,
-    work: &Path,
-) -> Result<Option<NativeLib>, String> {
-    if manifest.native.is_none() {
-        return Ok(None);
-    }
-    let name = &manifest.package.name;
-    check_not_wasm(name, target)?;
-    if !cargo_available() {
-        return Err(format!(
-            "package `{name}` at `{}` has native code, which needs cargo to build from source \
-             (install Rust from https://rustup.rs, or depend on a published version)",
-            dir.display()
-        ));
-    }
-    let out = work.join(target);
-    build(BuildRequest {
-        root: dir,
-        manifest,
-        target,
-        out: &out,
-        cargo_target_dir: &work.join("cargo"),
-        locked: false,
-    })?;
-    NativeLib::open(&out, NativeOrigin::BuiltFromSource).map(Some)
-}
-
-/// A registry package's library for `target`: the verified prebuilt bundle pinned by the lockfile,
-/// else built from its cached sources when cargo exists.
+/// A registry package's library for `target`: the verified prebuilt bundle of its C `sources`
+/// pinned by the lockfile (`None` when it has none for `target`: [`c_sources::registry_out`] says
+/// where it builds then).
 fn registry_native(
     loc: &Locations,
     (name, version): (&str, &semver::Version),
@@ -488,88 +424,37 @@ fn registry_native(
     native_abi: Option<u32>,
     target: &str,
 ) -> Result<Option<NativeLib>, String> {
-    let manifest = Manifest::from_dir(dir)?;
-    if manifest.native.is_none() && (published.is_empty() || manifest.has_c_sources()) {
-        // A library built from sources has its bundle here only for a target it was published for.
-        let Some(checksum) = published.get(target).filter(|_| manifest.has_c_sources()) else {
-            return Ok(None);
-        };
-        let bundle = cache::fetch_native(loc, name, version, target, checksum)?;
-        let lib = NativeLib::open(&bundle, NativeOrigin::Prebuilt)?;
-        let what = format!("`{name} {version}`");
-        crate::native::c_build::check_has_libraries(&manifest, &lib.meta, &what)?;
-        return Ok(Some(lib));
+    if published.is_empty() {
+        return Ok(None);
     }
-    check_not_wasm(name, target)?;
     if let Some(abi) = native_abi {
         check_abi(name, version, abi)?;
     }
-    if let Some(checksum) = published.get(target) {
-        let bundle = cache::fetch_native(loc, name, version, target, checksum)?;
-        let lib = NativeLib::open(&bundle, NativeOrigin::Prebuilt)?;
-        // The index's `native_abi` is unknown for a locked version taken from the cache.
-        check_abi(name, version, lib.meta.abi)?;
-        return Ok(Some(lib));
-    }
-    let missing = missing_target_message(name, &version.to_string(), target, published);
-    if manifest.native.is_none() || !cargo_available() {
-        return Err(missing);
-    }
-    // Building runs the package's build scripts: only when the user asks for it.
-    if !from_source_allowed() {
-        return Err(format!(
-            "{missing}\nRust is installed: set {FROM_SOURCE_VAR}=1 to build it from source with cargo (this runs the package's build scripts)."
-        ));
-    }
-    eprintln!(
-        "    Building `{name}` {version} from source with cargo for {target} (it runs the package's build scripts)"
-    );
-    let work = loc.cached_native_root(name, version);
-    let out = work.join(format!("{target}-source"));
-    build(BuildRequest {
-        root: dir,
-        manifest: &manifest,
-        target,
-        out: &out,
-        cargo_target_dir: &work.join("cargo"),
-        locked: true,
-    })
-    .map_err(|e| {
-        format!(
-            "{}\nBuilding it from source failed: {e}",
-            missing_target_message(name, &version.to_string(), target, published)
-        )
-    })?;
-    NativeLib::open(&out, NativeOrigin::BuiltFromSource).map(Some)
+    let manifest = Manifest::from_dir(dir)?;
+    let Some(checksum) = published.get(target).filter(|_| manifest.has_c_sources()) else {
+        return Ok(None);
+    };
+    let bundle = cache::fetch_native(loc, name, version, target, checksum)?;
+    let lib = NativeLib::open(&bundle, NativeOrigin::Prebuilt)?;
+    let what = format!("`{name} {version}`");
+    crate::native::c_build::check_has_libraries(&manifest, &lib.meta, &what)?;
+    Ok(Some(lib))
 }
 
-/// The native library of a git or url package at `dir` (`from`: how its source reads; `work`:
-/// where its builds go), and where its C sources build (into `c_sources`). Building runs its
-/// build scripts or the pinned zig, as for a registry package without a prebuilt library, so
-/// only when the user asks for it; and cargo builds from a copy, since it writes `Cargo.lock`
-/// beside the crate and the fetched tree must stay as fetched (its checksum is verified on every
-/// use).
+/// Where the C sources of a git or url package at `dir` build (`from`: how its source reads;
+/// `work`: where its builds go), into `c_sources`: nothing of it is prebuilt.
 fn remote_native(
     name: &str,
     dir: &Path,
     (from, work): (&str, &Path),
     c_sources: &mut BTreeMap<String, PathBuf>,
     target: &str,
-) -> Result<Option<NativeLib>, String> {
+) -> Result<(), String> {
     let m = Manifest::from_dir(dir)?;
     if let Some(out) = c_sources::remote_out(name, from, &m, work, target)? {
         c_sources.insert(name.to_string(), out);
     }
-    if m.native.is_some() && !from_source_allowed() {
-        return Err(format!(
-            "`{name}` from {from} has native code, which it builds from source with cargo (it runs the package's build scripts): set {FROM_SOURCE_VAR}=1 to allow it"
-        ));
-    }
-    let copy = work.join("package");
-    if m.native.is_some() && !copy.is_dir() {
-        crate::contents::copy_package(dir, &copy)?;
-    }
-    native_from_source_in(&copy, &m, target, work)
+    Ok(())
 }
 
 /// The lockfile of `resolution`, with path sources relative to `root`; the path packages in

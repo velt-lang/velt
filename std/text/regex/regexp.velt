@@ -29,6 +29,7 @@ import { CURSOR, MATCH, MATCH_ALL, REPLACE_CALLING, SEARCH, SPLIT } from "velt/t
 import { positionOf, textOf, unitOf } from "velt/text/regex/offsets";
 import { Program } from "velt/text/regex/program";
 import { RegExpMatch } from "velt/text/regex/regexp_match";
+import { own } from "velt/lang/intrinsics/decorators";
 import { escapePattern, replaceMatches, splitMatches } from "velt/text/regex/replace";
 import { lookExec, lookTest, YES } from "velt/text/regex/quick";
 import { Cursor, keepTables, memoryOf } from "velt/text/regex/cursor";
@@ -276,8 +277,10 @@ export class RegExp implements Pattern {
   /**
    * Where `exec(s)` and `test(s)` of a `g` or `y` regex start, set past each match (0 after a
    * failed one); `s.replace`, `s.match` and `s.matchAll` read and set it as in JS. An `Atomic`,
-   * so the methods that update it don't need a mutable receiver.
+   * so the methods that update it don't need a mutable receiver. It is the regex's own data
+   * property, as in JavaScript: a subclass's `lastIndex` accessors are never reached.
    */
+  @own()
   get lastIndex(): number {
     return this.#cursor.at.load();
   }

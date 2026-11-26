@@ -10,7 +10,7 @@ export const pkg: Package = {
   name: "app",
   version: "0.1.0",
   dependencies: { json: "1.2" },
-  native: { targets: [], wasm: false },
+  native: { c: { c: { unchecked: true } } },
 };
 "#;
 
@@ -82,10 +82,13 @@ fn completion_and_hover_come_from_the_schema() {
         ]
     );
 
-    let (line, character) = pos_of(&text, "wasm", 1);
+    let (line, character) = pos_of(&text, "unchecked", 1);
     let hover = client.request("textDocument/hover", at(&doc, line, character));
     let value = hover["contents"]["value"].as_str().unwrap();
-    assert!(value.starts_with("```velt\nwasm?: boolean\n```"), "{value}");
+    assert!(
+        value.starts_with("```velt\nunchecked?: boolean\n```"),
+        "{value}"
+    );
     // Program features have nothing to say about data.
     let defs = client.request("textDocument/definition", at(&doc, line, character));
     assert_eq!(defs, Value::Null);

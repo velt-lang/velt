@@ -11,7 +11,7 @@ export const pkg: Package = {
   dependencies: { json: "1.2", "my-util": { path: "../util" }, http: { version: "0.3" } },
   paths: { "@app/*": "src/*" },
   jsx: { importSource: "sigx" },
-  native: { path: "rs", targets: ["x86_64-unknown-linux-gnu"] },
+  native: { targets: ["x86_64-unknown-linux-gnu"], c: { x: { sources: ["native/x.c"], unchecked: true } } },
   build: { cpu: "x86-64-v3" },
 };
 "#;
@@ -83,7 +83,7 @@ fn json_has_the_package_shape_with_defaults() {
     assert_eq!(json["dependencies"]["my-util"]["path"], "../util");
     assert_eq!(json["paths"]["@app/*"], "src/*");
     assert_eq!(json["jsx"]["importSource"], "sigx");
-    assert_eq!(json["native"]["wasm"], false);
+    assert_eq!(json["native"]["targets"][0], "x86_64-unknown-linux-gnu");
     let minimal =
         Manifest::parse("export const pkg: Package = { name: \"a\", version: \"1.0.0\" };")
             .unwrap()

@@ -1,5 +1,5 @@
-// velt/native (internal): `IoResult<T>`, the result runtime and native-package functions return,
-// and `unwrapIo`, which turns a failed one into `IoError`.
+// velt/native (internal): `IoResult<T>`, the result runtime functions return, and `unwrapIo`,
+// which turns a failed one into `IoError`.
 //
 // Runtime I/O functions (docs/internals/contracts/rt_abi_async.md §3) report failures as an `IoResult<T>`
 // with the C layout `{ i32 code; u32 pad; VeltStr message; T value /* @32 */ }`, which is exactly

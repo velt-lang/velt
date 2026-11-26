@@ -290,8 +290,8 @@ function longText(b: u8[], from: usize, to: usize): string {
   velt_rt_strbuf_new(cap, out);
   // SAFETY: a builder made with a capacity above 23 is a heap buffer allocated up front with
   // nothing in it (rt_abi_async.md, `velt_rt_strbuf_new`): its data starts at word 0 (rt_abi.md
-  // "Strings") and has room for `n` bytes, the room `velt_rt_strbuf_spare` would give; the view
-  // is only written, and dropped before the builder is touched again.
+  // "Strings") and has room for `n` bytes; the view is only written, and dropped before the
+  // builder is touched again.
   const dst: u8[] = unsafe { addressArray<u8>(strWord0(out) as usize, n) };
   const ascii = copyAscii(b, from, to, dst);
   const done = ascii as u64;

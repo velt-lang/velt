@@ -1,19 +1,19 @@
 // registry-core (internal): a package archive's entries checked as a package (vpm's
-// `archive::entries`): safe paths, and only `package.velt`, `src/` and the directory of the native
-// crate its manifest declares. A manifest that doesn't read has no native directory here; the
-// manifest itself is checked where it is read.
+// `archive::entries`): safe paths, and only `package.velt`, `src/` and, when its manifest has
+// `native`, the directory of its C sources (`native/`). A manifest that doesn't read has no native
+// directory here; the manifest itself is checked where it is read.
 
 import { EncodingError, utf8Decode } from "velt/encoding";
 import { ArchiveEntry, checkPackagePaths, MANIFEST_FILE, readArchive } from "./archive";
 import { readManifest } from "./manifest/decode";
 import { ManifestError } from "./manifest/manifest_error";
 
-/** The native crate's directory declared by the manifest text in `entries`, if any. */
+/** The directory of the C sources of the manifest text in `entries`, if it has them. */
 function nativeDir(entries: ArchiveEntry[]): string | null {
   for (const e of entries) {
     if (e.path == MANIFEST_FILE) {
       try {
-        return readManifest(utf8Decode(e.bytes)).native?.path ?? null;
+        return readManifest(utf8Decode(e.bytes)).native != null ? "native" : null;
       } catch (err) {
         // A manifest that isn't UTF-8 or doesn't read; anything else is a bug, not a refusal.
         if (err instanceof ManifestError || err instanceof EncodingError) {
