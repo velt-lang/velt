@@ -351,6 +351,25 @@ const EXECUTOR_ONLY: &[&str] = &[
     "velt_rt_timer_free",
 ];
 
+/// `#net-tcp`'s default variant (std/imports.velt), which only WebAssembly builds compile: native
+/// builds take std/net/tcp_sched.velt, which imports from it only `velt_rt_tcp_listen` (velt dev's
+/// listener, which velt_rt defines). Its other declarations are velt_rt_wasm's where it has them,
+/// and otherwise undefined there on purpose: a WebAssembly program that uses TCP fails to link,
+/// with velt_link's note that it cannot (crates/velt_link/src/wasm.rs `explain_missing_symbols`).
+const WASM_TCP_BINDINGS: &str = "std/net/rt.velt";
+
+/// Whether `name`, declared in `paths` and not defined by velt_rt, is declared only in
+/// [`WASM_TCP_BINDINGS`].
+fn wasm_tcp_binding(paths: &[PathBuf]) -> bool {
+    let Ok(bindings) = repo().join(WASM_TCP_BINDINGS).canonicalize() else {
+        return false;
+    };
+    !paths.is_empty()
+        && paths
+            .iter()
+            .all(|p| p.canonicalize().is_ok_and(|p| p == bindings))
+}
+
 /// Whether `name`, declared in `paths` and not defined by velt_rt, is a WebAssembly-only leaf:
 /// declared in one file of `WASM_ONLY_BINDINGS` and nowhere else, and defined by velt_rt_wasm (whose check
 /// below verifies its signature). A declaration velt_rt lacks in any other std file is a
@@ -386,6 +405,7 @@ fn std_declarations_match_velt_rt() {
             let name = m.split_once(':').map_or("", |(n, _)| n);
             let paths = declared_in.get(name).map_or(&[][..], Vec::as_slice);
             let wasm_only = wasm_only_leaf(name, paths, &wasm)
+                || wasm_tcp_binding(paths)
                 || (EXECUTOR_ONLY.contains(&name) && wasm.contains_key(name));
             !(m.ends_with(", not defined") && wasm_only)
         })
@@ -523,7 +543,7 @@ fn the_parsers_see_the_whole_abi() {
         (&["ptr".to_string()][..], "ptr")
     );
     // A floor that shows the parser reads the sources, not the size of the ABI: velt_rt shrinks
-    // as std takes its functions over (#2196, #2563), 199 at the time of writing.
+    // as std takes its functions over (#2196, #2563), 147 at the time of writing.
     let defs = rust_definitions(&runtime_sources("velt_rt"));
-    assert!(defs.len() > 150, "found only {} definitions", defs.len());
+    assert!(defs.len() > 100, "found only {} definitions", defs.len());
 }

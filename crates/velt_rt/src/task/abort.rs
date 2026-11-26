@@ -5,7 +5,7 @@
 //! reference-counted object: a flag, the abort reason and the tasks waiting for it.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use tokio::sync::Notify;
 
@@ -60,29 +60,6 @@ impl Signal {
     fn reason(&self) -> Reason {
         lock(&self.reason).clone()
     }
-}
-
-impl Signal {
-    /// Completes once the signal is aborted (never, if it never is): what runtime operations
-    /// that take a signal (`fetch`) race their work against.
-    pub(crate) async fn aborted(&self) {
-        loop {
-            let notified = self.notify.notified();
-            if self.is_aborted() {
-                return;
-            }
-            notified.await;
-        }
-    }
-}
-
-/// The signal behind handle bits `h` (0 = none), as a new reference.
-///
-/// # Safety
-/// A nonzero `h` must be a live signal handle.
-pub(crate) unsafe fn signal_of(h: u64) -> Option<Arc<Signal>> {
-    let h = Handle::<Signal>::from_ptr(h as usize as *const Signal);
-    (!h.is_null()).then(|| h.clone_arc())
 }
 
 /// Releases a handle.
