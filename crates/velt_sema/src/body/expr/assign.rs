@@ -6,10 +6,10 @@ use velt_syntax::ast;
 
 use super::accessor_rmw::Rmw;
 use super::any_text::Hint;
-use super::assign_checks::assigned_literal;
 use super::dynamic_arith::DynRmw;
 use super::element_value::ElementWrite;
 use super::ops::hir_binop;
+use super::{assign_checks::assigned_literal, assign_paths::is_plain_path};
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, BinOp, ExprKind as H, TyId, UseMode};
@@ -31,8 +31,6 @@ pub(super) enum AssignTarget {
     /// `x[k]` of a type parameter's value by a key known per instantiation (`key_index.rs`).
     Keyed(hir::Expr, hir::Expr),
 }
-
-use super::assign_paths::is_plain_path;
 
 impl FnCx<'_, '_> {
     /// Resolve an assignment target to a writable place or a setter. Reports errors.
@@ -67,6 +65,7 @@ impl FnCx<'_, '_> {
                     return Some(AssignTarget::Record(obj));
                 }
                 self.note_field_write(obj.ty, prop);
+                self.frozen_write_check(object, obj.ty, prop, target.span);
                 if let Some(ok) = self.iface_write_target(obj.ty, prop) {
                     return ok.then_some(AssignTarget::Setter(obj));
                 }
@@ -118,9 +117,8 @@ impl FnCx<'_, '_> {
                 if self.indexes_through(obj.ty, index) {
                     return Some(AssignTarget::Indexer(obj));
                 }
-                // `c["v"] = x` with a constant key is `c.v = x`, and `c[KEY] = x` with a symbol
-                // key the member it names: a setter or a getter-only accessor is handled the
-                // same way.
+                // `c["v"] = x` with a constant key is `c.v = x`, and `c[KEY] = x` with a symbol key
+                // the member it names: a setter or a getter-only accessor is handled the same way.
                 let key = match self.symbol_key_of(index) {
                     Some(key) => Some(key),
                     None => self.single_key(index),
@@ -132,6 +130,7 @@ impl FnCx<'_, '_> {
                     };
                     // A field write for the copies of `crate::object_copies`, as for `o.k = v`.
                     self.note_field_write(obj.ty, &prop);
+                    self.frozen_write_check(object, obj.ty, &prop, target.span);
                     if let Some(ok) = self.iface_write_target(obj.ty, &prop) {
                         return ok.then_some(AssignTarget::Setter(obj));
                     }
@@ -266,9 +265,10 @@ impl FnCx<'_, '_> {
             op,
             None | Some(ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish)
         );
-        let ((h, valued), temps) = self.with_asserted(rmw, span, |cx| {
+        let ((h, valued), mut temps) = self.with_asserted(rmw, span, |cx| {
             cx.target_scope(|cx| cx.assign_as_here(op, target, value, as_value, span))
         });
+        let h = self.frozen_after_value(target.span, h, &mut temps);
         (self.with_lets(temps, h), valued)
     }
 

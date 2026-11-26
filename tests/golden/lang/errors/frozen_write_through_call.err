@@ -1,0 +1,1 @@
+frozen_write_through_call.velt:16:1: error: a write to a field of a `Config` reached through a call, in a program that freezes `Config` values, is not supported yet

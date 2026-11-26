@@ -400,6 +400,11 @@ impl crate::body::FnCx<'_, '_> {
         {
             let ty = base.ty;
             self.note_field_write(ty, prop);
+            // A write into what the field holds, not of the field: a frozen object's (Node's
+            // freeze is shallow) is not checked against its mark.
+            if let Some(w) = self.cx.object_copies.writes.last_mut() {
+                w.checkable = false;
+            }
         }
     }
 

@@ -1,0 +1,23 @@
+// velt/lang/hooks (internal): the errors of a write to a frozen object's field (`Object.freeze`,
+// #2623): velt_sema `freezable.rs` tests the object's frozen mark before each write of a
+// freezable type and calls these, which throw Node's strict-mode `TypeError`.
+
+/** A write to field `name` of a frozen object. */
+export function frozenWriteError(name: string): void {
+  throw new TypeError("Cannot assign to read only property '" + name + "' of object '#<Object>'");
+}
+
+/** `Object.defineProperty` of field `name` of a frozen object. */
+export function frozenDefineError(name: string): void {
+  throw new TypeError("Cannot redefine property: " + name);
+}
+
+/** A write that would add optional field `name`, absent, to a frozen object. */
+export function frozenAddError(name: string): void {
+  throw new TypeError("Cannot add property " + name + ", object is not extensible");
+}
+
+/** `Object.defineProperty` of optional field `name`, absent, on a frozen object. */
+export function frozenDefineAddError(name: string): void {
+  throw new TypeError("Cannot define property " + name + ", object is not extensible");
+}

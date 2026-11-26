@@ -42,15 +42,12 @@ use crate::hook_calls::{self as hooks, ty, HookTy};
 
 /// The functions of JavaScript's `Object` that Velt doesn't have yet (`keys`, `values`,
 /// `entries` and the ones here are handled).
-const NOT_YET: [&str; 14] = [
+const NOT_YET: [&str; 11] = [
     "defineProperties",
     "getOwnPropertyNames",
     "getOwnPropertyDescriptor",
     "getOwnPropertyDescriptors",
     "getOwnPropertySymbols",
-    "isFrozen",
-    "isSealed",
-    "isExtensible",
     "seal",
     "preventExtensions",
     "setPrototypeOf",
@@ -108,6 +105,9 @@ impl FnCx<'_, '_> {
             name,
             "is" | "assign"
                 | "freeze"
+                | "isFrozen"
+                | "isSealed"
+                | "isExtensible"
                 | "fromEntries"
                 | "hasOwn"
                 | "getPrototypeOf"
@@ -153,6 +153,8 @@ impl FnCx<'_, '_> {
             "is" => self.object_is(args, span),
             "assign" => self.object_assign(args, Want::Borrow, span),
             "freeze" => self.object_freeze(args, exp, span),
+            "isFrozen" | "isSealed" => self.object_is_frozen(name, false, args, span),
+            "isExtensible" => self.object_is_frozen(name, true, args, span),
             "fromEntries" => self.object_from_entries(callee, type_args, args, exp, span)?,
             "hasOwn" => self.has_own(args, "Object.hasOwn", span),
             "getPrototypeOf" => self.get_prototype_of(args, span),
@@ -452,6 +454,11 @@ impl FnCx<'_, '_> {
                 existing: !fresh,
             };
             self.cx.object_copies.frozen.push(frozen);
+            // A freezable type's value (`crate::freezable`): its mark set.
+            if self.cx.frozen_checked(h.ty) {
+                let t = h.ty;
+                return self.intrinsic(Intrinsic::Freeze, vec![h], t, span);
+            }
             return h;
         }
         let Some(frozen) = frozen else {
@@ -465,7 +472,12 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         };
-        self.coerce(h, frozen)
+        let v = self.coerce(h, frozen);
+        // Seen later as a type whose fields are written (`crate::freezable`): its mark set.
+        match self.cx.frozen_checked(frozen) {
+            true => self.intrinsic(Intrinsic::Freeze, vec![v], frozen, span),
+            false => v,
+        }
     }
 
     /// `Object.fromEntries(pairs)`: the prelude's, with an iterable that is not an array

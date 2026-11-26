@@ -1,5 +1,5 @@
-// Node refuses a write to a frozen object, which has no mark at run time here (#2554): a frozen
-// object seen as a type whose fields can be written is refused once the program writes one,
+// A write to a frozen object seen as a type whose fields can be written throws Node's
+// `TypeError`, uncaught here: the object carries a frozen mark (#2623, before #2554 refused it),
 // here a value frozen where it is, written directly.
 interface Config { name: string; port: number; }
 const config: Config = { name: "app", port: 80 };
