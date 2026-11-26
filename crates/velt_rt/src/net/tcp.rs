@@ -8,7 +8,7 @@
 //! another writes. The object behind a stream handle is in `stream.rs`.
 
 use super::stream::{StreamObj, Writing};
-use super::sys::{TcpListener, TcpStream};
+use super::sys::TcpStream;
 use crate::bytes::VeltBytes;
 use crate::registry::{closed_error, Key, Registry};
 use crate::result::{IoResult, VeltErr};
@@ -43,8 +43,13 @@ fn stream_result(r: io::Result<TcpStream>) -> IoResult<StreamHandle> {
 pub unsafe extern "C" fn velt_rt_tcp_listen(addr: *const VeltStr) -> *mut VeltFut {
     let addr = text_arg(addr);
     new_leaf(async move {
-        let r = crate::dev::bind(addr.as_str()).await;
-        IoResult::from_io(r.and_then(TcpListener::into_raw), |fd| fd)
+        IoResult::from_io(crate::dev::bind(addr.as_str()).await, |l| {
+            #[cfg(unix)]
+            let raw = std::os::fd::IntoRawFd::into_raw_fd(l) as u64;
+            #[cfg(windows)]
+            let raw = std::os::windows::io::IntoRawSocket::into_raw_socket(l);
+            raw
+        })
     })
 }
 
