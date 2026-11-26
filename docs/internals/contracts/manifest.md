@@ -191,18 +191,39 @@ through the checkout's own links, at most 40, its missing parts taken as written
 `GIT_CONFIG_NOSYSTEM=1`, an empty global configuration, `core.autocrlf=false`, `core.eol=lf`,
 `core.longpaths=true`, and `core.symlinks=true` (`false` on Windows: links are files holding the
 stored text, which hash as a link's text does elsewhere; Git for Windows would write link targets
-with `\`). The commit's links (`git ls-tree` mode `120000`) are listed in `<commit>.links` beside
-the checkout, outside the hashed tree; on Windows, resolving a git package warns about each link
+with `\`). The links checked out (`git ls-tree` mode `120000`) are listed in `<checkout>.links`
+beside the checkout, outside the hashed tree; on Windows, resolving a git package warns about each link
 inside it (`git::link_warnings`, printed with the yanked versions by `velt install` and builds).
 Lock query values percent-encode `%`, `&`, `=`, `#` and `?`. Resolution (`resolve::Want::Git`,
 `Source::Git { spec, commit, checksum, dir }`) takes the commit the lockfile records for an equal
 spec, else `git ls-remote` of the ref (an annotated tag's `^{}` commit), and checks it out with
-`git::checkout` into `<cache>/git/<repo>/<commit>/` (`<repo>`: the first 10 bytes of the URL's
-SHA-256 as 20 hex digits; a shallow fetch of the commit into a scratch bare repository, checked
-out into a staging directory, renamed into place;
-`GIT_TERMINAL_PROMPT=0`). The lock's `source` is `git+<url>[?branch=|tag=|rev=…][&path=…]#<commit>`
-(`GitSpec::source`/`parse_source`), and its `checksum` is `git::tree_checksum` of the whole checkout
-(every file, path order, `contents::checksum`'s encoding; symbolic links by target), checked on
+`git::checkout` (a shallow fetch of the commit into a scratch bare repository, checked out into a
+staging directory, renamed into place; `GIT_TERMINAL_PROMPT=0`) below `<cache>/git/<repo>/`
+(`<repo>`: the first 10 bytes of the URL's SHA-256 as 20 hex digits). A dependency without a
+`path` has the commit's whole tree, in `<commit>/`. One with a `path` has a **sparse checkout**
+(`git::sparse`, `Source::Git::sparse`), in `<commit>-<the first 6 bytes of the path's SHA-256>/`:
+the files keep their places in the repository (`<checkout>/<path>/…`), and the checkout holds
+the `path`, through the commit's links where it goes through one (the directory it leads to, and
+each link on the way as a step); each directory above it's `package.json`, `pnpm-workspace.yaml`
+and `node_modules`, with the package directories of each npm workspace rooted there (its
+patterns read as `npm::workspace` reads a checkout's, over the directories whose paths have no
+`\` or `:`); what the symbolic links in those lead to in the commit (the target and each link on
+the way, followed in the commit's listing as `check_links` follows a checkout's; one that leaves
+the repository or loops is refused); and the `.gitattributes` of each directory above any of
+those, which git applies to the files below. A commit with a file path that has an empty, `.` or
+`..` part is refused, and so is a `path` the commit doesn't have. Its fetch is also partial
+(`--filter=blob:none`, then the files wanted by id). A server without partial fetches sends
+every file; a git that can't fetch partially, can't list what was left out or can't ask by id,
+and a server that won't send by id, get the commit fetched whole; the checkout is the same.
+`<checkout>.only` beside it lists the URL and the paths held, and a relative import that isn't
+found gets a note from `git::sparse::outside` when it names a file outside them. A git package's
+`path` dependencies are packages of their own, each with its own sparse checkout. The lock's
+`source` is `git+<url>[?branch=|tag=|rev=…][&path=…][&sparse=1]#<commit>`
+(`GitSpec::locked_source`/`parse_locked`; `sparse=1` only with `path`), and its `checksum` is
+`git::tree_checksum` of the checkout (every file, path order, `contents::checksum`'s encoding;
+symbolic links by target): the whole tree's, or with `sparse=1` the sparse checkout's. A locked
+package is checked out as its `source` says, so a lock without `sparse=1` on a `path` keeps the
+whole tree its checksum covers until `velt update` writes it anew. The checksum is checked on
 every use as "Fetched trees" below says. Native code of a git package builds only with
 `VELT_NATIVE_FROM_SOURCE=1`, from a copy of the package in `<cache>/git-native/<name>/<commit>/`.
 `registry::publish` refuses a dependency with only `git` (a `version` beside it is published as the
@@ -214,9 +235,10 @@ errors (paths relative to the target), and a walk cut at `MAX_DIRS` is named whe
 found; the dependency's name must be one of them (else "provides no npm package named …"), its
 version is that package's (`0.0.0` without a valid one), and it has no dependencies of its own. It
 is `Source::Git` with `npm` (name → directory), locked like any git package, and no package of the
-graph (two git dependencies providing one npm name from different directories are an error,
-`install::check_npm_overlap`; from one checkout they agree): each dependent's `GraphPackage::npm`
-gets the packages, and the loader resolves a bare import of one in its directory
+graph (two git dependencies providing one npm name from different repositories, commits or
+directories of a commit are an error, `install::check_npm_overlap`; the same directory of one
+commit agrees, also from two checkouts, and every dependent gets one of them): each dependent's
+`GraphPackage::npm` gets the packages, and the loader resolves a bare import of one in its directory
 (`NpmResolver::resolve_in`) before Node's search.
 
 ## Archive dependencies

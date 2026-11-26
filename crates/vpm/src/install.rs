@@ -476,8 +476,13 @@ fn to_lockfile(resolution: &Resolution, root: &Path, members: &[PathBuf]) -> Loc
                     spec,
                     commit,
                     checksum,
+                    sparse,
                     ..
-                } => (spec.source(commit), Some(checksum.clone()), BTreeMap::new()),
+                } => (
+                    spec.locked_source(commit, *sparse),
+                    Some(checksum.clone()),
+                    BTreeMap::new(),
+                ),
                 Source::Url { spec, checksum, .. } => {
                     (spec.source(), Some(checksum.clone()), BTreeMap::new())
                 }
@@ -533,23 +538,21 @@ fn check_native_names<'n>(names: impl Iterator<Item = &'n String>) -> Result<(),
     Ok(())
 }
 
-/// Two git dependencies that provide the same npm package from different directories (other
-/// repositories or commits) would leave it to chance which one an import gets: an error naming
-/// both. Two packages of one checkout (`a` and `b` both from a repository's root) provide the
-/// same directories and agree.
+/// Two git dependencies that provide the same npm package from different places (other
+/// repositories, commits or directories) would leave it to chance which one an import gets: an
+/// error naming both. Two packages of one commit that provide the same directory of it agree
+/// (`a` and `b` both from a repository's root; one of them by its `path`, whose checkout is its
+/// own, [`crate::git::sparse`]).
 fn check_npm_overlap<'r>(
     packages: impl Iterator<Item = &'r ResolvedPackage>,
 ) -> Result<(), String> {
-    let mut seen: BTreeMap<&str, (&str, &PathBuf)> = BTreeMap::new();
+    let mut seen: BTreeMap<&str, (&str, NpmOrigin)> = BTreeMap::new();
     for pkg in packages {
-        let Source::Git { npm, .. } = &pkg.source else {
-            continue;
-        };
-        for (name, dir) in npm {
-            let Some((other, other_dir)) = seen.insert(name, (&pkg.name, dir)) else {
+        for (name, origin) in npm_origins(pkg) {
+            let Some((other, other_origin)) = seen.insert(name, (&pkg.name, origin.clone())) else {
                 continue;
             };
-            if other_dir != dir {
+            if other_origin != origin {
                 return Err(format!(
                     "git dependencies `{other}` and `{}` both provide the npm package `{name}`; depend on one of them",
                     pkg.name
@@ -558,6 +561,36 @@ fn check_npm_overlap<'r>(
         }
     }
     Ok(())
+}
+
+/// Where an npm package of a git dependency comes from: the repository, the commit, and its
+/// directory in the commit (`/`-separated, `.` for the root).
+type NpmOrigin = (String, String, String);
+
+/// The npm packages `pkg` provides (a git dependency without a manifest), each with its origin.
+fn npm_origins(pkg: &ResolvedPackage) -> Vec<(&str, NpmOrigin)> {
+    let Source::Git {
+        spec,
+        commit,
+        dir,
+        npm,
+        ..
+    } = &pkg.source
+    else {
+        return vec![];
+    };
+    npm.iter()
+        .map(|(name, at)| {
+            let below = relpath::relative(at, dir);
+            let in_commit = match (&spec.subdir, below.as_str()) {
+                (None, _) => below,
+                (Some(sub), ".") => sub.clone(),
+                (Some(sub), below) => format!("{sub}/{below}"),
+            };
+            let origin = (spec.url.clone(), commit.clone(), in_commit);
+            (name.as_str(), origin)
+        })
+        .collect()
 }
 
 /// The graph of the `root` package (its manifest, directory and direct dependencies), added first
@@ -578,6 +611,14 @@ fn build_graph<'r>(
             _ => None,
         })
         .collect();
+    // One directory per npm package: two dependencies that provide the same directory of a
+    // commit from two checkouts (`check_npm_overlap`) give every dependent the first one's.
+    let mut npm_dirs: BTreeMap<&str, &PathBuf> = BTreeMap::new();
+    for provided in npm.values() {
+        for (name, dir) in provided.iter() {
+            npm_dirs.entry(name.as_str()).or_insert(dir);
+        }
+    }
     let add = |graph: &mut PackageGraph, name: &str, dir: &Path, deps: &[String]| {
         let velt = deps
             .iter()
@@ -589,7 +630,7 @@ fn build_graph<'r>(
             if let Some(provided) = npm.get(n.as_str()) {
                 added
                     .npm
-                    .extend(provided.iter().map(|(k, v)| (k.clone(), v.clone())));
+                    .extend((provided.keys()).map(|k| (k.clone(), npm_dirs[k.as_str()].clone())));
             }
         }
     };

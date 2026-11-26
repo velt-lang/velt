@@ -38,14 +38,23 @@ export class DOMException extends Error {
   static readonly INVALID_NODE_TYPE_ERR: number = 24;
   static readonly DATA_CLONE_ERR: number = 25;
 
+  // The name given at construction, read through a getter only, as Node's `DOMException` has it
+  // (an assignment is an error); never written through the accessor a subclass may override.
+  #name: string;
+
   // Fixed at construction from the name (a getter, so that it is not shown as an own field).
   #code: number;
 
   /** A `DOMException` with `message` and `name` (`new DOMException("Invalid character", "InvalidCharacterError")`). */
   constructor(message: string = "", name: string = "Error") {
     super(message);
-    this.name = name;
+    this.#name = name;
     this.#code = legacyCode(name);
+  }
+
+  /** The name given at construction (`"AbortError"`), which `String(e)` starts with. */
+  override get name(): string {
+    return this.#name;
   }
 
   /** The legacy code of the name given at construction (`5` for `InvalidCharacterError`), or 0. */

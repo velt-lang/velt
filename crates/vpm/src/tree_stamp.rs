@@ -208,8 +208,9 @@ pub struct Fetched {
     pub cache: PathBuf,
 }
 
-/// The fetched trees of `packages`: each git checkout (its checksum covers the whole checkout,
-/// whichever package of it is used) and each archive's package directory.
+/// The fetched trees of `packages`: each git checkout (its checksum covers the whole checkout:
+/// a commit's tree whichever package of it is used, or one package's sparse checkout) and each
+/// archive's package directory.
 pub(crate) fn fetched<'r>(
     loc: &Locations,
     packages: impl Iterator<Item = &'r crate::resolve::ResolvedPackage>,
@@ -221,9 +222,11 @@ pub(crate) fn fetched<'r>(
                 spec,
                 commit,
                 checksum,
+                sparse,
                 ..
             } => {
-                let dir = crate::git::checkout_dir(loc, &spec.url, commit);
+                let only = spec.subdir.as_deref().filter(|_| *sparse);
+                let dir = crate::git::checkout_dir(loc, &spec.url, commit, only);
                 Some((dir.clone(), dir, checksum))
             }
             Source::Url {

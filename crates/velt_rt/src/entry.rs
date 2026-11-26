@@ -58,8 +58,6 @@ pub fn run_main(velt_main: extern "C" fn() -> i32) -> i32 {
 
 /// What happens once `main` returned `code`: the program's end (returns its exit code).
 fn finish(code: i32) -> i32 {
-    // The promises a synchronous `main` handed to tasks go on in a task of their own.
-    crate::task::local::outside_done();
     // Servers, timers and tasks that can still make progress keep a program alive after `main`
     // returns, but not after it failed (an uncaught error, or an exit code): like Node, which
     // exits on an uncaught exception whatever is still listening.

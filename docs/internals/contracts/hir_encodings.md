@@ -880,7 +880,10 @@ name in it. A deferred type lowering meets unreduced under such a value is a dia
   (`keyEq`, JS SameValueZero: `Same` with `NaN` equal to itself and `0` to `-0`) and hash with
   `Intrinsic::Hash`, which agrees with it (objects hash their identity; a type declared with
   `struct`, `AdtDef::declared_struct`, compares and hashes by content, field by field: a struct has
-  no identity, #641). A declared `struct` compares its numbers by their bits under every one of
+  no identity, #641). The key a `Map` stores (a `Set` its element) is `Intrinsic::KeyOf` of it
+  (`keyOf`, additive): an owned copy whose float `-0` is `+0`, as JS stores it: in a float, an
+  option of one, a float member of a union, or a `number` held by `any` / `unknown`; any other
+  value is itself. A declared `struct` compares its numbers by their bits under every one of
   these; a C struct (`AdtDef::c_struct`) compares them as the operation compares numbers (IEEE under
   `Same`, SameValueZero for keys and `includes`). A C struct held in a declared `struct` compares by
   the outer struct's rule, its bits. `Array.includes` compares with `Intrinsic::IncludesEq` (JS
@@ -1565,7 +1568,9 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   argument passes one argument instead, an `any[]` (the array literal `[a..., ...xs]`, never a
   boxed `any`), whose elements move into the call. An `unknown` receiver is
   an error until narrowed. When a program has any of these, `Program::dyn_members` lists the
-  methods and accessors (`DynMember`: name, kind, def, declaring type) of every struct, class and
+  methods and accessors (`DynMember`: name, kind, def, declaring type, and whether a method's
+  last parameter is a rest parameter, which a call by name packs its remaining arguments into)
+  of every struct, class and
   object type by name, and every `any` table gets four more slots (velt_vir `lower/any_member.rs`):
   5 `AnyGet (data, key, out) -> u8`, 6 `AnyIndex (data, f64, out) -> u8`, 7 `AnyCall (data, key,
   argv, argc, out) -> u8`, 8 `AnyApply (data, argv, argc, out) -> u8`, returning 0 (the result

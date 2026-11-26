@@ -488,7 +488,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         if !self.cx.is_class(err) {
             return None;
         }
-        // The root class: its fields are a prefix of every subclass's.
+        // The root class: its fields are a prefix of every subclass's. `Error`'s start with
+        // `message` and `#name` (std/prelude/errors.velt; `#stack` follows).
         while let Some(b) = self.cx.adt_def(d).base {
             let TyKind::Adt(bd, _) = self.cx.kind(b) else {
                 return None;
@@ -497,7 +498,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         let root = self.cx.adt_def(d);
         let is_error = (root.name == "Error" || root.name.ends_with("::Error"))
-            && root.fields.len() == 2
+            && root.fields.len() >= 2
             && root.fields[0].name == "message"
             && root.fields[1].name == "#name";
         is_error.then_some(d)

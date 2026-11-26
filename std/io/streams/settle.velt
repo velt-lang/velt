@@ -1,11 +1,17 @@
-// velt/io (internal): `settled`, how a stream's controller (controller.velt) waits for its source's
-// promises: `p.then(ok, err)` written out (std/prelude/promise.velt `promiseThenElse`), in an
+// velt/io (internal): how a stream's controller (controller.velt) waits for its source's promises
+// (#3643, #3695), as Node's streams settle them, and the error of a stream used in a wrong state.
+// `settled` is `p.then(ok, err)` written out (std/prelude/promise.velt `promiseThenElse`), in an
 // async function rather than as closures over the controller, which made every closure of those
 // types and the controller cycle-capable (docs/internals/design/cycles.md, #3119).
 
 import { ReadableStreamDefaultController } from "velt/io/streams/controller";
 
 declare async function velt_rt_microtask(): Promise<void>;
+
+/** Waits for `p`, dropping its result. */
+export async function finished<T>(p: Promise<T>): Promise<void> {
+  await p;
+}
 
 /**
  * Runs `c`'s step after `p` settles: `begun` or `error` for `start`'s promise, `pulled` or `fail`
@@ -65,4 +71,9 @@ async function turns(adopt: bool) {
   if (adopt) {
     await velt_rt_microtask();
   }
+}
+
+/** `TypeError: Invalid state: <what>`, Node's message for a stream used in a wrong state. */
+export function invalidState(what: string): TypeError {
+  return new TypeError(`Invalid state: ${what}`);
 }

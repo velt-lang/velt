@@ -946,7 +946,8 @@ velt --version | -V | version          # velt <ver> (<git hash> <host triple>)
   "version", "source", "checksum"?, "dependencies"?, "native"?, "overrides"?}` sorted by name.
   `source` is `"registry"`, `"path+<dir relative to the root package>"`, a workspace member's
   `"workspace+<dir relative to the workspace root>"`, or a git or URL source
-  (`git+<url>…#<commit>`, `url+<url>…#sha256:<hash>`; manifest.md). `checksum` is
+  (`git+<url>…#<commit>`, with `&sparse=1` when the checkout is the dependency's `path` alone;
+  `url+<url>…#sha256:<hash>`; manifest.md). `checksum` is
   `sha256:<hex>` of registry packages; `native` maps each published target triple to the checksum
   of its prebuilt library; `velt` is the toolchain version that builds the package (the launcher
   runs it when the package's pin accepts it). The root package itself is not listed.

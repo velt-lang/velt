@@ -428,6 +428,7 @@ fn adt_methods(cx: &mut Ctx, d: DefId) {
         .filter(|m| !m.is_static && !m.is_setter)
         .map(|m| m.decl.sig.name.name.as_str())
         .collect();
+    let own = crate::decorators::own::inherited(cx, d);
     for m in &decl.methods {
         let name = &m.decl.sig.name;
         let key = if m.is_static && instance.contains(&name.name.as_str()) {
@@ -437,6 +438,11 @@ fn adt_methods(cx: &mut Ctx, d: DefId) {
             cx.method_key(module, name, m.is_setter)
         };
         let def = method_def(cx, &owner, m, &key);
+        // A member a std ancestor installs on every instance (`@own()`: an error's `stack`)
+        // shadows this one in JS: declared and checked, never reached.
+        if crate::decorators::own::hidden(&own, m) {
+            continue;
+        }
         if methods.contains_key(&key) {
             cx.err(
                 format!("duplicate {} `{}`", what(m.is_setter), name.name),

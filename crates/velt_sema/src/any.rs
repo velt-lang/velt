@@ -370,6 +370,7 @@ pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<FxHashMap<DefId, Vec<DynMember
                 // hands it back (`crate::hand_back`): a method of that name the program calls
                 // through `any` gets a method returning it.
                 let called = cx.method_facts.call_names.contains(&name);
+                let rest = kind == DynMemberKind::Method && cx.fn_info(def).rest;
                 let def = match kind {
                     DynMemberKind::Method if called => crate::hand_back::value_entry(cx, def),
                     _ => def,
@@ -379,6 +380,7 @@ pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<FxHashMap<DefId, Vec<DynMember
                     kind,
                     def,
                     owner,
+                    rest,
                 });
             }
             let Some(base) = base else { break };
@@ -407,6 +409,7 @@ pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<FxHashMap<DefId, Vec<DynMember
                 kind: DynMemberKind::ReadonlyField,
                 def: d,
                 owner: own,
+                rest: false,
             });
         }
         if !members.is_empty() {
@@ -474,8 +477,8 @@ fn literal_accessors(cx: &mut Ctx, d: DefId, members: &mut Vec<DynMember>) {
     let Some(i) = cx.iface(iface) else {
         return;
     };
-    let slots: Vec<(String, bool, TyId)> = (i.methods.iter())
-        .map(|m| (m.name.clone(), m.is_getter, m.ret))
+    let slots: Vec<(String, bool, TyId, usize)> = (i.methods.iter())
+        .map(|m| (m.name.clone(), m.is_getter, m.ret, m.params.len()))
         .collect();
     // An interface field filled by `get f() { … }`: its getter slot runs the function (a
     // setter next to it is not listed: printing such a literal through its interface is
@@ -487,6 +490,7 @@ fn literal_accessors(cx: &mut Ctx, d: DefId, members: &mut Vec<DynMember>) {
                 kind: DynMemberKind::Getter,
                 def,
                 owner,
+                rest: false,
             });
         }
     }
@@ -496,11 +500,22 @@ fn literal_accessors(cx: &mut Ctx, d: DefId, members: &mut Vec<DynMember>) {
         .flat_map(|a| a.fields.iter().map(|f| (f.name.clone(), f.ty)))
         .collect();
     let has_field = |n: &str| fields.iter().any(|(f, _)| f == n);
-    for ((name, getter, ret), def) in slots.into_iter().zip(defs) {
+    // A method using `this` is a function in field `m` that takes the object first
+    // (`body::expr::literal_this`): the slot passes it, where a call of the field would not.
+    let own_args = args_of(cx, d);
+    let this_ty = cx.ty.intern(TyKind::Dyn(iface, own_args));
+    let takes_this = |t: TyId, n: usize| match cx.ty.kind(t) {
+        TyKind::FnPtr { params, .. } => params.len() == n + 1 && params[0] == this_ty,
+        _ => false,
+    };
+    for ((name, getter, ret, n_params), def) in slots.into_iter().zip(defs) {
+        let held = fields.iter().find(|(f, _)| *f == name).map(|(_, t)| *t);
         let (kind, name) = match name.strip_prefix("set ") {
             Some(n) if has_field(&name) => (DynMemberKind::Setter, n.to_string()),
+            None if !getter && held.is_some_and(|t| takes_this(t, n_params)) => {
+                (DynMemberKind::Method, name)
+            }
             None if getter => {
-                let held = fields.iter().find(|(f, _)| *f == name).map(|(_, t)| *t);
                 let is_fn = |t: TyId| matches!(cx.ty.kind(t), TyKind::FnPtr { .. });
                 match held {
                     Some(t) if is_fn(t) && t != ret => (DynMemberKind::Getter, name),
@@ -521,6 +536,7 @@ fn literal_accessors(cx: &mut Ctx, d: DefId, members: &mut Vec<DynMember>) {
             kind,
             def,
             owner,
+            rest: false,
         });
     }
 }
