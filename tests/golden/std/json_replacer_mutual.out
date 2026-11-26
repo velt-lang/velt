@@ -1,0 +1,24 @@
+  replacer ""
+  replacer "name"
+  replacer "b"
+  replacer "n"
+  replacer "a"
+  replacer "name"
+  replacer "b"
+{"name":"a","b":{"n":1,"a":{"name":"inner","b":null}}}
+{"name":"a","b":{"n":10,"a":{"name":"inner","b":null}}}
+  replacer ""
+  replacer "q"
+  replacer "c"
+  replacer "p"
+  replacer "q"
+{"q":{"c":{"p":{"q":null}}}}
+  replacer ""
+  replacer "tag"
+  replacer "right"
+  replacer "tag"
+  replacer "left"
+  replacer "tag"
+  replacer "right"
+{"tag":"l","right":{"tag":"r","left":{"tag":"l","right":null}}}
+{"right":{"left":{"right":null}}}

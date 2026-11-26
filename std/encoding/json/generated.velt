@@ -93,7 +93,7 @@ const JSON_DEPTH = new ThreadLocal<u64>(0);
 const JSON_SHALLOW: u64 = 16;
 
 /** Starts writing a value that can contain itself, whose identity is `id`. */
-function jsonEnter(id: u64): void {
+export function jsonEnter(id: u64): void {
   const d = JSON_DEPTH.get();
   JSON_DEPTH.set(d + 1);
   if (d >= JSON_SHALLOW && !beginVisit(id)) {
@@ -102,7 +102,7 @@ function jsonEnter(id: u64): void {
 }
 
 /** Ends what `jsonEnter` started. */
-function jsonLeave(): void {
+export function jsonLeave(): void {
   const d = JSON_DEPTH.get();
   if (d == 0) {
     return;

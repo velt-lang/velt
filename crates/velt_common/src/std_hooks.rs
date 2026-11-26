@@ -61,11 +61,14 @@ mod decorator_hooks;
 mod promise_hooks;
 #[macro_use]
 mod tls_hooks;
+#[macro_use]
+mod any_hooks;
 pub use module_hooks::BLOCKS_MODULE_ENTRY;
 
-// The table: these rows, then TLS's, promises' through `any`, the decorators', module state's,
-// the string methods' and the weak core's (`*_hooks.rs`), given to `hooks!` together.
-with_tls_hooks! {
+// The table: these rows, then the `any` operations', TLS's, promises' through `any`, the
+// decorators', module state's, the string methods' and the weak core's (`*_hooks.rs`), given to
+// `hooks!` together.
+with_any_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
     array_filled => lang_hooks_array, "arrayFilled", sig(<A>(f64, &A) -> [A]);
@@ -435,140 +438,6 @@ with_tls_hooks! {
     /// The entries of that copy written back into the map after the call.
     unknown_map_out => lang_hooks_adapt, "unknownMapOut", sig((&unknown, move Map(unknown, unknown)) -> void);
 
-    // any_text.velt: the text of an `any` (`velt_sema` `any_text.rs`); lowering keeps one instance of
-    // each and passes the call site (`velt_vir` `track_caller.rs`).
-    /// `String(v)` and `${v}` of an `any`: sema writes the dispatch over the program's classes.
-    any_string => lang_hooks_any_text, "anyString", sig((&any, &string) -> string), lowered;
-    /// `v + ""` / `s += v` of an `any` (hint `"default"`): sema writes the class dispatch.
-    any_concat_text => lang_hooks_any_text, "anyConcatText", sig((&any, &string) -> string), lowered;
-    /// `any_concat_text` of a value no class method of the program writes.
-    any_concat_plain => lang_hooks_any_text, "anyConcatPlain", sig((move any, &string) -> string), lowered;
-    /// The text of what a `toString()`, `valueOf()` or `[Symbol.toPrimitive]` returned.
-    any_prim_text => lang_hooks_any_text, "anyPrimText", sig((move any, &string) -> string), lowered;
-    /// `any_prim_text` of a primitive, `null` for an object (`ToPrimitive` tries the next method).
-    any_prim_try => lang_hooks_any_text, "anyPrimTry", sig((move any, &string) -> or_null(string)), lowered;
-    /// `String(p)` of a proxy through `any`, which reports that it is not supported yet.
-    any_text_unsupported => lang_hooks_any_text, "anyTextUnsupported", sig((&string, &string) -> string), lowered;
-    /// `String(v)` of an `any` holding no class instance with `toString()` or `[Symbol.toPrimitive]`.
-    any_text => lang_hooks_any_text, "anyText", sig((move any, &string) -> string), lowered;
-    /// `String(r)` of an `any` holding a record, where `Object.create(null)` is called.
-    any_record_text => lang_hooks_any_text, "anyRecordText", sig((move any, &string) -> string);
-    /// `r + ""` of an `any` holding a record, where `Object.create(null)` is called.
-    any_record_concat => lang_hooks_any_text, "anyRecordConcat", sig((move any, &string) -> string);
-    /// `xs.join(sep)` and `String(xs)` of an array of `any`, `unknown` or `object` values.
-    any_join => lang_hooks_any_text, "anyJoin", sig((move any, &string, &string) -> string), lowered;
-    /// `xs.join(sep)` of an `any` `xs` (`velt_sema` `dynamic_member.rs`).
-    any_join_method => lang_hooks_any_text, "anyJoinMethod", sig((move any, move any, &string) -> any);
-    /// `xs.join()` of an `any` `xs`, with no argument written.
-    any_join_none => lang_hooks_any_text, "anyJoinNone", sig((move any, &string) -> any);
-    /// The list of `f.apply(self, list)` read at the call (`velt_sema` `dynamic_member.rs`).
-    any_apply_list => lang_hooks_any_ops, "anyApplyList", sig((&any, move any) -> any throws union(TypeError, RangeError));
-    /// A typed array as that list, in a program that has them.
-    typed_apply_list => lang_typed_array_apply_list, "typedApplyList", sig((&any, move any) -> any);
-    /// A typed array behind a proxy as that list, in a program that has both.
-    typed_proxy_list => lang_typed_array_apply_list, "typedProxyList", sig((&any, &any, move any) -> any throws TypeError);
-    /// The same outside a `try`: the error ends the program, with no `throws` for the caller.
-    typed_proxy_stop => lang_typed_array_apply_list, "typedProxyStop", sig((&any, &any, move any) -> any);
-    proxy_innermost => lang_proxy_traps, "proxyInnermost", sig((&any) -> any);
-    /// The same in a program with `Proxy`, where reading the list can run traps.
-    proxy_apply_list => lang_proxy_traps, "proxyApplyList", sig((&any, move any) -> any throws union(TypeError, RangeError));
-    /// `any_join` with the arrays being joined around it, so a cycle prints as empty text.
-    any_join_seen => lang_hooks_any_text, "anyJoinSeen", sig((move any, &string, &mut [any], &string) -> string), lowered;
-
-    // any_object.velt: `Object.*`, spreads, prototypes and `delete` of an `any`.
-    /// `{ ...o }` of an `any` in an object literal (`velt_sema` `record_literal.rs`).
-    spread_any => lang_hooks_any_object, "spreadAny", sig((&mut Record(string, any), &any) -> void);
-    /// `const { a, ...rest } = o` of an `any` (`velt_sema` `literal_patterns.rs`).
-    rest_any => lang_hooks_any_object, "restAny", sig((&any, &any) -> any);
-    /// `Object.hasOwn(o, k)` of an `any` (`velt_sema` `object_own.rs`).
-    any_has_own => lang_hooks_any_object, "anyHasOwn", sig((&any, &union(string, symbol)) -> bool);
-    /// Member `k` (one of `Object.keys(o)`) of an `any`: std's `spreadAny` & co. call it, not the compiler.
-    any_member => lang_hooks_any_object, "anyMember", sig((&any, &string) -> any);
-    /// `Object.values(o)` of an `any` (`velt_sema` `object_keys.rs`).
-    any_values => lang_hooks_any_object, "anyValues", sig((&any) -> [any]);
-    /// `Object.entries(o)` of an `any` (`velt_sema` `object_keys.rs`).
-    any_entries => lang_hooks_any_object, "anyEntries", sig((&any) -> [tuple(string, any)]);
-    /// `Object.getPrototypeOf(v)` of an `any` holding no class instance (`object_prototypes.rs`).
-    any_prototype => lang_hooks_any_object, "anyPrototype", sig((&any) -> or_null(ObjectPrototype));
-    /// `Object.getPrototypeOf(r)` of an `any` holding a record.
-    any_record_prototype => lang_hooks_any_object, "anyRecordPrototype", sig((&any) -> or_null(ObjectPrototype));
-    /// `Object.getPrototypeOf(v)` of an instance of a class Velt doesn't name: an error.
-    any_prototype_unsupported => lang_hooks_any_object, "anyPrototypeUnsupported", sig((&string) -> or_null(ObjectPrototype));
-    /// `Object.prototype.toString.call(v)` of an `any` holding no class instance (`object_own.rs`).
-    any_object_tag => lang_hooks_any_object, "anyObjectTag", sig((&any) -> string);
-    /// `Object.prototype.toString.call(v)` of an instance whose tag Velt doesn't know: an error.
-    any_tag_unsupported => lang_hooks_any_object, "anyTagUnsupported", sig((&string) -> string);
-    /// `v.constructor.name` of an `any` holding no class instance (`velt_sema` `ctor_name.rs`).
-    any_ctor_name => lang_hooks_any_object, "anyCtorName", sig((&any) -> string);
-    /// `v.constructor.name` of an instance whose constructor Velt doesn't name: an error.
-    any_ctor_name_unsupported => lang_hooks_any_object, "anyCtorNameUnsupported", sig((&string) -> string);
-    /// `delete o.k` / `delete o[k]` of an `any` that is no proxy (`velt_sema` `proxy.rs`).
-    any_delete_member => lang_hooks_any_object, "anyDeleteMember", sig((&any, &any) -> bool);
-    /// `Object.prototype.hasOwnProperty` as a value (`object_prototypes.rs`, `velt_vir` `any_proxy.rs`).
-    has_own_property => lang_hooks_any_object, "HasOwnProperty", class, lowered;
-
-    // any_record.velt: an `any` holding another object converted to a record (`velt_vir`
-    // `any_to_record.rs`), loaded for a program that mentions `Record`
-    // (std/prelude/global/record_any.velt).
-    /// `x as Record<string, any>` of an `any` holding an object that is no such record: a copy.
-    any_to_record_any => lang_hooks_any_record, "anyToRecordAny", sig((&any) -> Record(string, any)), lowered;
-    /// `x as Record<string, V>` of such an `any`: `any_to_record_any`, each value a `V`.
-    any_to_record => lang_hooks_any_record, "anyToRecord", sig(<A>(&any) -> Record(string, A)), lowered;
-    /// The source of a record view (`velt_vir` `record_view.rs`): the object an `any` held.
-    record_view_source => lang_hooks_any_record, "RecordViewSource", class, lowered;
-    /// The source of a view of the object an `any` holds.
-    record_view_new => lang_hooks_any_record, "recordViewNew", sig((move any) -> RecordViewSource), lowered;
-    /// A view's record, its mirror filled from the source.
-    record_view_make => lang_hooks_any_record, "recordViewMake", sig((&RecordViewSource) -> Record(string, any)), lowered;
-    /// The source's own entry for one key of a view, or `undefined`.
-    record_view_get_one => lang_hooks_any_record, "recordViewGetOne", sig((&RecordViewSource, &string) -> any), lowered;
-    /// Whether a view's source has one own key.
-    record_view_has_one => lang_hooks_any_record, "recordViewHasOne", sig((&RecordViewSource, &string) -> bool), lowered;
-    /// A value written to a view's source under one key.
-    record_view_set_one => lang_hooks_any_record, "recordViewSetOne", sig((&RecordViewSource, &string, move any) -> void), lowered;
-    /// A key deleted from a view's source.
-    record_view_delete_one => lang_hooks_any_record, "recordViewDeleteOne", sig((&RecordViewSource, move string) -> void), lowered;
-    /// A view's mirror rebuilt from its source before a read of the whole record.
-    record_view_sync_all => lang_hooks_any_record, "recordViewSyncAll", sig((&RecordViewSource) -> Map(string, any)), lowered;
-    /// A view's mirror entries for another record's keys written to its source after a spread.
-    record_view_write_all => lang_hooks_any_record, "recordViewWriteAll", sig((&RecordViewSource, &Map(string, any), move Map(string, any)) -> void), lowered;
-
-    // any_ops.velt: operators on `any` values holding objects (`ToPrimitive` first).
-    /// `ToPrimitive(v, hint)` of an `any` holding an object or a function.
-    any_primitive => lang_hooks_any_ops, "anyPrimitive", sig((&any, &string, &string) -> any), lowered;
-    /// `ToPrimitive(v, hint)` of an object no class method of the program answers (`any_prim.rs`).
-    any_primitive_plain => lang_hooks_any_ops, "anyPrimitivePlain", sig((move any, &string, &string) -> any), lowered;
-    /// What a `valueOf()`, `toString()` or `[Symbol.toPrimitive]` returned, checked a primitive.
-    any_prim_keep => lang_hooks_any_ops, "anyPrimKeep", sig((move any, &string) -> any), lowered;
-    /// A method's result when it is a primitive, else the next method's (`velt_sema` `any_prim.rs`).
-    any_prim_then => lang_hooks_any_ops, "anyPrimThen", sig((move any, &Fn(() -> any)) -> any);
-    /// `ToNumber` of an object an `any` holds, for `-`, `*`, `<`, `+x` (`dynamic_arith.rs`).
-    any_object_number => lang_hooks_any_ops, "anyObjectNumber", sig((&any, &string) -> f64);
-    /// `a + b` of dynamic values one of which holds a string or an object (`dynamic_arith.rs`).
-    any_add => lang_hooks_any_ops, "anyAdd", sig((move any, move any, &string) -> any);
-    /// `<`, `>`, `<=`, `>=` of dynamic values one of which holds an object (`dynamic_relational.rs`).
-    any_relational => lang_hooks_any_ops, "anyRelational", sig((move any, move any, i64, &string) -> bool);
-    /// `a == b` of an object and a primitive (`velt_vir` `any_eq.rs`).
-    any_loose_eq => lang_hooks_any_ops, "anyLooseEq", sig((&any, &any, &string) -> bool), lowered;
-
-    // class_object.velt: classes as values, and `x.constructor` of an `any`.
-    /// The rest element type of a class object's function type, read by `velt_vir` `glue/format.rs`.
-    class_marker => lang_hooks_class_object, "ClassMarker", class, lowered;
-    /// A class used as a value (`velt_sema` `ctor_objects.rs`; printed by `glue/format.rs`).
-    class_object => lang_hooks_class_object, "classObject", sig((&string, &string) -> FnRest(([ClassMarker(string)]) -> any)), lowered;
-    /// `class_object` of a class with static fields or accessors.
-    class_object_statics => lang_hooks_class_object, "classObjectStatics", sig((&string, &string) -> FnRest(([ClassMarker(bool)]) -> any));
-    /// `v.constructor` of an `any` holding no class instance (`velt_sema` `ctor_objects.rs`).
-    any_ctor => lang_hooks_class_object, "anyCtor", sig((&any, move any, move any, move any, move any, move any, move any) -> any);
-    /// `r.constructor` of an `any` holding a record.
-    any_record_ctor => lang_hooks_class_object, "anyRecordCtor", sig((move any, move any) -> any);
-    /// `v.constructor` of an `any` without an own `constructor`: sema writes the class dispatch.
-    any_constructor => lang_hooks_class_object, "anyConstructor", sig((&any) -> any);
-    /// `v.constructor` of an instance of a class declared in a function.
-    any_ctor_local => lang_hooks_class_object, "anyCtorLocal", sig((&string) -> any);
-    /// `v.constructor` of an instance of a std class JavaScript doesn't name: an error.
-    any_ctor_unsupported => lang_hooks_class_object, "anyCtorUnsupported", sig((&string) -> any);
-
     // tuple_elements.velt: a tuple's array methods that call back (`velt_sema` `tuple_text.rs`).
     /// The elements of one tuple, read when a method reaches them.
     tuple_elements_class => lang_hooks_tuple_elements, "TupleElements", class;
@@ -630,6 +499,10 @@ with_tls_hooks! {
     // (std/prelude/global/json.velt).
     /// `JSON.parse(text)` with its type from the context (`velt_sema` `static_call.rs`).
     json_parse_from_context => lang_hooks_json, "jsonParseFromContext", sig(<A>(&string, &or_null(object("{ unknownKeys?: \"ignore\" | \"reject\", maxDepth?: i64, comments?: \"error\" | \"skip\", trailingCommas?: boolean }"))) -> A throws JsonError);
+    // json_replace.velt: demanded, with std up front too (velt_loader `JSON_REPLACE_MODULES`).
+    /// `JSON.stringify(value, replacer)` with a replacer function, called by role from the
+    /// prelude's `jsonStringifyReplaced` (std/prelude/json/layout.velt).
+    json_stringify_replaced => lang_hooks_json_replace, "jsonStringifyReplaced", sig(<A>(&mut A, &Fn((string, JsonValue) -> or_undefined(JsonValue))) -> string throws union(RangeError, TypeError));
 
     // proxy.velt: the operations on `any` that ask a proxy, used once a program has loaded `Proxy`
     // (std/prelude/global/proxy.velt).

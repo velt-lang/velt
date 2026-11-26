@@ -39,6 +39,7 @@ pub(crate) const VIR_IDENTITY_CODE: &[&str] = &[
     "crates/velt_common/src/std_hooks/string_hooks.rs",
     "crates/velt_common/src/std_hooks/weak_hooks.rs",
     "crates/velt_common/src/std_hooks/module_hooks.rs",
+    "crates/velt_common/src/std_hooks/any_hooks.rs",
     "crates/veltc/src/driver.rs",
     "crates/veltc/src/driver/recover.rs",
     "crates/veltc/src/driver/std_load.rs",

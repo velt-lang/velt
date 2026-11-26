@@ -1,0 +1,105 @@
+// velt/encoding/json (internal): a dynamic value as a replacer function of `JSON.stringify` sees
+// it (the dynamic parts of what `writeJsonRaw` writes). As in Node, a replacer gets a value
+// before the `toJSON` of anything in it runs (each runs when the walk reaches its own key), so
+// this writes what any.velt writes, without calling any `toJSON`: a class instance with one is
+// written as its members, a `Date` as `{}` (it has no enumerable own properties).
+
+import { StringBuilder } from "velt/text/string_builder";
+import { appendJsonString } from "velt/encoding/json/append";
+import {
+  enter,
+  holdsJsonValue,
+  jsonPresent,
+  recordOrder,
+  unsupported,
+  writeJsonAny,
+} from "velt/encoding/json/any";
+import { callToJSON, endVisit, entryCount, entryName, entryValue, typeOf } from "velt/reflect";
+
+/**
+ * Appends the dynamic value `v` (whose key in its parent is `key`) as a replacer sees it: `null`
+ * for a value without a JSON form.
+ */
+export function writeJsonAnyRaw(w: StringBuilder, v: any, key: string): void {
+  if (!jsonPresent(v)) {
+    w.append("null");
+    return;
+  }
+  const t = typeOf(v);
+  const kind = t.kind;
+  if (kind == "proxy") {
+    // A typed proxy converts to the value it stands for: no hook of the program's.
+    writeJsonAnyRaw(w, callToJSON(v, key), key);
+  } else if (kind == "array" || kind == "tuple") {
+    enter(v);
+    writeElements(w, v);
+    endVisit();
+  } else if (kind == "shared") {
+    enter(v);
+    writeJsonAnyRaw(w, entryValue(v, 0), key);
+    endVisit();
+  } else if (kind == "class" && t.hasHook("toJSON") && !holdsJsonValue(v)) {
+    if (t.name == "Date") {
+      w.append("{}");
+      return;
+    }
+    enter(v);
+    writeMembers(w, v, null);
+    endVisit();
+  } else if ((kind == "object" || kind == "class" || kind == "struct") && !holdsJsonValue(v)) {
+    enter(v);
+    writeMembers(w, v, null);
+    endVisit();
+  } else if (kind == "record") {
+    enter(v);
+    writeMembers(w, v, recordOrder(v));
+    endVisit();
+  } else {
+    // A scalar, a `JsonValue`, a collection written as `{}`: no `toJSON` of the program's.
+    writeJsonAny(w, v, key);
+  }
+}
+
+function writeElements(w: StringBuilder, v: any): void {
+  const n = entryCount(v);
+  if (n < 0) {
+    unsupported();
+  }
+  w.append("[");
+  for (let i: i64 = 0; i < n; i++) {
+    if (i > 0) {
+      w.append(",");
+    }
+    writeJsonAnyRaw(w, entryValue(v, i), `${i}`);
+  }
+  w.append("]");
+}
+
+/** The members of an object, a class instance, a struct or a record, in `order`. */
+function writeMembers(w: StringBuilder, v: any, order: i64[] | null): void {
+  const n = entryCount(v);
+  if (n < 0) {
+    // std's `WeakMap` and `WeakSet` (any.velt).
+    writeJsonAny(w, v, "");
+    return;
+  }
+  w.append("{");
+  let first = true;
+  const count = order == null ? n : (order.length as i64);
+  for (let k: i64 = 0; k < count; k++) {
+    const i = order == null ? k : order[k];
+    const x = entryValue(v, i);
+    if (!jsonPresent(x)) {
+      continue;
+    }
+    if (!first) {
+      w.append(",");
+    }
+    first = false;
+    const name = entryName(v, i);
+    appendJsonString(w, name);
+    w.append(":");
+    writeJsonAnyRaw(w, x, name);
+  }
+  w.append("}");
+}

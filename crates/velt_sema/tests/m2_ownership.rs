@@ -148,7 +148,8 @@ fn receivers_that_are_moved_from_are_owned() {
         .defs
         .iter()
         .find_map(|d| match d {
-            velt_sema::hir::Def::Fn(f) if f.name.ends_with(".take") => Some(f),
+            // The program's own `take`: std has others (`StringBuilder.take`).
+            velt_sema::hir::Def::Fn(f) if f.name == "T[].take" => Some(f),
             _ => None,
         })
         .unwrap();

@@ -1,0 +1,47 @@
+// velt/encoding/json (internal): which types are plain JSON data, for the generators of the
+// replacer's walk (replace.velt).
+
+import { Model } from "velt/generate";
+import { isRecursive, toJsonMethod } from "velt/encoding/json/generate/facts";
+import { writtenFields } from "velt/encoding/json/generate/values";
+
+/**
+ * Is a value of type `id` plain JSON data all the way down: a number, a string, a boolean, or
+ * an array, a tuple or an object of them, with no `toJSON`, class, getter, proxy, dynamic or
+ * optional part? What a replacer sees of such a value (`writeJsonRaw`) is its JSON form, so
+ * its walk is the walk of that view (`jsonReplaced`) and takes no code of its own (`depth`
+ * bounds the nesting looked into).
+ */
+export function plainJson(model: Model, id: i64, depth: i64 = 0): bool {
+  const t = model.type(id);
+  const k = t.kind;
+  if (k == "number" || k == "string" || k == "boolean") {
+    return true;
+  }
+  if (depth > 16) {
+    return false;
+  }
+  if (k == "array") {
+    return plainJson(model, t.args[0], depth + 1);
+  }
+  if (k == "tuple") {
+    for (const a of t.args) {
+      if (!plainJson(model, a, depth + 1)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (k != "object" && k != "struct") {
+    return false;
+  }
+  if (toJsonMethod(t) >= 0 || t.mayBeProxy || isRecursive(model, t)) {
+    return false;
+  }
+  for (const f of writtenFields(model, t)) {
+    if (f.optional || f.isGetter || f.via >= 0 || !plainJson(model, f.type, depth + 1)) {
+      return false;
+    }
+  }
+  return true;
+}
