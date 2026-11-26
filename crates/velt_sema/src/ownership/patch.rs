@@ -163,9 +163,10 @@ pub(super) fn fixed_callee(cx: &Ctx, callee: &Callee, args: &[Expr]) -> bool {
 }
 
 /// A closure literal passed directly to a callee with fixed modes captures by value and owns a
-/// heap environment: the callee may keep it (functions.md "Captures"). Not one that forwards a
-/// borrowed function (captures one of `borrowed`) to a parameter of function type, which the
-/// callee cannot keep: it stays in the caller's frame, as the callee's borrowed parameter. A
+/// heap environment: the callee may keep it (https://veltlang.com/docs/reference/functions/
+/// "Captures"). Not one that forwards a borrowed function (captures one of `borrowed`) to a
+/// parameter of function type, which the callee cannot keep: it stays in the caller's frame, as
+/// the callee's borrowed parameter. A
 /// parameter declared with a generic type (`keep(x: T)`, `keeps[k]`) may be kept when `T` is a
 /// function type, and so may a callee whose result is a promise that is not awaited at once (it
 /// may call the closure after this frame is gone): a forwarding closure passed there escapes too.

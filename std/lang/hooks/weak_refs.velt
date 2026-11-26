@@ -1,5 +1,5 @@
 // velt/lang/hooks (internal): the weak core's `WeakRef` slots (weak.velt; docs/internals/design/
-// weak-refs.md "WeakRef"), all with the lock held.
+// weak-refs.md "Weak maps and `WeakRef`"), all with the lock held.
 //
 // A `WeakRef`'s handle is a `u32` (0: none), an index into the header's table of two-word slots:
 // the target's word (0 once it was freed; bit 0 set for a typed proxy, which the slot keeps so

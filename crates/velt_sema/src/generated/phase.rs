@@ -1,6 +1,6 @@
-//! The generated phase of a check (docs/internals/design/source-generators.md §6): the
-//! generated modules the driver added ([`super::GenInput`]) are collected and checked once the
-//! program's bodies are, when the instances they were generated for can be found again.
+//! The generated phase of a check (docs/internals/design/source-generators.md "Compilation"):
+//! the generated modules the driver added ([`super::GenInput`]) are collected and checked once
+//! the program's bodies are, when the instances they were generated for can be found again.
 //!
 //! Each instance a generator wrote names its types by handles ([`super::handles`]): positions
 //! in the walk from the type arguments of a demanded instance, identified by its fingerprint.

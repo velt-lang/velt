@@ -1,4 +1,4 @@
-//! Thread transfer (semantics stage 2, docs/design/semantics-stage2.md §6). Counts are not
+//! Thread transfer (docs/internals/design/semantics.md "Threads"). Counts are not
 //! atomic, so a counted object must never be reachable from two threads. A value entering
 //! another task (a `spawn` argument or capture, a channel send, the HTTP handler environment, a
 //! value settled on a promise from another task, a promise's result) is *transferred*, in

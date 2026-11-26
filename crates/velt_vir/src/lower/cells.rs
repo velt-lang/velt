@@ -1,9 +1,10 @@
-//! Shared cells of captured variables (semantics stage 2, docs/design/semantics-stage2.md §5,
-//! `LocalDef::boxed`): such a variable is a counted heap block holding its value. Its VIR local
-//! holds the cell pointer and is *indirect*, so every read and write goes through the cell; an
-//! escaping closure capturing it stores the cell pointer in its environment (one more reference)
-//! and reads through it too. The function's own reference is released at scope exit (the value
-//! is dropped with the last reference); reassigning the variable drops the old value in place.
+//! Shared cells of captured variables (docs/internals/design/semantics.md "Closures and captured
+//! variables", `LocalDef::boxed`): such a variable is a counted heap block holding its value.
+//! Its VIR local holds the cell pointer and is *indirect*, so every read and write goes through
+//! the cell; an escaping closure capturing it stores the cell pointer in its environment (one
+//! more reference) and reads through it too. The function's own reference is released at scope
+//! exit (the value is dropped with the last reference); reassigning the variable drops the old
+//! value in place.
 //!
 //! With `LowerOptions::cell_checks` (debug builds by a debug compiler) every cell's creation,
 //! count change, hand-over to another task and free, and every call of a closure assigning a

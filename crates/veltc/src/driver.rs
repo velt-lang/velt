@@ -707,7 +707,8 @@ pub fn check_for_lint(
 
 /// In a source generator host ([`Session::generator_build`]): an error when the generators reach
 /// outside the program. A generator is a pure function of its request, which makes its output
-/// cacheable and running it at compile time safe (docs/internals/design/source-generators.md §5).
+/// cacheable and running it at compile time safe (docs/internals/design/source-generators.md
+/// "Running generators").
 pub fn check_generator_host(sess: &mut Session, program: &vir::Program) -> Result<(), BuildError> {
     if !sess.generator_build {
         return Ok(());
