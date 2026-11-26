@@ -303,9 +303,9 @@ export function start(
     nc.catchesFrom(n, catching);
   }
   bind(task, n, rdrop, rejecting);
-  // `firstRun`, written out: its call of `run` stays inlined here.
+  // `firstRun`, written out, with `run` in line (`runIn`): one per started promise.
   m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) + 1);
-  run(task, n, false, 0);
+  runIn(task, n, false, 0);
   m.st32(task + t.T_WORD, m.ld32(task + t.T_WORD) - 1);
 }
 
@@ -362,6 +362,12 @@ export function handled(f: usize, qdrop: usize, hdrPoll: usize): void {
  * entry's; 0 at its start).
  */
 export function run(task: usize, n: usize, taken: bool, lent: usize): void {
+  runIn(task, n, taken, lent);
+}
+
+/** `run`, in line where it is called. */
+@inline("always")
+function runIn(task: usize, n: usize, taken: bool, lent: usize): void {
   if (taken) {
     m.and32(n + N_FLAGS, ~QUEUED);
   }
