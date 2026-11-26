@@ -16,14 +16,17 @@
 // class's own `clone()`) runs outside it (`xferSuspend` / `xferResume`): its own `.clone()` calls
 // copy as they would anywhere else. Outside a transfer every call returns after reading one
 // thread-local. The check loads this module only for a program that can start a transfer
-// (`Construct::Transfer`, velt_common `ON_DEMAND_MODULES`).
+// (`Construct::Transfer`, velt_common `ON_DEMAND_MODULES`). The entry points are `@noInline`, calls
+// as velt_rt's were: inlined, the map's probes and allocations went into every clone glue, and with
+// it into the frozen instances that inline the glue, which then read and wrote count words
+// (veltc `tests/frozen_instances.rs`).
 //
 // The state is this thread's: a transfer runs on one thread, with no await in between. The
 // runtime never reads it: generated code asks `xferKeeps` and hands the answer to read mode
 // (velt_rt `velt_rt_lk_leave`). A thread keeps its transfer's block for the next one; the blocks
 // are the C library's, outside the leak counters (`#xfer-mem`).
 
-import { addressLoad, addressStore, stateDrop } from "velt/lang/intrinsics";
+import { addressLoad, addressStore, noInline, stateDrop } from "velt/lang/intrinsics";
 import { release, zeroed } from "#xfer-mem";
 
 /** What `xferFind` returns outside a transfer (never an object address: objects are aligned). */
@@ -221,6 +224,7 @@ function discard(t: usize): void {
 }
 
 /** Starts transferring a value (nested calls nest). */
+@noInline
 export function xferBegin(): void {
   DEPTH.set(DEPTH.get() + 1);
 }
@@ -230,6 +234,7 @@ export function xferBegin(): void {
  * caller_stores.rs): as `xferBegin`, and when it is the outermost one, the transfer glue keeps the
  * objects the reader did not make (the caller's, counted once more) instead of copying them.
  */
+@noInline
 export function xferKeepBegin(): void {
   const outer = DEPTH.get();
   DEPTH.set(outer + 1);
@@ -244,6 +249,7 @@ export function xferKeepBegin(): void {
  * outermost one, the transfer glue keeps the objects the reader made and still references instead
  * of copying them, so the caller holds the same object.
  */
+@noInline
 export function xferShareBegin(): void {
   const outer = DEPTH.get();
   DEPTH.set(outer + 1);
@@ -253,6 +259,7 @@ export function xferShareBegin(): void {
 }
 
 /** 1 inside a transfer `xferKeepBegin` started, 2 inside one `xferShareBegin` started, else 0. */
+@noInline
 export function xferKeeps(): u8 {
   if (DEPTH.get() == 0) {
     return 0;
@@ -265,6 +272,7 @@ export function xferKeeps(): u8 {
  * Done transferring a value: the outermost end releases the deferred references and forgets the
  * copies.
  */
+@noInline
 export function xferEnd(): void {
   const depth = DEPTH.get();
   if (depth > 1) {
@@ -282,6 +290,7 @@ export function xferEnd(): void {
  * The copy made of `object` in this transfer; 0 if none yet (the caller copies it and
  * `xferRecord`s the copy), or 1 outside a transfer (nothing to record).
  */
+@noInline
 export function xferFind(object: usize): usize {
   if (DEPTH.get() == 0) {
     return NO_TRANSFER;
@@ -291,6 +300,7 @@ export function xferFind(object: usize): usize {
 }
 
 /** `copy` is the copy of `object` in this transfer (and stays itself if it is reached again). */
+@noInline
 export function xferRecord(object: usize, copy: usize): void {
   if (DEPTH.get() == 0) {
     return;
@@ -304,6 +314,7 @@ export function xferRecord(object: usize, copy: usize): void {
  * Releases the transfer's reference to `object` (with its drop glue at `drop`) when the transfer
  * ends: 1, or 0 outside a transfer (the caller releases it now).
  */
+@noInline
 export function xferDefer(object: usize, drop: usize): u8 {
   if (DEPTH.get() == 0) {
     return 0;
@@ -335,6 +346,7 @@ export function xferDefer(object: usize, drop: usize): u8 {
  * depth for `xferResume`. In between, nothing is looked up or recorded in it, and a transfer the
  * user code starts has a map of its own.
  */
+@noInline
 export function xferSuspend(): u32 {
   const depth = DEPTH.get();
   if (depth == 0) {
@@ -350,6 +362,7 @@ export function xferSuspend(): u32 {
 }
 
 /** Continues the transfer set aside by the `xferSuspend` that returned `depth`. */
+@noInline
 export function xferResume(depth: u32): void {
   if (depth == 0) {
     return;
