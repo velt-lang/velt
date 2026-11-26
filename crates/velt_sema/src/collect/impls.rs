@@ -280,7 +280,7 @@ pub(crate) fn accessor_slots(
 fn accessor_slot(cx: &mut Ctx, d: DefId, self_ty: TyId, f: &Found, key: &str, want: TyId) -> DefId {
     let def = f.def();
     cx.fn_info_mut(def).fixed_modes = true;
-    match cx.adt(d).and_then(|a| a.vslots.get(key).copied()) {
+    match cx.vslot(d, key) {
         Some(slot) => trampoline(cx, d, self_ty, f, (slot, Some(want))),
         None => def,
     }
@@ -314,7 +314,7 @@ fn impl_method(cx: &mut Ctx, p: &Pair, m: &IfaceMethod) -> Option<DefId> {
                     super::short_overrides::impl_entry(cx, host, method, (m, &want, ret), take);
                 return Some(entry);
             }
-            let slot = cx.adt(p.d).and_then(|a| a.vslots.get(&m.name).copied());
+            let slot = cx.vslot(p.d, &m.name);
             Some(match slot {
                 Some(slot) => trampoline(cx, p.d, p.self_ty, &f, (slot, want)),
                 None => crate::hand_back::value_entry(cx, def),

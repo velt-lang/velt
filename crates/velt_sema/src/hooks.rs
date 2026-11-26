@@ -163,9 +163,7 @@ enum Shape {
 fn shape(cx: &mut Ctx, owner: DefId, m: DefId, name: &str) -> Result<Shape, (String, String)> {
     let a = cx.adt(owner).expect("ICE: hook owner");
     let owner_generics = a.generics.len();
-    let slot = (name == TO_STRING)
-        .then(|| a.vslots.get(name).copied())
-        .flatten();
+    let slot = (name == TO_STRING).then(|| cx.vslot(owner, name)).flatten();
     let f = cx.fn_info(m);
     if f.is_async || f.is_generator || f.is_async_gen {
         return Err((

@@ -33,8 +33,11 @@ pub(super) fn check_classes(cx: &mut Ctx, from: u32) {
         base_first(cx, d, &mut seen, &mut order);
     }
     let (overridden, overrides) = overridden_methods(cx, &adts);
+    // The slots the program's overrides add to a finished unit's classes, kept beside them.
+    super::program_slots::add(cx, &overridden, &overrides);
     for d in order {
-        // A base class of a finished unit (`crate::units`): its vtable and constructor are final.
+        // A base class of a finished unit (`crate::units`): its vtable and constructor are final
+        // (the slots the program adds are beside it).
         if cx.is_frozen(d) {
             continue;
         }
@@ -93,14 +96,6 @@ fn overridden_methods(cx: &mut Ctx, adts: &[DefId]) -> (Overridden, Overrides) {
                     cx.generic_overrides.push((d, key));
                 }
                 Some(origin) => {
-                    // An override of a finished unit's method without a slot (`crate::units`):
-                    // the slot would change that unit. D1 gives such methods their slot in their
-                    // own unit; until then it is counted where the program crosses.
-                    if cx.is_frozen(origin)
-                        && !cx.adt(origin).is_some_and(|a| a.vslots.contains_key(&key))
-                    {
-                        crate::ctx::def_table::crossing();
-                    }
                     // A getter-only override shadows the base's setter too (JS replaces the
                     // whole property), so that setter becomes virtual.
                     if let Some(set_key) = shadowed_setter(cx, d, m) {
@@ -201,19 +196,11 @@ type Overridden = BTreeSet<(DefId, String)>;
 fn layout_vtable(cx: &mut Ctx, d: DefId, overridden: &Overridden, overrides: &Overrides) {
     let a = cx.adt(d).expect("ICE: adt");
     let n = a.generics.len();
-    let base_vt = a
-        .base
-        .and_then(|b| cx.class_of(b))
-        .and_then(|(b, _)| cx.adt(b))
-        .map(|ba| (ba.vtable.clone(), ba.vslots.clone()));
-    let mut vt = match a.base.and_then(|b| cx.class_of(b)) {
-        Some((b, _)) => {
-            let ba = cx.adt(b).expect("ICE: base");
-            Vtable {
-                entries: ba.vtable.clone(),
-                slots: ba.vslots.clone(),
-            }
-        }
+    // A finished unit's base with the slots the program adds to it (`program_slots`).
+    let base_vt = (a.base.and_then(|b| cx.class_of(b)))
+        .and_then(|(b, _)| Some((cx.vtable_of(b)?.to_vec(), cx.vslots_of(b)?.clone())));
+    let mut vt = match base_vt.clone() {
+        Some((entries, slots)) => Vtable { entries, slots },
         None => Vtable {
             entries: vec![],
             slots: FxHashMap::default(),

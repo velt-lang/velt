@@ -50,6 +50,7 @@ mod iterable;
 mod lookup;
 mod nested;
 mod operators;
+mod program_slots;
 mod regexp_symbols;
 pub(crate) mod ret_infer;
 pub(crate) mod shapes;
