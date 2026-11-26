@@ -5,7 +5,10 @@
 
 import { Ptr } from "velt/ffi/ptr";
 import { wideOf, wideText } from "velt/ffi/wide";
+import { hiddenVar, withoutHidden } from "./env_hidden";
 import { addressLoad, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+
+export { executablePath, osArgs } from "./args_win32";
 
 declare c("c") function GetEnvironmentVariableW(
   name: readonly u16[],
@@ -33,8 +36,13 @@ function validName(name: string): bool {
   return name.length > 0 && name.indexOf("=", 1) < 0;
 }
 
-/** The variable `name`, or undefined when it isn't set. */
+/** The variable `name`, or undefined when it isn't set or is one velt passes (env_hidden.velt). */
 export function getEnv(name: string): string | undefined {
+  return hiddenVar(name, true) ? undefined : getEnvRaw(name);
+}
+
+/** The variable `name` as it is, the hidden ones included (std/process/args.velt). */
+export function getEnvRaw(name: string): string | undefined {
   const n = wideOf(name);
   if (n === null || !validName(name)) {
     return undefined;
@@ -93,6 +101,11 @@ export function removeEnv(name: string) {
  * (`=C:=C:\dir`, whose name starts with "=") left out, as in Node.
  */
 export function envPairs(): string[] {
+  return withoutHidden(allPairs(), true);
+}
+
+/** Every variable as `[name, value, …]`, the hidden ones included. */
+function allPairs(): string[] {
   const out: string[] = [];
   // SAFETY: no precondition; the block is freed below.
   const block = unsafe { GetEnvironmentStringsW() };

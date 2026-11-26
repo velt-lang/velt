@@ -73,13 +73,6 @@ pub fn sleep_ms(ms: f64) {
     }
 }
 
-/// The program's command-line arguments (argv[0] included; empty in the browser).
-pub fn args() -> Vec<String> {
-    std::env::args_os()
-        .map(|a| a.to_string_lossy().into_owned())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

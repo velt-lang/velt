@@ -2,12 +2,20 @@
 // variant, std/imports.velt): the WebAssembly runtime's, which reads WASI's environment (empty in
 // the browser). The working directory is `#cwd-sys`' (std/process/cwd_wasm.velt).
 
+import { hiddenVar, withoutHidden } from "./env_hidden";
+
 declare function velt_rt_env_get(name: string, out: string): bool;
 declare function velt_rt_env_set(name: string, value: string);
 declare function velt_rt_env_remove(name: string);
 declare function velt_rt_env_all(): string[];
 
+/** The variable `name`, or undefined when it isn't set or is one velt passes (env_hidden.velt). */
 export function getEnv(name: string): string | undefined {
+  return hiddenVar(name, false) ? undefined : getEnvRaw(name);
+}
+
+/** The variable `name` as it is, the hidden ones included (std/process/args.velt). */
+export function getEnvRaw(name: string): string | undefined {
   let out = "";
   if (velt_rt_env_get(name, out)) {
     return out;
@@ -23,7 +31,17 @@ export function removeEnv(name: string) {
   velt_rt_env_remove(name);
 }
 
+/** The arguments the program was started with: a JS host passes none. */
+export function osArgs(): string[] {
+  return [];
+}
+
+/** The running program's path: none under a JS host. */
+export function executablePath(): string {
+  return "";
+}
+
 /** Every variable as `[name, value, …]`. */
 export function envPairs(): string[] {
-  return velt_rt_env_all();
+  return withoutHidden(velt_rt_env_all(), false);
 }

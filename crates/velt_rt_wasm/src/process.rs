@@ -1,8 +1,7 @@
-//! Process state (rt_abi_async.md §8): arguments, environment and working directory. Same
-//! behavior as velt_rt's `process` module, through [`crate::platform`] so it also works in the
-//! browser.
+//! Process state (rt_abi_async.md §8): the environment and the working directory, through Rust's
+//! `std` (empty or failing in the browser). The arguments are std's
+//! (std/process/env_wasi.velt).
 
-use crate::platform;
 use crate::result::{IoResult, VeltErr};
 use crate::str::VeltStr;
 use crate::str_array::VeltStrArray;
@@ -10,24 +9,6 @@ use crate::str_array::VeltStrArray;
 /// A string argument as UTF-8 for the host (one U+FFFD per lone surrogate).
 unsafe fn text<'a>(s: *const VeltStr) -> std::borrow::Cow<'a, str> {
     (*s).text_lossy()
-}
-
-/// `process.argv`: all arguments including the program path.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_process_args(out: *mut VeltStrArray) {
-    out.write(VeltStrArray::from_strings(platform::args()));
-}
-
-/// Node's `process.argv`: `[program, program, ...args]` (WebAssembly has no separate runtime
-/// path or script). Under WASI the program is the module's path; the browser passes no
-/// arguments, so it is `["", ""]`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_process_node_argv(out: *mut VeltStrArray) {
-    let args = platform::args();
-    let program = args.first().cloned().unwrap_or_default();
-    let mut all = vec![program.clone(), program];
-    all.extend(args.into_iter().skip(1));
-    out.write(VeltStrArray::from_strings(all));
 }
 
 /// `process.env[name]`: 1 and an owned string in `out` if set, else 0 (`out` untouched).
@@ -96,13 +77,7 @@ mod tests {
     use std::mem::MaybeUninit;
 
     #[test]
-    fn args_env_clock() {
-        let mut args = MaybeUninit::<VeltStrArray>::uninit();
-        unsafe { velt_rt_process_args(args.as_mut_ptr()) };
-        let mut args = unsafe { args.assume_init() };
-        assert!(args.len >= 1);
-        unsafe { crate::str_array::velt_rt_str_array_drop(&mut args) };
-
+    fn env_clock() {
         let name = VeltStr::from_static(b"VELT_RT_WASM_TEST_ENV");
         let value = VeltStr::from_static(b"yes");
         let mut out = VeltStr::empty();

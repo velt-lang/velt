@@ -1,0 +1,55 @@
+// velt/process (internal): the environment under WASI (`#env-sys`' wasi variant,
+// std/imports.velt): the variables of std/process/env_wasm.velt, and the arguments the host
+// passes (`args_sizes_get`, `args_get` through wasi-libc: docs/internals/design/wasi-libc.md).
+// WebAssembly has no separate executable: its path is the first argument, the module's.
+
+import { arrayDataAddress, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+
+export { envPairs, getEnv, getEnvRaw, removeEnv, setEnv } from "./env_wasm";
+
+/** `args_sizes_get`: the number of arguments and the bytes they take, NULs included. */
+declare c("c") function __wasi_args_sizes_get(argc: u32[], size: u32[]): u16;
+/** `args_get`: each argument's address into `argv`, the NUL-terminated texts into `buf`. */
+declare c("c") function __wasi_args_get(argv: u32[], buf: u8[]): u16;
+
+/** Every argument the host passed, the module's path first; none when it can't tell. */
+export function osArgs(): string[] {
+  const out: string[] = [];
+  const count: u32[] = [0];
+  const size: u32[] = [0];
+  // SAFETY: each array holds the one u32 written.
+  if (unsafe { __wasi_args_sizes_get(count, size) } !== 0 || count[0] === 0) {
+    return out;
+  }
+  const n = count[0] as usize;
+  const bytes = size[0] as usize;
+  const table = arrayWithCapacity<u32>(n);
+  arraySetLen(table, n);
+  const buf = arrayWithCapacity<u8>(bytes);
+  arraySetLen(buf, bytes);
+  // SAFETY: `table` holds `count` addresses and `buf` `size` bytes, as args_get writes.
+  if (unsafe { __wasi_args_get(table, buf) } !== 0) {
+    return out;
+  }
+  // SAFETY: `buf` is this function's array; only its address is taken.
+  const base = unsafe { arrayDataAddress(buf) };
+  for (let i: usize = 0; i < n; i++) {
+    const at = table[i] as usize;
+    if (at < base || at - base >= bytes) {
+      break;
+    }
+    const start = at - base;
+    let end = start;
+    while (end < bytes && buf[end] !== 0) {
+      end++;
+    }
+    out.push(buf.utf8Slice(start as i64, end as i64));
+  }
+  return out;
+}
+
+/** The module's path (the first argument), or "" without one. */
+export function executablePath(): string {
+  const all = osArgs();
+  return all.length > 0 ? all[0] : "";
+}
