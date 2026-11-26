@@ -29,8 +29,9 @@ pub(super) fn walk_def(cx: &mut Ctx, d: DefId, w: &mut Walk) -> bool {
                 // Thrown and not caught, it is reported as `console.log` prints it: lowering
                 // builds that from the signature, whatever the body throws. (`hir::FnDef::throws`
                 // is filled in later, by `finalize::build_defs`.)
-                w.formats
-                    .extend(fi.declared_throws.as_ref().and_then(|d| d.ty));
+                let thrown = fi.declared_throws.as_ref().and_then(|d| d.ty);
+                w.thrown.extend(thrown);
+                w.formats.extend(thrown);
             }
             for t in f.body.locals.iter().map(|l| l.ty).chain([f.ret]) {
                 note_ty(ty, t, w);
@@ -150,23 +151,36 @@ pub(super) fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
             w.formats.push(expr.ty);
             w.into_any.push((expr.ty, e.ty));
         }
-        E::Throw(v) => w.formats.push(v.ty),
+        E::Throw(v) => {
+            w.formats.push(v.ty);
+            w.thrown.push(v.ty);
+        }
         E::Call {
             callee: Callee::Intrinsic(I::ToString | I::TemplateToString),
             args,
-        } => w.texts.extend(args.iter().map(|a| a.ty)),
+        } => {
+            w.texts.extend(args.iter().map(|a| a.ty));
+            w.prints.extend(args.iter().map(|a| (a.ty, true)));
+        }
         E::Call {
             callee: Callee::Intrinsic(I::Print | I::PrintErr),
             args,
         } => {
             let (float, glued) = super::super::number_text::printed(ty, args);
             w.prints_float |= float;
+            w.prints.extend(glued.iter().map(|&t| (t, false)));
             w.formats.extend(glued);
         }
         E::Call {
-            callee: Callee::Intrinsic(I::Inspect | I::InspectNested | I::ErrorText),
+            callee: Callee::Intrinsic(i @ (I::Inspect | I::InspectNested | I::ErrorText)),
             args,
-        } => w.formats.extend(args.iter().map(|a| a.ty)),
+        } => {
+            w.formats.extend(args.iter().map(|a| a.ty));
+            // `inspectNested` writes a value inside another, which the outer value's layout breaks.
+            if !matches!(i, I::InspectNested) {
+                w.prints.extend(args.iter().map(|a| (a.ty, false)));
+            }
+        }
         E::Call {
             callee: Callee::Intrinsic(I::AnyTo | I::AnyToExact),
             ..

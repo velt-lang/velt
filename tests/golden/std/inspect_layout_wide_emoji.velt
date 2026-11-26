@@ -1,0 +1,26 @@
+// console.log's column grouping counts the display width of every character as Node 22 does
+// (`getStringWidth`, from ICU): emoji are two columns wide wherever they are in Unicode, not only
+// in U+1F300..U+1F64F, so their columns are padded like Node's; skin tones and joined emoji
+// count each part. Output from node 22.
+
+function repeat(s: string, n: number): string[] {
+  const xs: string[] = [];
+  for (let i = 0; i < n; i++) {
+    xs.push(s.repeat((i % 3) + 1));
+  }
+  return xs;
+}
+
+function main() {
+  // U+1F980, U+1F680, U+1FA90, U+2705: wide, outside U+1F300..U+1F64F.
+  console.log(repeat("🦀", 8));
+  console.log(repeat("🚀", 10));
+  console.log(repeat("🪐", 9));
+  console.log(repeat("✅", 12));
+  // Mixed with narrow entries.
+  console.log(["🦀", "a", "bb", "🚀🚀", "ccc", "✅", "d", "ee", "🪐"]);
+  // A skin tone and a joined family: each part counts.
+  console.log(["👍🏽", "👍", "x", "y", "z", "👨‍👩‍👧", "w", "v"]);
+  // In an object, at deeper indentation.
+  console.log({ crabs: repeat("🦀", 14), label: "wide" });
+}
