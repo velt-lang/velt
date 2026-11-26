@@ -6,11 +6,10 @@ use velt_syntax::ast;
 
 use super::accessor_rmw::Rmw;
 use super::any_text::Hint;
-use super::assign_checks::assigned_literal;
-use super::assign_paths::is_plain_path;
 use super::dynamic_arith::DynRmw;
 use super::element_value::ElementWrite;
 use super::ops::hir_binop;
+use super::{assign_checks::assigned_literal, assign_paths::is_plain_path};
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, BinOp, ExprKind as H, TyId, UseMode};
