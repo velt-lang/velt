@@ -1,7 +1,8 @@
 //! `velt build` and `velt run` by units (`VELT_UNITS=2`, `crates/veltc/src/driver/all_std.rs`):
 //! the program built is the one a check by units checked, and a source generator's host (JSON) is
 //! still built as one program. The nightly's `golden-units` runs every golden this way; these
-//! guard the build path on pull requests.
+//! guard the build path on pull requests, and a run with std and the program checked in one
+//! context (`VELT_UNITS=1`) too.
 
 mod no_window;
 mod test_dir;
@@ -33,10 +34,16 @@ const PRINTS: &str = "HI! 3 AppError\n";
 
 /// `velt <args>` in `dir` by units, with the checker's pass timings on stderr.
 fn velt_by_units(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
+    velt_by_units_in(dir, "2", args)
+}
+
+/// `velt <args>` in `dir` by units in mode `mode` (`VELT_UNITS`), with the checker's pass timings
+/// on stderr.
+fn velt_by_units_in(dir: &std::path::Path, mode: &str, args: &[&str]) -> std::process::Output {
     no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(args)
         .current_dir(dir)
-        .env("VELT_UNITS", "2")
+        .env("VELT_UNITS", mode)
         .env("VELT_SEMA_TIMINGS", "1")
         .env("VELT_BUILD_CACHE", "off")
         .env_remove("VELT_UNITS_FREEZE")
@@ -199,6 +206,139 @@ fn a_run_by_units_raises_std_s_proxy_hooks_to_what_the_traps_throw() {
         let stderr = String::from_utf8_lossy(&ran.stderr);
         assert!(ran.status.success(), "{what}: {stderr}");
         assert!(checked_by_units(&stderr), "{what}: not by units:\n{stderr}");
+        assert_eq!(String::from_utf8_lossy(&ran.stdout), prints, "{what}");
+    }
+}
+
+/// Overrides that throw where the base method doesn't: through the base type a call throws what
+/// the overrides throw (their dispatch group's error type).
+const OVERRIDES_THROW: &str = r#"
+function boom(): number {
+  throw new Error("boom");
+}
+
+class P {
+  m(x: number = 1): number {
+    return x;
+  }
+  get value(): number {
+    return 1;
+  }
+  size(): number {
+    return 1;
+  }
+}
+
+class Q extends P {
+  override m(x: number = boom()): number {
+    return x;
+  }
+  override get value(): number {
+    throw new Error("getter");
+  }
+  override size(): number {
+    throw new Error("size");
+  }
+}
+
+const ps: P[] = [new P(), new Q()];
+for (const p of ps) {
+  try {
+    console.log(p.m());
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+  try {
+    console.log(p.value);
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+  try {
+    console.log(p.size());
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+}
+"#;
+
+/// An abstract method returning `Promise<string>` rejects with what its `async` overrides throw:
+/// a call through the base type settles with the overrides' result layout.
+const OVERRIDES_REJECT: &str = r#"
+class IoError extends Error {}
+
+abstract class Source {
+  abstract read(): Promise<number[], IoError>;
+  abstract text(): Promise<string>;
+}
+
+class Disk extends Source {
+  fail: bool;
+  constructor(fail: bool) {
+    super();
+    this.fail = fail;
+  }
+  async read(): Promise<number[], IoError> {
+    if (this.fail) {
+      throw new IoError("read failed");
+    }
+    return [1, 2, 3];
+  }
+  async text(): Promise<string> {
+    if (this.fail) {
+      throw new IoError("text failed");
+    }
+    return "abc";
+  }
+}
+
+async function show(s: Source, text: bool): Promise<void> {
+  try {
+    if (text) {
+      console.log(await s.text());
+    } else {
+      console.log((await s.read()).length);
+    }
+  } catch (e) {
+    const io: IoError = e;
+    console.log(`caught ${io.message}`);
+  }
+}
+
+async function main() {
+  await show(new Disk(false), true);
+  await show(new Disk(true), true);
+  await show(new Disk(true), false);
+}
+"#;
+
+/// With std and the program checked in one context (`VELT_UNITS=1`), the program's overrides join
+/// its dispatch groups: the memos std's bodies built over std's definitions alone are dropped
+/// before the program is collected (#3887). Built from them, a call through the base type
+/// reported "the error type here is not known yet", and an `async` override's promise was read
+/// with the base method's layout (a crash).
+#[test]
+fn a_run_by_units_in_one_context_gives_the_program_s_overrides_their_groups() {
+    for (what, src, prints) in [
+        (
+            "throws",
+            OVERRIDES_THROW,
+            "1\n1\n1\ncaught boom\ncaught getter\ncaught size\n",
+        ),
+        (
+            "rejects",
+            OVERRIDES_REJECT,
+            "abc\ncaught text failed\ncaught read failed\n",
+        ),
+    ] {
+        let dir = test_dir::TestDir::new();
+        std::fs::write(dir.path().join("main.velt"), src).unwrap();
+        let ran = velt_by_units_in(dir.path(), "1", &["run", "main.velt"]);
+        let stderr = String::from_utf8_lossy(&ran.stderr);
+        assert!(ran.status.success(), "{what}: {stderr}");
+        assert!(
+            stderr.contains("units: app"),
+            "{what}: not by units:\n{stderr}"
+        );
         assert_eq!(String::from_utf8_lossy(&ran.stdout), prints, "{what}");
     }
 }
