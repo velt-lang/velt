@@ -350,23 +350,29 @@ impl<'a> Provider<'a> {
 impl Provider<'_> {
     /// The package of a git requirement: at the commit the lockfile records for the same spec
     /// (no network), else at the commit its reference names now; checked out into the cache.
+    /// A new lock entry with a `path` checks out that directory alone (`git::sparse`); a locked
+    /// one is checked out as its source says, which is what its checksum covers.
     fn git_candidate(&mut self, req: &Requirement, spec: &GitSpec) -> Result<Candidate, String> {
         let named = |e: String| format!("git dependency `{}`: {e}", req.name);
         let locked = self
             .prefer
             .and_then(|lock| lock.get(&req.name))
             .and_then(|p| {
-                let (locked_spec, commit) = GitSpec::parse_source(&p.source)?;
-                (locked_spec == *spec).then(|| (commit, p.checksum.clone()))
+                let (locked_spec, commit, sparse) = GitSpec::parse_locked(&p.source)?;
+                (locked_spec == *spec).then(|| (commit, p.checksum.clone(), sparse))
             });
-        let (commit, checksum) = match locked {
-            Some((commit, checksum)) => (commit, checksum),
-            None => (crate::git::resolve_ref(spec).map_err(named)?, None),
+        let (commit, checksum, sparse) = match locked {
+            Some(locked) => locked,
+            None => {
+                let commit = crate::git::resolve_ref(spec).map_err(named)?;
+                (commit, None, spec.subdir.is_some())
+            }
         };
+        let only = spec.subdir.as_deref().filter(|_| sparse);
         let checkout = crate::git::checkout(
             self.loc,
             &spec.url,
-            &commit,
+            (&commit, only),
             (checksum.as_deref(), self.check),
         )
         .map_err(named)?;
@@ -413,6 +419,7 @@ impl Provider<'_> {
                     spec: spec.clone(),
                     commit,
                     checksum,
+                    sparse,
                     dir,
                     npm,
                 },
@@ -463,6 +470,7 @@ impl Provider<'_> {
                 spec: spec.clone(),
                 commit,
                 checksum,
+                sparse,
                 dir,
                 npm: BTreeMap::new(),
             },
