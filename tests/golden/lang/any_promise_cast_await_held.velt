@@ -1,0 +1,49 @@
+// check: no leaks
+// check: heap blocks at most 400
+// `await (p as Promise<number>)` of an `any` holding a typed `Promise<number>` awaits that
+// promise itself: no wrapper (and no allocation) per await. A promise of another type held
+// the same way is still converted.
+async function sumHeld(held: any[], rounds: number): Promise<number> {
+  let sum = 0;
+  for (let r = 0; r < rounds; r++) {
+    for (const p of held) {
+      sum += await (p as Promise<number>);
+    }
+  }
+  return sum;
+}
+
+async function main(): Promise<void> {
+  const held: any[] = [];
+  for (let i = 0; i < 3; i++) {
+    const p: Promise<number> = Promise.resolve(i + 1);
+    held.push(p);
+  }
+  console.log(await sumHeld(held, 100));
+
+  // A promise of another type: converted when it settles.
+  const wide: Promise<number | string> = Promise.resolve(7);
+  const w: any = wide;
+  console.log(await (w as Promise<number>));
+
+  // A rejection passes through the cast.
+  const failing: any = Promise.reject(new Error("no"));
+  try {
+    await (failing as Promise<number>);
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+
+  // A string result, owned by the code after the await.
+  const s: Promise<string> = Promise.resolve("held");
+  const hs: any = s;
+  const got = await (hs as Promise<string>);
+  console.log(got + "!");
+
+  // `void`.
+  const v: Promise<void> = Promise.resolve();
+  const hv: any = v;
+  await (hv as Promise<void>);
+  console.log("void done");
+}
+main();
