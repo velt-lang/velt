@@ -1,6 +1,7 @@
 //! Phase 4: class hierarchy rules. `override` is required exactly when a method redefines a
-//! base-class method (same signature). Vtable slots exist only for methods that some subclass
-//! overrides (whole-program), laid out base slots first. Constructors are inherited when a class
+//! base-class method (same signature, or only its first parameters: `short_overrides`). Vtable
+//! slots exist only for methods that some subclass overrides (whole-program), laid out base
+//! slots first. Constructors are inherited when a class
 //! declares none; fields without a default need a constructor that initializes them. A method
 //! implementing an abstract one overrides it without `override` (`abstracts`).
 
@@ -328,11 +329,20 @@ fn own_methods(cx: &mut Ctx, d: DefId, overridden: &Overridden, vt: &mut Vtable)
             .filter(|f| !f.is_static());
         let implements = implements_abstract(cx, d, &key);
         if m.is_override || implements || (inherited.is_some() && std_override(cx, d, &key)) {
-            if let Some(f) = inherited {
-                check_override_sig(cx, mref, &f, name);
-            }
-            if let Some(&slot) = vt.slots.get(&key) {
-                vt.entries[slot as usize] = mref.def;
+            let shorter = inherited
+                .as_ref()
+                .and_then(|f| Some((f, check_override_sig(cx, mref, f, name)?)));
+            match (vt.slots.get(&key).copied(), shorter) {
+                (Some(slot), Some((f, take))) => {
+                    let entry = vt.entries.len() as u32;
+                    let base = super::short_overrides::adapter(cx, d, mref.def, f, (entry, take));
+                    vt.entries[slot as usize] = base;
+                    vt.slots
+                        .insert(super::short_overrides::base_key(&key, slot), slot);
+                    vt.push(key, mref.def);
+                }
+                (Some(slot), None) => vt.entries[slot as usize] = mref.def,
+                (None, _) => {}
             }
         } else if inherited.is_some() {
             cx.error(
@@ -516,7 +526,15 @@ fn this_result_ok(cx: &mut Ctx, own: TyId, base: TyId) -> bool {
     false
 }
 
-fn check_override_sig(cx: &mut Ctx, m: MethodRef, base: &Found, name: &velt_syntax::ast::Ident) {
+/// Check method `m` against the base class method `base` it overrides. `Some(n)`: it takes only
+/// the first `n` of that method's parameters, as TypeScript allows (a method that ignores the
+/// arguments after them), and gets a slot of its own (`short_overrides`).
+fn check_override_sig(
+    cx: &mut Ctx,
+    m: MethodRef,
+    base: &Found,
+    name: &velt_syntax::ast::Ident,
+) -> Option<usize> {
     super::unsafe_methods::overrides(cx, m.def, base.def());
     let (mp, mr, mg) = {
         let f = cx.fn_info(m.def);
@@ -540,7 +558,7 @@ fn check_override_sig(cx: &mut Ctx, m: MethodRef, base: &Found, name: &velt_synt
             ),
             name.span,
         );
-        return;
+        return None;
     }
     let nd = cx.fn_info(m.def).generics.len() - own_m;
     args.extend((0..own_m as u32).map(|k| cx.ty.param(nd as u32 + k)));
@@ -561,7 +579,7 @@ fn check_override_sig(cx: &mut Ctx, m: MethodRef, base: &Found, name: &velt_synt
                     "TypeScript's TS2416: the base class method returns `this`, the class of the object it is called on; declare the override's result as `this` and return `this`",
                 ),
             );
-            return;
+            return None;
         }
     }
     let at = (name.span, message.clone());
@@ -591,7 +609,9 @@ fn check_override_sig(cx: &mut Ctx, m: MethodRef, base: &Found, name: &velt_synt
     };
     let ret_ok = cx.unify_promise_results((mr, ms), (br, bs))
         || super::ret_infer::override_ret(cx, (m.def, base.def()), &args, (mr, br), at);
-    if !cx.same_tys(&mp, &bp) || !ret_ok || mg != bg {
+    let shorter = super::short_overrides::takes_first(cx, (m.def, &mp), (base.def(), &bp));
+    let params_ok = shorter.is_some() || cx.same_tys(&mp, &bp);
+    if !params_ok || !ret_ok || mg != bg {
         let mut d = Diagnostic::error(message, name.span);
         if let Some(note) = crate::body::defaults::applied_default_note(
             cx,
@@ -600,7 +620,9 @@ fn check_override_sig(cx: &mut Ctx, m: MethodRef, base: &Found, name: &velt_synt
             d = d.with_note(note);
         }
         cx.error(d);
+        return None;
     }
+    shorter
 }
 
 /// Number of a method's own type params (after its owner's).
