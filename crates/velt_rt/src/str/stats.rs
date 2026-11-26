@@ -13,9 +13,7 @@
 //! takes back from it (`VeltBytes::take_vec`), since compiled code frees and allocates those as
 //! its own blocks: equal numbers at exit mean compiled code freed everything it allocated (leak
 //! checks, semantics stage 2); the counts are frozen at a moment when they were equal, or else
-//! once no task is left that could make them so ([`freeze`]). `panics caught=<n>`: Velt panics stopped at a promise that catches them
-//! (`catchPanic`, panic.rs): each leaks what the panicked code held, so a leak check of such a run
-//! cannot pass and is skipped.
+//! once no task is left that could make them so ([`freeze`]).
 
 #[cfg(debug_assertions)]
 mod counters {
@@ -198,14 +196,13 @@ pub fn report() {
         use std::sync::atomic::Ordering::Relaxed;
         let blocks = BLOCKS.get();
         eprintln!(
-            "rc stats: retain={} release={} alloc={} free={} blocks={}/{} panics caught={}",
+            "rc stats: retain={} release={} alloc={} free={} blocks={}/{}",
             RETAIN.load(Relaxed),
             RELEASE.load(Relaxed),
             ALLOC.load(Relaxed),
             FREE.load(Relaxed),
             blocks.allocated,
             blocks.freed,
-            crate::panic::caught_count()
         );
     }
 }
