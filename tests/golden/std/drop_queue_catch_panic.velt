@@ -7,7 +7,9 @@
 // the depth they had raised, and the drain they cut short left this thread's drop state
 // draining. The catch puts the state back and drops what was still queued, so every node is
 // disposed and freed, and later deep drops on the thread are bounded and drained again; without
-// that, each later drop past the limit stayed queued (and leaked) forever.
+// that, each later drop past the limit stayed queued (and leaked) forever. The same for a list
+// through the class's own field, which drops in a loop with no nesting: the rest of the list after
+// the node that panicked is disposed and freed too.
 import { catchPanic, PanicError } from "velt/task";
 
 class Log {
@@ -44,6 +46,47 @@ function chain(n: number, log: Log, failAt: number): Node {
   return head;
 }
 
+/** A list through the class's own field, dropped in a loop. */
+class Cell {
+  id: number;
+  log: Log;
+  failAt: number;
+  next: Cell | null = null;
+
+  constructor(id: number, log: Log, failAt: number) {
+    this.id = id;
+    this.log = log;
+    this.failAt = failAt;
+  }
+
+  [Symbol.dispose]() {
+    this.log.count++;
+    if (this.id == this.failAt) {
+      panic(`cell ${this.id} failed`);
+    }
+  }
+}
+
+async function makeCells(n: number, log: Log, failAt: number): Promise<number> {
+  let head: Cell | null = null;
+  for (let i = n - 1; i >= 0; i--) {
+    const c = new Cell(i, log, failAt);
+    c.next = head;
+    head = c;
+  }
+  return head == null ? 0 : n;
+}
+
+async function dropCells(n: number, failAt: number): Promise<void> {
+  const log = new Log();
+  try {
+    const made = await catchPanic(() => makeCells(n, log, failAt));
+    console.log(`cells: made ${made}, ${log.count} of ${n} disposed`);
+  } catch (e) {
+    console.log(`cells: caught ${e instanceof PanicError}, ${log.count} of ${n} disposed`);
+  }
+}
+
 /** Makes a chain of `n` whose node `failAt` panics (-1: none) and drops it. */
 async function makeAndDrop(n: number, log: Log, failAt: number): Promise<number> {
   const c = chain(n, log, failAt);
@@ -66,6 +109,8 @@ async function main() {
   await dropCaught(1000, 700);
   await dropCaught(1000, 40);
   await dropCaught(1000, -1);
+  await dropCells(1000, 40);
+  await dropCells(1000, -1);
   // A deep drop on the thread afterwards is bounded and drained as before.
   const log = new Log();
   {
