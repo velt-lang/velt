@@ -17,7 +17,6 @@ use velt_sema::hir::{self, ExprKind as K, Intrinsic, LocalId, PassMode, TyId, Ty
 
 use super::caller_aliases::binds;
 use super::operand::proj;
-use super::rt::Rt;
 use super::{FnLower, Glue, LkMode, Work};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Ty};
 
@@ -185,7 +184,7 @@ impl FnLower<'_, '_> {
     /// caller holds and what the reader made (`held_by_caller`): in read mode, the transfer glue
     /// moves what the reader made and alone holds, counts the objects it did not make (the
     /// caller's, which it held uncounted) once more and keeps them, and copies only what the
-    /// reader made and still shares (velt_rt `velt_rt_xfer_keep_begin`).
+    /// reader made and still shares (std's `xferKeepBegin`).
     pub(in crate::lower) fn reader_keep(&mut self, v: Operand, ty: TyId) -> Operand {
         if self.dead() || !self.cx.transfers(ty) || !self.cx.holds_counted(ty) {
             return v;
@@ -203,9 +202,9 @@ impl FnLower<'_, '_> {
             |_| {},
             |lw| {
                 lw.in_caller_frame(|lw| {
-                    lw.call_rt(Rt::XferKeepBegin, vec![], None);
+                    lw.xfer_keep_begin();
                     lw.call(vir::Callee::Func(f), vec![a], None, false);
-                    lw.call_rt(Rt::XferEnd, vec![], None);
+                    lw.xfer_end();
                 })
             },
         );

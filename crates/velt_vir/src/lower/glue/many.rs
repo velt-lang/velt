@@ -19,7 +19,7 @@
 //! knows it by the pointer's other tag, in a program with a function in `shared(...)` only.
 //!
 //! The strict walk goes through an object once, so a cycle ends: it is a transfer scope with nothing
-//! copied (velt_rt `transfer_map`), each object it reaches recorded as its own copy. It runs no user
+//! copied (std's transfer map), each object it reaches recorded as its own copy. It runs no user
 //! code and is never inside a transfer (the glue that transfers runs user code only with the
 //! transfer suspended, and a caught panic forgets what it left open), so its scope has only its own
 //! objects, and its `end` only forgets them. It ends the scope before it panics. The plain walk runs
@@ -29,7 +29,6 @@ use velt_sema::hir::{TyId, TyKind};
 
 use super::{Glue, SLOT_TRANSFER};
 use crate::lower::operand::proj;
-use crate::lower::rt::Rt;
 use crate::lower::{cint, unit, FnLower, Work};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
@@ -62,7 +61,7 @@ impl FnLower<'_, '_> {
     /// The strict walk's scope ends (module docs).
     pub(super) fn end_walk_scope(&mut self) {
         if self.many_strict {
-            self.call_rt(Rt::XferEnd, vec![], None);
+            self.xfer_end();
         }
     }
 
@@ -79,12 +78,12 @@ impl FnLower<'_, '_> {
             return;
         }
         let found = self.temp(Ty::Ptr);
-        self.call_rt(Rt::XferFind, vec![p.clone()], Some(Place::local(found)));
+        self.xfer_find(p.clone(), Place::local(found));
         let bits = self.cast_to(Operand::Copy(Place::local(found)), Ty::Ptr, Ty::U64);
         // Null: not reached yet. 1: outside a scope, nothing to remember.
         let first = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, bits, cint(1, Ty::U64)));
         self.when(first, done);
-        self.call_rt(Rt::XferRecord, vec![p.clone(), p], None);
+        self.xfer_record(p.clone(), p);
     }
 
     /// The panic of the strict walk for a value of `ty` itself, a lock or an `Atomic`, or a resource
@@ -374,7 +373,7 @@ impl FnLower<'_, '_> {
         self.many_strict = strict;
         if strict {
             self.cx.note_shared_fn();
-            self.call_rt(Rt::XferBegin, vec![], None);
+            self.xfer_begin();
         }
         self.many_check(p, ty);
         self.end_walk_scope();

@@ -1,0 +1,29 @@
+// velt/lang/hooks (internal): the memory of the transfer map (transfer.velt, `#xfer-mem`) in the
+// browser (wasm32-unknown-unknown), which has no C library: the allocator compiled code uses. The
+// WebAssembly runtime has no leak counters, so the block a thread keeps between transfers counts
+// nowhere.
+
+import { addressStore, rawAlloc, rawFree } from "velt/lang/intrinsics";
+
+/** `n` bytes (a multiple of 8) set to 0. */
+export function zeroed(n: usize): usize {
+  const p = rawAlloc(n);
+  for (let i: usize = 0; i < n; i += 8) {
+    // SAFETY: a word of the block just made.
+    unsafe {
+      addressStore<u64>(p + i, 0);
+    }
+  }
+  return p;
+}
+
+/** Gives back the block of `n` bytes `zeroed` made at `p` (0: none). */
+export function release(p: usize, n: usize): void {
+  if (p == 0) {
+    return;
+  }
+  // SAFETY: `p` came from `zeroed(n)` and is not used after.
+  unsafe {
+    rawFree(p, n);
+  }
+}
