@@ -515,22 +515,27 @@ fn a_commit_with_dot_dot_entries_writes_nothing_outside_the_cache() {
         );
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     };
+    // As many `..` as lead from the scratch directory the stand-ins are written in
+    // (`<repository>/.fetch-…/skeleton`) to the test's own directory, so that a stand-in written
+    // there lands in this test's directory, never above it.
+    let repository = checkout_dir(&e.loc, &up.url(), "x", None);
+    let below = repository.parent().unwrap().strip_prefix(&e.root).unwrap();
+    let levels = below.components().count() + 2;
     let mut tree = mktree(format!("100644 blob {blob}\tpackage.json\n"));
     tree = mktree(format!("040000 tree {tree}\tvictim\n"));
-    for _ in 0..12 {
+    for _ in 1..levels {
         tree = mktree(format!("040000 tree {tree}\t..\n"));
     }
     let root = up.git(&["ls-tree", "HEAD"]);
     let root = mktree(format!("{root}\n040000 tree {tree}\t..\n"));
     let commit = up.git(&["commit-tree", &root, "-p", "HEAD", "-m", "dotdot"]);
     up.git(&["update-ref", "refs/heads/main", &commit]);
-    // Where the stand-in would land, twelve directories up from the skeleton and above.
-    let victims: Vec<PathBuf> = e
-        .loc
-        .cache
-        .ancestors()
+    // Where the stand-in would land: the test's directory, and no directory below it.
+    let victims: Vec<PathBuf> = (e.loc.cache.ancestors())
+        .take_while(|dir| dir.starts_with(&e.root))
         .map(|dir| dir.join("victim/package.json"))
         .collect();
+    assert!(victims.contains(&e.root.join("victim/package.json")));
     let app = e.app(&lib_dep(&e));
     let err = e.install(&app, false).unwrap_err();
     assert!(
