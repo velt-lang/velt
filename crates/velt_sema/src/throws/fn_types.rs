@@ -497,13 +497,13 @@ impl Ctx<'_> {
         self.error_union(&ms)
     }
 
-    /// Are the function types written without `throws` in module `module` sites: those of a
-    /// user module, and the traps of std/lang/proxy's `ProxyHandler` (the only function types
-    /// those modules write), so a trap may throw: a proxy operation throws what its trap throws
-    /// (hir_encodings.md "Proxy and Reflect").
+    /// Are the function types written without `throws` in module `module` sites: a user
+    /// module's (not a generated one's: those are its declaration's, #3774), and the traps of
+    /// std/lang/proxy's `ProxyHandler`, so a proxy operation throws what its trap throws.
     pub(super) fn site_module(&self, module: usize) -> bool {
         match self.scopes.get(module) {
             None => false,
+            Some(_) if self.is_generated_module(module) => false,
             Some(s) if s.is_std => self.modules.get(module).is_some_and(|m| {
                 crate::body::expr::proxy::PROXY_MODULES.contains(&m.path.as_str())
             }),

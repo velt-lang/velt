@@ -1,0 +1,21 @@
+replacer_throws_in_throws_fn.velt:27:46: error: the replacer of `JSON.stringify` cannot be a `(string, JsonValue) => JsonValue | undefined throws Error`
+  = note: a replacer function takes `(key: string, value: JsonValue)` and returns `JsonValue | undefined`
+
+replacer_throws_in_throws_fn.velt:34:35: error: the replacer of `JSON.stringify` cannot be a `(string, JsonValue) => JsonValue | undefined throws Error`
+  = note: a replacer function takes `(key: string, value: JsonValue)` and returns `JsonValue | undefined`
+
+replacer_throws_in_throws_fn.velt:11:10: error: `h` throws `TypeError`, which its `throws` clause does not allow
+  replacer_throws_in_throws_fn.velt:10:33: declared here
+  = note: add `TypeError` to the `throws` clause, or catch it
+
+replacer_throws_in_throws_fn.velt:17:10: error: `g` throws `TypeError`, which its `throws` clause does not allow
+  replacer_throws_in_throws_fn.velt:16:33: declared here
+  = note: add `TypeError` to the `throws` clause, or catch it
+
+replacer_throws_in_throws_fn.velt:18:20: error: this function throws `Error`, but the function type it is used as does not allow throwing
+  = note: it is used as `(string, JsonValue) => JsonValue | undefined`
+  = note: catch the error inside the function, or write the function type with `throws Error`
+
+replacer_throws_in_throws_fn.velt:12:20: error: this function throws `Error`, but the function type it is used as does not allow throwing
+  = note: it is used as `(string, JsonValue) => JsonValue | undefined`
+  = note: catch the error inside the function, or write the function type with `throws Error`
