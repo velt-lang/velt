@@ -182,12 +182,12 @@ pub extern "C" fn velt_rt_lk_mode() -> u8 {
 
 /// velt_rt `read_mode::velt_rt_lk_leave`: in a nested read, the bit goes when the reads end.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64, obj: *mut u8, drop: DropGlue) {
+pub unsafe extern "C" fn velt_rt_lk_leave(p: *mut u64, obj: *mut u8, drop: DropGlue, keeps: u8) {
     if READ_DEPTH as u64 > LEAVE_TO || leaving(p) {
         return;
     }
     let unique = *p & (STORED - 1) == 1 && KEPT_UNDER == 0;
-    if unique || (READ_DEPTH <= 1 && crate::transfer_map::velt_rt_xfer_keeps() != 1) {
+    if unique || (READ_DEPTH <= 1 && keeps != 1) {
         *p &= !LOCAL;
         return;
     }

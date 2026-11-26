@@ -347,7 +347,8 @@ impl FnLower<'_, '_> {
 
     /// The object of type `ty` at `p` leaves a `read` callback (transferred out of it): no longer
     /// the reader's own, unless the thread stays in read mode (the result of a `read` nested in
-    /// another, which the outer reader made: velt_rt `velt_rt_lk_leave`).
+    /// another, which the outer reader made: velt_rt `velt_rt_lk_leave`, which is told the kind of
+    /// transfer under way, std's `xferKeeps`).
     pub(super) fn leave_read(&mut self, p: Operand, ty: TyId) {
         if !self.cx.lock_counted(ty) {
             return;
@@ -375,7 +376,10 @@ impl FnLower<'_, '_> {
                 let c = lw.count_addr(p.clone());
                 // Its glue releases the reference a nested reader's store keeps until the reads end.
                 let glue = cfunc(lw.cx.func(Work::Glue(Glue::Drop, ty)));
-                lw.call_rt(Rt::LkLeave, vec![c, p, glue], None);
+                let keeps = lw.temp(Ty::U8);
+                lw.xfer_keeps(Place::local(keeps));
+                let keeps = Operand::Copy(Place::local(keeps));
+                lw.call_rt(Rt::LkLeave, vec![c, p, glue, keeps], None);
                 lw.goto(done);
                 lw.switch_to(done);
             },

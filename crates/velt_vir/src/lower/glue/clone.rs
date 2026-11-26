@@ -265,17 +265,17 @@ impl FnLower<'_, '_> {
             let targs = self.cx.method_targs(m, ty);
             let f = self.cx.func_for_direct(m, targs, self.mode);
             let out = self.temp(Ty::Ptr);
-            // User code runs outside a transfer under way (velt_rt `transfer_map`): its own
+            // User code runs outside a transfer under way (std's transfer map): its own
             // copies are not looked up in the transfer's map.
             let depth = Place::local(self.temp(Ty::U32));
-            self.call_rt(Rt::XferSuspend, vec![], Some(depth.clone()));
+            self.xfer_suspend(depth.clone());
             self.call(
                 vir::Callee::Func(f),
                 vec![this],
                 Some(Place::local(out)),
                 false,
             );
-            self.call_rt(Rt::XferResume, vec![Operand::Copy(depth)], None);
+            self.xfer_resume(Operand::Copy(depth));
             self.terminate(Terminator::Return(Operand::Copy(Place::local(out))));
             return;
         }

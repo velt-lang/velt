@@ -32,6 +32,8 @@
 ../../../bench/stdport/pow_int.velt
 # The string methods in Velt (#2198): trim, repeat, pad, split, replace and the ASCII case mapping.
 ../../../bench/stdport/string_methods.velt
+# The transfer map in Velt (#3584): a graph copied for each of 2,000 tasks.
+../../../bench/stdport/transfer_graph.velt
 #
 # The rest, greedily:
 ../../../tests/std/fetch/server_api.test.velt
