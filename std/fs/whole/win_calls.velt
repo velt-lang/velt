@@ -227,15 +227,28 @@ export function writeAllWin(
   return null;
 }
 
-declare c("c") function SetFilePointerEx(
+declare c("c") function SetFilePointer(
   handle: Ptr<void> | null,
-  distance: i64,
-  newPointer: Ptr<void> | null,
+  distance: i32,
+  distanceHigh: i32[],
   method: u32,
-): i32;
+): u32;
 
-/** Moves `h`'s file pointer to byte `at` from the start: 0, or the Win32 error. */
+/**
+ * Moves `h`'s file pointer to byte `at` (not negative) from the start: 0, or the Win32 error.
+ * `SetFilePointer` takes the position as two 32-bit halves (`SetFilePointerEx` takes a
+ * `LARGE_INTEGER` by value).
+ */
 export function seekTo(h: Ptr<void>, at: i64): u32 {
-  // SAFETY: `h` is open; FILE_BEGIN (0); the new position isn't asked for.
-  return unsafe { SetFilePointerEx(h, at, null, 0) } !== 0 ? 0 : lastWin32();
+  const high: i32[] = [(at >> 32) as i32];
+  const low32: i64 = at & 0xffffffff;
+  // The low half as C's `LONG`: the same 32 bits.
+  const low = (low32 >= 0x80000000 ? low32 - 0x100000000 : low32) as i32;
+  // SAFETY: `h` is open; `high` holds the high half and receives the new one; FILE_BEGIN (0).
+  const got = unsafe { SetFilePointer(h, low, high, 0) };
+  // INVALID_SET_FILE_POINTER is also the low half of a valid position: the last error tells.
+  if (got !== 0xffffffff) {
+    return 0;
+  }
+  return lastWin32();
 }
