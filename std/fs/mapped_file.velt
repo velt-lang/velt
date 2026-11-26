@@ -50,8 +50,10 @@ import { copyOf, MapOptions, Mapping, pinOwner } from "velt/fs/mapped_part";
  * memory of the whole file, and later changes to the file are not seen.
  *
  * Changing the file's bytes while it is mapped changes what the arrays read. Cutting the file
- * short ends the program with a bus-error signal when a cut page is read, without a message,
- * and output it had buffered may be lost: map files nothing else writes.
+ * short ends the program with a bus-error signal when a cut page is read: a line on standard
+ * error says so (on macOS and Linux, unless the program has its own action for that signal), but
+ * nothing can be caught, and output the program had buffered may be lost: map files nothing
+ * else writes.
  */
 export class MappedFile extends MappedBytes {
   // Where `bytes` starts in memory and in the file. A mapping starts at a page of the file,
