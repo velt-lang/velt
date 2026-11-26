@@ -1,0 +1,15 @@
+two thens, at once: o1 t0 a1 b1 t1 t2 t3 t4 t0 t1 t2 t3 t4 t5 t6 t7
+await and then, at once: o2 t0 x2 a2 t1 t2 t3 t4 t0 t1 t2 t3 t4 t5 t6 t7
+alias and promise, at once: o3 t0 a3 A3 b3 W3 t1 t2 t3 t4 t0 t1 t2 t3 t4 t5 t6 t7
+converted twice, at once: o4 t0 S4 s4 t1 t2 t3 t4 t0 t1 t2 t3 t4 t5 t6 t7
+one then, at once: o5 t0 a5 t1 t2 t3 t4 t0 t1 t2 t3 t4 t5 t6 t7
+two thens, in a reaction: t0 o1 t1 a1 b1 t2 t3 t4 t0 t1 t2 t3 t4 t5 t6 t7
+await and then, in a reaction: t0 o2 t1 x2 a2 t2 t3 t4 t0 t1 t2 t3 t4 t5 t6 t7
+alias and promise, in a reaction: t0 o3 t1 a3 A3 b3 W3 t2 t3 t4 t0 t1 t2 t3 t4 t5 t6 t7
+converted twice, in a reaction: t0 o4 t1 S4 s4 t2 t3 t4 t0 t1 t2 t3 t4 t5 t6 t7
+one then, in a reaction: t0 o5 t1 a5 t2 t3 t4 t0 t1 t2 t3 t4 t5 t6 t7
+async function awaiting it: t0 o6 t1 r6 t2 a6 b6 t3 t4 t0 t1 t2 t3 t4 t5 t6 t7
+async function awaiting its own: t0 o9 t1 r9 t2 a9 b9 t3 t4 t0 t1 t2 t3 t4 t5 t6 t7
+async function awaiting its own, one then: t0 o10 t1 r10 t2 a10 t3 t4 t0 t1 t2 t3 t4 t5 t6 t7
+the root awaiting its own: t0 o11 t1 r11 t2 t3 t4 t0 t1 t2 t3 t4 t5 t6 t7
+async generator calls: t0 o7 t1 t2 t3 n7 t4 m8 t5 t0 t1 t2 t3 t4 t5 t6 t7
