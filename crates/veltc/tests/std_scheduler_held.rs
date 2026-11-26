@@ -82,7 +82,16 @@ fn check_paused(name: &str, src: &str, want: &str, runs: usize) {
 /// Runs `exe` at `threads` workers, counted, with `env`, killed after a minute (a lost wake
 /// waits for ever): its exit code (`None` when killed), stdout and stderr.
 fn run(exe: &Path, threads: &str, env: &[(&str, &str)]) -> (Option<i32>, String, String) {
-    let mut child = command(exe)
+    run_command(command(exe), threads, env)
+}
+
+/// [`run`] of a command that runs the program (the program itself, or a wrapper that becomes it).
+fn run_command(
+    mut cmd: std::process::Command,
+    threads: &str,
+    env: &[(&str, &str)],
+) -> (Option<i32>, String, String) {
+    let mut child = cmd
         .env("VELT_THREADS", threads)
         .env("VELT_RT_DEBUG_ALLOC", "1")
         .env("VELT_RC_STATS", "1")
@@ -230,6 +239,43 @@ fn promises_handed_over_pending_and_awaited_or_dropped_there_as_they_finish() {
 #[test]
 fn a_shared_promise_whose_first_waiter_leaves_after_it_finished_still_wakes_the_next() {
     check_paused("away_first_leaves", AWAY_FIRST_LEAVES, "got 30\n", 3);
+}
+
+/// #3845: with fewer cores than workers each turn a pause gives away (`VELT_SCHED_TASK_PAUSE`,
+/// sched_wake_pause.velt) hands the core to another thread for far longer than on an idle machine,
+/// and this program pauses 240 times: 2000 turns each took it past the minute on a loaded 3-core
+/// machine. A pause now ends by the clock too. Here: one core for 8 workers and five times the
+/// turns, which is minutes without that bound and seconds with it. Linux only: `taskset` pins it.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_paused_program_ends_in_time_with_one_core_for_its_workers() {
+    let Some(cpu) = first_allowed_cpu() else {
+        return;
+    };
+    if command("taskset").arg("--version").output().is_err() {
+        return;
+    }
+    runtime_support::build_native_runtime(manifest());
+    let dir = test_dir::TestDir::new();
+    let exe = build_std(dir.path(), "away_one_core", AWAY_FIRST_LEAVES);
+    let mut pinned = command("taskset");
+    pinned.arg("-c").arg(&cpu).arg(&exe);
+    let (code, out, err) = run_command(pinned, "8", &[("VELT_SCHED_TASK_PAUSE", "10000")]);
+    assert!(
+        code == Some(0) && out == "got 30\n" && all_freed(&err),
+        "pinned to cpu {cpu}: exit {code:?}, stdout {out:?}, stderr {err}"
+    );
+}
+
+/// The first CPU this process may run on (`Cpus_allowed_list` of /proc/self/status).
+#[cfg(target_os = "linux")]
+fn first_allowed_cpu() -> Option<String> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let list = status
+        .lines()
+        .find_map(|l| l.strip_prefix("Cpus_allowed_list:"))?;
+    let first = list.trim().split([',', '-']).next()?;
+    (!first.is_empty()).then(|| first.to_string())
 }
 
 /// The program of [`a_task_holding_a_promise_that_finished_unawaited_is_found_parked_for_ever`].
