@@ -22,7 +22,7 @@
 // - `sleep`: a future that keeps its deadline until a worker first polls it.
 // - Node timers: sched_foreign_timer.velt.
 // A promise of such a thread is the executor's node (sched_node.velt), its owner on this thread:
-// its drop takes the atomic path (sched_node_await.velt `ownSide`).
+// its drop takes the atomic path (sched_node.velt `nodeDrop`).
 
 import {
   exportedAddress,

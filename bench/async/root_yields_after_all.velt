@@ -1,0 +1,19 @@
+// 200,000 awaited yields of `main`'s root after an inline `Promise.all` of yielding children gave
+// its task a yield block (#3687): once the list is empty the block is parked, and each yield takes
+// the no-block path again (no record).
+async function yields(n: number): Promise<number> {
+  for (let i = 0; i < n; i++) {
+    await yieldNow();
+  }
+  return n;
+}
+
+async function main() {
+  await Promise.all([yields(1), yields(1)]);
+  let n = 0;
+  for (let i = 0; i < 200000; i++) {
+    await yieldNow();
+    n++;
+  }
+  console.log(n);
+}

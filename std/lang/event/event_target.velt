@@ -184,12 +184,13 @@ export class EventTarget implements Target {
    * event that is being dispatched throws.
    */
   dispatchEvent(event: Event): boolean throws Error {
+    // The type is read through its getter, which a subclass may override, as Node reads it.
     if (event.dispatching) {
-      throw new Error(`The event "${event.kind}" is already being dispatched`);
+      throw new Error(`The event "${event.type}" is already being dispatched`);
     }
     event.targetNow = this;
     event.dispatching = true;
-    const head = this.lists.get(event.kind);
+    const head = this.lists.get(event.type);
     if (head === undefined || head.next === null) {
       event.dispatching = false;
       return !event.defaultPrevented;

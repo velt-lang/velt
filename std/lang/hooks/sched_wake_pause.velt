@@ -1,8 +1,17 @@
-// velt/lang/hooks (internal): a knob for tests only, with the block counters on (#3487):
-// `VELT_SCHED_WAKE_PAUSE=<n>` gives the core away `n` times right after every wake that queues a
-// task or marks it notified (sched_wake.velt `wake`, sched_wake_away.velt `wakeAway`), whichever
-// order a wake by value takes, so the woken task runs, and parks, inside the window a busy machine
-// opens there now and then before a reference given back after the wake goes.
+// velt/lang/hooks (internal): knobs for tests only, with the block counters on, that hold open
+// windows a busy machine opens now and then, so each run of a test goes through them:
+// - `VELT_SCHED_WAKE_PAUSE=<n>` (#3487) gives the core away `n` times right after every wake that
+//   queues a task or marks it notified (sched_wake.velt `wake`, sched_wake_away.velt `wakeAway`),
+//   whichever order a wake by value takes, so the woken task runs, and parks, before a reference
+//   given back after the wake goes; and in a wake by value from another thread between its flag
+//   test and its reference to the task (sched_node_wake.velt `wakeAway`).
+// - `VELT_SCHED_TASK_PAUSE=<n>` (#3498) gives the core away `n` times where an owner that may run
+//   off a started node's task, having read the node unfinished, is about to read the node's task:
+//   as it stores its waker (sched_node_await.velt `awaitWith`, after sched_node.velt `pollNode` or
+//   a shared promise's hub, sched_share_away.velt `watch`) and as it drops the node
+//   (sched_node.velt `nodeDrop`).
+//   The node finishes on its task meanwhile and lets go of it (sched_node_done.velt), and the
+//   owner finds task 0 with stale flags.
 
 import { inline, noInline } from "velt/lang/intrinsics";
 import { processEnv } from "./process";
@@ -12,14 +21,18 @@ import * as wk from "./sched_wake";
 /** The turns to give away after such a wake; 0: none. */
 const PAUSE = new Atomic<u64>(0);
 
-/** Reads `VELT_SCHED_WAKE_PAUSE` (sched_wake.velt `countWakes`, as the counters start). */
+/** The turns to give away before such a read of a node's task; 0: none. */
+const TASK_PAUSE = new Atomic<u64>(0);
+
+/** Reads the knobs (sched_wake.velt `countWakes`, as the counters start). */
 export function read(): void {
-  PAUSE.store(asked(), "relaxed");
+  PAUSE.store(asked("VELT_SCHED_WAKE_PAUSE"), "relaxed");
+  TASK_PAUSE.store(asked("VELT_SCHED_TASK_PAUSE"), "relaxed");
 }
 
-/** `VELT_SCHED_WAKE_PAUSE`, at most 100000; 0 when unset or not a number. */
-function asked(): u64 {
-  const v = processEnv("VELT_SCHED_WAKE_PAUSE");
+/** Environment variable `name`, at most 100000; 0 when unset or not a number. */
+function asked(name: string): u64 {
+  const v = processEnv(name);
   if (v === undefined) {
     return 0;
   }
@@ -40,14 +53,55 @@ function asked(): u64 {
 @inline("always")
 export function afterWake(): void {
   if (wk.counting()) {
-    pause();
+    pause(PAUSE.load("relaxed"));
   }
 }
 
+/**
+ * A wake by value of a node, from another thread, read the node's task and is about to take a
+ * reference to it (sched_node_wake.velt `wakeAway`): a finish of the node on its task in between
+ * must not have let go of the task while this waker's reference was out (sched_node_done.velt).
+ */
+@inline("always")
+export function beforeTaskRef(): void {
+  if (wk.counting()) {
+    pause(PAUSE.load("relaxed"));
+  }
+}
+
+/**
+ * An owner that may run off a started node's task read the node unfinished and is about to read
+ * its task (module docs), the counters on (its callers test them, out of their common path).
+ */
+export function taskRead(): void {
+  pause(TASK_PAUSE.load("relaxed"));
+}
+
+/**
+ * The longest a pause lasts, in nanoseconds per turn asked for. A turn takes a few microseconds
+ * when nothing else wants the core, so a pause on an idle machine gives all its turns. On a busy
+ * one (more workers than cores, other processes) each turn hands the core to someone else for far
+ * longer, the window is as open after a few of them, and a program that pauses hundreds of times
+ * would not end in a test's time (#3845: 480,000 turns in one run, over a minute on three cores).
+ */
+const TURN_NS: u64 = 5000;
+
+/** Gives the core away `n` times, or until `n` turns' time (`TURN_NS`) has passed. */
 @noInline
-function pause(): void {
-  const n = PAUSE.load("relaxed");
+function pause(n: u64): void {
+  if (n === 0) {
+    return;
+  }
+  const end = now() + n * TURN_NS;
   for (let i: u64 = 0; i < n; i++) {
     m.yieldCore();
+    if (now() >= end) {
+      return;
+    }
   }
+}
+
+/** The monotonic clock, in nanoseconds since the process started. */
+function now(): u64 {
+  return (performance.now() * 1000000.0) as u64;
 }

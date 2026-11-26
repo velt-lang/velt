@@ -1,0 +1,2 @@
+error: method `join` cannot be used as a function value
+wrap it in an arrow function: `(...parts) => j.join(...parts)`
