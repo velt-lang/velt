@@ -1,14 +1,14 @@
-//! TCP listeners and streams over tokio.
+//! TCP streams over tokio, which only an OS without the executor's reactor reaches, and the
+//! listening socket `velt dev`'s supervisor hands over, which std registers with the reactor.
 //!
-//! Handles are keys into handle tables (`crate::registry`): an in-flight `accept`/`read`/`write`
-//! future holds its own `Arc`, so generated code may close a handle at any time without
-//! dangling futures (the socket is released once the last in-flight operation finishes or is
-//! dropped), and using a closed handle through any copy of the Velt struct fails with `EBADF`.
-//! One task can read while another writes. The object behind a stream handle is in `stream.rs`:
-//! a raw socket, or a stream set up by its first operation (TLS, an upgraded HTTP connection).
+//! Handles are keys into handle tables (`crate::registry`): an in-flight `read`/`write` future
+//! holds its own `Arc`, so generated code may close a handle at any time without dangling futures
+//! (the socket is released once the last in-flight operation finishes or is dropped), and using a
+//! closed handle through any copy of the Velt struct fails with `EBADF`. One task can read while
+//! another writes. The object behind a stream handle is in `stream.rs`.
 
 use super::stream::{StreamObj, Writing};
-use super::sys::{TcpListener, TcpStream};
+use super::sys::TcpStream;
 use crate::bytes::VeltBytes;
 use crate::registry::{closed_error, Key, Registry};
 use crate::result::{IoResult, VeltErr};
@@ -16,53 +16,13 @@ use crate::str::VeltStr;
 use crate::task::leaf::new_leaf;
 use crate::task::VeltFut;
 use std::io;
-use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::sync::Notify;
 
 /// Default chunk size for `read()` / `readString()` without an explicit maximum.
 pub const DEFAULT_READ: u64 = 64 * 1024;
 
-/// A listening socket.
-pub struct ListenerObj {
-    listener: TcpListener,
-    /// Set by `close()`, which also wakes the accepts waiting then: they fail with `EBADF`
-    /// instead of waiting for a connection that keeps the socket bound and the process alive.
-    closed: AtomicBool,
-    closing: Notify,
-}
-
-impl ListenerObj {
-    fn new(listener: TcpListener) -> ListenerObj {
-        ListenerObj {
-            listener,
-            closed: AtomicBool::new(false),
-            closing: Notify::new(),
-        }
-    }
-
-    /// The next connection, or `None` once the listener is closed.
-    async fn accept(&self) -> Option<io::Result<(TcpStream, std::net::SocketAddr)>> {
-        let closing = self.closing.notified();
-        let mut closing = std::pin::pin!(closing);
-        // Registered before the check: a close in between still wakes it.
-        closing.as_mut().enable();
-        if self.closed.load(Ordering::Acquire) {
-            return None;
-        }
-        let accept = std::pin::pin!(self.listener.accept());
-        match futures_util::future::select(closing, accept).await {
-            futures_util::future::Either::Left(_) => None,
-            futures_util::future::Either::Right((r, _)) => Some(r),
-        }
-    }
-}
-
-/// Opaque listener handle.
-pub type ListenerHandle = Key<ListenerObj>;
 /// Opaque stream handle.
 pub type StreamHandle = Key<StreamObj>;
 
-static LISTENERS: Registry<ListenerObj> = Registry::new();
 pub(crate) static STREAMS: Registry<StreamObj> = Registry::new();
 
 /// Owned text of a string argument (copied: async operations outlive the call).
@@ -75,44 +35,20 @@ fn stream_result(r: io::Result<TcpStream>) -> IoResult<StreamHandle> {
     IoResult::from_io(r, |stream| STREAMS.insert(StreamObj::tcp(stream)))
 }
 
-/// `listen("host:port")` → result slot `IoResult<ListenerHandle>`. Port 0 picks a free port.
+/// `listen("host:port")` under `velt dev` → result slot `IoResult<u64>`: the listening socket the
+/// supervisor hands over (a non-blocking descriptor, or a `SOCKET` on Windows), which the caller
+/// owns and registers with the executor's reactor (std/net/tcp_sched.velt). Port 0 picks a free
+/// port.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_listen(addr: *const VeltStr) -> *mut VeltFut {
     let addr = text_arg(addr);
     new_leaf(async move {
-        let r = crate::dev::bind(addr.as_str()).await;
-        IoResult::from_io(r, |listener| LISTENERS.insert(ListenerObj::new(listener)))
-    })
-}
-
-/// `listener.port`: the bound local port (the real one after listening on port 0); 0 on error
-/// or once closed.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_tcp_listener_port(l: ListenerHandle) -> u32 {
-    LISTENERS
-        .get(l)
-        .and_then(|o| o.listener.local_addr().ok())
-        .map_or(0, |a| a.port() as u32)
-}
-
-/// Release a listener handle (closing it again is a no-op).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_tcp_listener_close(l: ListenerHandle) {
-    if let Some(obj) = LISTENERS.remove(l) {
-        obj.closed.store(true, Ordering::Release);
-        obj.closing.notify_waiters();
-    }
-}
-
-/// `accept()` → `IoResult<StreamHandle>` (TCP_NODELAY enabled).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_tcp_accept(l: ListenerHandle) -> *mut VeltFut {
-    LISTENERS.op::<StreamHandle>(l, |obj| {
-        new_leaf(async move {
-            let Some(accepted) = obj.accept().await else {
-                return IoResult::err(closed_error());
-            };
-            stream_result(accepted.map(|(s, _)| s))
+        IoResult::from_io(crate::dev::bind(addr.as_str()).await, |l| {
+            #[cfg(unix)]
+            let raw = std::os::fd::IntoRawFd::into_raw_fd(l) as u64;
+            #[cfg(windows)]
+            let raw = std::os::windows::io::IntoRawSocket::into_raw_socket(l);
+            raw
         })
     })
 }
