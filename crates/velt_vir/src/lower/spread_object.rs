@@ -1,11 +1,11 @@
-//! `Intrinsic::SpreadObject` (#350; hir_encodings.md "Spreads in generic bodies"): an object
-//! literal that spreads a value whose fields are known only per instantiation (`{ ...t, $set }`
-//! with `t: T`). Its type is the deferred `TyOp::Spread`, which sema reduced at this
-//! instantiation to the object type JavaScript's spread builds. Each part is a place of a
-//! concrete object type (a spread source, or a temporary holding a run of explicit properties);
-//! each field of the result is shared from the last part that has a field of that name, and an
-//! optional field (which sema allows only from one part) keeps that part's presence. A class's
-//! optional field is always present (an own property holding `undefined` until set).
+//! `Intrinsic::SpreadObject` (#350; hir_encodings.md "Spreads and conversions in generic
+//! bodies"): an object literal that spreads a value whose fields are known only per
+//! instantiation (`{ ...t, $set }` with `t: T`). Its type is the deferred `TyOp::Spread`, which
+//! sema reduced at this instantiation to the object type JavaScript's spread builds. Each part is
+//! a place of a concrete object type (a spread source, or a temporary holding a run of explicit
+//! properties); each field of the result is shared from the last part that has a field of that
+//! name, and an optional field (which sema allows only from one part) keeps that part's presence.
+//! A class's optional field is always present (an own property holding `undefined` until set).
 
 use velt_sema::hir::{self, LitValue, Nothing, TyId, TyKind};
 
@@ -352,7 +352,7 @@ impl FnLower<'_, '_> {
     /// union (`T[K]`): the value is evaluated once, and the field the key names takes the
     /// value's member, checked: a member of another type stops the program with a `TypeError`,
     /// where TypeScript would store a value of the wrong type
-    /// (docs/internals/design/deferred-types.md, decision 4).
+    /// (docs/internals/design/deferred-types.md "Values of deferred types in a generic body").
     fn key_write_checked(
         &mut self,
         object: &hir::Expr,
@@ -511,8 +511,8 @@ impl FnLower<'_, '_> {
     /// field type `to` of the field `name` names (`` `s` (string | null) ``): a nothing is the
     /// field's same nothing, a member of the field's type is its payload, and a member of
     /// another type, or a nothing the field cannot hold, stops the program with a `TypeError`
-    /// (decision 4). A `T | null | undefined` is an option of a `T | null` (`Cx::kind`), taken
-    /// one option at a time.
+    /// (as in `key_write_checked`). A `T | null | undefined` is an option of a `T | null`
+    /// (`Cx::kind`), taken one option at a time.
     fn key_store_value(&mut self, src: &Place, from: TyId, to: TyId, name: &str) -> Operand {
         if from == to {
             return Operand::Copy(src.clone());

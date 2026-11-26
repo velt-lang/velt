@@ -1,7 +1,7 @@
-//! The type model a generator reads (docs/internals/design/source-generators.md §4): a closed,
-//! read-only description of the types a request reaches, with types referring to each other by
-//! index so that recursive types are a graph. `velt/generate` (std/generate) declares the same
-//! model as Velt classes; the driver sends it to the generator host.
+//! The type model a generator reads (docs/internals/design/source-generators.md "The type
+//! model"): a closed, read-only description of the types a request reaches, with types referring
+//! to each other by index so that recursive types are a graph. `velt/generate` (std/generate)
+//! declares the same model as Velt classes; the driver sends it to the generator host.
 
 use rustc_hash::FxHashMap;
 use velt_common::Span;
@@ -562,7 +562,7 @@ impl Model {
     /// A fingerprint of what a request for type arguments `roots` reads: the types they reach,
     /// renumbered in the order a walk from `roots` meets them, without positions (`at`), so it is
     /// the same in any model that holds them and changes when any of them does
-    /// (docs/internals/design/source-generators.md §9, the offered modules). `extra` is mixed in
+    /// (docs/internals/design/source-generators.md "Caching", the offers). `extra` is mixed in
     /// (the generated function's signature).
     pub fn fingerprint(&self, roots: &[u32], extra: &str) -> String {
         let order = self.canonical_order(roots);

@@ -375,10 +375,10 @@ impl FnLower<'_, '_> {
         self.assign(proj(p, Proj::Field(2)), Rvalue::Use(w2));
     }
 
-    /// `b.append("text")` on a `StringBuilder` (string-building.md step 2, #1677): literal ASCII
-    /// text appended with the builder's fast path inline, as `JSON.stringify`'s glue appends its
-    /// literal text ([`Self::push_ascii_inline`] says why a shared buffer needs no count check). `None`: not such a call
-    /// (it is compiled as written).
+    /// `b.append("text")` on a `StringBuilder` (string-building.md "Inline appends", #1677):
+    /// literal ASCII text appended with the builder's fast path inline, as `JSON.stringify`'s glue
+    /// appends its literal text ([`Self::push_ascii_inline`] says why a shared buffer needs no
+    /// count check). `None`: not such a call (it is compiled as written).
     pub(super) fn builder_append_literal(
         &mut self,
         name: &str,

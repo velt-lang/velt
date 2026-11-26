@@ -1,8 +1,8 @@
 //! `declare c struct`s checked against their library's C headers (#2187 layer 4,
-//! docs/internals/design/c-ffi.md "As built" 13): each struct a declaration reaches must be one
-//! the headers define, with the same fields by name and type, and clang's own size, alignment
-//! and offsets. These tests need `VELT_ZIG` as tests/c_headers.rs's do; the comparison of a
-//! field's type is unit-tested in `native::headers`.
+//! docs/internals/design/c-ffi.md "Checking declarations against C headers"): each struct a
+//! declaration reaches must be one the headers define, with the same fields by name and type,
+//! and clang's own size, alignment and offsets. These tests need `VELT_ZIG` as
+//! tests/c_headers.rs's do; the comparison of a field's type is unit-tested in `native::headers`.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
