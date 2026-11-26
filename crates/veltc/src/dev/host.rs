@@ -42,15 +42,7 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
     let mut sess = Session::new();
     sess.show_details = args.build.timings;
     sess.verbose = args.build.verbose;
-    let natives = match super::native::jit_symbols(opts.packages.as_ref()) {
-        Ok(natives) => natives,
-        Err(msg) => {
-            crate::style::error(&msg);
-            return ExitCode::from(1);
-        }
-    };
-    let mut symbols = velt_rt_host::abi_symbols::symbol_table();
-    symbols.extend(natives.iter().map(|(n, a)| (n.as_str(), *a as *const u8)));
+    let symbols = velt_rt_host::abi_symbols::symbol_table();
     let mut session = DevSession::new(&symbols);
     // Lowering's counted types, carried from each version to the next (dev-warm-front-end.md).
     sess.counted_seed = Some(velt_vir::CountedSeed::default());

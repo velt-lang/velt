@@ -23,9 +23,9 @@ export const pkg: Package = {
     "@app/*": "src/*",          // "@app/util" → src/util.velt or src/util/index.velt
     "@config": "src/config",    // exact alias
   },
-  native: {                     // optional: a Rust crate or C libraries (`c`)
-    path: "native",             // the crate's directory, one name in the package root (default)
-    targets: ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"],  // published prebuilt
+  native: {                     // optional: the C libraries of `declare c` functions
+    c: { tiny: { sources: ["native/tiny.c"], headers: ["native/tiny.h"] } },
+    targets: ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"],  // `sources` published prebuilt
   },
   tsCompat: ["src/models"],     // optional: folders kept TypeScript-compatible
   lint: { perf: "warn" },       // optional: how loud the lint rules are
@@ -82,8 +82,8 @@ talk to hosts the checkout names); `$VELT_REGISTRY` is always asked.
   cannot be installed or served, and the error says its author must publish a new version
   (`vpm::manifest::legacy::REPUBLISH`).
 - `velt manifest --json` prints the validated manifest as JSON in this shape, with the defaults
-  filled in (`entry`, `dependencies: {}`, `paths: {}`, and `native.path`/`targets`/`wasm` when
-  `native` has a crate); the other fields are printed only when present.
+  filled in (`entry`, `dependencies: {}`, `paths: {}`); the other fields are printed only when
+  present.
 
 ## Scoped names
 - `name` and the keys of `dependencies` may be scoped, `@scope/name`, each part lowercase
@@ -348,8 +348,8 @@ package directory inside it, which the record would still vouch for.
 - `name` (`vpm::manifest::is_valid_package_name`): a lowercase letter, then lowercase letters,
   digits, `-` and `_`, with words joined by single `-` or `_` (never two in a row, nor at the
   end). `std` and `velt`, Windows device names (`con`, `nul`, `com1`, …) and names whose first
-  word is `rt`, `sig` or `native` are reserved ([native_abi.md](native_abi.md) "Calls from Velt
-  into the library").
+  word is `rt`, `sig` or `native` are reserved (`velt_rt_`, `velt_sig_` and `velt_native_`
+  were Velt's own symbols next to a package's `velt_<package>__` ones).
 - `import ... from "json"` / `"json/sub"` resolve through `dependencies`; `"velt/x"` and `"./x"`
   never do.
 - `paths`: a bare specifier matching a pattern resolves to the target, relative to the package
@@ -558,8 +558,8 @@ registry: "https://registry.example.com",
 - Index entries carry the version's `"description"` and `"keywords"` after
   `"checksum"` (omitted when absent), taken from the published `package.velt`, also by the server
   from the uploaded archive (never from request headers).
-- Archives (`vpm::archive`) carry `package.velt` + `src/**` (+ `c-headers.json`, + the `native`
-  crate directory or, for C `sources`, `native/`, without `target/` and `.git/`); an archive with
+- Archives (`vpm::archive`) carry `package.velt` + `src/**` (+ `c-headers.json`, + for C
+  `sources`, `native/`, without `target/` and `.git/`); an archive with
   any other path, such as a `velt.toml`, is rejected. Their checksum is the same content hash
   `velt.lock.json` records, and every download is verified against it before it enters the cache.
 - `https://` uses rustls (`velt_http::tls`) with Mozilla's roots (`webpki-roots`) plus the PEM
@@ -620,15 +620,15 @@ lint: { perf: "warn", rules: { "perf/number-double": "off", "ts-compat/default-s
 
 ## Native libraries
 Contract: [native_abi.md](native_abi.md).
-- `native`: `path` (default `"native"`, a directory name in the package root, not `src` or
-  `target`), `targets` (triples from `vpm::manifest::NATIVE_TARGETS`: x86_64/aarch64 Linux GNU,
-  macOS and Windows MSVC), `wasm` (must be `false`: WebAssembly libraries are not supported).
+- `native`: `c` (required) and `targets` (triples from `vpm::manifest::NATIVE_TARGETS`:
+  x86_64/aarch64 Linux GNU, macOS and Windows MSVC; only with `sources`, which is what `velt
+  publish` builds with the pinned zig). `path` and `wasm`, and a `native` without `c`, were a
+  Rust crate's library (the old native ABI, removed in #2563): an error saying to use `declare c`.
 - `native.c.<library>` (c-ffi.md "Where libraries come from"): `system`, `headers`, `unchecked`,
   and `sources` (`.c` files under `native/`; not with `system`) with `defines` (macro → value).
-  With `sources`, `native` has only `c` and `targets`, which is what `velt publish` builds with
-  the pinned zig; `path` and `wasm` are a crate's, an error next to them. A library's own headers
-  are then under `native/`, all of which the package ships.
-- Index entries gain `"native_abi": <n>` and `"native": { "<triple>": "sha256:…" }`. A published
+  A library's own headers are then under `native/`, all of which the package ships.
+- Index entries gain `"native_abi": 0` and `"native": { "<triple>": "sha256:…" }` (an ABI above
+  0 was a Rust crate's library, refused before download). A published
   target is never replaced; a target may be **added** to a published version
   (`velt publish --native-only`). `velt publish` requires a bundle for every listed target.
 - Local registry: `<registry>/<name>/<version>.native/<triple>/`. Remote:

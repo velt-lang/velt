@@ -219,7 +219,6 @@ fn link_key(
             file.hash(&mut h);
             file.and_then(|f| file_stamp(f)).hash(&mut h);
         }
-        n.system_libs.hash(&mut h);
     }
     c_libs.hash(&mut h);
     linker.hash(&mut h);
@@ -286,7 +285,6 @@ mod tests {
             shared: rt.clone(),
             import_lib: None,
             static_obj: None,
-            system_libs: vec![],
         }];
         assert_ne!(
             key,

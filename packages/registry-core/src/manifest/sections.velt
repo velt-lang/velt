@@ -16,7 +16,6 @@ import {
   checkImportKey,
   checkImportTarget,
   checkModuleFile,
-  checkNativePath,
   checkNativeTarget,
   checkScaffold,
 } from "./checks";
@@ -141,21 +140,24 @@ export function decodeHost(p: Problems, v: Data): HostConfig | null {
   return config;
 }
 
-/** `native`: the package's native crate. */
+/**
+ * `native`: the package's C libraries. registry-core does not read `native.c` yet (a key it
+ * doesn't know), so every `native` object is refused here; a Rust crate's keys (the old native
+ * ABI, velt-lang/velt#2563) and an object without `c` as vpm refuses them.
+ */
 export function decodeNative(p: Problems, v: Data): NativeConfig | null {
   if (!p.object(v, "`native`")) {
     return null;
   }
-  const config: NativeConfig = { path: "native", targets: [], wasm: false };
+  const config: NativeConfig = { targets: [] };
+  let c = false;
   for (let i = 0; i < v.keys.length; i++) {
     const key = v.keys[i];
     const value = v.items[i];
-    if (key == "path") {
-      const s = p.string(value, "path");
-      if (s != null) {
-        p.check(checkNativePath(s));
-        config.path = s;
-      }
+    if (key == "path" || key == "wasm") {
+      p.problems.push(
+        `\`native.${key}\` was a Rust crate's, and velt no longer builds Rust crates: declare the package's C functions with \`declare c\` and their libraries in \`native.c\``,
+      );
     } else if (key == "targets") {
       if (value.kind != DataKind.Array) {
         p.problems.push(`\`targets\` must be an array, not ${value.describe()}`);
@@ -172,21 +174,15 @@ export function decodeNative(p: Problems, v: Data): NativeConfig | null {
         }
       }
       config.targets = targets;
-    } else if (key == "wasm") {
-      if (value.kind == DataKind.Bool) {
-        if (value.bool) {
-          p.problems.push(
-            "`wasm: true` is not supported yet: packages with native code cannot target WebAssembly",
-          );
-        }
-        config.wasm = value.bool;
-      } else {
-        p.problems.push(`\`wasm\` must be a boolean, not ${value.describe()}`);
-        config.wasm = false;
-      }
     } else {
+      c = c || key == "c";
       p.unknown(key);
     }
+  }
+  if (!c) {
+    p.problems.push(
+      "`native` has no `c`: a package's native code is C libraries, declared with `declare c` and listed in `native.c` (a Rust crate's library is no longer supported)",
+    );
   }
   return config;
 }

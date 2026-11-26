@@ -1,5 +1,5 @@
-// Only a package's own native library may be declared: a plain dependency's `declare function`
-// is an error, even though this program never declares anything itself.
+// A dependency's plain `declare function` is an error (only `declare c` declares native code
+// outside std), even though this program never declares anything itself.
 import { copy } from "plain";
 
 function main() {

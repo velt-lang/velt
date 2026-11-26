@@ -13,7 +13,7 @@
 //!       "version": "1.0.0",
 //!       "checksum": "sha256:…",
 //!       "dependencies": { "util": "^0.2" },
-//!       "native_abi": 1,
+//!       "native_abi": 0,
 //!       "native": { "x86_64-unknown-linux-gnu": "sha256:…" }
 //!     }
 //!   ]
@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 use crate::contents;
 use crate::locations::Locations;
 use crate::manifest::Manifest;
-use crate::native::{bundle, NativeMeta, NATIVE_ABI};
+use crate::native::{bundle, NativeMeta};
 
 /// File name of a package's index inside the registry.
 pub const INDEX_FILE: &str = "index.json";
@@ -66,7 +66,8 @@ pub struct IndexEntry {
     /// Dependency name → semver requirement.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub dependencies: BTreeMap<String, String>,
-    /// The runtime table version its native libraries need (packages with native code).
+    /// The native ABI its libraries need (packages with native code): 0, C libraries; more was a
+    /// Rust crate's (the old native ABI), which velt no longer installs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_abi: Option<u32>,
     /// Target triple → checksum of the prebuilt native bundle ([`bundle::checksum`]).
@@ -228,16 +229,6 @@ pub fn publish_with_native(
     let manifest = Manifest::from_dir(root)?;
     let loc = &loc.clone().for_package(root, &manifest)?;
     check_bundles(&manifest, bundles)?;
-    if let Some(native) = &manifest.native {
-        let lock = root.join(&native.path).join("Cargo.lock");
-        if !lock.is_file() {
-            return Err(format!(
-                "cannot publish `{}`: `{}` is missing (commit the native crate's lockfile: builds from source use exactly it)",
-                manifest.package.name,
-                lock.display()
-            ));
-        }
-    }
     if manifest.has_bundles() {
         let targets = manifest.bundle_targets();
         let missing: Vec<&String> = targets
@@ -310,12 +301,6 @@ fn check_bundles(manifest: &Manifest, bundles: &BTreeMap<String, PathBuf>) -> Re
         );
         bundle::check_meta(&meta, id, &bundle::list_files(dir)?, &what)?;
         crate::native::c_build::check_has_libraries(manifest, &meta, &what)?;
-        if meta.abi > NATIVE_ABI {
-            return Err(format!(
-                "{what} needs native ABI {}; this velt provides {NATIVE_ABI}",
-                meta.abi
-            ));
-        }
     }
     Ok(())
 }

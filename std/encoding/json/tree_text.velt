@@ -202,9 +202,8 @@ export function writeTree(out: string, tree: JsonTree): void {
 }
 
 /**
- * `writeTree`'s byte buffer (also the rows reader's, rows_text.velt): `n` bytes of `buf` written,
- * `extra` of them beyond their UTF-16 units (non-ASCII text copied in), and the last byte written
- * (to tell an object's first member). Handed to a string builder in chunks (`flush`); a caller
+ * `writeTree`'s byte buffer: `n` bytes of `buf` written, `extra` of them beyond their UTF-16
+ * units (non-ASCII text copied in), and the last byte written (to tell an object's first member). Handed to a string builder in chunks (`flush`); a caller
  * flushes once `n` passes `OUT_CAP` (every write but `text` needs at most `OUT_ROOM` bytes).
  */
 export class TreeWriter {
