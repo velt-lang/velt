@@ -1,0 +1,110 @@
+// velt/lang/hooks (tests): a poll whose only jobs are its yields' turns, the first its root's
+// (sched_run.velt `turnsPoll`, #3781), is not taken by a task with another job. Each case leaves a
+// task's root with a turn placed and a record listed (two children of an inline `Promise.all` that
+// yield) and one more job for its next poll, which comes first:
+// - a stored yield made in the poll: the next one begins a yield generation, so the stored yield's
+//   turn has passed when it is awaited;
+// - a sleep due: it fires before the yields' turns, as Node's timers phase comes before its check
+//   phase;
+// - the module lock: a task that touched module state takes it when its poll begins.
+// And such a poll's end gives back the module lock its root took meanwhile.
+import { describe, expect, it } from "velt/test";
+import * as m from "velt/lang/hooks/sched_mem";
+import { holds, IN_POLL, NOT_HELD, touch } from "velt/lang/hooks/sched_module";
+import * as sl from "velt/lang/hooks/sched_sleep";
+import * as t from "velt/lang/hooks/sched_task";
+
+describe("a poll of the root's turns alone", () => {
+  it("is not taken after a stored yield was made: its turn has passed by then", async () => {
+    const order = await spawn(async (): Promise<string> => {
+      const log: string[] = [];
+      const stored = yieldNow();
+      const first = async (): Promise<void> => {
+        await yieldNow();
+        // Made in the poll before this one: ready at once.
+        await stored;
+        log.push("a");
+      };
+      const second = async (): Promise<void> => {
+        await yieldNow();
+        log.push("b");
+        await yieldNow();
+        log.push("c");
+      };
+      await Promise.all([first(), second()]);
+      return log.join(",");
+    });
+    expect(order).toBe("a,b,c");
+  });
+
+  it("is not taken with a sleep due: it fires before the yields' turns", async () => {
+    const order = await spawn(async (): Promise<string> => {
+      const log: string[] = [];
+      const k = m.ld(t.here() + t.E_CURRENT);
+      // A started promise of the task: its sleep fires only at its turn (the root polls no sleep
+      // that would fire itself).
+      const sleeps = (async (): Promise<void> => {
+        // timing: a sleep has to exist; `first` makes it due itself, no wait decides the order.
+        await sleep(1);
+        log.push("s");
+      })();
+      const first = async (): Promise<void> => {
+        // The sleep comes due and joins the task's due list (flag `TIMED`) in this poll, as the
+        // worker's look between two polls moves it: no wait on the clock decides the order.
+        const timers = m.ld(t.here() + t.E_TIMERS);
+        while (m.ld(k + t.T_TIMERS) === 0) {
+          sl.expire(timers, sl.clock());
+        }
+        await yieldNow();
+        log.push("a");
+      };
+      const second = async (): Promise<void> => {
+        await yieldNow();
+        log.push("b");
+      };
+      await Promise.all([first(), second()]);
+      await sleeps;
+      return log.join(",");
+    });
+    expect(order).toBe("s,a,b");
+  });
+
+  it("is not taken by a task that touched module state: it takes the lock first", async () => {
+    const seen = await spawn(async (): Promise<u32> => {
+      touch();
+      const yields = async (): Promise<void> => {
+        await yieldNow();
+      };
+      await Promise.all([yields(), yields()]);
+      // The poll after the one that touched: the lock is held for it.
+      return holds();
+    });
+    expect(seen).toBe(IN_POLL);
+  });
+
+  it("gives the module lock it took back at its end, with yields listed again", async () => {
+    const seen = await spawn(async (): Promise<u32> => {
+      const toucher = spawn(async (): Promise<void> => {
+        const touches = async (): Promise<void> => {
+          await yieldNow();
+          // In the task's second poll, its turns' own.
+          touch();
+          await yieldNow();
+        };
+        const yields = async (): Promise<void> => {
+          await yieldNow();
+          await yieldNow();
+        };
+        await Promise.all([touches(), yields()]);
+      });
+      // With one worker this task's third poll follows the toucher's second on its thread, which
+      // holds no lock by then; on another thread it holds none either.
+      await yieldNow();
+      await yieldNow();
+      const held = holds();
+      await toucher;
+      return held;
+    });
+    expect(seen).toBe(NOT_HELD);
+  });
+});
