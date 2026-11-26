@@ -46,7 +46,10 @@ fn getter_of(
         ty,
         span,
     };
-    let value = if copy {
+    let hooked = crate::error_message::slot_read(cx, self_ty, &fname, &this, span);
+    let value = if let Some(read) = hooked {
+        read
+    } else if copy {
         field(UseMode::Copy)
     } else {
         hir::Expr {

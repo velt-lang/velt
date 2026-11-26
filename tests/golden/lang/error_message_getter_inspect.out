@@ -1,0 +1,7 @@
+E { message: 'from the getter' }
+E { message: 'own' }
+E { message: '' }
+F { message: 'from the getter', extra: 1, hint: undefined }
+[ E { message: 'from the getter' }, E { message: 'o' } ]
+{ inner: F { message: 'f', extra: 1, hint: undefined } }
+TypeError { message: '' } Error { message: 'plain' }

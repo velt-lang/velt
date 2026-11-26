@@ -142,3 +142,33 @@ pub(crate) fn check_throws(cx: &mut Ctx) {
         );
     }
 }
+
+/// The value of the getter slot `<message>` of class type `self_ty` (`this` is local 0), in a
+/// program with the getter, when `self_ty` extends `Error`: `errorMessage(this)`, as a typed
+/// read is. A read through a bound or an interface (`T extends { message: string }`) calls the
+/// slot, so it gets the getter's text too. `None` otherwise (the field, as before).
+pub(crate) fn slot_read(
+    cx: &mut Ctx,
+    self_ty: TyId,
+    fname: &str,
+    this: &crate::hir::Expr,
+    span: velt_common::Span,
+) -> Option<crate::hir::Expr> {
+    use crate::hir::{Expr, ExprKind as H, TyKind};
+    use crate::hook_calls::{self as hooks, ty, HookTy};
+    if fname != "message" || !on(cx) {
+        return None;
+    }
+    let error = error_class(cx, self_ty)?;
+    let error_ty = cx.ty.intern(TyKind::Adt(error, vec![]));
+    let e = match self_ty == error_ty {
+        true => this.clone(),
+        false => Expr {
+            kind: H::Upcast(Box::new(this.clone())),
+            ty: error_ty,
+            span,
+        },
+    };
+    let str_ = cx.ty.str_;
+    hooks::error_message(ty::Error::of(e)).plain(cx, str_, span)
+}

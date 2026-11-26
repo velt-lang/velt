@@ -1,0 +1,21 @@
+// `console.log` of an error whose class declares `get message()` (#3792) shows the `message` a
+// read gives: the getter's text for an error made without one, the own text otherwise. (Node
+// prints an error as its stack instead, #1106; the value shown is the same.)
+
+class E extends Error {
+  get message(): string {
+    return "from the getter";
+  }
+}
+class F extends E {
+  extra: number = 1;
+  hint?: string;
+}
+
+console.log(new E());
+console.log(new E("own"));
+console.log(new E(""));
+console.log(new F());
+console.log([new E(), new E("o")]);
+console.log({ inner: new F("f") });
+console.log(new TypeError(), new Error("plain"));

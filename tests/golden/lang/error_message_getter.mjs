@@ -119,3 +119,26 @@ console.log(message, name, messageParam(none), messageParam(given), assigned);
 // A closure and a template.
 const read = () => none.message;
 console.log(read(), `${none.message}!`, none.message.length);
+
+// A read through a structural bound or an interface field calls the getter too (the field's
+// getter slot is `errorMessage`), and never hands the program the "no message" mark.
+function structural(x) {
+  return x.message;
+}
+function indexed(x) {
+  return x["message"];
+}
+class D extends Error {
+  get message() {
+    return "D getter";
+  }
+  describe() {
+    return "/d";
+  }
+}
+function described(d) {
+  return d.message + d.describe();
+}
+console.log(structural(none), structural(given), structural(new F()), indexed(none), indexed(given));
+console.log(described(new D()), described(new D("own")), structural(new Error()));
+console.log(new D(structural(new D())).message, new E(indexed(new D())).message);

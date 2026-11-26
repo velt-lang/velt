@@ -600,7 +600,6 @@ with_tls_hooks! {
     /// `sort(cmp)` of a view: the mirror sorted by the stable sort and written back.
     array_view_sort => lang_hooks_array_view, "arrayViewSort", sig(<A, B>(&mut ArrayView(A), &Fn((A, A) -> B), &Fn((B) -> bool)) -> void), lowered;
 
-
     // record.velt: `k in r` for a key known only at run time, and `===` on prototypes.
     /// `a === b` on prototypes (`velt_sema` `object_prototypes.rs`).
     prototype_same => lang_hooks_record, "prototypeSame", sig((&or_null(ObjectPrototype), &or_null(ObjectPrototype)) -> bool);
@@ -610,12 +609,10 @@ with_tls_hooks! {
     record_in => lang_hooks_record, "recordIn", sig(<A>(&string, &Record(string, A)) -> bool);
     /// `record_in` in a program that calls `Object.create(null)`.
     record_in_maybe_null_proto => lang_hooks_record, "recordInMaybeNullProto", sig(<A>(&string, &Record(string, A)) -> bool);
-    // error.velt: the first line of the report of an uncaught error (`velt_vir` `entry.rs`).
+    // error.velt: the report of an uncaught error (`velt_vir` `entry.rs`); where a class declares `get message()`, `Error`'s default message and `e.message` (`error_message.rs`).
     /// The first line of Node's report of an uncaught error (`E [TypeError]: m`).
     uncaught_header => lang_hooks_error, "uncaughtHeader", sig((&Error, &string) -> string), lowered;
-    /// `Error`'s default message where a class declares `get message()` (`velt_sema` `error_message.rs`).
     error_no_message => lang_hooks_error, "noMessage", sig(() -> string);
-    /// `e.message` there: its own, else the getter's (`velt_sema`, `velt_vir` `error_message.rs`).
     error_message => lang_hooks_error, "errorMessage", sig((&Error) -> string), lowered, constructs(ErrorMessage);
 
     // string.velt: the characters a `for...of` over a string iterates.
