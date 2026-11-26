@@ -7,6 +7,7 @@ import {
   PromiseSlot,
   raceTakesStep,
   runExecutor,
+  settledAtCall,
   settlement,
   settlers,
 } from "velt/lang/promise/settle";
@@ -42,15 +43,23 @@ export async function promiseAllSettled<T, E>(
   // The promises as they are at the call, as JS reads them: the caller may still hold the
   // array and change it while this waits (and JS leaves the array as it is).
   const snap = ps.slice();
-  for (let i = 0; i < snap.length; i++) {
-    try {
-      out.push({ status: "fulfilled", value: await snap[i] });
-    } catch (e) {
-      out.push({ status: "rejected", reason: e });
+  if (!settledAtCall()) {
+    // The runtime's executor (WebAssembly): one by one, then Node's step after the callback it
+    // runs for the last promise.
+    for (let i = 0; i < snap.length; i++) {
+      out.push(await settledOf<T, E>(snap[i]));
     }
+    await velt_rt_microtask();
+    return out;
   }
-  // Node settles in the callback it runs for the last promise: one microtask later.
-  await velt_rt_microtask();
+  const each: Promise<PromiseSettledResult<T, E>>[] = [];
+  for (let i = 0; i < snap.length; i++) {
+    each.push(settledOf<T, E>(snap[i]));
+  }
+  const all = await Promise.all(each);
+  for (const r of all) {
+    out.push(r);
+  }
   return out;
 }
 
