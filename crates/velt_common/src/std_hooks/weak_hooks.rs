@@ -1,10 +1,10 @@
 //! The weak core's rows of the hook table (std/lang/hooks/weak*.velt, #3145; docs/internals/
 //! design/weak-refs.md, rt_abi.md "Weak references"): the core under `WeakMap`, `WeakSet` and
-//! `WeakRef` and the cold path of a weakly held object's release, all lowered for
-//! `Construct::Weak` and prebuilt; and the table of function properties (fn_props.velt, #2196),
-//! another process-wide table in std, lowered for `Construct::FnProps`. Kept apart from the rest of the table ([`super`]), which
-//! [`with_weak_hooks`] gives to `hooks!` with these rows after it (and the yields' after those,
-//! `yield_hooks.rs`).
+//! `WeakRef` and the cold path of a weakly held object's release, all lowered for `Construct::Weak`
+//! and prebuilt; and the table of function properties (fn_props.velt, #2196), another process-wide
+//! table in std, lowered for `Construct::FnProps`. Kept apart from the rest of the table
+//! ([`super`]), which [`with_weak_hooks`] gives to `hooks!` with these rows after it (and the
+//! yields' after those, `yield_hooks.rs`).
 
 /// `hooks!` over the rows given, then the weak core's, then the yields'.
 macro_rules! with_weak_hooks {
@@ -69,8 +69,9 @@ macro_rules! with_weak_hooks {
             fn_prop_identity_of => lang_hooks_fn_props, "fnPropIdentityOf", sig((u64) -> u64),
                 lowered, constructs(FnProps), replaces("velt_rt_fnprop_identity_of");
             /// `(env, key)`: the property's index, or -1; `fn_prop_at` gives a share of its value.
-            fn_prop_index => lang_hooks_fn_props, "fnPropIndex", sig((u64, &string) -> i64), lowered,
-                constructs(FnProps), replaces("velt_rt_fnprop_get");
+            fn_prop_index => lang_hooks_fn_props, "fnPropIndex", sig((u64, &string) -> i64),
+                lowered, constructs(FnProps), replaces("velt_rt_fnprop_get");
+            /// `(env, index)`: a share of the value of the property at `index` (`fn_prop_index`).
             fn_prop_at => lang_hooks_fn_props, "fnPropAt", sig((u64, i64) -> any), lowered,
                 constructs(FnProps);
             /// `(env, key, value)`: the property set, the value taken over.

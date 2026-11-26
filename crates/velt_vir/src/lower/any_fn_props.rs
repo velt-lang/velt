@@ -1,18 +1,18 @@
 //! Properties of function values through `any` (#924; rt_abi.md "Function properties"): as in
-//! JavaScript, a function is an object a program may add properties to
-//! (`factory.__setup = setup`). The member slots of a function type's `any` table (any_glue.rs,
-//! any_set.rs, any_has.rs, any_keys.rs, any_delete.rs) look a key up in the runtime's table of
-//! the function's properties (std/lang/hooks/fn_props.velt, through its hooks), keyed by its
-//! closure environment, which is the function's identity: a program that writes through `any` and holds functions there gives every closure
-//! a counted environment (`Boxing::fn_identity`), so copies of the function share it, and its
-//! properties; a function value without one (a declared function's) has the identity std keeps
-//! for its code, made at the first property write to any reference to it.
+//! JavaScript, a function is an object a program may add properties to (`factory.__setup = setup`).
+//! The member slots of a function type's `any` table (any_glue.rs, any_set.rs, any_has.rs,
+//! any_keys.rs, any_delete.rs) look a key up in the runtime's table of the function's properties
+//! (std/lang/hooks/fn_props.velt, through its hooks), keyed by its closure environment, which is
+//! the function's identity: a program that writes through `any` and holds functions there gives
+//! every closure a counted environment (`Boxing::fn_identity`), so copies of the function share it,
+//! and its properties; a function value without one (a declared function's) has the identity std
+//! keeps for its code, made at the first property write to any reference to it.
 //!
 //! A property read or call that finds nothing goes on as before: `name` and `length` are the
 //! function's own (fn_shapes.rs), the other built-in members of functions (`call`, ...) are not
-//! supported yet, and another key is `undefined`, as in Node. Writing `name` or `length` (read-only in JavaScript) is not supported either. In a
-//! program without writes through `any` no function has properties, and the slots are the ones
-//! they were before.
+//! supported yet, and another key is `undefined`, as in Node. Writing `name` or `length` (read-only
+//! in JavaScript) is not supported either. In a program without writes through `any` no function
+//! has properties, and the slots are the ones they were before.
 
 use velt_sema::hir::{Nothing, TyId, TyKind};
 

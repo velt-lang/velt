@@ -1114,9 +1114,9 @@ Properties a program adds to a function value through `any` (velt_vir `lower/any
 JavaScript functions are objects. They live in std (std/lang/hooks/fn_props*.velt, #2196), which
 lowering calls through the hooks `fnPropIndex`, `fnPropAt`, `fnPropSet`, `fnPropDelete`,
 `fnPropLen`, `fnPropKey`, `fnPropIdentity` and `fnPropIdentityOf` (velt_common `std_hooks`,
-`Construct::FnProps`: a program without a write through `any` loads none of it). The function's
-identity is its closure environment (a program with writes through `any` that holds functions
-there gives every closure a counted one), so the table maps the environment's address (a `u64`)
+`Construct::FnProps`: a program without a write through `any` or a record view of a function
+(`live_walk.rs`) loads none of it). The function's identity is its closure environment (a
+program with writes through `any` that holds functions there gives every closure a counted one), so the table maps the environment's address (a `u64`)
 to its properties in insertion order, each a name and an `any` value. `fnPropIndex(env, key)`
 answers the property's index or -1, and `fnPropAt(env, i)` a share of its value (owned by the
 caller); `fnPropSet` takes the value and drops the one it replaces after the table's lock is

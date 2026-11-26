@@ -119,11 +119,13 @@ function dropWithProps(env: usize): void {
  * thread, velt_vir `glue/transfer_env.rs`): the properties go with the function as an object's
  * members do. A unique environment moves, its values transferred in place; a shared one is copied
  * (by its own transfer entry, or as a new environment holding nothing), and the copy gets a
- * transferred copy of each property. Called with the pointer tagged (the many-threads check), it
- * hands the check to the environment's own entry.
+ * transferred copy of each property. Called with the pointer tagged (environments are aligned to
+ * 8: 1 the many-threads check, 4 its strict walk, velt_vir `glue/many.rs`; 2 a call's copy for a
+ * `shared` function, `glue/transfer_env.rs`), it hands the question to the environment's own
+ * entry; with none, the check finds nothing and the call needs no copy (null).
  */
 function transferWithProps(env: usize): usize {
-  const plain = env & ~(1 as usize);
+  const plain = env & ~(7 as usize);
   lock();
   const e = mapGet(propsField(), plain);
   unlock();
@@ -132,9 +134,12 @@ function transferWithProps(env: usize): usize {
   }
   // The entry is this function's, which only this thread uses: its items need no lock.
   const own = entryTransfer(e) as usize;
-  if ((env & 1) !== 0) {
-    // SAFETY: the environment's own transfer entry, for this environment.
-    return own !== 0 ? unsafe { addressCall(own, env) } : plain;
+  if ((env & 7) !== 0) {
+    if (own !== 0) {
+      // SAFETY: the environment's own transfer entry, for this environment, asked the same.
+      return unsafe { addressCall(own, env) };
+    }
+    return (env & 2) !== 0 ? 0 : plain;
   }
   const n = itemCount(e);
   if ((ld64(rcWord(plain)) & RC_COUNT) === 1) {
@@ -239,10 +244,11 @@ function identityClone(env: Ptr<u8>): Ptr<u8> {
 
 /**
  * The transfer entry of an identity: the function goes to the other thread as it is (a tagged
- * pointer, the many-threads check, has nothing to check either).
+ * pointer, the many-threads check, has nothing to check either, and a call's copy, tag 2, is the
+ * identity itself: its drop changes no count).
  */
 function identityTransfer(env: Ptr<u8>): Ptr<u8> {
-  return at(Ptr.addressOf(env) & ~(1 as usize));
+  return at(Ptr.addressOf(env) & ~(7 as usize));
 }
 
 /** The pointer to environment `env`. */
