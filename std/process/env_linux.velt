@@ -3,7 +3,10 @@
 // `environ`.
 
 import { Ptr } from "velt/ffi/ptr";
+import { hiddenVar, withoutHidden } from "./env_hidden";
 import * as posix from "./env_posix";
+
+export { executablePath, osArgs } from "./args_linux";
 
 /** C's `char **environ`: the table of "name=value" strings (NULL after `clearenv`). */
 declare c("c") let environ: Ptr<void> | null;
@@ -15,7 +18,13 @@ function table(): usize {
   return at === null ? 0 : Ptr.addressOf(at);
 }
 
+/** The variable `name`, or undefined when it isn't set or is one velt passes (env_hidden.velt). */
 export function getEnv(name: string): string | undefined {
+  return hiddenVar(name, false) ? undefined : posix.getEnv(name);
+}
+
+/** The variable `name` as it is, the hidden ones included (std/process/args.velt). */
+export function getEnvRaw(name: string): string | undefined {
   return posix.getEnv(name);
 }
 
@@ -29,5 +38,5 @@ export function removeEnv(name: string) {
 
 /** Every variable as `[name, value, …]`, in the table's order. */
 export function envPairs(): string[] {
-  return posix.envPairs(table);
+  return withoutHidden(posix.envPairs(table), false);
 }

@@ -3,8 +3,6 @@
 
 import { StdinRead, readAll, readLine } from "./stdin_buffer";
 
-export declare function velt_rt_process_args(): string[];
-
 export declare function velt_rt_stdout_write_bytes(bytes: u8[]);
 
 /** Standard input's next line, read on this thread (the async twin of std's `readLine`). */

@@ -1,0 +1,47 @@
+// velt/process (internal): the two variables velt passes a program its script and arguments in
+// (`VELT_SCRIPT` from `velt run` and `velt test`, `VELT_ARGV` beside it from `velt dev` and the
+// source-generator host: std/process/args.velt reads them). The program's own reads of its
+// environment leave them out (`process.env.VELT_SCRIPT`, `in`, `Object.keys(process.env)`), and
+// so does the environment a child starts with, which is made from those reads: as when the
+// runtime removed them at start-up.
+
+/** `VELT_SCRIPT`: the source file `velt run` and `velt dev` run (Node's `process.argv[1]`). */
+export const SCRIPT_VAR = "VELT_SCRIPT";
+
+/** `VELT_ARGV`: the program's arguments under `velt dev` and the generator host. */
+export const ARGV_VAR = "VELT_ARGV";
+
+/** Whether `name` is one of them; `fold`: names compare without regard to ASCII case (Windows). */
+export function hiddenVar(name: string, fold: bool): bool {
+  return same(name, SCRIPT_VAR, fold) || same(name, ARGV_VAR, fold);
+}
+
+/** `pairs` (`[name, value, …]`) without the hidden variables. */
+export function withoutHidden(pairs: string[], fold: bool): string[] {
+  const out: string[] = [];
+  for (let i: usize = 0; i + 1 < pairs.length; i += 2) {
+    if (!hiddenVar(pairs[i], fold)) {
+      out.push(pairs[i]);
+      out.push(pairs[i + 1]);
+    }
+  }
+  return out;
+}
+
+/** Whether `a` is `b` (upper-case ASCII), `fold`: a lower-case ASCII letter of `a` too. */
+function same(a: string, b: string, fold: bool): bool {
+  if (a.length !== b.length) {
+    return false;
+  }
+  const n = a.length as i64;
+  for (let i: i64 = 0; i < n; i++) {
+    let c = a.charCodeAt(i);
+    if (fold && c >= 97 && c <= 122) {
+      c -= 32;
+    }
+    if (c !== b.charCodeAt(i)) {
+      return false;
+    }
+  }
+  return true;
+}

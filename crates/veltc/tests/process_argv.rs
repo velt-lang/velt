@@ -26,6 +26,29 @@ const PROGRAM: &str = r#"function main() {
 }
 "#;
 
+/// velt/process' `argv()` and `args()`, and the two variables velt passes the script and the
+/// arguments in (`VELT_SCRIPT`, `VELT_ARGV`), which the program's reads of its environment and
+/// its child processes' environment leave out.
+const STD_PROGRAM: &str = r#"import { argv, args, envAll } from "velt/process";
+import { execSync } from "velt/process/child";
+import { platform } from "velt/os";
+
+function main() {
+  const rest = args();
+  console.log(argv().length == rest.length + 1);
+  for (const a of rest) {
+    console.log(`[${a}]`);
+  }
+  console.log(process.env.VELT_SCRIPT == null);
+  console.log(process.env["VELT_ARGV"] == null);
+  const keys = Object.keys(envAll());
+  console.log(keys.includes("VELT_SCRIPT") || keys.includes("VELT_ARGV"));
+  const env = platform() == "win32" ? execSync("cmd", ["/C", "set"]) : execSync("env");
+  console.log(env.code);
+  console.log(env.stdout.includes("VELT_SCRIPT=") || env.stdout.includes("VELT_ARGV="));
+}
+"#;
+
 /// Arguments that must reach the program unchanged.
 const ARGS: &[&str] = &[
     "one",
@@ -138,6 +161,88 @@ fn run_and_built_program_follow_node() {
             assert_eq!(split_runtime(&stdout(&node)).0, split_runtime(&ran).0);
         }
     }
+}
+
+/// `velt dev` runs the program inside `velt`, whose own arguments are not the program's: it
+/// passes them (and the script) in variables std reads. `process.argv[0]` is the running `velt`.
+#[test]
+fn dev_passes_the_arguments_and_script() {
+    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    let dir = test_dir::TestDir::new();
+    let spaced = spaced_dir(dir.path());
+    let src = spaced.join("argv_prog.velt");
+    std::fs::write(&src, PROGRAM).unwrap();
+    // `--host`: the program alone, without the supervisor that waits for changes after it.
+    let dev = velt()
+        .args(["dev", "--host"])
+        .arg(&src)
+        .arg("--")
+        .args(ARGS)
+        .current_dir(&spaced)
+        .output()
+        .unwrap();
+    let out = stdout(&dev);
+    let (body, runtime) = split_runtime(&out);
+    assert_eq!(body, expected(true));
+    let velt = Path::new(env!("CARGO_BIN_EXE_velt"));
+    let runtime = Path::new(runtime);
+    if cfg!(windows) {
+        // As Windows names it (GetModuleFileNameW), which may differ in case from Cargo's path.
+        assert_eq!(runtime.file_name(), velt.file_name());
+    } else {
+        assert_eq!(runtime, std::fs::canonicalize(velt).unwrap());
+    }
+}
+
+/// `argv()` / `args()` of velt/process under `velt run`, `velt dev` and as a built program, and
+/// the variables velt passes them in hidden from the program and its children.
+#[test]
+fn std_arguments_and_hidden_variables() {
+    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    let dir = test_dir::TestDir::new();
+    let spaced = spaced_dir(dir.path());
+    let src = spaced.join("std_args.velt");
+    std::fs::write(&src, STD_PROGRAM).unwrap();
+    let mut want = String::from("true\n");
+    for a in ARGS {
+        want.push_str(&format!("[{a}]\n"));
+    }
+    want.push_str("true\ntrue\nfalse\n0\nfalse\n");
+    for mode in [&["run"][..], &["dev", "--host"]] {
+        let out = velt()
+            .args(mode)
+            .arg(&src)
+            .arg("--")
+            .args(ARGS)
+            .current_dir(&spaced)
+            .output()
+            .unwrap();
+        assert_eq!(stdout(&out), want, "velt {mode:?}");
+    }
+    let exe = spaced.join(if cfg!(windows) {
+        "std_args.exe"
+    } else {
+        "std_args"
+    });
+    let build = velt()
+        .arg("build")
+        .arg(&src)
+        .arg("-o")
+        .arg(&exe)
+        .current_dir(&spaced)
+        .output()
+        .unwrap();
+    stdout(&build);
+    let built = command(&exe).args(ARGS).output().unwrap();
+    assert_eq!(stdout(&built), want, "the built program");
+    // Variables that aren't velt's format leave the OS's arguments in place, still hidden.
+    let built = command(&exe)
+        .args(ARGS)
+        .env("VELT_ARGV", "not 1:a list")
+        .env("VELT_SCRIPT", "elsewhere.velt")
+        .output()
+        .unwrap();
+    assert_eq!(stdout(&built), want, "the built program, odd variables");
 }
 
 /// `velt test`: `process.argv[1]` is the test file, as with `node --test`.

@@ -1,18 +1,89 @@
-// velt/process (internal): the command-line arguments (`argv`, `args`).
+// velt/process (internal): the command-line arguments (`argv`, `args`, and Node's `process.argv`
+// through std/lang/hooks/process.velt).
+//
+// They are the OS's (`osArgs` of `#env-sys`' variant: std/process/args_darwin.velt,
+// args_linux.velt, args_win32.velt, env_wasi.velt; none in the browser), except when velt runs
+// the program inside its own process (`velt dev`, the source-generator host): there velt passes
+// them in `VELT_ARGV` (std/process/env_hidden.velt), each argument as its length in UTF-16 code
+// units, a colon and its text (`5:hello3:a b`). `velt run` and `velt test` pass the script in
+// `VELT_SCRIPT` (Node's `process.argv[1]`). The program's own reads of its environment leave
+// both out.
+//
+// Nothing is cached: each call reads them again (the variables stay in the environment, hidden).
 
-import { velt_rt_process_args } from "velt/process/rt";
+import { executablePath, getEnvRaw, osArgs } from "#env-sys";
+import { ARGV_VAR, SCRIPT_VAR } from "./env_hidden";
 import { arrayRemove } from "velt/lang/intrinsics";
 
 /** Every command-line argument, starting with the program path (like C's `argv`). */
 export function argv(): string[] {
-  return velt_rt_process_args();
+  const passed = getEnvRaw(ARGV_VAR);
+  if (passed !== undefined) {
+    const decoded = decodeArgv(passed);
+    if (decoded !== undefined) {
+      return decoded;
+    }
+  }
+  return osArgs();
 }
 
 /** The arguments after the program path. */
 export function args(): string[] {
-  let all = velt_rt_process_args();
+  let all = argv();
   if (all.length > 0) {
     arrayRemove(all, 0);
   }
   return all;
+}
+
+/**
+ * Node's `process.argv`: `[runtime, script, ...args]`. The runtime is the running executable
+ * (the program, or `velt` under `velt dev`); the script is the source file under `velt run`,
+ * `velt test` and `velt dev`, else the executable again (as for a Node single-executable
+ * application). In WebAssembly both are the module's path (WASI) or empty (the browser).
+ */
+export function nodeArgv(): string[] {
+  const all = argv();
+  let exe = executablePath();
+  if (exe.length === 0 && all.length > 0) {
+    exe = all[0];
+  }
+  const script = getEnvRaw(SCRIPT_VAR);
+  const out: string[] = [exe, script ?? exe];
+  for (let i: usize = 1; i < all.length; i++) {
+    out.push(all[i]);
+  }
+  return out;
+}
+
+/**
+ * `VELT_ARGV`'s arguments: each its length in UTF-16 code units, ":", its text. Undefined when
+ * the text isn't that (the OS's arguments are used then).
+ */
+export function decodeArgv(text: string): string[] | undefined {
+  const out: string[] = [];
+  const len = text.length as i64;
+  let i: i64 = 0;
+  while (i < len) {
+    let n: i64 = 0;
+    let digits: i64 = 0;
+    while (i < len) {
+      const c = text.charCodeAt(i);
+      if (c < 48 || c > 57) {
+        break;
+      }
+      n = n * 10 + (c - 48);
+      digits++;
+      i++;
+      if (n > len) {
+        return undefined;
+      }
+    }
+    if (digits === 0 || i >= len || text.charCodeAt(i) !== 58 || i + 1 + n > len) {
+      return undefined;
+    }
+    out.push(text.slice(i + 1, i + 1 + n));
+    i += 1 + n;
+  }
+  return out;
 }

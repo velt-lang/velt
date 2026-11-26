@@ -1,0 +1,72 @@
+// velt/process (internal): what the arguments' readers of macOS and Linux share
+// (std/process/args_darwin.velt, args_linux.velt): C strings as text, and a path resolved as
+// Node's `process.execPath` is (symbolic links followed).
+
+import { Ptr } from "velt/ffi/ptr";
+import { readCString } from "velt/ffi/read";
+import { strBytesOf } from "velt/ffi/str_bytes";
+import {
+  addressLoad,
+  arraySetLen,
+  arrayWithCapacity,
+  ptrFromAddress,
+  strByteLen,
+  strDataAddress,
+} from "velt/lang/intrinsics";
+
+declare c("c") function realpath$args(
+  path: readonly u8[],
+  resolved: Ptr<u8> | null,
+): Ptr<u8> | null;
+declare c("c") function free$args(p: Ptr<u8> | null): void;
+declare c("c") function memcpy$args(dst: u8[], src: Ptr<u8> | null, n: usize): Ptr<u8>;
+
+/** `s`'s UTF-8 and a NUL after it; `s` holds no NUL. */
+export function cBytes(s: string): u8[] {
+  const text = strBytesOf(s);
+  const n = strByteLen(text);
+  const bytes = arrayWithCapacity<u8>(n + 1);
+  arraySetLen(bytes, n + 1);
+  if (n > 0) {
+    // SAFETY: `bytes` holds n + 1 bytes and `text`'s n bytes are at its data address.
+    unsafe {
+      memcpy$args(bytes, Ptr.orNull<u8>(strDataAddress(text)), n);
+    }
+  }
+  bytes[n] = 0;
+  return bytes;
+}
+
+/**
+ * The `n` NUL-terminated strings whose addresses are the words of the table at `table` (C's
+ * `argv`), as text (an invalid sequence as U+FFFD).
+ */
+export function cStrings(table: usize, n: usize): string[] {
+  const out: string[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    // SAFETY: the table holds `n` addresses, which live as long as the process.
+    const at = unsafe { addressLoad<usize>(table + 8 * i) };
+    if (at === 0) {
+      break;
+    }
+    // SAFETY: a NUL-terminated string, not at 0.
+    out.push(unsafe { readCString(ptrFromAddress<u8>(at)) });
+  }
+  return out;
+}
+
+/** `path` with its symbolic links followed (`realpath`), or as it is when that fails. */
+export function resolved(path: string): string {
+  // SAFETY: `cBytes` is NUL-terminated; a NULL buffer has realpath allocate the result.
+  const p = unsafe { realpath$args(cBytes(path), null) };
+  if (p === null) {
+    return path;
+  }
+  // SAFETY: realpath's NUL-terminated result, freed after it is read.
+  const text = unsafe { readCString(p) };
+  // SAFETY: realpath's block, freed once.
+  unsafe {
+    free$args(p);
+  }
+  return text;
+}
