@@ -131,7 +131,7 @@ function rows(l: Layout, r: u64, first: u64, count: u64, pad: u64, out: u8[]): v
       out.push(0x2c);
       newline(out, pad);
     }
-    const fill = l.widest[at + column] - l.ent[p + 2];
+    const fill = l.ent[at + column] - l.ent[p + 2];
     if (numbers) {
       spaces(out, fill);
     }
