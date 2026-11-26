@@ -78,7 +78,8 @@ export class Blob extends ByteSource {
   }
 
   /** How `console.log` shows a blob, like Node: `Blob { size: 5, type: 'text/plain' }`. */
-  [INSPECT]() {
+  // A record, so that `File`'s adds its name and time.
+  [INSPECT](): Record<string, string | i64> {
     return { size: this.size, type: this.type };
   }
 }
