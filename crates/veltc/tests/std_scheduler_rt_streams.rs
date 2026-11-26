@@ -1,13 +1,11 @@
-//! Deferred writes under the executor in Velt (#2817). On a runtime-owned stream (`connectTls`) a
-//! program compiled with `VELT_SCHEDULER=std` keeps what `writeLater` queues in Velt and hands it
-//! to the runtime's `write` once the poll ends (std/net/rt_later.velt): the runtime sends its own
-//! deferred bytes only after polls of its own tasks, which never run on the Velt worker. A
-//! `streamPair` is two of the reactor's sockets (std/net/pair.velt): the same programs on it check
-//! the reactor's deferred writes, closes and errors. And the end of such a program gives back the
-//! send buffers of the reactor's sockets dropped without `close()` (sched_io_table.velt
-//! `releaseBuffers`), which a leak check counts. Each program is built with the variable and
-//! runs with `VELT_THREADS=1` and `4` (the flusher is a task other workers may take; killed after
-//! a minute: lost bytes hang); it must print what Node prints.
+//! Deferred writes under the executor in Velt (#2817): a program compiled with
+//! `VELT_SCHEDULER=std` sends what `writeLater` queues once the poll ends, on a `streamPair` (two
+//! of the reactor's sockets, std/net/pair.velt) and on TLS streams; the same programs check the
+//! reactor's deferred writes, closes and errors. And the end of such a program gives back the send
+//! buffers of the reactor's sockets dropped without `close()` (sched_io_table.velt
+//! `releaseBuffers`), which a leak check counts. Each program is built with the variable and runs
+//! with `VELT_THREADS=1` and `4` (killed after a minute: lost bytes hang); it must print what Node
+//! prints.
 
 use std::path::Path;
 use std::process::{Output, Stdio};
@@ -17,7 +15,6 @@ use no_window::command;
 
 mod no_window;
 mod runtime_support;
-mod std_unix;
 mod test_dir;
 
 /// `src` built with `VELT_SCHEDULER=std`: the binary.
@@ -157,19 +154,6 @@ fn prints_counted(name: &str, src: &str, want: &str, marker: &[u8], counted: Cou
     }
 }
 
-/// The shadows' white-box tests (std_unix/net/rt_later_shadow.test.velt): every flag of a
-/// stream's flags word is a bit of its own, and a flusher given up at the end finds nothing left
-/// to send. They import the scheduler's modules, which only link on macOS and Linux.
-#[cfg(unix)]
-#[test]
-fn rt_later_shadow_white_box_tests_pass() {
-    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
-    std_unix::velt_test_in_std_copy(
-        "net/rt_later_shadow.test.velt",
-        include_str!("std_unix/net/rt_later_shadow.test.velt"),
-    );
-}
-
 /// The issue's case and its neighbours on a `streamPair`: deferred bytes reach the peer once
 /// the poll ends, with `drained` and without (`readable`), a `write` and a `shutdown` go behind
 /// them, `tryWrite` takes nothing while they wait, `close` sends them first, and 4 MiB go
@@ -264,13 +248,12 @@ async function main() {
     );
 }
 
-/// The same on TLS streams, which stay the runtime's under std: a `connectTls` client and the
-/// runtime listener's accepted stream both answer with `writeLater` only, and the client ends
-/// with `writeLater`, `shutdown` and `close` before the server has read anything. Block counts
-/// are not compared: a reactor thread of the runtime that still holds a waker of a finished task
-/// when the counts are taken gives its reference back after them, one block (#2842).
+/// The same on TLS streams (the client and server in Velt, on the reactor): a `connectTls` client
+/// and the listener's accepted stream both answer with `writeLater` only, and the client ends with
+/// `writeLater`, `shutdown` and `close` before the server has read anything. Block counts are not
+/// compared (#2842).
 #[test]
-fn deferred_writes_on_runtime_tls_streams_reach_the_peer() {
+fn deferred_writes_on_tls_streams_reach_the_peer() {
     prints_counted(
         "tls_later",
         "import { connectTls, listenTls } from \"velt/net\";
@@ -325,7 +308,7 @@ async function main() {
 }
 ",
         "hello\nworld\n!|11\n",
-        b"rt_later",
+        b"",
         Counted::Never,
     );
 }

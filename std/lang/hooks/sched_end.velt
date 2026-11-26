@@ -40,7 +40,6 @@ import {
   slotTake,
   stdUsed,
 } from "velt/lang/intrinsics";
-import * as dt from "./sched_detach";
 import * as give from "./sched_order_give";
 import * as io from "./sched_io";
 import * as tb from "./sched_io_table";
@@ -250,9 +249,6 @@ function quiet(e: usize): bool {
  */
 @noInline
 export function mayPark(e: usize): bool {
-  if (stdUsed("rt-later") && m.ld(e + t.E_ROOT) === 0) {
-    detached(e);
-  }
   if (quiet(e)) {
     const root = m.ld(e + t.E_ROOT);
     if (root !== 0) {
@@ -320,20 +316,6 @@ function askAgain(e: usize): u32 {
     asked = asked | ASKED_HERE;
   }
   return asked;
-}
-
-/**
- * After `main`, the flushers of bytes deferred on runtime streams (sched_detach.velt) are the only
- * live tasks and nothing else of the executor's can happen: their writes are dropped, as the
- * runtime's background sending never keeps the process alive. What the runtime has outstanding
- * besides them still counts in the scan that follows.
- */
-@noInline
-function detached(e: usize): void {
-  const n = dt.count();
-  if (n !== 0 && n === mk.live(e) && !veltBusy(e, e, false)) {
-    dt.giveUp();
-  }
 }
 
 /** `main` can never finish: the runtime's `exit_unfinished` (module docs). */

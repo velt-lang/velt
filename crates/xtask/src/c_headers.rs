@@ -67,7 +67,6 @@ const PATHS: &[&str] = &[
     "std/net/calls_posix.velt",
     "std/net/fd_io.velt",
     "std/net/fd_until.velt",
-    "std/net/rt_later_flush.velt",
     "std/process/child/",
     "std/process/stdin_buffer.velt",
     "std/process/stdin_posix.velt",
