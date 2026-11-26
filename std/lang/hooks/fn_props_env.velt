@@ -1,0 +1,301 @@
+// velt/lang/hooks (internal): the environment entries of function properties (fn_props.velt;
+// rt_abi.md "Function properties"). An environment's header is three words, its drop, clone and
+// transfer entries, called by generated code with the C calling convention. One with properties
+// has its drop and transfer entries replaced by `envDrop` and `envTransfer` (`adopt`), which keep
+// the properties with it: with the last reference the entry goes and its values are dropped; a
+// function moving to another thread takes them along.
+//
+// A declared function's value has no environment of its own: the first time one is converted to
+// `any` it gets the identity environment kept for its code (`identityEnv`), whose entries change
+// no count, so every reference, in every task, is one function, for `===`, `Map` keys and its
+// properties. Its properties are module state (generated code takes the module lock first) and
+// are released at exit, for the leak counters only (`releaseAtExit`). A shared environment
+// without a transfer entry of its own crosses as a new environment holding nothing
+// (`emptyEnv`).
+
+import { Ptr } from "velt/ffi/ptr";
+import {
+  addressCall,
+  addressLoad,
+  fnAddress,
+  ptrFromAddress,
+  rawAlloc,
+  rawFree,
+  stateDrop,
+} from "velt/lang/intrinsics";
+import {
+  entryDrop,
+  entryTransfer,
+  freeEntry,
+  idsField,
+  itemAt,
+  itemCount,
+  lock,
+  newEntry,
+  propsField,
+  pushItem,
+  releaseItem,
+  transferValue,
+  transferredCopy,
+  unlock,
+} from "./fn_props_core";
+import { mapAnyKey, mapGet, mapRemove, mapSet } from "./fn_props_map";
+import { RC_COUNT, ld64, rcWord, st64 } from "./weak_mem";
+
+// As module_blocks.velt declares it: one C symbol has one signature in a program.
+declare c("c") function getenv$fnprops(name: readonly u8[]): Ptr<u8> | null;
+
+/** An environment holding nothing: its count, then the three header words. */
+const EMPTY_BLOCK: usize = 32;
+
+/** Word `i` of environment `env`'s header (drop, clone, transfer), 8 bytes each. */
+function word(env: usize, i: usize): u64 {
+  return ld64(env + 8 * i);
+}
+
+function setWord(env: usize, i: usize, w: u64): void {
+  st64(env + 8 * i, w);
+}
+
+/** Whether `env` is a declared function's identity: its clone entry says so, and never changes. */
+export function isIdentity(env: usize): bool {
+  return word(env, 1) === (fnAddress(identityClone) as u64);
+}
+
+/** Whether `env` may have properties: an identity, or an environment `adopt` took. */
+export function mayHaveProps(env: usize): bool {
+  return word(env, 0) === (fnAddress(envDrop) as u64) || isIdentity(env);
+}
+
+/**
+ * A new entry for `env`, which gets its first property: an identity keeps its entries (its
+ * properties live as long as it does); another environment drops and transfers them from now on.
+ */
+export function adopt(env: usize): usize {
+  if (isIdentity(env)) {
+    return newEntry(0, 0);
+  }
+  const e = newEntry(word(env, 0), word(env, 2));
+  setWord(env, 0, (fnAddress(envDrop) as u64));
+  setWord(env, 2, (fnAddress(envTransfer) as u64));
+  return e;
+}
+
+/**
+ * The drop entry of an environment with properties: with its last reference the entry goes and
+ * its values are dropped; then the environment's own drop runs.
+ */
+function dropWithProps(env: usize): void {
+  const last = (ld64(rcWord(env)) & RC_COUNT) === 1;
+  lock();
+  const e = last ? mapRemove(propsField(), env) : mapGet(propsField(), env);
+  if (e === 0) {
+    unlock();
+    panic("ICE: a function's properties are missing");
+  }
+  const drop = entryDrop(e);
+  if (last) {
+    setWord(env, 0, drop);
+    setWord(env, 2, entryTransfer(e));
+  }
+  unlock();
+  if (last) {
+    const n = itemCount(e);
+    for (let i: usize = 0; i < n; i++) {
+      releaseItem(itemAt(e, i));
+    }
+    freeEntry(e);
+  }
+  if (drop !== 0) {
+    // SAFETY: the environment's own drop entry, for this environment.
+    unsafe {
+      stateDrop(drop as usize, env);
+    }
+  }
+}
+
+/**
+ * The transfer entry of an environment with properties (a function value about to enter another
+ * thread, velt_vir `glue/transfer_env.rs`): the properties go with the function as an object's
+ * members do. A unique environment moves, its values transferred in place; a shared one is copied
+ * (by its own transfer entry, or as a new environment holding nothing), and the copy gets a
+ * transferred copy of each property. Called with the pointer tagged (the many-threads check), it
+ * hands the check to the environment's own entry.
+ */
+function transferWithProps(env: usize): usize {
+  const plain = env & ~(1 as usize);
+  lock();
+  const e = mapGet(propsField(), plain);
+  unlock();
+  if (e === 0) {
+    panic("ICE: a function's properties are missing");
+  }
+  // The entry is this function's, which only this thread uses: its items need no lock.
+  const own = entryTransfer(e) as usize;
+  if ((env & 1) !== 0) {
+    // SAFETY: the environment's own transfer entry, for this environment.
+    return own !== 0 ? unsafe { addressCall(own, env) } : plain;
+  }
+  const n = itemCount(e);
+  if ((ld64(rcWord(plain)) & RC_COUNT) === 1) {
+    // It moves: the values go along, each transferred in place.
+    // SAFETY: as above.
+    const moved = own !== 0 ? unsafe { addressCall(own, plain) } : plain;
+    for (let i: usize = 0; i < n; i++) {
+      transferValue(itemAt(e, i));
+    }
+    return moved;
+  }
+  // Shared: a copy of the function for the other thread, with copies of its properties.
+  let copy: usize = 0;
+  if (own !== 0) {
+    // SAFETY: as above.
+    copy = unsafe { addressCall(own, plain) };
+  } else {
+    st64(rcWord(plain), ld64(rcWord(plain)) - 1);
+    copy = emptyEnv();
+  }
+  const ce = adopt(copy);
+  for (let i: usize = 0; i < n; i++) {
+    pushItem(ce, transferredCopy(itemAt(e, i)));
+  }
+  lock();
+  mapSet(propsField(), copy, ce);
+  unlock();
+  return copy;
+}
+
+/** A new identity environment: an environment holding nothing whose entries change no count. */
+export function identityEnv(): usize {
+  const p = rawAlloc(EMPTY_BLOCK);
+  st64(p, 1);
+  const env = p + 8;
+  setWord(env, 0, (fnAddress(identityDrop) as u64));
+  setWord(env, 1, (fnAddress(identityClone) as u64));
+  setWord(env, 2, (fnAddress(identityTransfer) as u64));
+  return env;
+}
+
+/** A new environment holding nothing, counted once. */
+function emptyEnv(): usize {
+  const p = rawAlloc(EMPTY_BLOCK);
+  st64(p, 1);
+  const env = p + 8;
+  setWord(env, 0, (fnAddress(emptyDrop) as u64));
+  setWord(env, 1, (fnAddress(emptyClone) as u64));
+  setWord(env, 2, 0);
+  return env;
+}
+
+/** The drop entry of an environment holding nothing: one reference less, freed with the last. */
+function emptyDropAt(env: usize): void {
+  const c = ld64(rcWord(env));
+  if ((c & RC_COUNT) === 1) {
+    // SAFETY: `emptyEnv`'s block, which nothing refers to any more.
+    unsafe {
+      rawFree(rcWord(env), EMPTY_BLOCK);
+    }
+  } else {
+    st64(rcWord(env), c - 1);
+  }
+}
+
+/** The clone entry of an environment holding nothing: one more reference. */
+function emptyCloneAt(env: usize): usize {
+  st64(rcWord(env), ld64(rcWord(env)) + 1);
+  return env;
+}
+
+// The entries generated code calls through an environment's header, with the C calling
+// convention: `Ptr<u8>` is pointer-sized on every target (a `usize` is 64 bits on wasm32).
+
+/** An environment with properties' drop entry (`dropWithProps`). */
+function envDrop(env: Ptr<u8>): void {
+  dropWithProps(Ptr.addressOf(env));
+}
+
+/** An environment with properties' transfer entry (`transferWithProps`). */
+function envTransfer(env: Ptr<u8>): Ptr<u8> {
+  return at(transferWithProps(Ptr.addressOf(env)));
+}
+
+/** The drop entry of an environment holding nothing (`emptyDropAt`). */
+function emptyDrop(env: Ptr<u8>): void {
+  emptyDropAt(Ptr.addressOf(env));
+}
+
+/** The clone entry of an environment holding nothing (`emptyCloneAt`). */
+function emptyClone(env: Ptr<u8>): Ptr<u8> {
+  return at(emptyCloneAt(Ptr.addressOf(env)));
+}
+
+/** The drop entry of an identity: nothing (it is kept to the end). */
+function identityDrop(env: Ptr<u8>): void {}
+
+/** The clone entry of an identity: the same function, as in JavaScript. */
+function identityClone(env: Ptr<u8>): Ptr<u8> {
+  return env;
+}
+
+/**
+ * The transfer entry of an identity: the function goes to the other thread as it is (a tagged
+ * pointer, the many-threads check, has nothing to check either).
+ */
+function identityTransfer(env: Ptr<u8>): Ptr<u8> {
+  return at(Ptr.addressOf(env) & ~(1 as usize));
+}
+
+/** The pointer to environment `env`. */
+function at(env: usize): Ptr<u8> {
+  // SAFETY: an environment's address, never 0 (an entry's result is an environment); generated
+  // code reads it as a pointer.
+  return unsafe { ptrFromAddress<u8>(env) };
+}
+
+/**
+ * The program's normal end in a program with function properties (velt_vir `entry.rs`, after
+ * module state went): with the debug runtime's block counters on (`VELT_RC_STATS=1`), the
+ * identities of declared functions are released with their properties, as module state is, so
+ * the counters see them freed; otherwise they are kept to the end, as in Node.
+ */
+export function releaseAtExit(): void {
+  if (!counting()) {
+    return;
+  }
+  while (true) {
+    lock();
+    const code = mapAnyKey(idsField());
+    if (code === 0) {
+      unlock();
+      return;
+    }
+    const env = mapRemove(idsField(), code);
+    const e = mapRemove(propsField(), env);
+    unlock();
+    if (e !== 0) {
+      const n = itemCount(e);
+      for (let i: usize = 0; i < n; i++) {
+        releaseItem(itemAt(e, i));
+      }
+      freeEntry(e);
+    }
+    // SAFETY: an identity's block, which nothing uses any more.
+    unsafe {
+      rawFree(rcWord(env), EMPTY_BLOCK);
+    }
+  }
+}
+
+/** Are the debug runtime's block counters on (`VELT_RC_STATS=1`)? As module_blocks.velt asks. */
+function counting(): bool {
+  // "VELT_RC_STATS" and a NUL.
+  const name: u8[] = [86, 69, 76, 84, 95, 82, 67, 95, 83, 84, 65, 84, 83, 0];
+  // SAFETY: `name` is NUL-terminated and alive during the call.
+  const p = unsafe { getenv$fnprops(name) };
+  if (p === null) {
+    return false;
+  }
+  const at = Ptr.addressOf(p);
+  // SAFETY: the C library's string, at least one byte and its NUL.
+  return unsafe { addressLoad<u8>(at) === 49 && addressLoad<u8>(at + 1) === 0 };
+}

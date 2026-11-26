@@ -54,6 +54,9 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/module_blocks",
     // The weak core (#3145), demanded by a weak collection's intrinsic (`Construct::Weak`).
     "std/lang/hooks/weak",
+    // The table of function properties (#2196), demanded by a write through `any`
+    // (`Construct::FnProps`).
+    "std/lang/hooks/fn_props",
     // The inline `Mutex` lock (#2196), demanded by a `Mutex`'s `with` (`Construct::Mutex`).
     "std/lang/hooks/mutex",
     // The count of held `Mutex`es (#3467), demanded by a `with` in a `velt dev` build

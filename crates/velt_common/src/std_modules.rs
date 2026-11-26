@@ -98,6 +98,7 @@ table! {
     lang_hooks_async_iter => "lang/hooks/async_iter",
     lang_hooks_class_object => "lang/hooks/class_object",
     lang_hooks_error => "lang/hooks/error",
+    lang_hooks_fn_props => "lang/hooks/fn_props",
     lang_hooks_clock => "lang/hooks/clock",
     lang_hooks_date_zone_name => "lang/hooks/date_zone_name",
     lang_hooks_mutex => "lang/hooks/mutex",

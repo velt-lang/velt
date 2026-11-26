@@ -62,6 +62,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             lw.push_scope(ScopeKind::Block);
             let code = lw.run_async_main(def);
             lw.sched_finish(&code);
+            lw.fn_props_exit();
             lw.terminate(Terminator::Return(code));
             lw.scopes.clear();
             return lw.finish_export();
@@ -94,6 +95,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
             code
         };
+        lw.fn_props_exit();
         lw.terminate(Terminator::Return(code));
         lw.scopes.clear();
         lw.finish_export()

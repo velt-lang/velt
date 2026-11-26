@@ -225,6 +225,33 @@ pub(super) fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
             w.ifaces.push(*iface);
             w.types.extend(method_type_args.iter().chain(iface_args));
         }
+        // A write through `any` (also `o[k] = v` where `o` may be one once instantiated) and a
+        // record view: function values may get properties there (velt_vir `any_fn_props.rs`,
+        // `record_view.rs`).
+        E::Call {
+            callee:
+                Callee::Intrinsic(
+                    I::AnySet
+                    | I::AnySetIndex
+                    | I::RecordViewSync
+                    | I::RecordViewIs
+                    | I::RecordViewGet
+                    | I::RecordViewHas
+                    | I::RecordViewSet
+                    | I::RecordViewDelete
+                    | I::RecordViewFlush,
+                ),
+            ..
+        } => w.constructs |= Construct::FnProps.bit(),
+        E::Call {
+            callee: Callee::Intrinsic(I::KeyWrite),
+            args,
+        } if args
+            .first()
+            .is_some_and(|o| matches!(ty.kind(o.ty), TyKind::Dyn(..) | TyKind::Param(_))) =>
+        {
+            w.constructs |= Construct::FnProps.bit()
+        }
         kind => w.constructs |= constructs::pow_bit(ty, kind),
     }
 }

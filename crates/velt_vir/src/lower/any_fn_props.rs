@@ -2,11 +2,11 @@
 //! JavaScript, a function is an object a program may add properties to
 //! (`factory.__setup = setup`). The member slots of a function type's `any` table (any_glue.rs,
 //! any_set.rs, any_has.rs, any_keys.rs, any_delete.rs) look a key up in the runtime's table of
-//! the function's properties, keyed by its closure environment, which is the function's
-//! identity: a program that writes through `any` and holds functions there gives every closure
+//! the function's properties (std/lang/hooks/fn_props.velt, through its hooks), keyed by its
+//! closure environment, which is the function's identity: a program that writes through `any` and holds functions there gives every closure
 //! a counted environment (`Boxing::fn_identity`), so copies of the function share it, and its
-//! properties; a function value without one (a declared function's) has the identity the
-//! runtime keeps for its code, made at the first property write to any reference to it.
+//! properties; a function value without one (a declared function's) has the identity std keeps
+//! for its code, made at the first property write to any reference to it.
 //!
 //! A property read or call that finds nothing goes on as before: `name` and `length` are the
 //! function's own (fn_shapes.rs), the other built-in members of functions (`call`, ...) are not
@@ -19,10 +19,10 @@ use velt_sema::hir::{Nothing, TyId, TyKind};
 use super::any_glue::OBJECT_PROTO;
 use super::any_has_builtin::{FN_OWN_UNKNOWN, FN_PROTO_NAMES};
 use super::any_member::{SLOT_APPLY, ST_OK, ST_UNSUPPORTED};
+use super::hook_calls::{self as hooks, ty, Construct, HookTy};
 use super::operand::proj;
-use super::rt::Rt;
-use super::{cint, FnLower};
-use crate::vir::{self, BlockId, Operand, Place, Proj, Rvalue, Terminator, Ty, STR_AGG};
+use super::{cint, FnLower, ScopeKind};
+use crate::vir::{self, BlockId, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl FnLower<'_, '_> {
     /// Is `ty` a function type whose values may carry properties (a program with writes
@@ -32,10 +32,39 @@ impl FnLower<'_, '_> {
             && matches!(self.cx.kind(ty), TyKind::FnPtr { .. } | TyKind::Closure(_))
     }
 
-    /// Before the runtime's table of a function's properties is reached: a declared function's
+    /// `f` in a scope of its own, which a hook call needs (glue bodies may have none); the
+    /// call's result is the caller's (`call_std_hook`).
+    fn fn_props_scoped<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.push_scope(ScopeKind::Block);
+        let r = f(self);
+        self.pop_scope();
+        r
+    }
+
+    /// An environment (or code) pointer as the hooks' `u64`.
+    fn fn_props_word(&mut self, p: Operand) -> Operand {
+        self.rvalue_temp(Ty::U64, Rvalue::Cast(p, Ty::U64))
+    }
+
+    /// The program's normal end (`velt_main`'s, after module state went): std's table releases
+    /// the identities of declared functions for the leak counters (fn_props_env.velt
+    /// `releaseAtExit`), in a program that may have made one and has the table checked. Not on a
+    /// JS host, which has no leak counters (nor the C library that asks for them).
+    pub(super) fn fn_props_exit(&mut self) {
+        let name = velt_common::std_hook!(fn_props_exit);
+        let live = (self.cx.prelude_def(name)).is_some_and(|d| !self.cx.hir.unchecked.contains(&d));
+        let js = super::host::js_host(&self.cx.target);
+        if live && !js && (self.cx.boxing.any_writes || self.cx.fn_identity()) {
+            self.fn_props_scoped(|lw| {
+                hooks::fn_props_exit(lw, Construct::FnProps).emit(lw);
+            });
+        }
+    }
+
+    /// Before std's table of a function's properties is reached: a declared function's
     /// are module state, so the module lock comes first, as for an access of module state
     /// (std/lang/hooks/sched_module.velt `touch`; the table's own lock is taken after it). Which
-    /// function it is is the runtime's to know, so any function's properties take it. On
+    /// function it is is known only at run time, so any function's properties take it. On
     /// WebAssembly, one thread, nothing.
     fn fn_props_touch(&mut self) {
         if self.std_sched() {
@@ -44,8 +73,8 @@ impl FnLower<'_, '_> {
     }
 
     /// The identity of the function value an `any`'s data pointer `data` stands for: its
-    /// environment, or for one without (a declared function's value) the identity the runtime
-    /// keeps for its code, null while it has none.
+    /// environment, or for one without (a declared function's value) the identity std keeps for
+    /// its code, null while it has none.
     fn fn_env(&mut self, data: vir::Local, ty: TyId) -> Operand {
         let vp = self.any_value_place(data, ty);
         // A wrapper's properties are those of the function it wraps (closure/fn_wrappers.rs).
@@ -58,14 +87,20 @@ impl FnLower<'_, '_> {
         self.branch(nn, join, none);
         self.switch_to(none);
         let code = Operand::Copy(proj(&vp, Proj::Field(0)));
-        self.call_rt(Rt::FnPropIdentityOf, vec![code], Some(out.clone()));
+        let code = ty::U64::arg(self.fn_props_word(code));
+        let id = self.fn_props_scoped(|lw| {
+            hooks::fn_prop_identity_of(lw, Construct::FnProps, code)
+                .emit(lw)
+                .op()
+        });
+        self.assign(out.clone(), Rvalue::Cast(id, Ty::Ptr));
         self.goto(join);
         self.switch_to(join);
         Operand::Copy(out)
     }
 
     /// Give the function value at `fp` without an environment (a declared function's value)
-    /// the identity the runtime keeps for its code, as its environment: every `any` holding the
+    /// the identity std keeps for its code, as its environment: every `any` holding the
     /// function then holds one function, which `===`, `Map` keys and properties see.
     pub(super) fn fn_identity_into(&mut self, fp: &Place) {
         let envp = proj(fp, Proj::Field(1));
@@ -75,35 +110,52 @@ impl FnLower<'_, '_> {
         self.branch(nn, join, none);
         self.switch_to(none);
         let code = Operand::Copy(proj(fp, Proj::Field(0)));
-        self.call_rt(Rt::FnPropIdentity, vec![code], Some(envp));
+        let code = ty::U64::arg(self.fn_props_word(code));
+        let id = self.fn_props_scoped(|lw| {
+            hooks::fn_prop_identity(lw, Construct::FnProps, code)
+                .emit(lw)
+                .op()
+        });
+        self.assign(envp, Rvalue::Cast(id, Ty::Ptr));
         self.goto(join);
         self.switch_to(join);
     }
 
     /// Look property `key` up: the current block becomes the one where it is present, with the
-    /// address of its `any` value; returns the block where it is not.
-    fn fn_prop_find(&mut self, data: vir::Local, key: vir::Local, ty: TyId) -> (Operand, BlockId) {
+    /// function's environment (as a `u64`) and the property's index; returns the block where it
+    /// is not.
+    fn fn_prop_find(
+        &mut self,
+        data: vir::Local,
+        key: vir::Local,
+        ty: TyId,
+    ) -> ((Operand, Operand), BlockId) {
         let env = self.fn_env(data, ty);
         let (has_env, found, absent) = (self.new_block(), self.new_block(), self.new_block());
         let nn = self.non_null(env.clone());
         self.branch(nn, has_env, absent);
         self.switch_to(has_env);
-        let p = Place::local(self.temp(Ty::Ptr));
-        let k = Operand::Copy(Place::local(key));
+        let env = self.fn_props_word(env);
+        let k = ty::Str::arg(Operand::Copy(Place::local(key)));
         self.fn_props_touch();
-        self.call_rt(Rt::FnPropGet, vec![env, k], Some(p.clone()));
-        let nn = self.non_null(Operand::Copy(p.clone()));
-        self.branch(nn, found, absent);
+        let e = ty::U64::arg(env.clone());
+        let i = self.fn_props_scoped(|lw| {
+            hooks::fn_prop_index(lw, Construct::FnProps, e, k)
+                .emit(lw)
+                .op()
+        });
+        let i = self.rvalue_temp(Ty::I64, Rvalue::Use(i));
+        let none = cint(-1, Ty::I64);
+        let found_it = self.rvalue_temp(Ty::Bool, Rvalue::Binary(vir::BinOp::Ne, i.clone(), none));
+        self.branch(found_it, found, absent);
         self.switch_to(found);
-        (Operand::Copy(p), absent)
+        ((env, i), absent)
     }
 
-    /// A share of the property value at address `p`.
-    fn fn_prop_value(&mut self, p: Operand) -> Operand {
-        let any = self.cx.any_ty();
-        let avt = self.cx.ty(any);
-        let pp = self.operand_place(p, Ty::Ptr);
-        self.share_value(Operand::Copy(proj(&pp, Proj::Deref(avt))), any)
+    /// A share of property `i` of the function with environment `env` (`fn_prop_find`'s), owned.
+    fn fn_prop_value(&mut self, (env, i): (Operand, Operand)) -> Operand {
+        let (e, i) = (ty::U64::arg(env), ty::I64::arg(i));
+        self.fn_props_scoped(|lw| hooks::fn_prop_at(lw, Construct::FnProps, e, i).emit_std(lw))
     }
 
     /// The `AnyGet` slot body of a function type: its property `key`, else `undefined`.
@@ -146,7 +198,7 @@ impl FnLower<'_, '_> {
         self.switch_to(absent);
     }
 
-    /// The `AnySet` slot body of a function type: the runtime keeps the value (which the slot
+    /// The `AnySet` slot body of a function type: std's table keeps the value (which the slot
     /// owns) as property `key`.
     pub(super) fn fn_prop_set(
         &mut self,
@@ -161,7 +213,7 @@ impl FnLower<'_, '_> {
             self.switch_to(next);
         }
         // A function without an environment (a declared function's value) gets the identity
-        // the runtime keeps for its code, the same for every reference to the function; the
+        // std keeps for its code, the same for every reference to the function; the
         // value this `any` holds keeps it as its environment.
         let vp = self.any_value_place(data, ty);
         self.fn_identity_into(&vp);
@@ -180,12 +232,15 @@ impl FnLower<'_, '_> {
         let nn = self.non_null(env.clone());
         self.branch(nn, yes, no);
         self.switch_to(yes);
+        let env = ty::U64::arg(self.fn_props_word(env));
         let (k, val) = (
-            Operand::Copy(Place::local(key)),
-            Operand::Copy(Place::local(v)),
+            ty::Str::arg(Operand::Copy(Place::local(key))),
+            ty::Any::moved(Operand::Copy(Place::local(v))),
         );
         self.fn_props_touch();
-        self.call_rt(Rt::FnPropSet, vec![env, k, val], None);
+        self.fn_props_scoped(|lw| {
+            hooks::fn_prop_set(lw, Construct::FnProps, env, k, val).emit(lw);
+        });
         self.ret_status(ST_OK);
         // A generic closure's value without an environment: no identity to carry them yet.
         self.switch_to(no);
@@ -225,10 +280,12 @@ impl FnLower<'_, '_> {
         let nn = self.non_null(env.clone());
         self.branch(nn, yes, no);
         self.switch_to(yes);
-        let r = Place::local(self.temp(Ty::U8));
-        let k = Operand::Copy(Place::local(key));
+        let env = ty::U64::arg(self.fn_props_word(env));
+        let k = ty::Str::arg(Operand::Copy(Place::local(key)));
         self.fn_props_touch();
-        self.call_rt(Rt::FnPropDelete, vec![env, k], Some(r));
+        self.fn_props_scoped(|lw| {
+            hooks::fn_prop_delete(lw, Construct::FnProps, env, k).emit(lw);
+        });
         self.ret_status(done);
         self.switch_to(no);
         self.ret_status(done);
@@ -247,17 +304,21 @@ impl FnLower<'_, '_> {
         let nn = self.non_null(env.clone());
         self.branch(nn, yes, done);
         self.switch_to(yes);
-        let n = Place::local(self.temp(Ty::U64));
+        let env = self.fn_props_word(env);
         self.fn_props_touch();
-        self.call_rt(Rt::FnPropLen, vec![env.clone()], Some(n.clone()));
+        let e = ty::U64::arg(env.clone());
+        let n =
+            self.fn_props_scoped(|lw| hooks::fn_prop_len(lw, Construct::FnProps, e).emit(lw).op());
+        let n = self.rvalue_temp(Ty::U64, Rvalue::Use(n));
         let arr = self.content(&ap, sa);
         let k = self.temp(Ty::U64);
         self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
-        self.count_loop(k, Operand::Copy(n), |lw, kv| {
-            let s = lw.temp(Ty::Agg(STR_AGG));
-            let sp = lw.addr(Place::local(s));
-            lw.call_rt(Rt::FnPropKey, vec![env.clone(), kv, sp], None);
-            lw.push_value(&arr, str_, Operand::Copy(Place::local(s)));
+        self.count_loop(k, n, |lw, kv| {
+            let (e, i) = (ty::U64::arg(env.clone()), ty::U64::arg(kv));
+            let s = lw.fn_props_scoped(|lw| {
+                hooks::fn_prop_key(lw, Construct::FnProps, e, i).emit_std(lw)
+            });
+            lw.push_value(&arr, str_, s);
         });
         self.goto(done);
         self.switch_to(done);

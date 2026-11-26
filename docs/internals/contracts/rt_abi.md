@@ -327,7 +327,7 @@ the object's thread-local values (`velt_tls_data_<id>`). Design:
   environment's drop entry (header word 0, one function per closure instance): it visits the
   environment with the trace glue of the closure whose drop entry it is, among those made at the
   value's function type, and leaves out an environment that matches none (one the runtime made, or
-  one whose drop entry a function property replaced, `fn_props.rs`). An environment's trace visits
+  one whose drop entry a function property replaced, std/lang/hooks/fn_props_env.velt). An environment's trace visits
   what its captures own and its captured variables' cells (counted `[count][value]` blocks, traced
   like a map value's box). In a program with such glue, environments and cells may be weakly held,
   and their releases take the three-way sequence below.
@@ -1110,54 +1110,51 @@ never reads), so that it treats the loop's copy for a plain array as the one tha
 
 ## Function properties
 
-```c
-const uint8_t *velt_rt_fnprop_get(const uint8_t *env, const VeltStr *key);
-void velt_rt_fnprop_set(uint8_t *env, const VeltStr *key, const uint8_t *value);
-uint8_t velt_rt_fnprop_delete(const uint8_t *env, const VeltStr *key);
-uint64_t velt_rt_fnprop_len(const uint8_t *env);
-void velt_rt_fnprop_key(const uint8_t *env, uint64_t i, VeltStr *out);
-uint8_t *velt_rt_fnprop_identity(const uint8_t *code);
-uint8_t *velt_rt_fnprop_identity_of(const uint8_t *code);
-```
-
 Properties a program adds to a function value through `any` (velt_vir `lower/any_fn_props.rs`):
-JavaScript functions are objects. The function's identity is its closure environment (a
-program with writes through `any` that holds functions there gives every closure a counted
-one), so the table maps the environment's address to its properties in insertion order, each
-value an `any` (`{ data, table }`, two pointers). `get` answers the address of the value held
-(borrowed: the caller shares it at once) or null; `set` takes the `any` at `value` and drops the
-one it replaces after the store; `delete` answers 1 when there was one; `len` and `key` list the
-names (`key` writes an owned string).
+JavaScript functions are objects. They live in std (std/lang/hooks/fn_props*.velt, #2196), which
+lowering calls through the hooks `fnPropIndex`, `fnPropAt`, `fnPropSet`, `fnPropDelete`,
+`fnPropLen`, `fnPropKey`, `fnPropIdentity` and `fnPropIdentityOf` (velt_common `std_hooks`,
+`Construct::FnProps`: a program without a write through `any` loads none of it). The function's
+identity is its closure environment (a program with writes through `any` that holds functions
+there gives every closure a counted one), so the table maps the environment's address (a `u64`)
+to its properties in insertion order, each a name and an `any` value. `fnPropIndex(env, key)`
+answers the property's index or -1, and `fnPropAt(env, i)` a share of its value (owned by the
+caller); `fnPropSet` takes the value and drops the one it replaces after the table's lock is
+given back; `fnPropDelete` answers whether there was one; `fnPropLen` and `fnPropKey` list the
+names (`fnPropKey` answers an owned string).
 
 A function value without an environment (a declared function's) is one function in
-JavaScript, whichever reference reaches it: `identity(code)` answers the environment the runtime
+JavaScript, whichever reference reaches it: `fnPropIdentity(code)` answers the environment std
 keeps for the function with that code address (an environment holding nothing, made on first
-use, which the caller stores into the value as its environment), and `identity_of(code)` the
-same without making one (null when there is none). A value converted to `any` gets it there, so
+use, which the caller stores into the value as its environment), and `fnPropIdentityOf(code)` the
+same without making one (0 when there is none). A value converted to `any` gets it there, so
 `===`, `Map` keys and properties see one function. An identity's entries change no count (its
 drop does nothing, its clone and transfer answer the same environment), so every thread may hold
 it, and a value holding one takes it along to another task: the function there is the same one.
 Its properties are module state (above), since their values are not atomic: generated code
-calls std's `schedModuleTouch` before `get`, `set`, `delete` and `len` (and the `key`s after
-it), on any function, which takes the module lock as an access of a module-level `let` does, and
-the task keeps it in its polls from then on; a program that may give functions properties calls
-`schedModuleWith` before each `Mutex` and `RwLock` lock whose callback may reach them, so such a
-callback holds it already. The `set` on an identity
-keeps its entries. The table keeps identities to the end; with the leak counters on
-(`VELT_RC_STATS=1`), they are freed at exit with their properties, as module state is.
+calls std's `schedModuleTouch` before the hooks, on any function, which takes the module lock as
+an access of a module-level `let` does, and the task keeps it in its polls from then on; a
+program that may give functions properties calls `schedModuleWith` before each `Mutex` and
+`RwLock` lock whose callback may reach them, so such a callback holds it already. The `fnPropSet`
+on an identity keeps its entries. The table keeps identities to the end; with the leak counters
+on (`VELT_RC_STATS=1`), `velt_main` calls `fnPropsExit` at a normal end, after module state
+went, which frees them with their properties.
 
-The first `set` on an environment replaces its drop entry (its first word) and its transfer
-entry (its third) with the runtime's. The drop calls the original and, with the last reference
-(a count of 1 in front of the environment), first removes the entry, puts the original entries
+The first `fnPropSet` on an environment replaces its drop entry (its first word) and its transfer
+entry (its third) with std's (`envDrop`, `envTransfer`: C-callable functions of
+fn_props_env.velt, by `fnAddress`). The drop calls the original and, with the last reference (a
+count of 1 in front of the environment), first removes the entry, puts the original entries
 back and drops the names and values. The transfer (the function enters another thread) moves a
 unique environment and transfers each value in place; a shared one is copied (by its original
 transfer entry, or as a new environment holding nothing), and the copy gets a share of each
 value, transferred, so every thread has properties of its own, as a copied object has members
 of its own. A tagged pointer (the many-threads check) goes to the original entry. Values are
-dropped, shared and transferred through their table's slots (8 bytes each on every target),
-never under the table's lock. One table for the process, behind a lock. Both runtimes provide
-them (`velt_rt/src/fn_props.rs`, compiled into velt_rt_wasm too). Programs without a write
-through `any` never call them.
+moved in and out of the table's blocks with `slotStore` and `slotTake` as they are, dropped and
+shared as any `any` is and transferred through its table's transfer entry (as the function's own
+transfer, which the checks see at the function), never under the table's lock. One table for the
+process, behind its own lock, which never yields the core (a source generator may write through
+`any`); its words are static atomics, its blocks the compiled code's allocator's (counted, and
+given back as the table empties). Its entries take `Ptr<u8>`, pointer-sized on every target.
 
 ## Output
 `stream`: 1 = stdout (buffered, flushed at exit / before any stderr write / on `velt_rt_flush`),
