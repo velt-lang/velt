@@ -38,8 +38,12 @@ pub(crate) fn infer_all(cx: &mut Ctx) {
         }
     }
     let mut guarded = Guarded::new(cx, &fns);
-    // By units, std's functions that the program's proxy traps make throw (`std_trap_callers`).
-    let with_std: Vec<DefId> = fns.iter().copied().chain(cx.std_trap_callers()).collect();
+    // By units, std's functions the program makes throw more (`std_raised_callers`).
+    let with_std: Vec<DefId> = fns
+        .iter()
+        .copied()
+        .chain(cx.std_raised_callers(&groups))
+        .collect();
     let mut work = Worklist::new(cx, &with_std, &groups);
     let mut round = 0;
     loop {
@@ -165,7 +169,7 @@ impl Worklist {
                 true => guarded.own_final(cx, d),
                 false => (own_final(cx, d), false),
             };
-            // A finished unit's function (`std_trap_callers`) only grows: what std's check gave
+            // A finished unit's function (`std_raised_callers`) only grows: what std's check gave
             // it stays.
             let t = match d.0 < cx.unit_base {
                 true => cx.join_errors(cx.fn_throws(d), t),

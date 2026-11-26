@@ -63,14 +63,14 @@ function main() {
 /// What Node prints: `super.get` and the plain `Map`s run `Map`'s `get`, the others the override.
 const PRINTS: &str = "1 99 99 1 2\n";
 
-/// `velt run` of [`PROGRAM`] by units against a copy of std with [`PROBE`]: its stdout, and the
+/// `velt run` of `program` by units against a copy of std with [`PROBE`]: its stdout, and the
 /// std functions whose calls dispatch (`velt-units-raised: dispatch` lines).
-fn run_by_units() -> (String, Vec<String>) {
+fn run_by_units(program: &str) -> (String, Vec<String>) {
     let dir = test_dir::TestDir::new();
     let std_copy = std_copy::with_probe(dir.path(), PROBE);
     let app = dir.path().join("app");
     std::fs::create_dir_all(&app).unwrap();
-    std::fs::write(app.join("main.velt"), PROGRAM).unwrap();
+    std::fs::write(app.join("main.velt"), program).unwrap();
     let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["run", "main.velt"])
         .current_dir(&app)
@@ -94,7 +94,7 @@ fn run_by_units() -> (String, Vec<String>) {
 
 #[test]
 fn std_s_calls_reach_a_program_override_only_where_it_can_run() {
-    let (printed, dispatched) = run_by_units();
+    let (printed, dispatched) = run_by_units(PROGRAM);
     assert_eq!(printed, PRINTS);
     let dispatches = |f: &str| dispatched.iter().any(|l| l.starts_with(f));
     // The calls on a receiver the program's class may be.
@@ -104,4 +104,42 @@ fn std_s_calls_reach_a_program_override_only_where_it_can_run() {
     for direct in ["Probe.first ->", "freshGet ->", "otherGet ->"] {
         assert!(!dispatches(direct), "{direct} dispatches: {dispatched:?}");
     }
+}
+
+/// An override that throws, reached from std's methods and functions: they throw what it throws
+/// (std's unit inferred them throwing nothing), and the program catches it.
+const THROWING: &str = r#"import { Probe, probeGet } from "velt/probe";
+
+class Thrower extends Probe {
+  override get(k: string): number | undefined {
+    if (k === "a") {
+      throw new Error("no " + k);
+    }
+    return 1;
+  }
+}
+
+function main() {
+  const p = new Thrower();
+  try {
+    console.log(probeGet(p));
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+  try {
+    console.log(p.plain());
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
+}
+"#;
+
+#[test]
+fn std_s_calls_of_a_throwing_override_throw_what_it_throws() {
+    let (printed, dispatched) = run_by_units(THROWING);
+    assert_eq!(printed, "caught no a\ncaught no a\n");
+    assert!(
+        dispatched.iter().any(|l| l.starts_with("probeGet ->")),
+        "{dispatched:?}"
+    );
 }

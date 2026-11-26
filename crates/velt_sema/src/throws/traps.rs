@@ -25,26 +25,34 @@ impl Ctx<'_> {
         out
     }
 
-    /// In the app's stage of a check by units, std's functions whose error type grows with what
-    /// the program's traps throw: those calling a trap (a source throwing a trap's error type,
-    /// [`Self::trap_call_error`]), and the std functions calling them. A whole-program check
-    /// infers them with the program's traps in the sites; std's unit inferred them before any
-    /// program existed, with the sites empty. So the app's fixpoint takes them in again and
-    /// raises their error types (`units::raised`).
-    pub(crate) fn std_trap_callers(&self) -> Vec<DefId> {
-        if self.units_stage != crate::units::Stage::App || self.unit_sums.trap_sites.is_empty() {
+    /// In the app's stage of a check by units, std's functions whose error type grows with the
+    /// program: those calling a trap (a source throwing a trap's error type,
+    /// [`Self::trap_call_error`]), those calling a std method or interface slot whose dispatch
+    /// group the program joins (an override, an implementation: the group's error type is raised
+    /// with the program's members), and the std functions calling them. A whole-program check
+    /// infers them with the program's traps in the sites and its members in the groups; std's
+    /// unit inferred them before any program existed. So the app's fixpoint takes them in again
+    /// and raises their error types (`units::raised`).
+    pub(crate) fn std_raised_callers(&self, groups: &super::groups::Groups) -> Vec<DefId> {
+        if self.units_stage != crate::units::Stage::App {
             return vec![];
         }
         let std_fns: Vec<DefId> = (self.fn_defs.iter().copied())
             .filter(|d| d.0 < self.unit_base)
             .filter(|d| self.fn_info(*d).state == crate::defs::BodyState::Done)
             .collect();
+        // The groups with a member of the program's.
+        let with_app = |g: Option<usize>| {
+            g.is_some_and(|g| groups.list[g].members.iter().any(|m| m.0 >= self.unit_base))
+        };
+        let grows = |s: &ThrowSrc| match s {
+            ThrowSrc::Direct(t, _) => self.trap_site_of_error(*t).is_some(),
+            ThrowSrc::Call(g, _, _) => g.0 < self.unit_base && with_app(groups.group_of(*g)),
+            ThrowSrc::Slot { iface, slot, .. } => with_app(groups.slot_group(*iface, *slot)),
+            _ => false,
+        };
         let mut out: FxHashSet<DefId> = (std_fns.iter().copied())
-            .filter(|d| {
-                (self.fn_info(*d).throw_srcs.iter()).any(|s| {
-                    matches!(s, ThrowSrc::Direct(t, _) if self.trap_site_of_error(*t).is_some())
-                })
-            })
+            .filter(|d| self.fn_info(*d).throw_srcs.iter().any(grows))
             .collect();
         loop {
             let more: Vec<DefId> = (std_fns.iter().copied())
