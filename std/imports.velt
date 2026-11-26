@@ -364,6 +364,7 @@ export const imports: Imports = {
     darwin: "./process/env_darwin.velt",
     linux: "./process/env_linux.velt",
     win32: "./process/env_win32.velt",
+    wasi: "./process/env_wasi.velt",
     default: "./process/env_wasm.velt",
   },
   // The working directory (`cwd`, `chdir`), apart from the variables: it throws `IoError`.

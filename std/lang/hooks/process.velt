@@ -9,6 +9,7 @@
 import { processId } from "#process-pid";
 import { addressLoad, addressStore, inline, noInline } from "velt/lang/intrinsics";
 import { getEnv } from "#env-sys";
+import { nodeArgv } from "velt/process/args";
 
 declare function velt_rt_write_str(stream: u32, s: string);
 
@@ -103,14 +104,12 @@ export function processEnv(name: string): string | undefined {
   return getEnv(name);
 }
 
-declare function velt_rt_process_node_argv(): string[];
-
 /**
  * Node's `process.argv`: `[runtime, script, ...args]` (the running executable, the script under
  * `velt run` / `velt dev` or the executable again, then the arguments).
  */
 export function processArgv(): string[] {
-  return velt_rt_process_node_argv();
+  return nodeArgv();
 }
 
 /** Node's `process.pid`: this process's id. */
