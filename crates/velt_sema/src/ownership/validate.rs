@@ -199,8 +199,9 @@ impl Validator<'_, '_, '_> {
                     let shared = self.shared.get(def).cloned().unwrap_or_default();
                     for cap in c.captures.iter().filter(|c| c.mode == PassMode::Owned) {
                         // An escaping closure keeps its by-value captures: a borrowed function
-                        // parameter may be a closure living in a caller's frame (functions.md
-                        // "Captures"). A local one ends with the call, like the parameter.
+                        // parameter may be a closure living in a caller's frame
+                        // (https://veltlang.com/docs/reference/functions/ "Captures"). A local
+                        // one ends with the call, like the parameter.
                         let escaping = self.cx.fn_info(*def).escaping;
                         let outer = Expr {
                             kind: E::Local(cap.outer, UseMode::Copy),

@@ -11,8 +11,8 @@ use crate::locate::Origin;
 use crate::spec::{resolve_spec, ModuleRef};
 use crate::std_ast::{self, StdAstCache, StdParser, NO_FILE};
 
-/// The cache's kind for a package's interface (package-cache.md layer 1), whose first fields are
-/// the std index.
+/// The cache's kind for a package's interface (build-architecture.md "A unit's interface"), whose
+/// first fields are the std index.
 pub const KIND: &str = "pkg-interface";
 
 /// A std source file: where it is, its canonical module path and its contents.

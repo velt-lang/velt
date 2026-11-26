@@ -3,7 +3,8 @@
 // modulo 32, and a product inside such an operand rounds like a double once it is past 2^53, so
 // `(y * k) | 0` is JS's value. Floats, integers inferred from literals and results of earlier
 // bitwise operators all behave the same. The expected output is Node's. (Products printed
-// without a bitwise operator are still exact `i64` values past 2^53: types.md "Numbers".)
+// without a bitwise operator are still exact `i64` values past 2^53:
+// https://veltlang.com/docs/reference/types/ "Numbers".)
 
 function mix32(x: number, i: number): number {
   let y = (x ^ (x >>> 15)) | 0;

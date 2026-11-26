@@ -1,4 +1,5 @@
-//! The output of source generators is cached (docs/internals/design/source-generators.md §9):
+//! The output of source generators is cached (docs/internals/design/source-generators.md
+//! "Caching"):
 //! a second build reuses it, and a change to the generator's module invalidates it.
 
 use std::path::Path;
@@ -303,7 +304,7 @@ fn checks_of_all_std_and_of_std_on_demand_keep_their_own_offers() {
 
 /// Instances that need code are generated during the check that finds them, and their code is
 /// added to that check: a program with generated functions is checked once, as one without
-/// (docs/internals/design/source-generators.md "As built so far").
+/// (docs/internals/design/source-generators.md "Compilation").
 #[test]
 fn generated_code_is_added_to_the_check_that_needs_it() {
     let tmp = tempfile::tempdir().expect("temp dir");

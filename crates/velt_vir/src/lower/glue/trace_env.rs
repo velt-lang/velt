@@ -1,4 +1,4 @@
-//! Trace glue through function values (docs/internals/design/cycles.md section 2, step 3): a
+//! Trace glue through function values (docs/internals/design/cycles.md "Compilation"): a
 //! closure's heap environment is a counted object that owns its captures, so a weak map value
 //! holding a handler closure that captures the key is an ephemeron cycle like any other (#989).
 //!

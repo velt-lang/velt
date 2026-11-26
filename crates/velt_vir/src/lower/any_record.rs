@@ -1,7 +1,7 @@
 //! `AnyTo` of an `any` to a string literal type (a key known per instantiation), checked by the
 //! string's content, and of an `any` holding a `Record<string, any>` to an object type: the
 //! object built from the record's entries (`{} as Pick<T, K>`, docs/internals/design/
-//! deferred-types.md, decision 5).
+//! deferred-types.md "Values of deferred types in a generic body").
 
 use velt_sema::hir::{self, DynMemberKind, TyId, TyKind};
 
@@ -65,8 +65,9 @@ impl FnLower<'_, '_> {
     /// Where the `any` at `p` (of type `from`, owned) holds a `Record<string, any>` and `ty` is
     /// an object type without optional fields: `ty` built from the record's entries, each value
     /// converted as `AnyTo` converts it, a missing key a `TypeError` naming it
-    /// (docs/internals/design/deferred-types.md, decision 5); then on to `done` with it in
-    /// `out`. Any other value goes on in the current block. Nothing for other target types.
+    /// (docs/internals/design/deferred-types.md "Values of deferred types in a generic body");
+    /// then on to `done` with it in `out`. Any other value goes on in the current block. Nothing
+    /// for other target types.
     pub(super) fn any_record_fill(
         &mut self,
         p: &Place,
@@ -221,8 +222,8 @@ impl FnLower<'_, '_> {
 
     /// The record `data` holds (of type `rec`) has a key the object type with fields `names`
     /// lacks, or its keys in another order: Velt's object has its type's fields in their order,
-    /// where JavaScript's object would have the record's (decision 5 in
-    /// docs/internals/design/deferred-types.md), so it is a `TypeError`. The record's keys
+    /// where JavaScript's object would have the record's (docs/internals/design/deferred-types.md
+    /// "Values of deferred types in a generic body"), so it is a `TypeError`. The record's keys
     /// (`[RECORD_KEY_NAMES]`, in JavaScript's order) must be the names of the fields it holds
     /// (`present`), in order.
     fn record_fill_order(

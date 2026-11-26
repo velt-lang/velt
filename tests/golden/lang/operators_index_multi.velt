@@ -1,4 +1,4 @@
-// `m[i, j]`: an operator indexer with several keys (#2179, design operators.md step 8). The
+// `m[i, j]`: an operator indexer with several keys (#2179, design operators.md "Indexing"). The
 // object, then each key once, left to right, then the value; `?.[…]` evaluates no key when
 // the object is null; a value reading the same element is well defined, as for `v += v`.
 

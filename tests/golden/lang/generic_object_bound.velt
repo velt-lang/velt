@@ -1,5 +1,5 @@
 // A type parameter bounded by an object type reads and writes its fields in the generic body
-// (`T extends { name: string }`; docs/internals/design/deferred-types.md, P3; #350, #1212).
+// (`T extends { name: string }`; deferred-types.md "Structural bounds"; #350, #1212).
 class Person {
   constructor(public name: string, public age: number) {}
 }

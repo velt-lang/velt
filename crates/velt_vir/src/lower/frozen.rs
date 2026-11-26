@@ -3,7 +3,7 @@
 //! a param of a `Work::Frozen` instance in its mask, a binding by reference into either, or a
 //! part of one of those (a *frozen root*). Sema rejects every write to one, also through the
 //! functions it is passed to. Lowering must not change a reference count in one either, since
-//! those are not atomic (semantics stage 2 §6):
+//! those are not atomic (docs/internals/design/semantics.md "Threads"):
 //! - a stabilized borrow (`stable_borrow`) and a held operand (`hold`) of one take no share and
 //!   retain nothing on the way: nothing changes a frozen value, and where code could give the
 //!   variable or object holding its `shared` handle another one while it is read, the reader

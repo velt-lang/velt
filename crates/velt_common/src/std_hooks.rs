@@ -97,7 +97,8 @@ with_tls_hooks! {
         replaces("velt_rt_u64_to_radix");
     /// `Math.imul`-like `(a * b) | 0` of two int32 values (`velt_sema` `int32.rs`, numrep).
     mul_to_int32 => lang_hooks_number, "mulToInt32", sig((f64, f64) -> i32), lowered;
-    /// An array index written as a float (`xs[i]` with `i: number`): ts-compat.md.
+    /// An array index written as a float (`xs[i]` with `i: number`):
+    /// https://veltlang.com/docs/reference/types/ "Numbers".
     float_index => lang_hooks_number, "floatIndex", sig((f64) -> usize), lowered;
     /// A float position argument (`xs.at(i)`, `s.slice(i)`).
     float_position => lang_hooks_number, "floatPosition", sig((f64) -> usize);

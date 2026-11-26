@@ -377,7 +377,7 @@ impl Translator<'_, '_> {
     }
 
     /// Address of element `at` of the array whose header `array` points to (the `{ data, len, cap }`
-    /// header of docs/internals/design/semantics-stage2.md).
+    /// header of docs/internals/design/semantics.md "Which types are counted").
     pub(super) fn simd_element(
         &mut self,
         lanes: Lanes,
