@@ -220,6 +220,7 @@ impl FnCx<'_, '_> {
                 h
             };
             let arg_ty = h.ty;
+            self.note_undefined_arg(p.default.is_some(), arg_ty, (hargs.len(), span));
             let site = self.arg_site(p, h.span);
             self.flow_into(&h, site);
             let outer_target = self.set_target(site);
@@ -264,6 +265,7 @@ impl FnCx<'_, '_> {
             let d = self.placed_default(d, &type_args, span);
             hargs.push(d);
         }
+        self.note_call_args(args, span);
         // A deferred type in the result that the type arguments let reduce is reported here.
         let outer = self.cx.type_level.use_site.replace(span);
         let ret = self.cx.subst(c.ret, &type_args);

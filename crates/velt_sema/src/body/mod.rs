@@ -255,6 +255,9 @@ pub(crate) struct FnCx<'a, 'm> {
     pub constraints: Vec<Option<TyId>>,
     /// Name of the enclosing top-level function (for closure names).
     pub fn_name: String,
+    /// What checking the arguments of calls in std's bodies by units noted, by the call's span
+    /// (`expr::default_args::ArgNote`, #3789), until their call takes them.
+    pub undefined_args: Vec<(velt_common::Span, expr::default_args::ArgNote)>,
     /// Type whose body is being checked (methods, constructors, defaults, field initializers):
     /// its `private` members are accessible.
     pub owner: Option<DefId>,
@@ -485,6 +488,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             bounds: vec![],
             constraints: vec![],
             fn_name: String::new(),
+            undefined_args: vec![],
             owner: None,
             body_def: None,
             static_this: None,
