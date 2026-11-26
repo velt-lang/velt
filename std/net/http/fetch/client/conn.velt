@@ -17,8 +17,7 @@ import { Target, TlsOn } from "velt/net/http/fetch/client/target";
 import { setBytes } from "velt/lang/bytes/copy";
 import { stdUsed } from "velt/lang/intrinsics";
 import { dialPlain, dialTls, reactorUp } from "#fetch-dial";
-
-declare async function velt_rt_tcp_connect(addr: string): Promise<IoResult<u64>>;
+import { velt_rt_tcp_connect } from "#net-tcp";
 
 /** How long connecting may take (milliseconds) before `ETIMEDOUT`, as undici's default. */
 const CONNECT_MS: i64 = 10000;
@@ -237,7 +236,9 @@ export async function dial(
   const tls = t.https ? tlsOf(t, addr) : null;
   // Where the executor in Velt's pool keeps streams of its reactor (std/net/tcp_sched.velt notes
   // it): a socket on the reactor, with the TLS client in Velt over it for `https:`
-  // (dial_sched.velt). A constant: a build without it lowers only the runtime's connect below.
+  // (dial_sched.velt). Otherwise `#net-tcp`'s connect below: on a native build without a reactor
+  // (before the executor started, or when it could not open one) std's, which fails with
+  // `ENOTSUP` and makes no socket; in a build without the executor (WebAssembly) the runtime's.
   if (stdUsed("fetch-pool-reactor") && reactorUp()) {
     return tls != null
       ? await dialTls(addr, bare(t.hostname), ca, alpn, tls, signal)
@@ -245,9 +246,9 @@ export async function dial(
   }
   const stop = new AbortController();
   const start = Date.now() as i64;
-  // The runtime's connect itself races the limits: when it loses, it is dropped, which stops
-  // connecting (a function around it would go on and make a connection nobody closes). For
-  // `https:` the TLS client in Velt then runs over the runtime's socket (`tlsOn`).
+  // The connect itself races the limits: when it loses, it is dropped, which stops connecting
+  // (a function around it would go on and make a connection nobody closes). For `https:` the TLS
+  // client in Velt then runs over the socket (`tlsOn`).
   const connecting = velt_rt_tcp_connect(addr);
   const racers: Promise<IoResult<u64>>[] = [connecting, expire(stop.signal)];
   if (signal != null) {

@@ -8,10 +8,16 @@ mod test_dir;
 
 /// The VIR of `src`, compiled as `main.velt`.
 fn vir_of(src: &str) -> String {
+    vir_for(src, &[])
+}
+
+/// The VIR of `src`, compiled as `main.velt` with `args` (a `--target`).
+fn vir_for(src: &str, args: &[&str]) -> String {
     let dir = test_dir::TestDir::new();
     std::fs::write(dir.path().join("main.velt"), src).unwrap();
     let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["build", "main.velt", "--emit", "vir"])
+        .args(args)
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -151,11 +157,13 @@ fn a_runtime_function_gets_an_array_of_a_view_type_in_place() {
     // #1831: `u8[]` is a view type here, so its arrays are boxed. A TCP stream's `readInto`
     // passes its buffer's bytes to `velt_rt_tcp_try_read_into`, which writes them: the extern
     // gets the box's own header, not a copy of it in a temporary (whose writes would be lost),
-    // and the view's mirror is written back after the call. (The function that calls it is std's
-    // wrapper under the std scheduler, `TcpStream.readInto` otherwise: the one holding the call.)
+    // and the view's mirror is written back after the call. (WebAssembly: a native build reads
+    // through the executor's reactor in std, which calls no runtime function with the array;
+    // the WebAssembly runtime's streams are still its own, and `TcpStream.readInto` calls it.)
     const EXTERN: &str = "velt_rt_tcp_try_read_into(";
-    let vir = vir_of(
+    let vir = vir_for(
         "import { connect } from \"velt/net\";\nconst ns: any = [1];\nconst bs = ns as u8[];\nasync function main() {\n  const s = await connect(\"127.0.0.1:1\");\n  const buf = new Uint8Array(8);\n  console.log(bs.length, await s.readInto(buf));\n}\n",
+        &["--target", "wasm32-wasip1"],
     );
     let fns: Vec<&str> = vir
         .split("\nfn#")
