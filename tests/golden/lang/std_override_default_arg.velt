@@ -1,0 +1,18 @@
+// A program's override of a std method that gives a parameter another default, called through
+// a std-typed receiver with the argument left out: the override's default applies, in every mode
+// of checking (#3684).
+class Semi extends Float32Array {
+  override join(sep: string = ";"): string {
+    return "[" + super.join(sep) + "]";
+  }
+}
+
+function joinIt(a: Float32Array): string {
+  return a.join();
+}
+
+function main() {
+  const s = new Semi(3);
+  const a: Float32Array = s;
+  console.log(s.join(), a.join(), joinIt(s));
+}
