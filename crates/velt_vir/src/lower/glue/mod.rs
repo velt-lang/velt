@@ -46,6 +46,7 @@ mod eq_cycles;
 mod eq_numbers;
 mod format;
 mod format_array;
+mod format_inspect;
 mod format_map;
 mod format_object;
 mod format_promise;
