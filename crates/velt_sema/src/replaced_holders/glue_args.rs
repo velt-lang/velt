@@ -179,8 +179,6 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::PromiseWiden
         | I::PromiseSame
         | I::PerfNow
-        | I::ProxyArrayCall
-        | I::ProxyArrayHole
         | I::IsTypedProxy
         | I::DateNow
         | I::SharedAdd

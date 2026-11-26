@@ -543,8 +543,6 @@ enums! {
         171 => AnyIsList,
         172 => NoteStdUse,
         173 => StdUsed,
-        174 => ProxyArrayCall,
-        175 => ProxyArrayHole,
         176 => IsTypedProxy,
         177 => Identity,
         178 => ToAny,
