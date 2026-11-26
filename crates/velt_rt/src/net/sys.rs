@@ -1,8 +1,7 @@
-//! TCP sockets of the runtime's host (tokio's), for its Rust glue: only what the HTTP server, TLS
-//! and the upgrade hand-over use.
+//! A TCP connection on the runtime's host (tokio's), for native packages' async I/O
+//! (native/aio.rs): connect, adopt a connected socket, read, write and shut down.
 
 use std::io;
-use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -20,47 +19,6 @@ impl TcpStream {
     /// inside the host's context).
     pub fn from_std(s: std::net::TcpStream) -> io::Result<TcpStream> {
         tokio::net::TcpStream::from_std(s).map(TcpStream)
-    }
-
-    pub async fn readable(&self) -> io::Result<()> {
-        self.0.readable().await
-    }
-
-    pub async fn writable(&self) -> io::Result<()> {
-        self.0.writable().await
-    }
-
-    /// Reads what is there into `buf`'s spare capacity (at most `max` bytes), without waiting.
-    pub fn try_read_buf(&self, buf: &mut Vec<u8>, max: usize) -> io::Result<usize> {
-        self.0.try_read_buf(&mut bytes::BufMut::limit(buf, max))
-    }
-
-    pub fn try_read(&self, dst: &mut [u8]) -> io::Result<usize> {
-        self.0.try_read(dst)
-    }
-
-    pub fn try_write(&self, data: &[u8]) -> io::Result<usize> {
-        self.0.try_write(data)
-    }
-
-    pub fn set_nodelay(&self, on: bool) -> io::Result<()> {
-        self.0.set_nodelay(on)
-    }
-
-    pub fn peer_addr(&self) -> io::Result<SocketAddr> {
-        self.0.peer_addr()
-    }
-
-    pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.0.local_addr()
-    }
-
-    /// Whether an idle socket is still open: a look at what has arrived, without taking it and
-    /// without waiting (a system call, not the reactor's possibly stale readiness), finds
-    /// nothing yet. The end of the stream, unexpected bytes or an error mean it is not.
-    pub fn idle_open(&self) -> bool {
-        let mut probe = [std::mem::MaybeUninit::<u8>::uninit()];
-        matches!(self.sock_ref().peek(&mut probe), Err(e) if e.kind() == io::ErrorKind::WouldBlock)
     }
 
     /// The socket, for `socket2` (shutdown).

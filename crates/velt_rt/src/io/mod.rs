@@ -40,11 +40,9 @@ pub fn init_stdout() {
 }
 
 /// Called after every poll of a compiled future by the runtime: makes this thread's output visible
-/// in order before the task can continue on another thread, then sends the socket writes the poll
-/// deferred (`TcpStream.writeLater`, net/later.rs).
+/// in order before the task can continue on another thread.
 pub fn publish_thread_output() {
     stdout::publish_local();
-    crate::net::later::flush_due();
 }
 
 /// Called before this task hands work to another one, ahead of the change the other task sees:

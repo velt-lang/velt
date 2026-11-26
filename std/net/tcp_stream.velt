@@ -259,8 +259,8 @@ export struct TcpStream implements TryStream {
 
   /**
    * Hands this idle stream to the process's pool under `key` (std only: `fetch`'s keep-alive
-   * connections; the runtime's, crates/velt_rt/src/net/park.rs, or for a socket on the reactor of
-   * the executor in Velt, std/net/fd_pool.velt), for `TcpStream.unpark(key)` in any task. This
+   * connections; std/net/fd_pool.velt for a socket on the executor's reactor, the runtime's in
+   * a build without it), for `TcpStream.unpark(key)` in any task. This
    * copy must not be used any more.
    */
   private park(key: string) {
