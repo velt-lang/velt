@@ -68,6 +68,8 @@ pub(super) fn add(
     origins.sort_by_key(|(o, _)| depth(cx, *o));
     for (origin, keys) in origins {
         add_slots(cx, origin, &keys, &frozen, overrides);
+        let added = keys.into_iter().map(|k| (origin, k));
+        cx.unit_sums.raised.added.extend(added);
     }
 }
 
