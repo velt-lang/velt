@@ -545,7 +545,7 @@ async function serveThenEnd(
 }
 
 describe("a pooled connection the server has closed", () => {
-  // The check before reuse (crates/velt_rt/src/net/park.rs) without its race: the next request
+  // The check before reuse (std/net/fd_pool.velt) without its race: the next request
   // starts only after the server's close, so it must find the connection closed and go out on a
   // new one. A POST could not be sent again, so without the check it would fail.
   it("is not used again by a POST or a GET", async () => {

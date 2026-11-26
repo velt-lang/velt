@@ -1,12 +1,11 @@
 // velt/net (internal): the keep-alive pool of `fetch`'s connections on the reactor of the executor
 // in Velt (std/net/tcp_sched.velt's `park` and `unpark` for the sockets of ours;
-// std/net/http/fetch/client/dial_sched.velt makes them). The same rules as the runtime's pool,
-// which keeps the runtime's streams (crates/velt_rt/src/net/park.rs, whose comment explains
-// them): a stream parked under a key (an origin) goes to the next task that asks for that key,
-// most recently parked first; with `settled` (a request that may not be sent twice) only one idle
-// for at least `SETTLED_NS`; one idle longer than `MAX_IDLE_NS` is closed when its key is next
-// asked for; a key keeps at most `MAX_PER_KEY` streams; and every stream is looked at before it is
-// handed out (the end of the stream, unexpected bytes or an error close it instead).
+// std/net/http/fetch/client/dial_sched.velt makes them): a stream parked under a key (an
+// origin) goes to the next task that asks for that key, most recently parked first; with
+// `settled` (a request that may not be sent twice) only one idle for at least `SETTLED_NS`; one
+// idle longer than `MAX_IDLE_NS` is closed when its key is next asked for; a key keeps at most
+// `MAX_PER_KEY` streams; and every stream is looked at before it is handed out (the end of the
+// stream, unexpected bytes or an error close it instead).
 //
 // Process-wide, so any worker's task takes a stream another parked: a map behind a `Mutex` in a
 // static atomic (its word is in the program's data; the reference is released at exit for the
