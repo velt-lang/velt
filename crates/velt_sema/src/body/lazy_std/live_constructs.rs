@@ -51,6 +51,8 @@ fn float_bit(cx: &mut Ctx, t: TyId, present: ConstructSet) -> ConstructSet {
 /// the passes after the bodies' check tell ([`too_late`], [`super::finish`]).
 #[derive(Clone, Default)]
 pub(crate) struct Assumed {
+    /// The keys of the freezable types the rounds before found (`crate::freezable`).
+    pub(crate) frozen: Vec<String>,
     pub(in super::super) constructs: ConstructSet,
     /// Live from the start: classes of values reported when thrown and not caught, and bodies
     /// that the code those passes make reaches, by `DefId` and name. Each is a collected
@@ -588,6 +590,6 @@ pub(super) fn note_program_code(
 // The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
 crate::units::codec::structs! {
     Assumed {
-        constructs, defs, record_conversion, tasks, hooks, module_state,
+        frozen, constructs, defs, record_conversion, tasks, hooks, module_state,
     }
 }

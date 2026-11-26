@@ -1,6 +1,7 @@
 // TS constructor parameter properties (`constructor(public x: f64, private readonly mass: f64)`,
-// docs/internals/design/ts-alignment.md §5) declare the fields and store the arguments; with a base class
-// the stores follow `super(...)`. Regression (benchmarks-game): a parse error.
+// docs/internals/design/ts-alignment.md "Smaller alignments") declare the fields and store the
+// arguments; with a base class the stores follow `super(...)`. Regression (benchmarks-game): a
+// parse error.
 class Body {
   constructor(public x: f64, private readonly mass: f64) {}
 

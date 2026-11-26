@@ -1,10 +1,11 @@
-//! Reference counts of counted objects (semantics stage 2, docs/design/semantics-stage2.md §3):
-//! a counted object is a heap block `[count: u64][payload]` whose value is the address of the
+//! Reference counts of counted objects (docs/internals/design/semantics.md "Operations"): a
+//! counted object is a heap block `[count: u64][payload]` whose value is the address of the
 //! payload, so a pointer to it is exactly what the borrow ABI passes for an inline value. The
-//! count is plain (non-atomic): counted objects never cross threads (§6). Inline code only — no
-//! runtime calls on the hot paths — except for the lock set (boxing/locks.rs), whose objects
-//! readers of an `RwLock` share: their count operations go through `velt_rt_lk_*`, which leave
-//! the shared ones alone in a `read` callback (the `_of` variants, given the object's type).
+//! count is plain (non-atomic): counted objects never cross threads (semantics.md "Threads").
+//! Inline code only — no runtime calls on the hot paths — except for the lock set
+//! (boxing/locks.rs), whose objects readers of an `RwLock` share: their count operations go
+//! through `velt_rt_lk_*`, which leave the shared ones alone in a `read` callback (the `_of`
+//! variants, given the object's type).
 
 use super::boxing::ShareKind;
 use super::hook_calls::{self as hooks, ty, Construct, HookTy};
@@ -204,9 +205,16 @@ impl FnLower<'_, '_> {
         weak: bool,
         last: impl FnOnce(&mut Self),
     ) {
+        if self.cx.freezable(ty) {
+            // Never lock-set (boxing/locks.rs): the count compared without the frozen bit.
+            return match weak {
+                true => self.release_weak(p, false, true, last),
+                false => self.release_frozen(p, last),
+            };
+        }
         if !self.cx.lock_counted(ty) {
             if weak && self.cx.is_class(ty) && self.cx.slot_target(ty) {
-                return self.release_weak(p, true, last);
+                return self.release_weak(p, true, false, last);
             }
             return self.release_as(p, weak, last);
         }
@@ -432,7 +440,7 @@ impl FnLower<'_, '_> {
     /// `WeakRef` when this was its last reference (then `last` runs, as on the unique path).
     pub(super) fn release_as(&mut self, p: Operand, weak: bool, last: impl FnOnce(&mut Self)) {
         if weak {
-            return self.release_weak(p, false, last);
+            return self.release_weak(p, false, false, last);
         }
         let c = self.count_place(p);
         let n = self.rvalue_temp(Ty::U64, Rvalue::Use(Operand::Copy(c.clone())));
@@ -453,11 +461,24 @@ impl FnLower<'_, '_> {
     }
 
     /// The weak-capable release; `slot`: the object may be weakly held by `weak` fields alone
-    /// (weak_fields.rs `slot_target`), so a weakly held one without a gate is decremented inline.
-    fn release_weak(&mut self, p: Operand, slot: bool, last: impl FnOnce(&mut Self)) {
+    /// (weak_fields.rs `slot_target`), so a weakly held one without a gate is decremented inline;
+    /// `frozen`: a freezable type's, whose tests leave out the frozen bit (frozen_mark.rs), which
+    /// a decrement keeps.
+    fn release_weak(&mut self, p: Operand, slot: bool, frozen: bool, last: impl FnOnce(&mut Self)) {
         let c = self.count_place(p.clone());
         let n = self.rvalue_temp(Ty::U64, Rvalue::Use(Operand::Copy(c.clone())));
-        let s = self.rvalue_temp(Ty::I64, Rvalue::Cast(n.clone(), Ty::I64));
+        let t = match frozen {
+            true => self.rvalue_temp(
+                Ty::U64,
+                Rvalue::Binary(
+                    BinOp::BitAnd,
+                    n.clone(),
+                    cint(!super::frozen_mark::FROZEN, Ty::U64),
+                ),
+            ),
+            false => n.clone(),
+        };
+        let s = self.rvalue_temp(Ty::I64, Rvalue::Cast(t.clone(), Ty::I64));
         let shared = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Gt, s, cint(1, Ty::I64)));
         let (dec_bb, other, join) = (self.new_block(), self.new_block(), self.new_block());
         self.branch(shared, dec_bb, other);
@@ -471,7 +492,7 @@ impl FnLower<'_, '_> {
         self.switch_to(other);
         let one = self.rvalue_temp(
             Ty::Bool,
-            Rvalue::Binary(BinOp::Eq, n.clone(), cint(1, Ty::U64)),
+            Rvalue::Binary(BinOp::Eq, t.clone(), cint(1, Ty::U64)),
         );
         let (last_bb, cold) = (self.new_block(), self.new_block());
         match slot {
@@ -483,7 +504,7 @@ impl FnLower<'_, '_> {
                 let gated = self.new_block();
                 self.branch(one, last_bb, gated);
                 self.switch_to(gated);
-                let x = Rvalue::Binary(BinOp::Shl, n, cint(1, Ty::U64));
+                let x = Rvalue::Binary(BinOp::Shl, t, cint(1, Ty::U64));
                 let x = self.rvalue_temp(Ty::U64, x);
                 let x = self.rvalue_temp(Ty::I64, Rvalue::Cast(x, Ty::I64));
                 let plain = Rvalue::Binary(BinOp::Gt, x, cint(2, Ty::I64));

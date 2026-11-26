@@ -369,7 +369,13 @@ impl FnCx<'_, '_> {
     }
 
     /// Is optional field `key` of `obj` present: its presence flag (`flag`), or not null?
-    fn present_test(&mut self, obj: hir::Expr, key: &str, flag: bool, span: Span) -> hir::Expr {
+    pub(super) fn present_test(
+        &mut self,
+        obj: hir::Expr,
+        key: &str,
+        flag: bool,
+        span: Span,
+    ) -> hir::Expr {
         let prop = ast::Ident {
             name: key.to_string(),
             span,

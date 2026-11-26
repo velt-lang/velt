@@ -56,6 +56,8 @@ mod string_hooks;
 #[macro_use]
 mod module_hooks;
 #[macro_use]
+mod object_hooks;
+#[macro_use]
 mod decorator_hooks;
 #[macro_use]
 mod promise_hooks;
@@ -63,9 +65,9 @@ mod promise_hooks;
 mod tls_hooks;
 pub use module_hooks::BLOCKS_MODULE_ENTRY;
 
-// The table: these rows, then TLS's, promises' through `any`, the decorators', module state's,
-// the string methods' and the weak core's (`*_hooks.rs`), given to `hooks!` together.
-with_tls_hooks! {
+// The table: these rows, then `Object.*`'s, TLS's, promises' through `any`, the decorators', module
+// state's, the string methods' and the weak core's (`*_hooks.rs`), given to `hooks!` together.
+with_object_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
     array_filled => lang_hooks_array, "arrayFilled", sig(<A>(f64, &A) -> [A]);
@@ -97,7 +99,8 @@ with_tls_hooks! {
         replaces("velt_rt_u64_to_radix");
     /// `Math.imul`-like `(a * b) | 0` of two int32 values (`velt_sema` `int32.rs`, numrep).
     mul_to_int32 => lang_hooks_number, "mulToInt32", sig((f64, f64) -> i32), lowered;
-    /// An array index written as a float (`xs[i]` with `i: number`): ts-compat.md.
+    /// An array index written as a float (`xs[i]` with `i: number`):
+    /// https://veltlang.com/docs/reference/types/ "Numbers".
     float_index => lang_hooks_number, "floatIndex", sig((f64) -> usize), lowered;
     /// A float position argument (`xs.at(i)`, `s.slice(i)`).
     float_position => lang_hooks_number, "floatPosition", sig((f64) -> usize);
@@ -473,38 +476,6 @@ with_tls_hooks! {
     proxy_apply_list => lang_proxy_traps, "proxyApplyList", sig((&any, move any) -> any throws union(TypeError, RangeError));
     /// `any_join` with the arrays being joined around it, so a cycle prints as empty text.
     any_join_seen => lang_hooks_any_text, "anyJoinSeen", sig((move any, &string, &mut [any], &string) -> string), lowered;
-
-    // any_object.velt: `Object.*`, spreads, prototypes and `delete` of an `any`.
-    /// `{ ...o }` of an `any` in an object literal (`velt_sema` `record_literal.rs`).
-    spread_any => lang_hooks_any_object, "spreadAny", sig((&mut Record(string, any), &any) -> void);
-    /// `const { a, ...rest } = o` of an `any` (`velt_sema` `literal_patterns.rs`).
-    rest_any => lang_hooks_any_object, "restAny", sig((&any, &any) -> any);
-    /// `Object.hasOwn(o, k)` of an `any` (`velt_sema` `object_own.rs`).
-    any_has_own => lang_hooks_any_object, "anyHasOwn", sig((&any, &union(string, symbol)) -> bool);
-    /// Member `k` (one of `Object.keys(o)`) of an `any`: std's `spreadAny` & co. call it, not the compiler.
-    any_member => lang_hooks_any_object, "anyMember", sig((&any, &string) -> any);
-    /// `Object.values(o)` of an `any` (`velt_sema` `object_keys.rs`).
-    any_values => lang_hooks_any_object, "anyValues", sig((&any) -> [any]);
-    /// `Object.entries(o)` of an `any` (`velt_sema` `object_keys.rs`).
-    any_entries => lang_hooks_any_object, "anyEntries", sig((&any) -> [tuple(string, any)]);
-    /// `Object.getPrototypeOf(v)` of an `any` holding no class instance (`object_prototypes.rs`).
-    any_prototype => lang_hooks_any_object, "anyPrototype", sig((&any) -> or_null(ObjectPrototype));
-    /// `Object.getPrototypeOf(r)` of an `any` holding a record.
-    any_record_prototype => lang_hooks_any_object, "anyRecordPrototype", sig((&any) -> or_null(ObjectPrototype));
-    /// `Object.getPrototypeOf(v)` of an instance of a class Velt doesn't name: an error.
-    any_prototype_unsupported => lang_hooks_any_object, "anyPrototypeUnsupported", sig((&string) -> or_null(ObjectPrototype));
-    /// `Object.prototype.toString.call(v)` of an `any` holding no class instance (`object_own.rs`).
-    any_object_tag => lang_hooks_any_object, "anyObjectTag", sig((&any) -> string);
-    /// `Object.prototype.toString.call(v)` of an instance whose tag Velt doesn't know: an error.
-    any_tag_unsupported => lang_hooks_any_object, "anyTagUnsupported", sig((&string) -> string);
-    /// `v.constructor.name` of an `any` holding no class instance (`velt_sema` `ctor_name.rs`).
-    any_ctor_name => lang_hooks_any_object, "anyCtorName", sig((&any) -> string);
-    /// `v.constructor.name` of an instance whose constructor Velt doesn't name: an error.
-    any_ctor_name_unsupported => lang_hooks_any_object, "anyCtorNameUnsupported", sig((&string) -> string);
-    /// `delete o.k` / `delete o[k]` of an `any` that is no proxy (`velt_sema` `proxy.rs`).
-    any_delete_member => lang_hooks_any_object, "anyDeleteMember", sig((&any, &any) -> bool);
-    /// `Object.prototype.hasOwnProperty` as a value (`object_prototypes.rs`, `velt_vir` `any_proxy.rs`).
-    has_own_property => lang_hooks_any_object, "HasOwnProperty", class, lowered;
 
     // any_record.velt: an `any` holding another object converted to a record (`velt_vir`
     // `any_to_record.rs`), loaded for a program that mentions `Record`

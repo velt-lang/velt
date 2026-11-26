@@ -1,6 +1,6 @@
 //! What `velt check` lists about native code (docs/internals/design/c-ffi.md "The trust
-//! boundary"): each package with native code that the program allows, with its C libraries (and
-//! whether it has a Rust crate) and its unsafe code by file and line. An audit of what the
+//! boundary"): each package with native code that the program allows, with its C libraries and
+//! its unsafe code by file and line. An audit of what the
 //! program trusts reads exactly these places.
 
 use std::path::Path;
@@ -19,8 +19,6 @@ pub struct NativePackage {
     /// target (`None`: none there, the C library, or its `sources`), how its declarations are
     /// checked, and the C files it is built from.
     pub c_libraries: Vec<(String, Option<String>, Checked, Vec<String>)>,
-    /// It has a Rust crate (`native.crate`), built into a native library.
-    pub rust_crate: bool,
     /// Its unsafe code, in module and source order.
     pub unsafe_code: Vec<UnsafeCode>,
 }
@@ -97,7 +95,6 @@ pub(super) fn native_packages(
                     )
                 })
                 .collect(),
-            rust_crate: p.native.is_some(),
             unsafe_code: Vec::new(),
         })
         .collect();
@@ -183,9 +180,6 @@ pub fn render(packages: &[NativePackage]) -> String {
                 .collect();
             parts.push(format!("C libraries {}", libs.join(", ")));
         }
-        if p.rust_crate {
-            parts.push("a Rust crate".into());
-        }
         let n = p.unsafe_code.len();
         parts.push(match n {
             0 => "no unsafe code".into(),
@@ -221,7 +215,6 @@ pub fn json(packages: &[NativePackage]) -> Value {
                         "checked": checked.word(),
                         "sources": sources,
                     })).collect::<Vec<_>>(),
-                    "rustCrate": p.rust_crate,
                     "unsafe": p.unsafe_code.iter().map(|u| json!({
                         "file": u.file,
                         "line": u.line,
@@ -256,7 +249,6 @@ mod tests {
                 ("own".into(), None, Checked::Listed, vec![]),
                 ("other".into(), None, Checked::Listed, vec![]),
             ],
-            rust_crate: false,
             unsafe_code: vec![],
         };
         let mut packages = vec![package("bind"), package("else")];
@@ -291,7 +283,6 @@ mod tests {
                         vec!["native/tiny.c".into()],
                     ),
                 ],
-                rust_crate: false,
                 unsafe_code: vec![
                     UnsafeCode {
                         file: "src/db.velt".into(),
@@ -308,7 +299,6 @@ mod tests {
             NativePackage {
                 name: "pg".into(),
                 c_libraries: vec![],
-                rust_crate: true,
                 unsafe_code: vec![],
             },
         ];
@@ -318,11 +308,11 @@ mod tests {
              sqlite: C libraries sqlite3 (sqlite3; headers checked), blas (none on this target; unchecked), tiny (built from native/tiny.c; headers checked); 2 places of unsafe code\n    \
              src/db.velt:12   unsafe block\n    \
              src/stmt.velt:7  unsafe function `step`\n  \
-             pg: a Rust crate; no unsafe code\n"
+             pg: no unsafe code\n"
         );
         assert_eq!(render(&[]), "");
         assert_eq!(json(&packages)[0]["unsafe"][1]["line"], 7);
-        assert_eq!(json(&packages)[1]["rustCrate"], true);
+        assert!(json(&packages)[1].get("rustCrate").is_none());
         assert_eq!(
             json(&packages)[0]["cLibraries"][2]["sources"][0],
             "native/tiny.c"

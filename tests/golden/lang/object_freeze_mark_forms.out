@@ -1,0 +1,16 @@
+rhs 5
+assign true Cannot assign to read only property 'x' of object '#<Object>'
+rhs 6
+compound true Cannot assign to read only property 'x' of object '#<Object>'
+add true Cannot add property s, object is not extensible
+add logical true Cannot add property s, object is not extensible
+define same ok
+rhs 3
+define other true Cannot redefine property: x
+define add true Cannot define property s, object is not extensible
+2 undefined true
+define NaN ok
+define present ok
+define -0 true Cannot redefine property: x
+write present true Cannot assign to read only property 's' of object '#<Object>'
+4 undefined t

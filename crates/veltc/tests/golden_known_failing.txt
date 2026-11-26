@@ -11,7 +11,6 @@ tests/golden/lang/rwlock_read_tasks_stop.velt                      #2917 os=maco
 tests/golden/std/abort_signal_identity.velt                        #3011
 tests/golden/std/fetch_abort_custom_reason.velt                    #3005
 tests/golden/std/timer_spawned_busy.velt                           #2916 os=macos,windows
-tests/golden/lang/std_typed_receiver_override.velt                 #3684 units
 # Refused by units on purpose: std's reads of `message` are checked before a program's
 # `get message()` on a class extending `Error` is known (velt_sema `error_message.rs`).
 tests/golden/lang/error_message_getter.velt                        #3792 units
@@ -41,7 +40,6 @@ tests/golden/std/date_subclass_text.velt                           #3684 units
 tests/golden/std/error_name_getter.velt                            #3684 units
 tests/golden/std/error_name_getter_uncaught.velt                   #3684 units
 tests/golden/std/set_ctor_subclass_add.velt                        #3684 units
-tests/golden/std/set_map_return_this.velt                          #3684 units
 # The others (#2943's U6 list):
 tests/golden/lang/any_not_fn_catch.velt                            #2943 units
 tests/golden/lang/any_operators_objects.velt                       #2943 units

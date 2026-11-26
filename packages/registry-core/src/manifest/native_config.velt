@@ -1,4 +1,4 @@
 // registry-core (internal): part of a package's manifest (./manifest.velt).
 
-/** `native`: the package's native crate. */
-export type NativeConfig = { path: string; targets: string[]; wasm: bool };
+/** `native`: what `velt publish` publishes the package's C libraries for. */
+export type NativeConfig = { targets: string[] };

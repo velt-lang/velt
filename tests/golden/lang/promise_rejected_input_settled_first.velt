@@ -1,0 +1,61 @@
+// `Promise.all`, `race`, `any` and `allSettled` with inputs already rejected at the call, also
+// where the combinator settles from another input before it reaches them: each rejection is
+// handled, as in Node (#3195): no "Uncaught", exit 0. The Node twin is
+// promise_rejected_input_settled_first.mjs.
+
+async function s(): Promise<string> {
+  await sleep(1);
+  return "s";
+}
+
+async function main() {
+  try {
+    await Promise.all([
+      Promise.reject<string>(new Error("a1")),
+      Promise.reject<string>(new Error("a2")),
+    ]);
+  } catch (e) {
+    console.log("all first", e.message);
+  }
+  try {
+    await Promise.all([
+      s(),
+      Promise.reject<string>(new Error("b1")),
+      Promise.reject<string>(new Error("b2")),
+    ]);
+  } catch (e) {
+    console.log("all middle", e.message);
+  }
+  const r1 = await Promise.race([Promise.resolve("ok"), Promise.reject<string>(new Error("r"))]);
+  console.log("race resolved first", r1);
+  try {
+    await Promise.race([
+      Promise.reject<string>(new Error("r1")),
+      Promise.reject<string>(new Error("r2")),
+    ]);
+  } catch (e) {
+    console.log("race two rejected", e.message);
+  }
+  const a1 = await Promise.any([Promise.resolve("ok"), Promise.reject<string>(new Error("y"))]);
+  console.log("any resolved first", a1);
+  try {
+    await Promise.any([
+      Promise.reject<string>(new Error("z1")),
+      Promise.reject<string>(new Error("z2")),
+    ]);
+  } catch (e) {
+    console.log("any all rejected", e.message);
+  }
+  const st = await Promise.allSettled([
+    Promise.reject<string>(new Error("q1")),
+    s(),
+    Promise.reject<string>(new Error("q2")),
+  ]);
+  console.log("allSettled", st.map((r) => r.status).join(","));
+  const st2 = await Promise.allSettled([s(), s(), Promise.reject<string>(new Error("q3"))]);
+  console.log("allSettled late", st2.map((r) => r.status).join(","));
+  await sleep(5);
+  console.log("done");
+}
+
+main();

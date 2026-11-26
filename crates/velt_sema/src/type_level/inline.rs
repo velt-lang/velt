@@ -292,7 +292,8 @@ impl Ctx<'_> {
         }
         // Keys whose fields have different types: `T[K]` is the union of them, a read is the
         // field the key names as that union, and a write checks the value's member against the
-        // field at run time (docs/internals/design/deferred-types.md, decision 4).
+        // field at run time (docs/internals/design/deferred-types.md "Values of deferred types
+        // in a generic body").
         if tys.iter().all(|&t| t != self.ty.error) {
             return body;
         }

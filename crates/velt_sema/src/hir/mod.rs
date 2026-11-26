@@ -180,6 +180,15 @@ pub struct Program {
     /// field by field. A fact of the whole program, kept out of the definitions so a definition's
     /// checked form doesn't depend on what else the program does (#2943).
     pub assigned_objects: HashSet<DefId>,
+    /// The object types (`Def::Adt`) whose values may be frozen at run time (#2623): a type
+    /// `Object.freeze` is given a value of that the program writes, or whose values reach
+    /// `Object.isFrozen`, and the types sharing its storage (`same_layout`). Each is a counted
+    /// object (hir_encodings.md "Sharing") with a frozen mark in its count word (rt_abi.md
+    /// "Counted objects", `RC_FROZEN`), set by `Intrinsic::Freeze` and read by
+    /// `Intrinsic::IsFrozen`; sema checks each field write `o.f = v` of one against the mark.
+    /// It may be weak-capable (its weak release masks the mark), never lock-set. A fact of the
+    /// whole program, kept out of the definitions (#2943).
+    pub freezable: HashSet<DefId>,
     /// The closures that change what they captured, and the classes' `clone()`s that may change
     /// their object (all but the standard library's that don't). Made when the program puts a
     /// function in `shared(...)` (`crate::ownership::local_async::record`): each call of one runs
@@ -242,9 +251,9 @@ pub struct Program {
     /// hold it (`null!`, `null as any`; hir_encodings.md "A nothing in a slot"): the targets of
     /// `AnyTo` then hold it as a view of it, as in a program with `new Proxy`. Additive.
     pub nothing_slots: bool,
-    /// Interface upcasts (hir_encodings.md "Interface upcasts"): per interface whose values
-    /// convert to other interfaces (`Upcast` of a `Dyn(A)` to a `Dyn(B)`), the targets, in
-    /// table order. Additive.
+    /// Interface upcasts (hir_encodings.md "Interface intersections and upcasts"): per
+    /// interface whose values convert to other interfaces (`Upcast` of a `Dyn(A)` to a
+    /// `Dyn(B)`), the targets, in table order. Additive.
     pub upcasts: HashMap<DefId, Vec<DefId>>,
     /// Per implementation (`impls` index) of an interface in `upcasts`: the implementation of
     /// each target for the same type, in `upcasts` order. Additive.
@@ -381,10 +390,10 @@ pub struct FnDef {
     pub self_ty: Option<TyId>,
     /// For closures: captured variables become the leading params, in this order.
     pub captures: Vec<Capture>,
-    /// A local async closure (#208, hir_encodings.md "Function values"): it never reaches a
-    /// thread boundary, so each call shares its by-value captures with the closure (another
-    /// reference, or the cell of a `LocalDef::boxed` capture) instead of copying them. False for
-    /// everything else, including async closures that may run on another thread.
+    /// A local async closure (#208, hir_encodings.md "Async closures, locks and JSON"): it never
+    /// reaches a thread boundary, so each call shares its by-value captures with the closure
+    /// (another reference, or the cell of a `LocalDef::boxed` capture) instead of copying them.
+    /// False for everything else, including async closures that may run on another thread.
     pub shares_captures: bool,
     pub body: Body,
     /// Thrown error type (a union when several types can be thrown; see hir_encodings.md

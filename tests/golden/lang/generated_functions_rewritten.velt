@@ -1,6 +1,6 @@
 // Generated code that the checker rewrites before a check starts (here a closure) cannot be added
 // to the check that asked for it, as other generated code is
-// (docs/internals/design/source-generators.md "As built so far"): the program is checked again
+// (docs/internals/design/source-generators.md "Compilation"): the program is checked again
 // with it, and the instances it holds are bound as any others.
 import { marked, show } from "./_generators";
 

@@ -1,10 +1,9 @@
-//! `check_declares` against a hand-made package graph: no cargo, no library, only the export
-//! signatures a bundle's `native.json` would list.
+//! `check_declares`: outside the standard library, a function without a body is a `declare c`
+//! function (or a JS host's), never a plain `declare function`.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use vpm::native::{NativeLib, NativeMeta, NativeOrigin};
 use vpm::PackageGraph;
 
 use crate::driver::{self, BuildError, BuildOptions, Session};
@@ -14,114 +13,35 @@ fn write(path: &Path, text: &str) {
     std::fs::write(path, text).unwrap();
 }
 
-const LIB: &str = r#"import { real } from "./real";
-
-declare function velt_demo__ok(): u64;
-declare function velt_demo__add(a: u64, b: i64): u64;
-declare function velt_demo__ad(a: u64): u64;
-declare function velt_demo__size(n: isize): u64;
-declare function velt_demo__cb(f: (x: i64) => i64): u64;
-
-struct IoResult<T> {
-  code: i32;
-  message: string;
-  value: T;
-}
-declare function velt_demo__fake(): IoResult<u64>;
+const LIB: &str = r#"declare function velt_demo__ok(): u64;
 
 export function run(): u64 {
-  return velt_demo__ok() + real();
+  return velt_demo__ok();
 }
 "#;
 
-const REAL: &str = r#"import { IoResult, IoStatus } from "velt/native";
-
-declare function velt_demo__real(): IoResult<u64>;
-
-struct Run {
-  changes: i64;
-  lastId: i64;
-}
-class Holder {
-  v: i64 = 0;
-}
-struct Maybe {
-  a?: i64;
-}
-declare function velt_demo__strs(xs: string[], r: Run): IoResult<Run[]>;
-declare function velt_demo__renamed(r: Run): void;
-declare function velt_demo__cls(h: Holder): void;
-declare function velt_demo__opt(m: Maybe): void;
-declare function velt_demo__status(): IoStatus;
-
-export function real(): u64 {
-  return velt_demo__real().value;
-}
-"#;
-
-const MAIN: &str = r#"import { run } from "demo";
-
-declare function velt_demo__ok(): u64;
-
-function main() {
-  console.log(run());
-}
-"#;
-
-/// Diagnostics of checking `MAIN` in an app that depends on package `demo` with a library.
-fn diagnostics() -> String {
+/// A package with native code may declare C functions, and nothing else: a plain `declare
+/// function` (what a Rust crate's export was declared with, velt-lang/velt#2563) is an error.
+#[test]
+fn a_package_declares_c_functions_only() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, demo) = (tmp.path().join("app"), tmp.path().join("demo"));
     write(
         &app.join("package.velt"),
-        "export const pkg: Package = { name: \"app\", version: \"0.1.0\" };",
+        "export const pkg: Package = { name: \"app\", version: \"0.1.0\", allowNative: [\"demo\"] };",
     );
-    write(&app.join("src/main.velt"), MAIN);
+    write(
+        &app.join("src/main.velt"),
+        "import { run } from \"demo\";\n\nfunction main() {\n  console.log(run());\n}\n",
+    );
     write(
         &demo.join("package.velt"),
-        "export const pkg: Package = { name: \"demo\", version: \"0.1.0\" };",
+        "export const pkg: Package = { name: \"demo\", version: \"0.1.0\", native: { c: {} } };",
     );
     write(&demo.join("src/lib.velt"), LIB);
-    write(&demo.join("src/real.velt"), REAL);
-
-    let exports = [
-        ("velt_demo__ok", "()->u64"),
-        ("velt_demo__add", "(u64,i32)->u64"),
-        ("velt_demo__size", "(i64)->u64"),
-        ("velt_demo__cb", "(i64)->u64"),
-        ("velt_demo__fake", "()->IoResult<u64>"),
-        ("velt_demo__real", "()->IoResult<u64>"),
-        (
-            "velt_demo__strs",
-            "(string[],{changes:i64,lastId:i64})->IoResult<{changes:i64,lastId:i64}[]>",
-        ),
-        ("velt_demo__renamed", "({changes:i64,last:i64})->void"),
-        ("velt_demo__cls", "(i64)->void"),
-        ("velt_demo__opt", "(i64)->void"),
-        ("velt_demo__status", "()->IoStatus"),
-    ];
-    let meta = NativeMeta {
-        package: "demo".into(),
-        version: "0.1.0".into(),
-        target: velt_codegen_cl::host_triple(),
-        abi: 1,
-        shared: Some("shared/libvelt_native_demo.so".into()),
-        import_lib: None,
-        static_obj: None,
-        system_libs: None,
-        exports: exports
-            .iter()
-            .map(|(n, s)| (n.to_string(), s.to_string()))
-            .collect(),
-        c: Default::default(),
-    };
     let mut graph = PackageGraph::default();
     graph.add("app", &app, BTreeMap::from([("demo".into(), demo.clone())]));
-    graph.add("demo", &demo, BTreeMap::new()).native = Some(NativeLib {
-        dir: demo.join("bundle"),
-        meta,
-        origin: NativeOrigin::Prebuilt,
-    });
+    graph.add("demo", &demo, BTreeMap::new()).has_native_code = true;
     let opts = BuildOptions {
         input: app.join("src/main.velt"),
         packages: Some(graph),
@@ -130,40 +50,12 @@ fn diagnostics() -> String {
     let mut sess = Session::new();
     let r = driver::check(&mut sess, &opts);
     assert!(matches!(r, Err(BuildError::Diagnostics)), "{r:?}");
-    sess.render_diagnostics()
-}
-
-#[test]
-fn declares_must_match_their_library_exactly() {
-    let d = diagnostics();
-    let has = |s: &str| assert!(d.contains(s), "missing `{s}` in:\n{d}");
-    // A type that differs.
-    has("`declare` of `velt_demo__add` does not match the native library of `demo 0.1.0`");
-    has("the library exports `(u64,i32)->u64`");
-    has("this declares     `(u64,i64)->u64`");
-    // A name the library does not export, with a hint.
-    has("`velt_demo__ad` is not exported by the native library of `demo 0.1.0`");
-    has("did you mean `velt_demo__add`?");
-    // Types that cannot cross the boundary.
-    has("not `isize`");
-    has("not `function`");
-    // A look-alike of std's IoResult is not IoResult (the only result error is `velt_demo__fake`'s).
-    assert_eq!(d.matches("a native function returns").count(), 1, "{d}");
-    assert!(d.contains("`IoResult<T>` of a value (values: "), "{d}");
-    // Arrays and structs cross by shape; a field with another name is another type.
-    assert!(!d.contains("velt_demo__strs"), "{d}");
-    // std's `IoStatus` is a struct, but crosses as `IoStatus`, not by its shape.
-    assert!(!d.contains("velt_demo__status"), "{d}");
-    has("this declares     `({changes:i64,lastId:i64})->void`");
-    // Classes and optional fields do not cross.
-    has("::Holder`");
-    has("::Maybe`");
-    // Another package's export, from a package without a library.
-    has("`declare function velt_demo__ok` is not allowed: package `app` has no native library");
-    has("`velt_demo__ok` is exported by the native library of package `demo`: import that package's API instead");
-    // The correct declarations (including std's IoResult) report nothing.
-    assert!(!d.contains("velt_demo__real"), "{d}");
-    assert_eq!(d.matches("velt_demo__ok").count(), 2, "{d}");
+    let d = sess.render_diagnostics();
+    assert!(
+        d.contains("`declare function velt_demo__ok` is not allowed outside the standard library"),
+        "{d}"
+    );
+    assert!(d.contains("declare c(\"<library>\")"), "{d}");
 }
 
 /// Diagnostics of checking `src` as a program without packages.
@@ -188,11 +80,11 @@ fn a_program_without_packages_declares_nothing() {
     let d =
         check_alone("declare function free(p: u64): void;\nfunction main() {\n  free(4096);\n}\n");
     assert!(
-        d.contains("`declare function free` is not allowed: this program is not in a package with a native library"),
+        d.contains("`declare function free` is not allowed outside the standard library"),
         "{d}"
     );
     assert!(
-        d.contains("to call C code, give the package a native library"),
+        d.contains("to call C code, declare the function with"),
         "{d}"
     );
     let d = check_alone(
