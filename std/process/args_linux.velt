@@ -3,9 +3,10 @@
 // the C library gives a program no way to reach `main`'s `argv` later), and the executable's
 // path (`/proc/self/exe`).
 
+import { CVarArgs } from "velt/ffi/c_var_args";
 import { cBytes, resolved } from "./args_posix";
 
-declare c("c") function open$args(path: readonly u8[], flags: i32): i32;
+declare c("c") function open$args(path: readonly u8[], flags: i32, ...args: CVarArgs): i32;
 declare c("c") function read$args(fd: i32, buf: u8[], n: usize): isize;
 declare c("c") function close$args(fd: i32): i32;
 declare c("c") function readlink$args(path: readonly u8[], buf: u8[], size: usize): isize;
@@ -76,7 +77,7 @@ export function executablePath(): string {
       const gone = " (deleted)";
       // SAFETY: `cBytes` is NUL-terminated; F_OK is 0.
       if (path.endsWith(gone) && unsafe { access$args(cBytes(path), 0) } !== 0) {
-        path = path.slice(0, path.length - gone.length);
+        path = path.slice(0, (path.length - gone.length) as i64);
       }
       return resolved(path);
     }

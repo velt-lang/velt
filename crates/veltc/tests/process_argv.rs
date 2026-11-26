@@ -245,6 +245,35 @@ fn std_arguments_and_hidden_variables() {
     assert_eq!(stdout(&built), want, "the built program, odd variables");
 }
 
+/// A program whose executable is removed while it runs: Linux's `/proc/self/exe` then ends in
+/// " (deleted)", which `process.argv[0]` leaves out (the path the program was started as).
+#[cfg(target_os = "linux")]
+#[test]
+fn removed_executable_keeps_its_path() {
+    use std::io::Write;
+    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    let dir = test_dir::TestDir::new();
+    let src = dir.path().join("gone.velt");
+    std::fs::write(
+        &src,
+        "import { readLineSync } from \"velt/process\";\n\
+         function main() {\n  readLineSync();\n  console.log(process.argv[0]);\n}\n",
+    )
+    .unwrap();
+    let exe = dir.path().join("gone");
+    stdout(&velt().arg("build").arg(&src).arg("-o").arg(&exe).output().unwrap());
+    let resolved = std::fs::canonicalize(&exe).unwrap();
+    let mut child = command(&exe)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::fs::remove_file(&exe).unwrap();
+    child.stdin.take().unwrap().write_all(b"\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(stdout(&out).trim_end(), resolved.to_str().unwrap());
+}
+
 /// `velt test`: `process.argv[1]` is the test file, as with `node --test`.
 #[test]
 fn test_files_see_themselves_as_the_script() {
