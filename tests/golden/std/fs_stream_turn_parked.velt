@@ -1,0 +1,29 @@
+// requires: unix
+// A read that waits for its reader's turn is parked: it uses no processor time while the read
+// before it blocks. Two reads of a FIFO whose writer sends after two seconds: a waiting read that
+// kept asking for the turn would keep a worker busy for those two seconds.
+import { openRead, remove } from "velt/fs";
+import { tmpdir } from "velt/os";
+import { cpuUsage } from "velt/process";
+import { spawn } from "velt/process/child";
+import { execSync } from "velt/process/child";
+import { uuidv4 } from "velt/random/uuid";
+
+async function main() {
+  const fifo = `${tmpdir()}/velt-stream-parked-${uuidv4()}`;
+  execSync("mkfifo", [fifo]);
+  const script = 'exec 3>"$1"; sleep 2; printf 0123456789 >&3; printf abcdefghij >&3';
+  const writer = spawn("sh", ["-c", script, "sh", fifo], { stdout: "ignore" });
+  const r = await openRead(fifo);
+  const before = cpuUsage();
+  const a = r.read(10);
+  const b = r.read(10);
+  console.log("read", (await a).length, (await b).length);
+  const used = cpuUsage(before);
+  console.log("parked:", used.user + used.system < 500000);
+  r.close();
+  console.log("writer exit:", await writer.wait());
+  await remove(fifo);
+}
+
+main();

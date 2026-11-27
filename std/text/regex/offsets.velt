@@ -34,6 +34,17 @@ export function inPair(s: string, at: usize, n: usize): bool {
   return at < n && (strByteAt(s, at as u64) & 0xc0) == 0x80;
 }
 
+/** Where a search goes on after an empty match at code unit `end` of `s`: JavaScript's
+ * AdvanceStringIndex, one code unit on, or past a whole pair for a pattern of code points (not
+ * `units`). */
+export function past(s: string, end: number, units: bool): number {
+  const at = end as i64;
+  const high = s.charCodeAt(at);
+  const low = s.charCodeAt(at + 1);
+  const pair = high >= 0xd800 && high < 0xdc00 && low >= 0xdc00 && low < 0xe000;
+  return end + (pair && !units ? 2 : 1);
+}
+
 /** The text of `s` between the positions at bytes `from` and `to`. */
 export function textOf(s: string, from: usize, to: usize): string {
   const n = strByteLen(s);

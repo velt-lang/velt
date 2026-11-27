@@ -5,7 +5,8 @@
 # literal-pattern replace/test/split calls through the RegExp API), bench/regex/units.velt, and
 # each row of bench/regex/long.velt (patterns that are no literal over a subject of 100,000
 # characters, failing and succeeding) and of bench/regex/lines.velt (such patterns searched line
-# by line). Run compare_refs.sh first:
+# by line), and bench/regex/deep_copy.velt (deep copies of an object holding regexes). Run
+# compare_refs.sh first:
 #
 #   bench/compare_refs.sh BASE_REF HEAD_REF WORK_DIR
 #   bench/regex/run.sh WORK_DIR
@@ -20,12 +21,12 @@ WORK=$(cd "$1" && pwd)
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=$WORK/regex
 mkdir -p "$OUT"
-cp "$HERE/literal.velt" "$HERE/units.velt" "$HERE/long.velt" "$HERE/lines.velt" "$OUT/"
+cp "$HERE/literal.velt" "$HERE/units.velt" "$HERE/long.velt" "$HERE/lines.velt" "$HERE/deep_copy.velt" "$OUT/"
 for side in base head; do
   velt="$WORK/target-$side/release/velt"
   (cd "$WORK/$side" && "$velt" build --release bench/benchmarks-game/fasta/main.velt -o "$OUT/fasta-$side" >/dev/null)
   (cd "$WORK/$side" && "$velt" build --release bench/benchmarks-game/regex-redux/main.velt -o "$OUT/redux-$side" >/dev/null)
-  for prog in literal units long lines; do
+  for prog in literal units long lines deep_copy; do
     (cd "$WORK/$side" && "$velt" build --release "$OUT/$prog.velt" -o "$OUT/$prog-$side" >/dev/null)
   done
 done
@@ -37,7 +38,7 @@ count() {
 row() {
   awk -v p="$1" -v b="$2" -v h="$3" 'BEGIN { printf "%s base %d head %d change %+.2f%%\n", p, b, h, (h - b) * 100 / b }'
 }
-for prog in redux literal units; do
+for prog in redux literal units deep_copy; do
   b=$(VELT_THREADS=1 count "$OUT/$prog-base" < "$OUT/fasta.txt")
   h=$(VELT_THREADS=1 count "$OUT/$prog-head" < "$OUT/fasta.txt")
   row "$prog" "$b" "$h"

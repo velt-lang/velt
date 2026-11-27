@@ -1,0 +1,70 @@
+// velt/fs (internal): the files under `openRead` and `openWrite` on macOS and Linux (the default
+// variant of `#fs-stream-os`, std/imports.velt): the C library's file descriptors (`#fd-system`),
+// opened, read and written as whole files are (std/fs/whole/posix_calls.velt). Each call blocks:
+// std/fs/stream_sched.velt runs them on the executor's blocking pool. A failed `open` names the
+// path, as Node's does; a failed `read` or `write` doesn't. A file is its descriptor plus one:
+// 0 means "no file" in the stream table, and a process started with standard input closed gets
+// descriptor 0 for the first file it opens.
+
+import { IoError } from "velt/io/error";
+import { closeFd, fstatFd, lastError } from "#fd-system";
+import { statsOf } from "velt/fs/fd/sync";
+import { osError } from "velt/fs/errors";
+import { Done } from "velt/fs/whole/done";
+import { cBytes } from "#fs-whole";
+import { openRetry, readFlags, readRetry, writeAll, writeFlags } from "velt/fs/whole/posix_calls";
+import { OsFile } from "velt/fs/stream_os/os_file";
+
+declare c("c") function lseek(fd: i32, offset: i64, whence: i32): i64;
+
+/**
+ * Opens `path` for reading at byte `start` (no file has a byte past `i64::MAX`: there it reads
+ * nothing, which the caller sees to), with the file's metadata as of the open.
+ */
+export function openReadOs(path: string, start: u64): Done<OsFile> {
+  const fd = openRetry(cBytes(path), readFlags());
+  if (fd < 0) {
+    return { value: null, error: osError(lastError(), "open", path) };
+  }
+  const st = fstatFd(fd);
+  if (st === null) {
+    const e = lastError();
+    closeFd(fd);
+    return { value: null, error: osError(e, "fstat") };
+  }
+  // SAFETY: `fd` is open; SEEK_SET (0) moves to `start` (at most `i64::MAX`, the caller's check).
+  if (start > 0 && unsafe { lseek(fd, start as i64, 0) } < 0) {
+    const e = lastError();
+    closeFd(fd);
+    return { value: null, error: osError(e, "lseek") };
+  }
+  return { value: { os: (fd as u64) + 1, stats: statsOf(st) }, error: null };
+}
+
+/** Creates `path` (truncated, or `append`ed to) for writing. */
+export function openWriteOs(path: string, append: bool): Done<u64> {
+  const fd = openRetry(cBytes(path), writeFlags(append));
+  if (fd < 0) {
+    return { value: null, error: osError(lastError(), "open", path) };
+  }
+  return { value: (fd as u64) + 1, error: null };
+}
+
+/** Reads up to `end - start` bytes into `bytes[start..end]`: the count (0 at the end). */
+export function readOs(os: u64, bytes: u8[], start: usize, end: usize): Done<usize> {
+  const n = readRetry((os - 1) as i32, bytes, start, end);
+  if (n < 0) {
+    return { value: null, error: osError(lastError(), "read") };
+  }
+  return { value: n as usize, error: null };
+}
+
+/** Writes all of `bytes[start..end]`: null, or the error. */
+export function writeOs(os: u64, bytes: readonly u8[], start: usize, end: usize): IoError | null {
+  return writeAll((os - 1) as i32, bytes, start, end);
+}
+
+/** Closes the file. */
+export function closeOs(os: u64): void {
+  closeFd((os - 1) as i32);
+}

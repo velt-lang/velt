@@ -53,6 +53,36 @@ pub(crate) fn inherited(cx: &Ctx, d: DefId) -> Vec<String> {
     out
 }
 
+/// Is `name` an instance member `@own()` marks in std class `d` or a class it extends: an own
+/// property of every instance in JavaScript (a regex's `lastIndex`, #3883)?
+pub(crate) fn marks(cx: &Ctx, d: DefId, name: &str) -> bool {
+    let Some(want) = role(cx) else {
+        return false;
+    };
+    let mut cur = Some(d);
+    let mut guard = 0;
+    while let Some(c) = cur {
+        guard += 1;
+        if guard > 64 {
+            break;
+        }
+        let Some(a) = cx.adt(c) else { break };
+        if let (Some(decl), true) = (a.decl, cx.declared_in_std(c)) {
+            let marked = (decl.methods.iter())
+                .filter(|m| !m.is_static && m.decl.sig.name.name == name)
+                .any(|m| {
+                    (m.decl.sig.decorators.iter())
+                        .any(|dec| super::known::written_def(cx, a.module, dec) == Some(want))
+                });
+            if marked {
+                return true;
+            }
+        }
+        cur = base_of(cx, c);
+    }
+    false
+}
+
 fn base_of(cx: &Ctx, d: DefId) -> Option<DefId> {
     let base = cx.adt(d)?.base?;
     cx.class_of(base).map(|(b, _)| b)

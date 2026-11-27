@@ -1,5 +1,4 @@
-// velt/lang/hooks (internal): the blocking pool of the executor in Velt (#2649 step 4), what
-// tokio's `spawn_blocking` is to the runtime (velt_rt task/leaf.rs `blocking_leaf`): threads
+// velt/lang/hooks (internal): the blocking pool of the executor in Velt (#2649 step 4): threads
 // that run work which blocks its thread (a file system call, reading standard input, a name
 // lookup), so the workers never wait for it.
 //
@@ -25,7 +24,7 @@
 //   finished the job before that poll ended: that poll wakes its task and returns pending, and
 //   the next one delivers it (`parkAfterWake`). A blocking result is an I/O event, which JS
 //   handles only after the reactions of the promises settled by then: `Promise.race([readFile(f),
-//   Promise.resolve("first")])` gives "first" (#2820, as the runtime's `run_blocking`). A result
+//   Promise.resolve("first")])` gives "first" (#2820). A result
 //   not ready by then, the usual case, takes the same path as before.
 // - A job runs to its end: dropping the promise (a `Promise.race` loser) leaves the work running
 //   and drops its result when it is done, as tokio does with a blocking task's handle.

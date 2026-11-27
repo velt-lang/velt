@@ -81,14 +81,18 @@ fn lock_type(cx: &Ctx, t: TyId) -> bool {
 
 impl Ctx<'_> {
     /// Does a deep copy of a `t` run its class's own `clone()`? Only for a class that owns a
-    /// resource, its own or a part's, or holds a promise (velt_vir `Cx::own_clone`); any other class
-    /// is copied field by field whatever its `clone()` does.
+    /// resource, its own or a part's, or holds a promise, and for std's `RegExp` (velt_vir
+    /// `Cx::own_clone`, #3883); any other class is copied field by field whatever its `clone()`
+    /// does.
     fn runs_own_clone(&mut self, t: TyId) -> bool {
         let TyKind::Adt(d, _) = *self.ty.kind(t) else {
             return false;
         };
         if self.own_clone(d).is_none() {
             return false;
+        }
+        if self.std_class(d, &["RegExp"]) {
+            return true;
         }
         let mut look = |cx: &mut Self, t: TyId| match cx.ty.kind(t).clone() {
             TyKind::Shared(_) | TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Closure(_) => {

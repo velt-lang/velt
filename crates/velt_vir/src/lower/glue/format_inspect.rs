@@ -7,7 +7,6 @@ use velt_sema::hir::{DefId, TyId, TyKind};
 
 use crate::lower::hook_calls::{self as hooks, ty, HookTy};
 use crate::lower::operand::proj;
-use crate::lower::rt::Rt;
 use crate::lower::{cint, FnLower};
 use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
 
@@ -35,9 +34,16 @@ impl FnLower<'_, '_> {
         m: DefId,
         depth: &Operand,
     ) {
-        // The method is user code: what it prints is numbered on its own (std's `inspectSave`).
+        // The method is user code: what it prints is numbered on its own (std's `inspectSave`),
+        // with custom inspect pieces of its own (`inspectAtomsSave`).
         let saved = hooks::inspect_save(self).map(|save| save.emit(self).op());
+        let atoms = hooks::inspect_atoms_save(self).map(|save| save.emit(self).op());
         let (res, rty) = self.call_hook(m, obj, ty, None);
+        if let Some(restore) =
+            atoms.and_then(|s| hooks::inspect_atoms_restore(self, ty::U64::arg(s)))
+        {
+            _ = restore.emit(self);
+        }
         if let Some(restore) = saved.and_then(|s| hooks::inspect_restore(self, ty::U64::arg(s))) {
             _ = restore.emit(self);
         }
@@ -73,13 +79,11 @@ impl FnLower<'_, '_> {
             };
             self.within_depth_by(buf, depth, cut_text, None, |lw, _| {
                 // The name and the text are one piece, like a custom inspect's string.
-                let start = lw.temp(Ty::U64);
-                lw.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
-                let start = Operand::Copy(Place::local(start));
+                let start = lw.builder_len(buf);
                 lw.push_text(buf, &name);
                 let a = lw.addr(text.clone());
                 lw.push_str(buf, a);
-                lw.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+                lw.inspect_atom(buf, start);
             });
         } else if self.is_native_inspect(rty) {
             // What Node prints for one of its own objects (`ArrayBuffer`, `URL`): the text, cut
@@ -115,26 +119,22 @@ impl FnLower<'_, '_> {
                 None => (String::new(), format!("[{name}]")),
             };
             self.within_depth(buf, depth, &cut, None, |lw, _| {
-                let start = lw.temp(Ty::U64);
-                lw.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
-                let start = Operand::Copy(Place::local(start));
+                let start = lw.builder_len(buf);
                 let arr = lw.content(&res, rty);
                 let len = Operand::Copy(proj(&arr, Proj::Field(1)));
                 lw.push_text(buf, &format!("{name}("));
                 let u64_ = lw.cx.intern(TyKind::Int(velt_sema::hir::IntTy::U64));
                 lw.push_scalar(buf, len, u64_);
                 lw.push_text(buf, &format!(") {tag}"));
-                lw.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+                lw.inspect_atom(buf, start);
                 lw.format_nested(buf, &res, rty, depth);
             });
         } else {
             // The string, or the name before the value, is kept as one piece when the value is
             // broken across lines: node inserts a custom inspect's text as it is.
-            let start = self.temp(Ty::U64);
-            self.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
-            let start = Operand::Copy(Place::local(start));
+            let start = self.builder_len(buf);
             self.push_text(buf, &format!("{name} "));
-            self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+            self.inspect_atom(buf, start);
             self.format_nested(buf, &res, rty, depth);
         }
         self.drop_glue(res, rty);
@@ -197,12 +197,10 @@ impl FnLower<'_, '_> {
     /// The string at `text` (a custom inspect's), kept as one piece when the value around it is
     /// broken across lines: node inserts a custom inspect's text as it is.
     fn push_inspect_text(&mut self, buf: &Operand, text: &Place) {
-        let start = self.temp(Ty::U64);
-        self.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
-        let start = Operand::Copy(Place::local(start));
+        let start = self.builder_len(buf);
         let a = self.addr(text.clone());
         self.push_str(buf, a);
-        self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+        self.inspect_atom(buf, start);
     }
 
     /// Is `ty` std's `NativeInspect` (std/lang/typed_array/native_inspect.velt), the result of an

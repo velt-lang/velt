@@ -1,0 +1,40 @@
+// velt/lang/hooks (internal): the memory of function properties' table (fn_props_core.velt,
+// fn_props_map.velt): blocks from the allocator compiled code uses, on every target (the browser
+// has no C library), each after a word holding its size, which its free needs, zeroed here. The
+// leak counters count them, and the table gives each back once it empties (the identities' at
+// exit: fn_props_env.velt `releaseAtExit`).
+
+import { addressLoad, addressStore, rawAlloc, rawFree } from "velt/lang/intrinsics";
+
+/** `n` zeroed bytes, aligned to 8. */
+export function alloc(n: usize): usize {
+  const words = (n + 7) / 8;
+  const p = rawAlloc(8 + words * 8);
+  // SAFETY: a fresh block of `8 + words * 8` bytes.
+  unsafe {
+    addressStore<u64>(p, words as u64);
+    for (let i: usize = 1; i <= words; i++) {
+      addressStore<u64>(p + i * 8, 0);
+    }
+  }
+  return p + 8;
+}
+
+/** Gives back a block `alloc` made. */
+export function free(p: usize): void {
+  // SAFETY: `p` follows its size word, as `alloc` made it; given back once.
+  unsafe {
+    const words = addressLoad<u64>(p - 8) as usize;
+    rawFree(p - 8, 8 + words * 8);
+  }
+}
+
+/** Copies `n` bytes, a multiple of 8 (blocks that do not overlap). */
+export function copy(dst: usize, src: usize, n: usize): void {
+  for (let i: usize = 0; i < n; i += 8) {
+    // SAFETY: both blocks hold `n` bytes.
+    unsafe {
+      addressStore<u64>(dst + i, addressLoad<u64>(src + i));
+    }
+  }
+}

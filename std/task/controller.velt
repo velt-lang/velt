@@ -1,6 +1,6 @@
 // velt/task (internal): `AbortController`, which aborts its signal.
 
-import { velt_rt_signal_new } from "velt/task/rt";
+import { signalNew } from "#task-signal";
 import { AbortSignal, PLAIN_ABORT, signalCell } from "velt/task/signal";
 import { INSPECT } from "velt/lang/hooks/keys";
 
@@ -9,7 +9,7 @@ export class AbortController {
   #sig: AbortSignal;
 
   constructor() {
-    this.#sig = new AbortSignal(signalCell(velt_rt_signal_new()));
+    this.#sig = new AbortSignal(signalCell(signalNew()));
   }
 
   /** The controller's signal (the same object every time, like JS). */

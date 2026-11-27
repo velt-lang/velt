@@ -48,6 +48,10 @@ impl FnCx<'_, '_> {
             return ms.iter().any(|m| self.converts_to(from, *m));
         }
         if self.cx.lit_value(from).is_some() {
+            // A number literal is a `number` too, an integer one included (`literal_as_number`).
+            if to == self.cx.ty.f64 && self.number_literal_type(from) {
+                return true;
+            }
             let base = self.cx.widened(from);
             return base != from && self.converts_to(base, to);
         }

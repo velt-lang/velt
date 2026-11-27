@@ -244,6 +244,26 @@ describe("layoutText", () => {
     expect(layoutText("{ a: 1, b: [ 2 ] }", 0, [])).toBe("");
   });
 
+  it("reads a quoted string 8 bytes at a time, at every alignment", () => {
+    // An escaped quote does not end the string, its backslash at any place in a word.
+    let line = "[ ";
+    let broken = "[\n";
+    for (let i = 0; i < 7; i++) {
+      const s = `'wwwwwwwwwwx\\'yy"w\`, zz${i}'`;
+      line += i == 0 ? s : ", " + s;
+      broken += "  " + s + (i < 6 ? ",\n" : "\n");
+    }
+    line += " ]";
+    broken += "]";
+    // A non-ASCII word inside a string is measured exactly: 71 units (75 bytes) stays on one line.
+    const wide = "{ a: '" + "c".repeat(43) + "éééé" + "c".repeat(9) + "', b: 1 }";
+    for (let k: u64 = 0; k < 8; k++) {
+      const pad = "-".repeat(k as i64);
+      expect(layoutText(pad + line, k, [])).toBe(broken);
+      expect(layoutText(pad + wide, k, [])).toBe("");
+    }
+  });
+
   it("leaves text that is not the printer's", () => {
     // Unbalanced or unterminated text: no layout.
     for (const text of ["{ a: 1", "Ok(1))", "[Circular *1"]) {
