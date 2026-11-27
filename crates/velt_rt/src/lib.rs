@@ -37,7 +37,6 @@ pub mod mutex;
 pub mod net;
 pub mod panic;
 pub mod process;
-pub mod proxy_array;
 pub mod read_mode;
 pub mod registry;
 pub mod result;

@@ -1,7 +1,7 @@
 // velt/lang/proxy (internal): property keys through a proxy and `Reflect`: array indices, symbol
 // keys by name, keys as Node's messages show them, and the receivers not supported yet.
 
-import { proxyArrayHole } from "velt/lang/intrinsics";
+import { isHole } from "velt/lang/proxy/holes";
 import { arrayIndex } from "velt/lang/hooks/record";
 import { Reflect } from "velt/lang/proxy/reflect";
 import { Proxy } from "velt/lang/proxy";
@@ -16,7 +16,7 @@ export function proxyIndex(s: string): number {
  * (velt/lang/proxy/array: Node's holes, which Velt's arrays don't have)?
  */
 export function arrayHole(a: any, i: number): boolean {
-  return proxyArrayHole(a, i as i64, 0) == 1;
+  return isHole(a, i as i64);
 }
 
 /** The element of an array that `key` (a string or a number) names, or -1. */
