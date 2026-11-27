@@ -37,6 +37,25 @@ async function main() {
     console.log("caught", x.message);
     return 0;
   });
+  let n = 0;
+  await later(5).then(
+    (v) => {
+      n += v;
+    },
+    (e) => {
+      const x = e;
+      n += x.message.length;
+    },
+  );
+  const c = await later(6).catch((e) => e.message.length);
+  await later(7)
+    .then((v) => {
+      n += v;
+    })
+    .catch((e) => {
+      console.log("e", e.message);
+    });
+  console.log("n", n, "c", c);
   console.log("done");
 }
 main();

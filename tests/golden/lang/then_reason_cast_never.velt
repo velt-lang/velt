@@ -41,6 +41,27 @@ async function main(): Promise<void> {
     console.log("caught", x.message);
     return 0;
   });
+  // A number read through the cast: added to a captured counter, a `catch` handler's
+  // result, and a `catch` after a `then`.
+  let n = 0;
+  await later(5).then(
+    (v) => {
+      n += v;
+    },
+    (e) => {
+      const x = e as Error;
+      n += x.message.length;
+    },
+  );
+  const c = await later(6).catch((e) => (e as Error).message.length);
+  await later(7)
+    .then((v) => {
+      n += v;
+    })
+    .catch((e) => {
+      console.log("e", (e as Error).message);
+    });
+  console.log("n", n, "c", c);
   console.log("done");
 }
 main();

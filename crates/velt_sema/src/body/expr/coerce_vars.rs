@@ -32,7 +32,10 @@ impl FnCx<'_, '_> {
             Ok(mut c) => {
                 self.cx.assume_empty_in(ty);
                 self.cx.assume_empty_in(exp);
-                if c.ty == self.cx.ty.never && self.cx.is_err_var(ty) {
+                // Only while nothing is known to be stored into the variable: once something
+                // is, the assumption fails and the program is checked again with the solved
+                // sets, so the conversion made as before costs nothing more in this check.
+                if c.ty == self.cx.ty.never && self.cx.var_known_empty(ty) {
                     return Ok(self.never_as_written(c));
                 }
                 c.ty = exp;
