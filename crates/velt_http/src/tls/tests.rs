@@ -11,7 +11,7 @@ use super::*;
 use crate::client::https;
 use crate::message::{read_request, write_response, Response};
 
-const TEST_CA: &str =
+pub(crate) const TEST_CA: &str =
   "-----BEGIN CERTIFICATE-----\nMIIBtDCCAVmgAwIBAgIUAdKl7damW41yHgg5amYgxZD1tWcwCgYIKoZIzj0EAwIw\nJjEkMCIGA1UEAwwbVmFpcyBUZXN0IENBIChkbyBub3QgdHJ1c3QpMCAXDTI2MDkz\nMDEzNTcxMloYDzIxMjYwOTA2MTM1NzEyWjAmMSQwIgYDVQQDDBtWYWlzIFRlc3Qg\nQ0EgKGRvIG5vdCB0cnVzdCkwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASk+j0T\nPdqEZlzKfKYbGiuDdqn5w1BnL2cBv2JUf/NorWzJipuXvAu/LVXoj419DalaZ+4D\nRpiTuT5d5eSRDcndo2MwYTAdBgNVHQ4EFgQU+XUq6wKttKjp0aSG6Tn4kyHKKDow\nHwYDVR0jBBgwFoAU+XUq6wKttKjp0aSG6Tn4kyHKKDowDwYDVR0TAQH/BAUwAwEB\n/zAOBgNVHQ8BAf8EBAMCAQYwCgYIKoZIzj0EAwIDSQAwRgIhALAhEgBiBw5QVGfL\ncr2a+XdMgKEZ6Lgmw/PEFAOL8IZaAiEA7Ba9rrnHO96Vrn8cfkSA6YJbfP4Y8zD5\nRADTuyZ4C9w=\n-----END CERTIFICATE-----\n";
 const TEST_CERT: &str =
   "-----BEGIN CERTIFICATE-----\nMIIB4zCCAYmgAwIBAgIUUWjjR76EmcvpdwD5yyBeoGEC+oIwCgYIKoZIzj0EAwIw\nJjEkMCIGA1UEAwwbVmFpcyBUZXN0IENBIChkbyBub3QgdHJ1c3QpMCAXDTI2MDkz\nMDEzNTcxMloYDzIxMjYwOTA2MTM1NzEyWjAUMRIwEAYDVQQDDAlsb2NhbGhvc3Qw\nWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAS34JkOS/SCH/jEnDTsuUiNpPFqqmgg\nnHmhm9FVPrvW3dzk0y1gwh63NeHjxyHL+KFcX6OAtu2BoAXhCOUH33wxo4GkMIGh\nMCwGA1UdEQQlMCOCCWxvY2FsaG9zdIcEfwAAAYcQAAAAAAAAAAAAAAAAAAAAATAM\nBgNVHRMBAf8EAjAAMA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcD\nATAdBgNVHQ4EFgQUBbUl3Qdv7aCuWcSog8ViJH1NEb4wHwYDVR0jBBgwFoAU+XUq\n6wKttKjp0aSG6Tn4kyHKKDowCgYIKoZIzj0EAwIDSAAwRQIhAPnCnjJTXQEYZS2z\nydBhuGIPfgwpZ9Mect34i62AYGYyAiB31JwL5JCmjtIueBktaY+6sJ8hbf1v2xW3\n2KQT7T6l1w==\n-----END CERTIFICATE-----\n";
@@ -19,7 +19,7 @@ const TEST_KEY: &str =
   "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgNMWysN/lz+uQWJ6b\nICqIzZwmPk6pOdOeO30P+ITXNCChRANCAAS34JkOS/SCH/jEnDTsuUiNpPFqqmgg\nnHmhm9FVPrvW3dzk0y1gwh63NeHjxyHL+KFcX6OAtu2BoAXhCOUH33wx\n-----END PRIVATE KEY-----\n";
 
 /// Serve one HTTPS request on a background thread; returns `127.0.0.1:<port>`.
-fn serve_once(answer: Response) -> String {
+pub(crate) fn serve_once(answer: Response) -> String {
     let certs = CertificateDer::pem_slice_iter(TEST_CERT.as_bytes())
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
