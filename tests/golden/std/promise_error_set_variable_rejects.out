@@ -1,0 +1,4 @@
+stored: caught true
+then: caught true
+finally: caught true
+then: 3
