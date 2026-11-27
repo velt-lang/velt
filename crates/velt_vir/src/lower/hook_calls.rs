@@ -22,8 +22,10 @@
 //! moved value or a share of a borrowed one: [`Own`]) and returns a [`Call`], which emits the call
 //! the way the site needs it ([`Call::emit`], [`Call::emit_to`], [`Call::emit_std`],
 //! [`Call::emit_owned`]). A hook lowering cannot do without is an ICE when std lacks it; a
-//! `fallback` hook's builder returns `None` when it is missing or unchecked, and the caller calls
-//! the runtime instead. The builder of a hook whose entry lists `constructs(…)` takes the
+//! `fallback` hook's builder returns `None` when the program doesn't load its module or sema left
+//! it unchecked (its module loaded without it is an ICE: std_defs.rs), and the caller writes the
+//! value another way (another hook, or lowering's own glue), never with a runtime extern the hook
+//! replaces (velt_common `hook_replaces.rs`). The builder of a hook whose entry lists `constructs(…)` takes the
 //! [`Construct`] the call site lowers, and asserts (in release compilers too: one bit test) that
 //! sema demanded the hook (`hir::Program::hooks_demanded`, velt_common `hook_demand.rs`): a
 //! construct missing from the table is an ICE naming it. A `prebuilt` hook whose module the
