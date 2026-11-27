@@ -401,3 +401,68 @@ fn an_export_extends_its_small_integer_parameters_itself() {
         );
     }
 }
+
+/// A std module exporting a function (user code may not: `@export` is std's and native
+/// packages'), which the program calls. It may panic, so its export calls it by `invoke`, with
+/// the abort pad.
+const EXPORTING: &str = r#"import * as ffi from "velt/ffi";
+
+@ffi.export("std_test_twice")
+function twice(x: i32): i32 {
+  if (x < 0) {
+    panic("twice of a negative number");
+  }
+  return x * 2;
+}
+
+export function viaExport(x: i32): i32 {
+  return twice(x);
+}
+"#;
+
+const CALLER: &str = "import { viaExport } from \"velt/zz_export\";\n\nfunction main() {\n  console.log(viaExport(21));\n}\n";
+
+/// `from` copied to `to`, recursively.
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            copy_tree(&path, &to.join(entry.file_name()));
+        } else {
+            std::fs::copy(&path, to.join(entry.file_name())).unwrap();
+        }
+    }
+}
+
+/// A debug LLVM build (`--backend llvm`) links a program with an export against the shared
+/// runtime, which exports no `rust_eh_personality`: the export's abort pad has the C library's
+/// personality (velt_codegen_llvm `function/stop_unwind.rs`). Needs no C sources.
+#[test]
+fn a_debug_llvm_build_of_a_program_with_an_export_links() {
+    if cfg!(windows) || !velt_codegen_llvm::available() {
+        eprintln!("note: needs clang on macOS/Linux; skipping");
+        return;
+    }
+    reload_support::build_runtime();
+    let dir = test_dir::TestDir::new();
+    let std = dir.path().join("std");
+    copy_tree(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"),
+        &std,
+    );
+    std::fs::create_dir_all(std.join("zz_export")).unwrap();
+    std::fs::write(std.join("zz_export/index.velt"), EXPORTING).unwrap();
+    std::fs::write(dir.path().join("main.velt"), CALLER).unwrap();
+    let home = dir.path().join("home");
+    let o = no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["run", "--backend", "llvm", "main.velt"])
+        .current_dir(dir.path())
+        .env("NO_COLOR", "1")
+        .env("VELT_HOME", &home)
+        .env("VELT_STD", &std)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", text(&o));
+    assert_eq!(String::from_utf8_lossy(&o.stdout), "42\n");
+}
