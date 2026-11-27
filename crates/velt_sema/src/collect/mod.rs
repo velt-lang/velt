@@ -75,6 +75,11 @@ pub(crate) use shapes::self_type;
 /// The def allocated for each module-level and nested item.
 pub(crate) type ItemDefs = Vec<DefId>;
 
+/// The class class `d` extends.
+pub(crate) fn base_class(cx: &Ctx, d: DefId) -> Option<DefId> {
+    classes::base_of_def(cx, d)
+}
+
 /// Collect generated modules `ms` once the program's bodies are checked
 /// (docs/internals/design/source-generators.md "Compilation"): their items declared in their own
 /// scope (with their declaring module's names inherited) and their signatures resolved. Returns

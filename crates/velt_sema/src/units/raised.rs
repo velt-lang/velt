@@ -32,6 +32,9 @@ pub struct Raised {
     /// A class's vtable with the slots the program's overrides add to it or to a base of it
     /// (`collect::program_slots`, #3684): its entries, and each method key's slot.
     pub(crate) vtables: FxHashMap<DefId, Vtable>,
+    /// The (origin class, method key) of each slot the program's overrides added, whose calls in
+    /// std's bodies dispatch once the freeze lifts (`units::std_calls`).
+    pub(crate) added: Vec<(DefId, String)>,
 }
 
 /// A class's vtable entries and the slot of each method key, as `AdtInfo` holds them.
@@ -46,7 +49,8 @@ impl super::codec::Codec for Raised {
                 && self.slots.is_empty()
                 && self.throws.is_empty()
                 && self.demoted.is_empty()
-                && self.vtables.is_empty(),
+                && self.vtables.is_empty()
+                && self.added.is_empty(),
             "ICE: a unit saved with raised definitions"
         );
     }
@@ -210,6 +214,7 @@ pub(crate) fn apply(cx: &mut Ctx) {
         a.vtable = entries;
         a.vslots = slots;
     }
+    super::std_calls::redispatch(cx, &raised.added);
     for (d, modes) in fns {
         write_modes(cx, d, &modes);
         // The body's parameters too, which lowering reads, as `ownership::infer`'s
