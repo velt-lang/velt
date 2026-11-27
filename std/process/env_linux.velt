@@ -6,9 +6,6 @@ import { Ptr } from "velt/ffi/ptr";
 import { ARGV_C, hiddenVar, SCRIPT_C, withoutHidden } from "./env_hidden";
 import * as posix from "./env_posix";
 
-export { executablePath, osArgs } from "./args_linux";
-export { keepArgs, keptArg, keptCount, releaseArgs } from "./args_keep";
-
 /** C's `char **environ`: the table of "name=value" strings (NULL after `clearenv`). */
 declare c("c") let environ: Ptr<void> | null;
 
@@ -31,20 +28,10 @@ export function getEnvRaw(name: string): string | undefined {
 
 /**
  * `VELT_ARGV` (`argv`) or `VELT_SCRIPT`, which velt passes (std/process/args_read.velt), read
- * while the caller holds the environment's lock (`lockEnv`).
+ * without the lock: once, before any change of the environment (env_posix.velt `getEnvOnce`).
  */
 export function passedVar(argv: bool): string | undefined {
-  return argv ? posix.getEnvHeld(ARGV_C) : posix.getEnvHeld(SCRIPT_C);
-}
-
-/** The environment's lock, for the arguments' first read (env_posix.velt `lockEnv`). */
-export function lockEnv() {
-  posix.lockEnv();
-}
-
-/** Gives back the lock `lockEnv` took. */
-export function unlockEnv() {
-  posix.unlockEnv();
+  return argv ? posix.getEnvOnce(ARGV_C) : posix.getEnvOnce(SCRIPT_C);
 }
 
 export function setEnv(name: string, value: string) {

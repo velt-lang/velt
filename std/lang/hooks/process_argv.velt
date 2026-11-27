@@ -1,75 +1,87 @@
 // velt/lang/hooks (internal): the command-line arguments, read once per process and kept, which
 // std/lang/hooks/process.velt's `argList` (`process.argv`, velt/process's `argv` and `args`)
-// reaches by role: `argCount` and `argAt` of `argv()`'s list or of Node's `process.argv`
-// (`node`). A module that sema loads on demand (velt_common `ON_DEMAND_MODULES`), so a program
-// whose live code reads no arguments loads none of the readers (std/process/args_read.velt and
-// the OS's under it).
+// reaches by role: `argCount` and `argAt` of `argv()`'s list (`list` 0) or of Node's
+// `process.argv` (`list` 1). A module that sema loads on demand (velt_common
+// `ON_DEMAND_MODULES`), so a program whose live code reads no arguments loads none of the
+// readers (std/process/args_read.velt and the OS's under it).
 //
 // Prebuilt (velt_common `std_hooks/prebuilt.rs`): `velt cache warm` compiles this module once
 // into an object of the build cache, and a native program calls its entry points
-// (`velt_hook_argCount`, `velt_hook_argAt`) without loading it, so the readers and the UTF-8
-// decoder are compiled once, not into every program that reads its arguments. Only numbers and
-// strings cross, so the list goes one argument at a time. The kept lists (`ARGV`, `NODE_ARGV`)
-// are this module's own state (a private module: nothing imports it), and the readers keep none.
-// They read velt's variables without the environment's lock, which their caller (`argList`)
-// holds: a copy of the lock in the object would be another lock.
+// (`velt_hook_argCount`, `velt_hook_argAt`, `velt_hook_argsReady`) without loading it, so the
+// readers and the UTF-8 decoder are compiled once, not into every program that reads its
+// arguments. Only numbers and strings cross, so a list goes one argument at a time. The kept
+// lists and the state of the read (`STATE`, `ARGV`, `NODE_ARGV`) are this module's own (a private
+// module: nothing imports it); the readers keep none.
 //
-// Each list is one block of the C library's (`keepArgs`: std/process/args_keep.velt; none in the
-// browser, whose list is always `["", ""]`), its address in a static atomic. Two first reads
-// race: one block wins and the other is given back. Where none could be kept, each call reads
-// the arguments again.
+// The first call reads both lists (`ready`), one thread at a time: another waits for it. The
+// readers take velt's variables from the environment without the environment's lock, which a
+// copy in the object could not share; std's changes of the environment call `argsReady` first
+// (std/process/env_posix.velt), so none runs during the read, and none comes after it.
+//
+// Each list is one block of the C library's (`keepArgs`: std/process/args_keep.velt), its address
+// in a static atomic; the browser's list, always `["", ""]`, needs none (std/process/args_none.velt).
 
-import { keepArgs, keptArg, keptCount, releaseArgs } from "#env-sys";
-import { noInline } from "velt/lang/intrinsics";
+import { keepArgs, keptArg, keptCount } from "#args-sys";
+import { atomicSpinHint, noInline } from "velt/lang/intrinsics";
 import { readArgv, readNodeArgv } from "velt/process/args_read";
+import { outOfMemory } from "./heap";
 
-/** The address of `argv()`'s list (`keepArgs`), 0 until the first read. */
+/** `process.argv`'s list (`argCount`'s `list`); any other picks `argv()`'s. */
+const NODE: u32 = 1;
+
+/** 0: not read yet, 1: being read, 2: both lists kept. */
+const STATE = new Atomic<u32>(0);
+
+/** The address of `argv()`'s list (`keepArgs`), once `STATE` is 2. */
 const ARGV = new Atomic<usize>(0);
 
-/** The address of Node's `process.argv` list, 0 until the first read. */
+/** The address of Node's `process.argv` list, once `STATE` is 2. */
 const NODE_ARGV = new Atomic<usize>(0);
 
-/** The list `node` picks, as read. */
-function read(node: bool): string[] {
-  return node ? readNodeArgv() : readArgv();
+/** Both lists read and kept, by this call or another thread's (`STATE`). */
+function ready() {
+  if (STATE.load("acquire") !== 2) {
+    readOnce();
+  }
 }
 
-/** The address of the kept list `node` picks, read and kept on first use; 0 if none could be. */
-function kept(node: bool): usize {
-  const found = node ? NODE_ARGV.load("acquire") : ARGV.load("acquire");
-  return found !== 0 ? found : keep(node);
-}
-
-/** Reads the list `node` picks and keeps it (`kept`). */
+/** The first read: this thread's, or another's it waits for. */
 @noInline
-function keep(node: bool): usize {
-  const made = keepArgs(read(node));
-  if (made === 0) {
-    return 0;
+function readOnce() {
+  if (STATE.compareExchange(0, 1, "acquire", "acquire") === 0) {
+    const all = keepArgs(readArgv());
+    const node = keepArgs(readNodeArgv());
+    if (all === 0 || node === 0) {
+      // The C library has no memory for them (or an argument is over 4 GiB: no OS passes one).
+      outOfMemory(0);
+    }
+    ARGV.store(all, "relaxed");
+    NODE_ARGV.store(node, "relaxed");
+    STATE.store(2, "release");
+    return;
   }
-  const before =
-    node
-      ? NODE_ARGV.compareExchange(0, made, "acqrel", "acquire")
-      : ARGV.compareExchange(0, made, "acqrel", "acquire");
-  if (before === 0) {
-    return made;
+  while (STATE.load("acquire") !== 2) {
+    atomicSpinHint();
   }
-  releaseArgs(made);
-  return before;
 }
 
-/** The number of arguments in `argv()`'s list, or in Node's `process.argv` (`node`). */
-export function argCount(node: bool): u64 {
-  const at = kept(node);
-  return at !== 0 ? keptCount(at) : read(node).length as u64;
+/** The kept list `list` picks. */
+function kept(list: u32): usize {
+  ready();
+  return list === NODE ? NODE_ARGV.load("relaxed") : ARGV.load("relaxed");
 }
 
-/** Argument `i` of the list `node` picks (`argCount`); "" past the last. */
-export function argAt(node: bool, i: u64): string {
-  const at = kept(node);
-  if (at !== 0) {
-    return keptArg(at, i);
-  }
-  const list = read(node);
-  return i < (list.length as u64) ? list[i as usize] : "";
+/** The number of arguments in `argv()`'s list (`list` 0), or in Node's `process.argv` (1). */
+export function argCount(list: u32): u64 {
+  return keptCount(kept(list));
+}
+
+/** Argument `i` of the list `list` picks (`argCount`); "" past the last. */
+export function argAt(list: u32, i: u64): string {
+  return keptArg(kept(list), i);
+}
+
+/** Before the environment changes (std/process/env_posix.velt): the first read done. */
+export function argsReady(): void {
+  ready();
 }

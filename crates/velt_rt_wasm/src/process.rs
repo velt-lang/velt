@@ -1,6 +1,6 @@
 //! Process state (rt_abi_async.md §8): the environment and the working directory, through Rust's
 //! `std` (empty or failing in the browser). The arguments are std's
-//! (std/process/env_wasi.velt).
+//! (std/process/args_wasi.velt).
 
 use crate::result::{IoResult, VeltErr};
 use crate::str::VeltStr;

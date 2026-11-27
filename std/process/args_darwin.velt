@@ -1,10 +1,12 @@
-// velt/process (internal): the arguments on macOS (std/process/env_darwin.velt re-exports
-// them): the C `main`'s `argc` and `argv`, which libSystem keeps for `_NSGetArgc` and
+// velt/process (internal): the arguments on macOS (`#args-sys`' darwin variant,
+// std/imports.velt): the C `main`'s `argc` and `argv`, which libSystem keeps for `_NSGetArgc` and
 // `_NSGetArgv`, and the executable's path (`_NSGetExecutablePath`, resolved).
 
 import { Ptr } from "velt/ffi/ptr";
 import { addressLoad, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 import { cStrings, resolvedC } from "./args_posix";
+
+export { keepArgs, keptArg, keptCount } from "./args_keep";
 
 /** `int *_NSGetArgc(void)` (<crt_externs.h>). */
 declare c("c") function _NSGetArgc(): Ptr<i32>;

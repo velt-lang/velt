@@ -283,6 +283,40 @@ fn arguments_are_read_once() {
     }
 }
 
+/// The arguments are read before the environment first changes (std/process/env_posix.velt
+/// `argsReady`): the readers take velt's variables without the environment's lock, so std's
+/// `setEnv` and `removeEnv` finish that read first. A program that sets or removes the variables
+/// before it reads its arguments still sees its own.
+const CHANGED_FIRST_PROGRAM: &str = r#"import { argv, removeEnv, setEnv } from "velt/process";
+
+function main() {
+  setEnv("VELT_ARGV", "5:other");
+  removeEnv("VELT_SCRIPT");
+  console.log(process.argv[1].endsWith("changed_first.velt"));
+  console.log(JSON.stringify(argv().slice(1)));
+}
+"#;
+
+#[test]
+fn arguments_are_read_before_the_environment_changes() {
+    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    let dir = test_dir::TestDir::new();
+    let src = dir.path().join("changed_first.velt");
+    std::fs::write(&src, CHANGED_FIRST_PROGRAM).unwrap();
+    let want = "true\n[\"a b\",\"\",\"ü\"]\n";
+    for mode in [&["run"][..], &["dev", "--host"]] {
+        let out = velt()
+            .args(mode)
+            .arg(&src)
+            .arg("--")
+            .args(["a b", "", "ü"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert_eq!(stdout(&out), want, "velt {mode:?}");
+    }
+}
+
 /// `process.argv` read at several places compiles its reader once: the reader takes no caller's
 /// location (a std function that may panic gets a copy per call site, velt_vir track_caller.rs)
 /// and is not inlined into the caller, so a program's code does not grow by a copy of it per
@@ -304,15 +338,80 @@ fn argv_reader_is_compiled_once() {
         .unwrap();
     let vir = stdout(&out);
     let fns: Vec<&str> = vir.lines().filter(|l| l.starts_with("fn#")).collect();
-    let readers: Vec<&&str> = fns
-        .iter()
-        .filter(|l| l.contains("P4argsN8nodeArgv"))
-        .collect();
-    assert_eq!(readers.len(), 1, "{readers:#?}");
-    assert!(!readers[0].contains("nodeArgv_L"), "{}", readers[0]);
+    let lists: Vec<&&str> = fns.iter().filter(|l| l.contains("N7argList")).collect();
+    assert_eq!(lists.len(), 1, "{lists:#?}");
+    assert!(!lists[0].contains("argList_L"), "{}", lists[0]);
     // The reading itself (the files, the variables) is one function more, out of line.
     let reads = fns.iter().filter(|l| l.contains("N12readNodeArgv")).count();
     assert_eq!(reads, 1, "{fns:#?}");
+}
+
+/// With the build cache holding the arguments' prebuilt object (std/lang/hooks/process_argv.velt,
+/// velt_common `std_hooks/prebuilt.rs`), a program calls it instead of compiling the readers in,
+/// and reads the same lists: `process.argv`, `argv()` and `args()`, and the hidden variables.
+#[test]
+fn prebuilt_readers_give_the_same_lists() {
+    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    let dir = test_dir::TestDir::new();
+    let spaced = spaced_dir(dir.path());
+    let cache = dir.path().join("cache");
+    for (name, src) in [("argv_prog", PROGRAM), ("std_args", STD_PROGRAM)] {
+        let file = spaced.join(format!("{name}.velt"));
+        std::fs::write(&file, src).unwrap();
+        let exe = spaced.join(if cfg!(windows) {
+            format!("{name}.exe")
+        } else {
+            name.to_string()
+        });
+        // The module loaded (no objects), then the object stored, then the object served.
+        let mut outputs = vec![];
+        for (mode, served) in [(Some("0"), false), (Some("fill"), false), (None, true)] {
+            let mut cmd = velt();
+            cmd.arg("build")
+                .arg(&file)
+                .arg("-o")
+                .arg(&exe)
+                .current_dir(&spaced)
+                .env("VELT_BUILD_CACHE", &cache)
+                .env("VELT_STD_OBJECT_STATS", "1")
+                .env("VELT_BUILD_STAMP", "off")
+                .env_remove("VELT_STD_OBJECT_FILL")
+                .env_remove("VELT_PREBUILT_HOOKS");
+            if let Some(m) = mode {
+                cmd.env("VELT_PREBUILT_HOOKS", m);
+            }
+            let build = cmd.output().unwrap();
+            stdout(&build);
+            let err = String::from_utf8_lossy(&build.stderr);
+            if mode != Some("fill") {
+                let found = err.contains("process_argv: object found");
+                assert_eq!(found, served, "{name}, {mode:?}: {err}");
+            }
+            let run = command(&exe).args(ARGS).output().unwrap();
+            outputs.push(stdout(&run));
+        }
+        assert_eq!(outputs[0], outputs[2], "{name}: loaded and prebuilt");
+        assert_eq!(outputs[0], outputs[1], "{name}: loaded and prebuilt");
+        if name == "argv_prog" {
+            let (body, runtime) = split_runtime(&outputs[2]);
+            assert_eq!(body, expected(false), "{name}");
+            assert!(!runtime.is_empty());
+        }
+    }
+    // `velt check` takes the object too.
+    let check = velt()
+        .arg("check")
+        .arg(spaced.join("argv_prog.velt"))
+        .current_dir(&spaced)
+        .env("VELT_BUILD_CACHE", &cache)
+        .env("VELT_STD_OBJECT_STATS", "1")
+        .env_remove("VELT_STD_OBJECT_FILL")
+        .env_remove("VELT_PREBUILT_HOOKS")
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&check.stderr);
+    assert!(check.status.success(), "{err}");
+    assert!(err.contains("process_argv: object found"), "{err}");
 }
 
 /// A program whose executable is removed while it runs: Linux's `/proc/self/exe` then ends in
