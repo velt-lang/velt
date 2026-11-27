@@ -1,0 +1,79 @@
+// velt/process (tests): a Windows command line split into arguments (args_cmdline.velt) by the
+// C runtime's rules, which Rust's `std::env::args` follows: its test table (official_examples,
+// whitespace_behavior, genius_quotes), run on every OS by `velt test std/`.
+import { describe, expect, it } from "velt/test";
+import { splitCommandLine } from "velt/process/args_cmdline";
+
+function units(s: string): u16[] {
+  const out: u16[] = [];
+  const n = s.length as i64;
+  for (let i: i64 = 0; i < n; i++) {
+    out.push(s.charCodeAt(i) as u16);
+  }
+  return out;
+}
+
+function split(line: string): string {
+  return JSON.stringify(splitCommandLine(units(line), () => "EXE-PATH"));
+}
+
+function check(line: string, args: string[]) {
+  expect(split(line)).toBe(JSON.stringify(args));
+}
+
+describe("splitCommandLine", () => {
+  it("takes words and quoted words", () => {
+    check("test", ["test"]);
+    check("test aa", ["test", "aa"]);
+    check("test aa\tbb", ["test", "aa", "bb"]);
+    check('test "aa bb"', ["test", "aa bb"]);
+    check("test ü日 ✓", ["test", "ü日", "✓"]);
+  });
+
+  it("follows the documented examples", () => {
+    check('EXE "abc" d e', ["EXE", "abc", "d", "e"]);
+    check('EXE a\\\\\\b d"e f"g h', ["EXE", "a\\\\\\b", "de fg", "h"]);
+    check('EXE a\\\\\\"b c d', ["EXE", 'a\\"b', "c", "d"]);
+    check('EXE a\\\\\\\\"b c" d e', ["EXE", "a\\\\b c", "d", "e"]);
+  });
+
+  it("separates by runs of spaces and tabs", () => {
+    check(" test", ["", "test"]);
+    check("  test", ["", "test"]);
+    check(" test test2", ["", "test", "test2"]);
+    check(" test  test2", ["", "test", "test2"]);
+    check("test test2 ", ["test", "test2"]);
+    check("test  test2 ", ["test", "test2"]);
+    check("test ", ["test"]);
+    check("test \t a", ["test", "a"]);
+  });
+
+  it("reads quotes inside quotes", () => {
+    check('EXE "" ""', ["EXE", "", ""]);
+    check('EXE "" """', ["EXE", "", '"']);
+    check('EXE "this is """all""" in the same argument"', [
+      "EXE",
+      'this is "all" in the same argument',
+    ]);
+    check('EXE "a"""', ["EXE", 'a"']);
+    check('EXE "a"" a', ["EXE", 'a" a']);
+    check('EXE "a b', ["EXE", "a b"]);
+    check('EXE "', ["EXE", ""]);
+    check('EXE back\\ "x\\\\"', ["EXE", "back\\", "x\\"]);
+  });
+
+  it("takes the program name's characters literally", () => {
+    check('"EXE" check', ["EXE", "check"]);
+    check('"EXE check"', ["EXE check"]);
+    check('"EXE """for""" check', ["EXE for check"]);
+    check('"EXE ""for""" check', ["EXE for", "check"]);
+    check('"EXE \\"for\\" check', ["EXE \\for\\ check"]);
+    check('"EXE \\" for \\" check', ["EXE \\", "for", '"', "check"]);
+    check('E"X"E test', ["EXE", "test"]);
+    check('EX""E test', ["EXE", "test"]);
+  });
+
+  it("answers the executable's path for an empty command line", () => {
+    check("", ["EXE-PATH"]);
+  });
+});
