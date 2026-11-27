@@ -10,9 +10,10 @@
 // - no pending `sleep` (sched_sleep.velt; Node's timers count through their keep-alive
 //   references, so an `unref()`'d one does not).
 // The runtime is not asked: what a program waits for on native is the executor's (its timers,
-// its reactor's sockets, its blocking pool), and the one runtime leaf std still awaits there (the
-// listener `velt dev`'s supervisor hands over, std/net/tcp_sched.velt) holds a keep-alive
-// reference while it waits. Only a park reads any of this, nothing per poll.
+// its reactor's sockets, its blocking pool). The runtime leaves std still awaits there are the
+// listener `velt dev`'s supervisor hands over, which holds a keep-alive reference while it waits,
+// and the runtime's TCP streams std/net/tcp_sched.velt falls back to without a reactor, which no
+// native target lacks. Only a park reads any of this, nothing per poll.
 // Tasks that wait only for each other (a promise nobody settles, a channel nobody sends on) can
 // never be woken then. With `main` still running, the program ends as the runtime's
 // `exit_unfinished`: a top-level `await` waiting (the last `velt_rt_tla_at`) writes Node's warning
