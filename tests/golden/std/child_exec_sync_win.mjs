@@ -44,6 +44,7 @@ console.log(`no input: ${empty.code} [${empty.stdout}]`);
 
 const exit3 = cmd("echo to out & echo to err 1>&2 & exit 3");
 console.log(`exit 3: ${exit3.code} [${exit3.stdout.trim()}] [${exit3.stderr.trim()}]`);
+console.log(`exit -1: ${cmd("exit -1").code}`);
 
 const dir = `${tmpdir()}\\velt-golden-exec-sync-win`;
 fs.mkdirSync(dir, { recursive: true });
@@ -51,8 +52,8 @@ const where = cmd("cd & echo %VELT_GOLDEN_VAR%", {
   cwd: dir,
   env: { ...process.env, VELT_GOLDEN_VAR: "value of the variable" },
 });
-console.log(`cwd and env: ${where.code} [${where.stdout.trim().split(dir).join("<dir>")}]`);
-fs.rmdirSync(dir);
+console.log(`cwd and env: ${where.code} [${where.stdout.trim().split(dir).join("<dir>").split("\r\n").join(" | ")}]`);
+fs.rmSync(dir, { recursive: true });
 
 console.log(`missing: ${failure("velt-golden-no-such-program")}`);
 console.log(`batch: ${failure("velt-golden-script.bat")}`);

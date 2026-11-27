@@ -123,7 +123,7 @@ async function main(): Promise<i32> {
 #[test]
 fn execsync_finds_a_program_as_exec_does() {
     // A program in the child's working directory, given by a bare name: libuv's lookup (Node's)
-    // looks there first; Rust's `Command`, which `execSync` runs, would not.
+    // looks there first; Rust's `Command`, which `execSync` ran once, would not.
     let dir = test_dir::TestDir::new();
     let (code, out) = build_and_run(
         dir.path(),

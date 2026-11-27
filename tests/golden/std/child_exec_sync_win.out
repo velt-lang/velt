@@ -3,7 +3,7 @@ echoed: 0; 258894 bytes; 30000 lines, in 1 .. in 30000
 unread: 0 [not reading]
 no input: 1 []
 exit 3: 3 [to out] [to err]
-cwd and env: 0 [<dir>
-value of the variable]
+exit -1: 4294967295
+cwd and env: 0 [<dir> | value of the variable]
 missing: ENOENT
 batch: EINVAL

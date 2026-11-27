@@ -1,0 +1,19 @@
+// `execSync` in a loop: 200 runs of a child that prints one line, its output kept. Measured by
+// the parent's own CPU time (bench/exec_sync/cpu.ps1 on Windows), as the children's time is not
+// the parent's.
+import { execSync } from "velt/process/child";
+import { platform } from "velt/os";
+
+let bytes = 0;
+let failed = 0;
+for (let i = 0; i < 200; i++) {
+  const r =
+    platform() === "win32"
+      ? execSync("cmd.exe", ["/d", "/c", "echo out"], { input: "in\n" })
+      : execSync("sh", ["-c", "echo out"], { input: "in\n" });
+  bytes += r.stdout.length;
+  if (r.code !== 0) {
+    failed++;
+  }
+}
+console.log(`${bytes} bytes, ${failed} failed`);
