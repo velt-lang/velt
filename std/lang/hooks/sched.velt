@@ -142,7 +142,8 @@ export function schedBlockOn(poll: usize, state: usize, stay: u64): void {
 /**
  * Runs the tasks still alive once `main` is done, until none is or none can run again (a park
  * finds nothing left to happen: sched_end.velt); not after a `main` that returned an exit code
- * other than 0, which ends the program at once.
+ * other than 0 or threw (1), which ends the program at once. Either way, with the debug counters
+ * on, module state goes at the end (#3878).
  */
 export function schedFinish(code: i32): void {
   const e = t.exec();
@@ -150,6 +151,9 @@ export function schedFinish(code: i32): void {
     return;
   }
   if (code !== 0) {
+    if (wk.counting()) {
+      mod.dropAtExit();
+    }
     st.report();
     return;
   }

@@ -68,6 +68,8 @@ pub(super) fn add(
     origins.sort_by_key(|(o, _)| depth(cx, *o));
     for (origin, keys) in origins {
         add_slots(cx, origin, &keys, &frozen, overrides);
+        let added = keys.into_iter().map(|k| (origin, k));
+        cx.unit_sums.raised.added.extend(added);
     }
 }
 
@@ -196,6 +198,10 @@ fn add_slots(cx: &mut Ctx, origin: DefId, keys: &[String], frozen: &[DefId], o: 
             }
             slots.insert(a.slot_key.clone(), entries.len() as u32);
             entries.push(def);
+            if a.fill.is_some() {
+                let fill = (c, a.slot_key.clone());
+                cx.unit_sums.raised.added_fills.insert(fill);
+            }
         }
         cx.unit_sums.raised.vtables.insert(c, (entries, slots));
     }

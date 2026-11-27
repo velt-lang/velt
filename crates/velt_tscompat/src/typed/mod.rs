@@ -3,7 +3,6 @@
 //! walk over each module ([`velt_syntax::visit`]) hands them.
 //!
 //! - [`numbers`] for `int-division`, `default-sort` (with the call arguments [`args`] collects);
-//! - [`templates`] for `object-in-template`;
 //! - [`strings`] for `map-iter-as-array`;
 //! - [`globals`] for `velt-global`, `velt-member`, with the prelude's classification in
 //!   [`prelude`];
@@ -16,7 +15,6 @@ mod numbers;
 mod prelude;
 mod returns;
 mod strings;
-mod templates;
 
 use std::collections::{HashMap, HashSet};
 
@@ -219,7 +217,6 @@ impl<'a> Visit<'a> for Walk<'a> {
                 }
                 numbers::assign(e, *op, target, value, t);
             }
-            E::Template { exprs, .. } => templates::template(exprs, t),
             E::Call {
                 callee,
                 type_args,

@@ -1,0 +1,28 @@
+// check: no leaks
+// A function with properties made `shared` and called: the call runs on a copy of what the
+// function captured (its transfer entry, asked for a call's copy), which the properties' entry
+// hands to the closure's own entry, and the properties stay the function's.
+
+function twice(x: number): number {
+  return x * 2;
+}
+
+function main() {
+  const f = (x: number): number => x + 1;
+  const a: any = f;
+  a.k = 1;
+  const s = shared(f);
+  console.log(s(1), a.k);
+
+  const base = 10;
+  const g = (x: number): number => x + base;
+  const b: any = g;
+  b.k = "g";
+  const t = shared(g);
+  console.log(t(1), b.k);
+
+  const d: any = twice;
+  d.k = true;
+  const u = shared(twice);
+  console.log(u(4), d.k);
+}

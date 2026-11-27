@@ -107,6 +107,9 @@ pub(crate) struct Live {
     int_text: FxHashMap<TyId, bool>,
     /// Live code prints a float: `console.log`'s float writer is needed (`number_text.rs`).
     pub(super) prints_float: bool,
+    /// Live code prints a value that may hold containers at the top level: `console.log`'s line
+    /// breaking is needed ([`super::live_constructs::demand_gated`]).
+    pub(super) prints_containers: bool,
     /// Live code runs on the executor ([`Walk::tasks`]): the executor in Velt's hooks are needed
     /// (#2649 P3(a)).
     pub(super) tasks: bool,
@@ -162,6 +165,14 @@ struct Walk {
     formats: Vec<TyId>,
     /// `console.log` or `console.error` of a float.
     prints_float: bool,
+    /// The types of the values printed at the top level, each with whether it is written as
+    /// text (`String(x)`, a template's part) and not inspected (`console.log`, `util.inspect`):
+    /// one that may hold containers needs the line breaking's hooks
+    /// ([`super::live_constructs::may_hold_containers`]).
+    prints: Vec<(TyId, bool)>,
+    /// The types thrown, which are printed when not caught. Only the program's count: std
+    /// throws its error classes in nearly every program.
+    thrown: Vec<TyId>,
     /// The interfaces whose methods it calls on a type parameter's value.
     ifaces: Vec<DefId>,
     /// The kinds ([`kind_bit`]) of its scalar types, which are not recorded as types.
@@ -326,6 +337,7 @@ fn walk_set(cx: &mut Ctx) {
                 super::check_found(cx, d);
             }
             let start = w.start();
+            let thrown = w.thrown.len();
             if !walk_def(cx, d, &mut w) {
                 pending.push(d);
                 continue;
@@ -333,6 +345,8 @@ fn walk_set(cx: &mut Ctx) {
             super::hook_stubs::demand_hook_calls(cx, d);
             if program_code(cx, d) {
                 constructs::note_program_code(cx, &w, start);
+                let thrown = w.thrown[thrown..].to_vec();
+                constructs::note_prints(cx, thrown.into_iter().map(|t| (t, false)));
             }
         }
         evaluate(cx, &w);

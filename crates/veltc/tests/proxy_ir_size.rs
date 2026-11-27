@@ -31,7 +31,10 @@ fn ir_of(src: &str, flags: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-const READ: &str = "const p = new Proxy({ a: 1 } as any, {});\nconsole.log(p.a);\n";
+/// A read through a proxy, printed as the number it is: printing the `any` itself would bring
+/// `console.log`'s line breaking, which is the price of printing a dynamic value, not of a
+/// `Proxy` ([`PRINTS_ANY`] measures that).
+const READ: &str = "const p = new Proxy({ a: 1 } as any, {});\nconsole.log(p.a as number);\n";
 
 /// Lines of release IR for `READ`: 37,557 when the budget was set, 47,165 since std prints
 /// numbers (#3154). A proxy's key text needs a float's text (`p[1.5]` reads the key `"1.5"`),
@@ -47,6 +50,34 @@ fn one_proxy_stays_within_its_budget() {
     assert!(
         lines <= READ_BUDGET,
         "one `new Proxy` is {lines} lines of release IR, over its budget of {READ_BUDGET}"
+    );
+}
+
+/// A program that prints an `any`, without a proxy.
+const PRINTS_ANY: &str = "const a: any = { a: 1 };\nconsole.log(a.a);\n";
+
+/// Lines of release IR for `PRINTS_ANY`: 42,321 when the budget was set. The value may be an
+/// object or an array, which `console.log` breaks across lines as Node does, so the program has
+/// std's line breaking (#3508): about 25,300 lines, of std/lang/hooks/inspect_layout_parse
+/// (18,300), inspect_layout_render (4,200), inspect_layout_width, inspect_layout_container,
+/// inspect_layout_pieces and inspect_layout. A real build links it prebuilt
+/// (velt/lang/hooks/inspect_layout_text), but `--emit llvm` compiles it in. A program that
+/// prints only numbers, strings and booleans has none of it
+/// ([`one_proxy_stays_within_its_budget`]).
+const PRINTS_ANY_BUDGET: usize = 45_000;
+
+#[test]
+fn printing_an_any_stays_within_its_budget() {
+    let lines = release_ir(PRINTS_ANY).lines().count();
+    assert!(
+        lines <= PRINTS_ANY_BUDGET,
+        "printing an `any` is {lines} lines of release IR, over its budget of {PRINTS_ANY_BUDGET}"
+    );
+    // And the line breaking is what a scalar leaves out.
+    let scalar = release_ir("const a: any = { a: 1 };\nconsole.log(a.a as number);\n");
+    assert!(
+        !scalar.contains("inspect__layout"),
+        "line breaking for a number"
     );
 }
 

@@ -80,6 +80,29 @@ impl Cx<'_> {
         matches!(self.hir.def(d), hir::Def::Adt(a) if a.name == super::array_view::VIEW_CLASS)
     }
 
+    /// Where `d` is numbered among the classes: 0 for a class of the program or of a module every
+    /// program reads. More for a class of a hook module read on demand, which a program with std
+    /// read up front has whether it uses it or not, so none may move another class's id: the
+    /// state of `console.log`'s line breaking (std/lang/hooks/inspect_layout_container.velt)
+    /// where the program builds one, then a record view's source (record_view.rs), then the
+    /// line breaking's state where nothing builds it (its constructor is unchecked): numbered
+    /// last of all, an id no code reads.
+    fn on_demand_rank(&self, d: DefId) -> u8 {
+        let hir::Def::Adt(a) = self.hir.def(d) else {
+            return 0;
+        };
+        if a.name == super::record_view::VIEW_SOURCE {
+            return 2;
+        }
+        if a.name != velt_common::std_hooks::INSPECT_LAYOUT_STATE {
+            return 0;
+        }
+        match a.ctor.is_some_and(|c| !self.hir.unchecked.contains(&c)) {
+            true => 1,
+            false => 3,
+        }
+    }
+
     /// Pre-order ids of every class (from 1), with the last id of each subtree.
     fn number_classes(&self) -> FxHashMap<DefId, (u64, u64)> {
         let mut children: FxHashMap<Option<DefId>, Vec<DefId>> = FxHashMap::default();
@@ -103,10 +126,15 @@ impl Cx<'_> {
         // `Proxy` and `Reflect` (std/lang/proxy/index.velt) and the other classes of `numbered_last` are
         // numbered last, so the classes of programs that don't use them keep their ids.
         let mut roots: Vec<DefId> = children.get(&None).cloned().unwrap_or_default();
-        // A record view's source (record_view.rs) is the very last: its hook module is read on
-        // demand, so a program without views (and with std read up front) has it or not.
-        let view_source = |d: DefId| matches!(self.hir.def(d), hir::Def::Adt(a) if a.name == super::record_view::VIEW_SOURCE);
-        roots.sort_by_key(|&d| (view_source(d), self.view_class(d), self.numbered_last(d)));
+        // The classes of hook modules read on demand come after those: a program that doesn't
+        // use one (and has std read up front) has it or not (`on_demand_rank`).
+        roots.sort_by_key(|&d| {
+            (
+                self.on_demand_rank(d),
+                self.view_class(d),
+                self.numbered_last(d),
+            )
+        });
         for &root in roots.iter().rev() {
             stack.push((root, false));
         }

@@ -1,0 +1,26 @@
+// check: no leaks
+// A regex's `lastIndex` takes any value written through `any`, as in JavaScript, where `exec`
+// converts it (ToLength): a numeric string, a non-numeric one, `null`, `true`, a negative
+// number (#3883; a non-number stopped the program with a `TypeError` panic). Velt keeps the
+// number `exec` reads, so only what `exec` does with it is printed.
+
+function from(label: string, v: any) {
+  const re = /b/g;
+  const a: any = re;
+  a.lastIndex = v;
+  const m = re.exec("abcabc");
+  console.log(label, m === null ? "no match" : m.index, re.lastIndex);
+}
+
+const sticky = /b/y;
+const s: any = sticky;
+s.lastIndex = "1";
+console.log("sticky", sticky.test("abc"), sticky.lastIndex);
+
+from("'3'", "3");
+from("' 4 '", " 4 ");
+from("'abc'", "abc");
+from("null", null);
+from("true", true);
+from("-5", -5);
+from("'1e1'", "1e1");

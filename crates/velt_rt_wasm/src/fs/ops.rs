@@ -1,5 +1,5 @@
-//! What the runtime's file streams (stream.rs) and velt_rt_wasm's file-system operations share:
-//! the `Stats` layout and the argument copies (velt_rt_wasm compiles this file too).
+//! What velt_rt_wasm's file-system operations share: the `Stats` layout and the argument
+//! copies.
 
 use crate::str::VeltStr;
 use std::fs;

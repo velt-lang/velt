@@ -9,9 +9,11 @@
 //! running a constructor, which would bypass the class's factories and their checks. The intrinsics sit in generic prelude code
 //! (`JSON.stringify<T>`), so a requirement on a type parameter propagates to every caller (and
 //! from a closure to its enclosing function) until it meets a concrete type, which is checked at
-//! that call site. A method dispatched dynamically (through an interface or a base class) has
-//! no call with type arguments: its requirements are instantiated wherever its class type is
-//! mentioned ([`crate::dispatch`]). The fixed point revisits only the functions whose callees'
+//! that call site. A method dispatched dynamically has no call with type arguments: a base class's
+//! (vtable) methods have their requirements instantiated wherever their class type is mentioned,
+//! an interface implementation's only when the program converts a value through it
+//! ([`crate::dispatch::Converted`]). A call through a type parameter's bound (`Need::Bound`) and
+//! a value converted to `any` (`Need::ToAny`) are needs on a type, resolved where it is concrete. The fixed point revisits only the functions whose callees'
 //! requirements grew ([`crate::dispatch::Rounds`]).
 //!
 //! The same propagation carries how generic code looks at its values for
@@ -27,9 +29,9 @@ use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
-use crate::dispatch::{add_work, instantiate, Dispatch, Pass, Rounds};
+use crate::dispatch::{add_work, instantiate, Converted, Dispatch, Pass, Rounds};
 use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, TyId, TyKind};
-use crate::inst_sites::{carry_guard, constructed, for_each_init, guards_of};
+use crate::inst_sites::{carry_guard, constructed, for_each_init, guards_of, ParamCall};
 use crate::object_copies::Seen;
 use crate::types::children;
 
@@ -53,6 +55,15 @@ enum Need {
     /// only for a type parameter; concrete types are refused where they are used
     /// (`FnCx::reject_ptr_text`, `FnCx::reject_ptr_dynamic`, `Ctx::ptr_type_written`).
     NoPtr(PtrUse),
+    /// A call of slot `1` of interface `0` through a type parameter's bound
+    /// (`Callee::ParamMethod`), on a receiver of this type: where the type is concrete, the
+    /// method that runs is known, and what it needs is the caller's
+    /// (`crate::dispatch::Converted`: no dispatch makes that method reachable).
+    Bound(DefId, u32),
+    /// Converted to a dynamic type (`any`, `unknown`, `object`, `Function`), which calls methods
+    /// by name: where the type is concrete, every method of the classes and structs in it is
+    /// reachable, and what they need is the converting function's.
+    ToAny,
 }
 
 /// How generic code uses a type parameter that must not be a C pointer ([`Need::NoPtr`]).
@@ -115,8 +126,17 @@ type Needs = FxHashMap<DefId, Vec<(TyId, Need, u64)>>;
 pub(crate) struct JsonNeeds(Needs);
 
 pub(crate) fn check_json_types(cx: &mut Ctx) {
-    let mut uses = collect(cx);
+    let (mut uses, mut converted) = collect(cx);
+    // A finished unit's conversions (`units::Summaries`), then the unit's own.
+    let unit = cx.unit_sums.converted.clone();
+    converted.impls.extend(unit.impls);
+    if cx.units_stage == crate::units::Stage::Std {
+        cx.unit_sums.converted = converted.clone();
+    }
     let mut dispatch = Dispatch::default();
+    dispatch.converted = Some(converted);
+    // What `any` reaches: every method, whatever the program converts.
+    let mut any_dispatch = Dispatch::default();
     for (_, u) in &mut uses {
         for (t, span) in &u.types {
             for (m, args) in dispatch.targets(cx, *t) {
@@ -144,12 +164,57 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
         let (f, u) = &uses[i];
         work += u.size();
         let mut grew = false;
-        for (t, span, parse, guard) in requirements(cx, u, &needs) {
+        let mut reqs = requirements(cx, u, &needs);
+        let mut bound: FxHashSet<(TyId, DefId, u32)> = FxHashSet::default();
+        let mut k = 0;
+        while k < reqs.len() {
+            let (t, span, parse, guard) = reqs[k];
+            k += 1;
             if has_param(cx, t) {
                 let n = needs.entry(*f).or_default();
                 if !n.contains(&(t, parse, guard)) {
                     n.push((t, parse, guard));
                     grew = true;
+                }
+            } else if parse == Need::ToAny {
+                if bound.insert((t, DefId(u32::MAX), 0)) {
+                    for (m, args) in any_dispatch.targets(cx, t) {
+                        rounds.read(i, m);
+                        let of_m: Vec<(TyId, Need, u64)> =
+                            needs.get(&m).into_iter().flatten().copied().collect();
+                        for (t2, parse2, need2) in of_m {
+                            let Some(g) = carry_guard(cx, need2, &args, guard) else {
+                                continue;
+                            };
+                            if let Some(t2) = instantiate(cx, t2, &args) {
+                                reqs.push((t2, span, parse2, g));
+                            }
+                        }
+                    }
+                }
+            } else if let Need::Bound(iface, slot) = parse {
+                // The method a bound call runs at this concrete receiver: what it needs, this
+                // function needs (and it is read again when that grows).
+                if bound.insert((t, iface, slot)) {
+                    let call = ParamCall {
+                        recv: t,
+                        iface,
+                        slot,
+                        margs: vec![],
+                    };
+                    for (m, args) in call.targets(cx) {
+                        rounds.read(i, m);
+                        let of_m: Vec<(TyId, Need, u64)> =
+                            needs.get(&m).into_iter().flatten().copied().collect();
+                        for (t2, parse2, need2) in of_m {
+                            let Some(g) = carry_guard(cx, need2, &args, guard) else {
+                                continue;
+                            };
+                            if let Some(t2) = instantiate(cx, t2, &args) {
+                                reqs.push((t2, span, parse2, g));
+                            }
+                        }
+                    }
                 }
             } else if let Need::Seen(how) = parse {
                 // The standard library's own looks at its concrete types (`any` in its proxy
@@ -192,6 +257,7 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
             rounds.changed(*f);
         }
     }
+    work += any_dispatch.work;
     add_work(Pass::Json, work);
     if cx.units_stage == crate::units::Stage::Std {
         cx.unit_sums.json_needs = JsonNeeds(needs);
@@ -229,7 +295,7 @@ fn requirements(cx: &mut Ctx, u: &Uses, needs: &Needs) -> Vec<(TyId, Span, Need,
     reqs
 }
 
-fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
+fn collect(cx: &mut Ctx) -> (Vec<(DefId, Uses)>, Converted) {
     let mut out = vec![];
     // Calls of generated functions look at their type arguments' shapes (`generated_look`).
     let generated: FxHashSet<DefId> = (0..cx.info.len() as u32)
@@ -280,6 +346,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
         parsers: &parsers,
         lookers: &lookers,
         record,
+        converted: Converted::default(),
     };
     let mut bodies: Vec<(DefId, Uses, News)> = vec![];
     // The unit's definitions (`crate::units`): a finished unit's come with its summary.
@@ -317,6 +384,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
         walk.expr(u, news, seen, e, 0);
     });
     let sources = std::mem::take(&mut walk.ids.sources);
+    let converted = std::mem::take(&mut walk.converted);
     cx.object_copies.dyn_sources.extend(sources);
     let mut inits: Vec<_> = inits.into_iter().collect();
     inits.sort_by_key(|(d, _)| *d);
@@ -338,7 +406,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Uses)> {
         }
         out.push((d, u));
     }
-    out
+    (out, converted)
 }
 
 /// One visit of the program's expressions, in [`collect`].
@@ -350,6 +418,8 @@ struct Walk<'a> {
     lookers: &'a FxHashSet<DefId>,
     /// The prelude's `Record`, whose view from `any` reads each value through it (`uses_of`).
     record: Option<DefId>,
+    /// The implementations values are converted to, and the types converted to a dynamic one.
+    converted: Converted,
 }
 
 impl Walk<'_> {
@@ -391,6 +461,23 @@ impl Walk<'_> {
         }
         if let E::New { def, type_args, .. } = &e.kind {
             news.push((*def, type_args.clone(), e.span, guard));
+        }
+        match &e.kind {
+            E::ToDyn { expr, impl_index } => match Some(*impl_index) == self.ids.any_impl {
+                true => u.direct.push((expr.ty, e.span, Need::ToAny)),
+                false => {
+                    self.converted.impls.insert(*impl_index);
+                }
+            },
+            E::Call {
+                callee: Callee::ParamMethod { iface, slot, .. },
+                args,
+            } => {
+                if let Some(r) = args.first() {
+                    u.direct.push((r.ty, e.span, Need::Bound(*iface, *slot)));
+                }
+            }
+            _ => {}
         }
         if self.looks {
             self.ids.uses(&mut u.direct, e);
@@ -474,6 +561,8 @@ crate::units::codec::enums! {
         1 => Json(how),
         2 => Seen(how),
         3 => NoPtr(how),
+        4 => Bound(iface, slot),
+        5 => ToAny,
     }
     PtrUse {
         0 => ToDyn,

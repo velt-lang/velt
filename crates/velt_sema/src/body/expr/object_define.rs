@@ -8,7 +8,8 @@
 //!   property with that symbol written directly anywhere (`{ [key]: v }`, `p[key] = v`) is an
 //!   error here.
 //! - A string key naming a field `o`'s type declares, with only a `value`: the property keeps its
-//!   attributes in JavaScript, so this is an assignment.
+//!   attributes in JavaScript, so this is an assignment. So is a std class's `@own()` accessor
+//!   with a setter, the instance's own data property in JavaScript (a regex's `lastIndex`).
 //!
 //! Accessors (`get` / `set`) are `crate::defined_accessors`'s, which rewrites the ones it
 //! follows; the others, other attributes on a declared field, and keys a type doesn't declare
@@ -156,8 +157,16 @@ impl FnCx<'_, '_> {
                 (Key::Member(prop), n.clone())
             }
         };
+        // A std class's `@own()` accessor with a setter is the instance's own data property in
+        // JavaScript (a regex's `lastIndex`, #3883): a `value` written through the setter.
+        let own_data = |fx: &mut Self| {
+            fx.cx.class_of(ot).is_some_and(|(d, _)| {
+                crate::decorators::own::marks(fx.cx, d, &name) && fx.has_setter(ot, &name)
+            })
+        };
         match self.cx.declared_presence(ot, &name) {
             Some(Presence::Yes | Presence::Optional(_)) => {}
+            _ if own_data(self) => {}
             _ => {
                 let shown = self.cx.shown_name(&name);
                 self.not_yet(

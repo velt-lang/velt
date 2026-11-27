@@ -1,0 +1,180 @@
+//! Std's calls of the methods a program's overrides gave a slot (#3684). Std's bodies are checked
+//! before the program exists (`crate::units`), so where std calls a method that had no slot then
+//! (`new Map(entries)` calling `this.set`, `Error`'s `toString` reading `this.name`), the call is
+//! direct. Once the program adds the slot (`collect::program_slots`) and the freeze lifts
+//! (`raised::apply`), such a call dispatches through it, as a whole-program check had made it:
+//! `Callee::Def` becomes `Callee::Virtual`. It stays direct when it can't reach the program's
+//! override: a `super.m()` call, a receiver just constructed (`new C().m()`), and a receiver
+//! whose class no overriding program class extends. Without a program slot nothing changes.
+
+use rustc_hash::{FxHashMap, FxHashSet};
+
+use crate::ctx::Ctx;
+use crate::hir::{Callee, Def, DefId, Expr, ExprKind as H};
+
+/// Makes std's direct calls of the methods in `added` (origin class, method key: the slots the
+/// program's overrides added) dispatch where a program override can run, and std's calls that
+/// leave out arguments take the default-filling slot in `fills` (std class, fill key: those the
+/// program added) of that many arguments, so the override that runs applies its own defaults.
+pub(crate) fn redispatch(
+    cx: &mut Ctx,
+    added: &[(DefId, String)],
+    fills: &FxHashSet<(DefId, String)>,
+) {
+    if added.is_empty() {
+        return;
+    }
+    let targets = targets(cx, added);
+    if targets.is_empty() && fills.is_empty() {
+        return;
+    }
+    let report = std::env::var_os("VELT_UNITS_RAISED").is_some();
+    let std_fns: Vec<DefId> = (0..cx.defs.len() as u32)
+        .map(DefId)
+        .filter(|&d| matches!(cx.defs[d.0 as usize], Some(Def::Fn(_))))
+        .filter(|&d| cx.try_fn(d).is_some_and(|f| cx.scopes[f.module].is_std))
+        // A class's default-filling entry calls its own class's method, the entry's (#3684).
+        .filter(|d| !cx.fills.contains_key(d))
+        .collect();
+    for d in std_fns {
+        let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
+            continue;
+        };
+        let (mut changed, mut filled) = (vec![], vec![]);
+        crate::visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
+            if let Some((slot, m)) = dispatches(cx, &targets, e) {
+                if let H::Call { callee, .. } = &mut e.kind {
+                    *callee = Callee::Virtual { slot };
+                    changed.push(m);
+                }
+            }
+            if let Some((slot, written, key)) = fills_left_out(cx, fills, e) {
+                if let H::Call { callee, args } = &mut e.kind {
+                    // The receiver and the arguments written: the defaults std placed for the
+                    // rest are the override's to apply.
+                    *callee = Callee::Virtual { slot };
+                    args.truncate(1 + written);
+                    filled.push(key);
+                }
+            }
+        });
+        cx.defs[d.0 as usize] = Some(Def::Fn(f));
+        if report {
+            for m in changed {
+                let (at, of) = (&cx.fn_info(d).name, &cx.fn_info(m).name);
+                eprintln!("velt-units-raised: dispatch {at} -> {of}");
+            }
+            for key in filled {
+                eprintln!("velt-units-raised: fill {} -> {key}", cx.fn_info(d).name);
+            }
+        }
+    }
+}
+
+/// (std class, the method a direct call on it runs) to the slot the program added, for every
+/// std class that an overriding program class extends.
+fn targets(cx: &Ctx, added: &[(DefId, String)]) -> FxHashMap<(DefId, DefId), u32> {
+    let keys: FxHashSet<&str> = added.iter().map(|(_, k)| k.as_str()).collect();
+    let mut out = FxHashMap::default();
+    for p in 0..cx.info.len() as u32 {
+        let p = DefId(p);
+        let Some(a) = cx
+            .adt(p)
+            .filter(|a| a.decl.is_some() && !cx.scopes[a.module].is_std)
+        else {
+            continue;
+        };
+        // The keys program class `p` overrides with a method of its own.
+        let own: Vec<&str> = (a.methods.iter())
+            .filter(|(k, m)| {
+                keys.contains(k.as_str()) && !m.is_static && cx.fn_info(m.def).owner == Some(p)
+            })
+            .map(|(k, _)| k.as_str())
+            .collect();
+        let mut at = crate::collect::base_class(cx, p);
+        let mut seen = 0;
+        while let (Some(c), true) = (at, seen < 64) {
+            if cx.declared_in_std(c) {
+                for k in &own {
+                    let Some(slot) = cx.vslot(c, k) else { continue };
+                    if let Some(&m) = cx.vtable_of(c).and_then(|v| v.get(slot as usize)) {
+                        out.insert((c, m), slot);
+                    }
+                }
+            }
+            at = crate::collect::base_class(cx, c);
+            seen += 1;
+        }
+    }
+    out
+}
+
+/// The slot and method of `e` when it is a direct call of std that should dispatch.
+fn dispatches(
+    cx: &Ctx,
+    targets: &FxHashMap<(DefId, DefId), u32>,
+    e: &Expr,
+) -> Option<(u32, DefId)> {
+    let H::Call {
+        callee: Callee::Def(m, _),
+        args,
+    } = &e.kind
+    else {
+        return None;
+    };
+    if cx.super_calls.contains(&e.span) {
+        return None;
+    }
+    let (c, inner) = receiver_class(cx, args.first()?);
+    if matches!(inner.kind, H::New { .. }) {
+        return None;
+    }
+    let slot = *targets.get(&(c?, *m))?;
+    Some((slot, *m))
+}
+
+/// The default-filling slot of `e`, a std call through a slot that leaves out arguments
+/// (`Summaries::left_out_calls`), when the program added it to the receiver's class: the slot taking
+/// the arguments written, their number, and its key.
+fn fills_left_out(
+    cx: &Ctx,
+    fills: &FxHashSet<(DefId, String)>,
+    e: &Expr,
+) -> Option<(u32, usize, String)> {
+    let H::Call {
+        callee: Callee::Virtual { slot },
+        args,
+    } = &e.kind
+    else {
+        return None;
+    };
+    let written = *cx.unit_sums.left_out_calls.get(&e.span)? as usize;
+    // A receiver just constructed runs its own class's method with std's defaults, as in Node.
+    let (c, inner) = receiver_class(cx, args.first()?);
+    if matches!(inner.kind, H::New { .. }) {
+        return None;
+    }
+    let c = c?;
+    let slots = cx.vslots_of(c)?;
+    let key = slots.iter().find(|(_, &s)| s == *slot)?.0;
+    let fill = crate::collect::fill_defaults::fill_key(key, Some(written));
+    if args.len() <= 1 + written || !fills.contains(&(c, fill.clone())) {
+        return None;
+    }
+    Some((*slots.get(&fill)?, written, fill))
+}
+
+/// The static class of a call's receiver `recv` and the receiver before its upcasts: its own
+/// class, or for a value of a type parameter bounded by a class (`p: T` with `T extends
+/// PBase`), the bound it is upcast to (`class_bound`); the innermost class decides.
+fn receiver_class<'e>(cx: &Ctx, recv: &'e Expr) -> (Option<DefId>, &'e Expr) {
+    let mut class = cx.class_of(recv.ty).map(|(c, _)| c);
+    let mut inner = recv;
+    while let H::Upcast(e) = &inner.kind {
+        inner = e;
+        if let Some((c, _)) = cx.class_of(inner.ty) {
+            class = Some(c);
+        }
+    }
+    (class, inner)
+}

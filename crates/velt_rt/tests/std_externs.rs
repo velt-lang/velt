@@ -323,11 +323,13 @@ fn mismatches(defs: &BTreeMap<String, Vec<(Sig, PathBuf)>>, required: bool) -> V
 /// imports only the file's `*_sync` twins and runs them on the executor's blocking pool), and
 /// std/process/tty_wasm.velt, env_wasm.velt, cwd_wasm.velt and memory_wasm.velt (`#tty`'s,
 /// `#env-sys`', `#cwd-sys`' and `#memory-sys`'s default variants: native builds ask the OS
-/// from std), and std/task/catch_rt.velt (`#task-catch`'s default variant: native builds catch
-/// panics on the executor in Velt, catch_sched.velt) (#2196).
+/// from std), std/task/catch_rt.velt (`#task-catch`'s default variant: native builds catch
+/// panics on the executor in Velt, catch_sched.velt), and std/task/signal_rt.velt
+/// (`#task-signal`'s default variant: native builds keep abort signals in std) (#2196).
 const WASM_ONLY_BINDINGS: &[&str] = &[
     "std/fs/rt.velt",
     "std/task/catch_rt.velt",
+    "std/task/signal_rt.velt",
     "std/process/tty_wasm.velt",
     "std/process/env_wasm.velt",
     "std/process/cwd_wasm.velt",
@@ -468,14 +470,9 @@ fn mirrored_sources() -> Vec<PathBuf> {
     out
 }
 
-/// velt_rt files in mirrored directories that are not on wasm yet: `std/fs_stream`
-/// (its reads run on velt_rt's blocking pool).
-const NATIVE_ONLY: &[&str] = &["fs/stream.rs"];
-
 /// A velt_rt directory velt_rt_wasm mirrors part of (`json/`, `fs/`) is portable code: every
 /// symbol std declares from a file there must be linkable on wasm too, mirrored or defined by
-/// velt_rt_wasm itself (a missing symbol fails only when a wasm program calls it), except in
-/// the files of `NATIVE_ONLY`.
+/// velt_rt_wasm itself (a missing symbol fails only when a wasm program calls it).
 #[test]
 fn velt_rt_wasm_defines_what_mirrored_directories_export() {
     let mirrored = mirrored_sources();
@@ -500,8 +497,7 @@ fn velt_rt_wasm_defines_what_mirrored_directories_export() {
         }
         for (_, path) in defs {
             let path = path.canonicalize().unwrap_or_else(|_| path.clone());
-            let native_only = NATIVE_ONLY.iter().any(|f| path.ends_with(f));
-            if !native_only && path.parent().is_some_and(|d| dirs.iter().any(|m| *m == d)) {
+            if path.parent().is_some_and(|d| dirs.iter().any(|m| *m == d)) {
                 missing.push(format!("{name}: defined in {}", short(&path)));
             }
         }

@@ -1,0 +1,19 @@
+// 50,000 inline `Promise.all`s in `main`'s root, each of two children that yield twice (#3781): each
+// poll of the task is its root's turn, in which the first child goes on and yields again with no
+// record and the second goes on with it (sched_yield_turn.velt `nextTurn`) and takes a record
+// again: the poll of a task whose only jobs are its yields' turns (sched_run.velt `turnsPoll`).
+async function yields(n: number): Promise<number> {
+  for (let i = 0; i < n; i++) {
+    await yieldNow();
+  }
+  return n;
+}
+
+async function main() {
+  let s = 0;
+  for (let i = 0; i < 50000; i++) {
+    const r = await Promise.all([yields(2), yields(2)]);
+    s += r[0] + r[1];
+  }
+  console.log(s);
+}

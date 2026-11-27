@@ -28,7 +28,7 @@ const GOLDENS: &[&str] = &[
     "lang/print_promise",
     "lang/print_limits",
     // A promise woken on its task's stack that finished before the task took it gives its
-    // reference back when the task ends (sched_run.velt `finish`): a `then` on a shared promise,
+    // reference back when the task ends (sched_run_done.velt `finish`): a `then` on a shared promise,
     // and a detached promise driving a combinator.
     "m3/promise_several_consumers",
     "lang/proxy_throws_settled_own",
