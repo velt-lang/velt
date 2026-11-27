@@ -416,6 +416,10 @@ fn add_walk(cx: &mut Ctx, w: Walk) {
     if cx.lazy.jit && w.constructs & Construct::Mutex.bit() != 0 {
         cx.lazy.live.present |= Construct::MutexHeld.bit();
     }
+    // `get message()` on a class extending `Error`: the `any` glue's `errorMessage`.
+    if crate::error_message::on(cx) {
+        cx.lazy.live.present |= Construct::ErrorMessage.bit();
+    }
     if w.async_host {
         let settled = hook_class(cx, hook_index::host_settled);
         live_classes(cx, settled);
