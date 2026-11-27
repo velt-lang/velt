@@ -140,7 +140,6 @@ const CHECKED: &[&str] = &[
     "lang/random/os_win32.velt",
     "net/calls_posix.velt",
     "net/fd_io.velt",
-    "net/rt_later_flush.velt",
     "net/udp/udp_sched.velt",
     "os/machine_darwin.velt",
     "os/machine_win32.velt",

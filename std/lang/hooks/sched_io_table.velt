@@ -264,7 +264,7 @@ function follow(s: usize): void {
   }
   const hb = m.ld(m.ld(k + t.T_HOME) + t.E_IO);
   const ob = m.ld(s + io.S_IOB);
-  if (ob === hb || (m.ld32(s + io.S_FLAGS) & (io.F_LISTENER | io.F_RUNTIME)) !== 0) {
+  if (ob === hb || (m.ld32(s + io.S_FLAGS) & io.F_LISTENER) !== 0) {
     return;
   }
   moveTo(s, ob, hb);
@@ -278,7 +278,7 @@ function follow(s: usize): void {
  * that may not move (pinned, anchored) or while tasks stay on their worker.
  */
 function join(k: usize, s: usize): void {
-  if ((m.ld32(s + io.S_FLAGS) & (io.F_LISTENER | io.F_RUNTIME)) !== 0 || !t.movable(k)) {
+  if ((m.ld32(s + io.S_FLAGS) & io.F_LISTENER) !== 0 || !t.movable(k)) {
     return;
   }
   const h = m.ld(m.ld(s + io.S_IOB) + io.IO_TICK_AT) - t.E_TICK;
