@@ -1,0 +1,110 @@
+// velt/lang/proxy (tests): white-box tests, run by `velt test std/`.
+//
+// An array method on a proxy left by a trap's error (array.velt `proxyArrayInvoke`, the trap
+// wrappers) ends its records' frames (holes.velt) on the way out: afterwards no trap call is
+// open, so nothing is recorded, and a later method on the array is the outermost again, so it
+// reports its own holes.
+import { describe, expect, it } from "velt/test";
+import { Proxy } from "velt/lang/proxy";
+import { proxyArrayInvoke } from "velt/lang/proxy/array";
+import { Reflect } from "velt/lang/proxy/reflect";
+import { methodBegin, methodEnd, recordHole, trapBegin, trapEnd } from "velt/lang/proxy/holes";
+
+/** A proxy of `raw` whose `trap` throws for element `key`. */
+function failing(raw: any, trap: string, key: string): Proxy {
+  const fail = (k: string | symbol): void => {
+    if (String(k) === key) {
+      throw new TypeError(`${trap} ${String(k)}`);
+    }
+  };
+  if (trap === "get") {
+    return new Proxy(raw, {
+      get(t, k, r) {
+        fail(k);
+        return Reflect.get(t, k, r);
+      },
+    });
+  }
+  if (trap === "has") {
+    return new Proxy(raw, {
+      has(t, k) {
+        fail(k);
+        return Reflect.has(t, k);
+      },
+    });
+  }
+  if (trap === "deleteProperty") {
+    return new Proxy(raw, {
+      deleteProperty(t, k) {
+        fail(k);
+        return Reflect.deleteProperty(t, k);
+      },
+    });
+  }
+  return new Proxy(raw, {
+    set(t, k, v, r) {
+      fail(k);
+      return Reflect.set(t, k, v, r);
+    },
+  });
+}
+
+/** Runs method `name` on `p` (its own receiver) and gives the error it threw, as text. */
+function thrown(p: Proxy, name: string, args: any[]): string {
+  const receiver: any = p;
+  try {
+    proxyArrayInvoke(p, name, args, receiver);
+    return "nothing";
+  } catch (e) {
+    return `${e}`;
+  }
+}
+
+/** No frame of a method or trap call is left on `raw`. */
+function clean(raw: any): void {
+  // No trap call is open: nothing is recorded.
+  expect(recordHole(raw, 1)).toBe(-1);
+  // A method that records a hole is the outermost one on `raw`: it reports the hole.
+  methodBegin(raw);
+  trapBegin(raw);
+  expect(recordHole(raw, 1)).toBe(0);
+  trapEnd();
+  expect(methodEnd(raw)).toBe(1);
+}
+
+/** Calls the methods below through `any`, so the program has them for a proxy too. */
+function calls(a: any): void {
+  a.push(4);
+  a.pop();
+  a.shift();
+  a.splice(0, 1);
+}
+
+describe("an array method on a proxy left by a trap's error", () => {
+  it("ends its frames for each trap", () => {
+    const plain: any = [1, 2, 3];
+    calls(plain);
+    expect(plain.length).toBe(1);
+    const cases: string[][] = [
+      ["get", "0", "shift"],
+      ["has", "1", "splice"],
+      ["deleteProperty", "2", "pop"],
+      ["set", "3", "push"],
+    ];
+    for (const c of cases) {
+      const raw: any = [1, 2, 3];
+      const p = failing(raw, c[0], c[1]);
+      const args: any[] = c[2] === "splice" ? [0, 1] : c[2] === "push" ? [4] : [];
+      expect(thrown(p, c[2], args)).toBe(`TypeError: ${c[0]} ${c[1]}`);
+      clean(raw);
+    }
+  });
+
+  it("ends them through a proxy of a proxy", () => {
+    const raw: any = [1, 2, 3];
+    const inner = failing(raw, "set", "3");
+    const outer = new Proxy(inner as any, {});
+    expect(thrown(outer, "push", [4])).toBe("TypeError: set 3");
+    clean(raw);
+  });
+});

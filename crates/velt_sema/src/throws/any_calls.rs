@@ -165,10 +165,27 @@ pub(super) fn note(cx: &mut Ctx) {
         return;
     }
     let held = crate::any_iface_sites::held_types(cx);
-    if holds_throwing(cx, &held) {
+    if proxy_call_throws(cx) || holds_throwing(cx, &held) {
         cx.fn_sites.found.any_calls_throw = true;
         cx.fn_sites.grew = true;
     }
+}
+
+/// Does a method call on a proxy throw: the `get` trap that reads the method (`[PROXY_GET]`),
+/// or an array method run on the proxy, through its traps (`[PROXY_ARRAY_CALL]`)? The proxy's
+/// call slot then carries the error back (velt_vir `lower/any_proxy.rs`).
+fn proxy_call_throws(cx: &mut Ctx) -> bool {
+    let Some(a) = cx.prelude_adt("Proxy").and_then(|p| cx.adt(p)) else {
+        return false;
+    };
+    let names = [
+        velt_common::std_key!(proxy_get),
+        velt_common::std_key!(proxy_array_call),
+    ];
+    let defs: Vec<_> = (names.iter())
+        .filter_map(|n| a.methods.get(*n).filter(|m| !m.is_static).map(|m| m.def))
+        .collect();
+    defs.into_iter().any(|m| throws_some(cx, cx.fn_throws(m)))
 }
 
 /// Does a value of one of the types `held` hold a function that throws: itself, its fields,

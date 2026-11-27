@@ -35,6 +35,19 @@ impl FnLower<'_, '_> {
         borrowed: Vec<(Place, TyId)>,
         call: impl FnOnce(&mut Self) -> Operand,
     ) -> Operand {
+        self.call_catching_then(throws, out, borrowed, |_| {}, call)
+    }
+
+    /// [`call_catching`](Self::call_catching), running `on_error` (dropping what the slot still
+    /// owns, its arguments) before the slot returns [`ST_THREW`].
+    pub(super) fn call_catching_then(
+        &mut self,
+        throws: TyId,
+        out: &Place,
+        borrowed: Vec<(Place, TyId)>,
+        on_error: impl FnOnce(&mut Self),
+        call: impl FnOnce(&mut Self) -> Operand,
+    ) -> Operand {
         let vt = self.cx.ty(throws);
         let caught = self.new_local(vt, Some("threw".into()));
         let handler = self.new_block();
@@ -60,6 +73,7 @@ impl FnLower<'_, '_> {
         self.switch_to(handler);
         let any = self.cx.any_ty();
         self.any_into(Operand::Copy(Place::local(caught)), throws, any, out);
+        on_error(self);
         self.ret_status(ST_THREW);
         self.switch_to(next);
         v
