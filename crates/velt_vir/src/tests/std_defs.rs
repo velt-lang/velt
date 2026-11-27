@@ -149,4 +149,65 @@ const SPAWNS_A_GRAPH: &str = "class N {\n  next: N | null = null;\n}\n\
 fn a_demanded_transfer_hook_its_loaded_module_lacks_is_an_ice() {
     let p = std_src::check_src(SPAWNS_A_GRAPH);
     lower_ok(&without(p, velt_common::std_hook!(xfer_begin)));
+/// Built-in methods of values held as `any`: a string's, an array's, a map's and a record's,
+/// each called through `any`.
+const ANY_METHODS: &str = "function main() {\n  const s: any = \" x \";\n  \
+     console.log(s.trim());\n  const a: any = [1, 2];\n  console.log(a.indexOf(2));\n  \
+     const m: any = new Map<string, number>([[\"k\", 1]]);\n  \
+     m.forEach((v: any, k: any) => console.log(k, v));\n  \
+     const rec: Record<string, number> = { x: 1 };\n  const r: any = rec;\n  \
+     console.log(Reflect.ownKeys(r));\n}\n";
+
+/// Each method lowering calls through `any` is a row of the hook table, found by its row: the
+/// definitions it calls are the rows' (velt_common `std_hooks::any_methods`).
+#[test]
+fn the_methods_of_an_any_lower_through_their_rows() {
+    let v = lower_ok(&std_src::check_src(ANY_METHODS));
+    for h in [
+        velt_common::std_hook_name!(any_str_trim),
+        velt_common::std_hook_name!(any_arr_index_of),
+        velt_common::std_hook_name!(any_map_for_each),
+    ] {
+        assert!(
+            // The mangled name doubles an underscore (`anyStr__trim`).
+            v.funcs
+                .iter()
+                .any(|f| f.symbol.contains(&h.replace('_', "__"))),
+            "no call of {h}:\n{v}"
+        );
+    }
+}
+
+/// A method's row missing from its loaded module: an ICE naming it, where a scan by name prefix
+/// left the method out (a `TypeError` naming #924 at run time).
+#[test]
+#[should_panic(
+    expected = "ICE: std hook `std/lang/hooks/any_methods::anyStr_trim` missing \
+                           from its module, which the program loads"
+)]
+fn a_method_its_loaded_module_lacks_is_an_ice() {
+    let p = std_src::check_src(ANY_METHODS);
+    lower_ok(&without(p, velt_common::std_hook!(any_str_trim)));
+}
+
+/// The same for a class's method (`Map`'s `forEach` through `any`).
+#[test]
+#[should_panic(
+    expected = "ICE: std hook `std/lang/hooks/any_array_methods::anyMap_forEach` missing \
+                           from its module, which the program loads"
+)]
+fn a_class_method_its_loaded_module_lacks_is_an_ice() {
+    let p = std_src::check_src(ANY_METHODS);
+    lower_ok(&without(p, velt_common::std_hook!(any_map_for_each)));
+}
+
+/// The same for a record's (`Reflect.ownKeys` of a record held as `any`).
+#[test]
+#[should_panic(
+    expected = "ICE: std hook `std/lang/record/reflect::anyRec_ownKeys` missing \
+                           from its module, which the program loads"
+)]
+fn a_record_method_its_loaded_module_lacks_is_an_ice() {
+    let p = std_src::check_src(ANY_METHODS);
+    lower_ok(&without(p, velt_common::std_hook!(any_rec_own_keys)));
 }

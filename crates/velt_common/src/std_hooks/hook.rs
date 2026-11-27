@@ -2,7 +2,7 @@
 //! entries into [`super::HOOKS`], [`super::hook_index`] and the `std_hook!`, `std_hook_name!` and
 //! `std_hook_table!` macros.
 
-use super::{Construct, Sig};
+use super::{Construct, Receiver, Sig};
 
 /// One hook: its entry name, its module's canonical path, its name there, its signature, whether
 /// lowering calls it, whether lowering may find it missing and fall back to the runtime
@@ -46,6 +46,10 @@ pub struct Hook {
     /// parameters and result are numbers and strings ([`super::prebuilt::scalar`], checked when
     /// the table is compiled).
     pub prebuilt: bool,
+    /// A built-in method of the values of a kind held as `any` (`method(Str)`: `anyStr_trim` is
+    /// `trim` of a string): lowering calls it for a call `x.trim(…)` on an `any` holding such a
+    /// value, by its name after the receiver's prefix ([`super::any_methods`]).
+    pub method: Option<Receiver>,
 }
 
 impl Hook {
@@ -68,7 +72,7 @@ impl Hook {
 
 /// An entry is `name => module, "item", sig(…)` (or `class`, `decorator`), then optional flags
 /// after commas, in any order: `lowered`, `fallback`, `prebuilt`, `replaces("velt_rt_…", …)`,
-/// `bench("row")` and `constructs(TextInt, …)` (the fields of [`Hook`]).
+/// `bench("row")`, `constructs(TextInt, …)` and `method(Str)` (the fields of [`Hook`]).
 macro_rules! hooks {
     // Each flag is one of these (an unknown one fails here).
     (@flag lowered) => {};
@@ -77,6 +81,7 @@ macro_rules! hooks {
     (@flag replaces) => {};
     (@flag bench) => {};
     (@flag constructs) => {};
+    (@flag method) => {};
     (@lowered) => { false };
     (@lowered lowered $($rest:tt)*) => { true };
     (@lowered $skip:tt $($rest:tt)*) => { hooks!(@lowered $($rest)*) };
@@ -95,6 +100,9 @@ macro_rules! hooks {
     (@constructs) => { &[] };
     (@constructs constructs ($($c:ident),* $(,)?) $($rest:tt)*) => { &[$(Construct::$c),*] };
     (@constructs $skip:tt $($rest:tt)*) => { hooks!(@constructs $($rest)*) };
+    (@method) => { None };
+    (@method method ($r:ident) $($rest:tt)*) => { Some($crate::std_hooks::Receiver::$r) };
+    (@method $skip:tt $($rest:tt)*) => { hooks!(@method $($rest)*) };
     ($($(#[doc = $doc:literal])* $name:ident => $module:ident, $item:literal,
         $kind:ident $(($($sig:tt)*))? $(, $flag:ident $(($($arg:tt)*))?)*;)*) => {
         $($(hooks!(@flag $flag);)*)*
@@ -135,7 +143,23 @@ macro_rules! hooks {
             bench: hooks!(@bench $($flag $(($($arg)*))?)*),
             constructs: hooks!(@constructs $($flag $(($($arg)*))?)*),
             prebuilt: hooks!(@prebuilt $($flag $(($($arg)*))?)*),
+            method: hooks!(@method $($flag $(($($arg)*))?)*),
         }),*];
+
+        // A method's item is its receiver's prefix and the method's name (`anyStr_trim`), and the
+        // hook is a lowered function: refused when the compiler is built.
+        const _: () = {
+            let mut i = 0;
+            while i < HOOKS.len() {
+                if let Some(r) = HOOKS[i].method {
+                    assert!(
+                        HOOKS[i].lowered && $crate::std_hooks::any_methods::named_by(HOOKS[i].item, r),
+                        "a `method` hook is `lowered` and named by its receiver's prefix"
+                    );
+                }
+                i += 1;
+            }
+        };
 
         // A `prebuilt` entry takes and returns only numbers and strings: refused when the
         // compiler is built, never by a build that would call it (`prebuilt::scalar`).

@@ -67,3 +67,54 @@ fn each_module_loaded_on_demand_holds_a_hook() {
         assert!(HOOKS.iter().any(|h| h.module() == *m), "{m}");
     }
 }
+
+#[test]
+fn every_built_in_method_of_an_any_is_a_row() {
+    use any_methods::{is_any_method, methods, record_key};
+    let strs: Vec<&str> = methods(Receiver::Str).map(|(n, _)| n).collect();
+    assert!(
+        strs.contains(&"trim") && strs.contains(&"localeCompare"),
+        "{strs:?}"
+    );
+    assert_eq!(methods(Receiver::Fn).count(), 0);
+    for r in [
+        Receiver::Str,
+        Receiver::Arr,
+        Receiver::Num,
+        Receiver::Bool,
+        Receiver::Promise,
+        Receiver::Rec,
+        Receiver::Map,
+        Receiver::Set,
+    ] {
+        let mut names: Vec<&str> = methods(r).map(|(n, _)| n).collect();
+        assert!(!names.is_empty(), "{r:?}");
+        let n = names.len();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), n, "a method of {r:?} is listed twice");
+    }
+    assert_eq!(Receiver::of_class("Map"), Some(Receiver::Map));
+    assert_eq!(Receiver::of_class("Array"), None);
+    assert!(is_any_method("anyArr_push") && !is_any_method("anyArr_nothing"));
+    assert!(!is_any_method("anyText"));
+    // A record's methods are called by std's symbols `record<Name>` (std calls
+    // `o[RECORD_SYM_GET](k)` on an `any` holding a record): each one's is a constant of
+    // keys.velt. No std method is declared with it, so it is no row of the key table.
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/lang/hooks/keys.velt");
+    let src = std::fs::read_to_string(path).expect("std/lang/hooks/keys.velt");
+    for (name, h) in methods(Receiver::Rec) {
+        let key = record_key(name);
+        let desc = key
+            .strip_prefix("\u{FFFF}Symbol(")
+            .and_then(|k| k.strip_suffix(')'))
+            .expect("a symbol's member name");
+        assert!(
+            src.contains(&format!(" = Symbol(\"{desc}\");")),
+            "{}: keys.velt has no `Symbol(\"{desc}\")`",
+            h.name
+        );
+    }
+    assert_eq!(record_key("symGet"), "\u{FFFF}Symbol(recordSymGet)");
+}

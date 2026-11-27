@@ -80,19 +80,17 @@ const HELPERS: &[&str] = &[
     velt_common::std_dir!(ffi),
 ];
 
-/// The prelude methods (and the few other names) lowering looks up by name: every `"__…"` name
-/// in the code of lowering, the optimizer and the backends
+/// The prelude methods lowering looks up by name, each by its key (`std_key!`, a symbol of
+/// std/lang/hooks/keys.velt: the Proxy traps, a record's and a map's methods). No `"__…"` literal
+/// in the code of lowering, the optimizer and the backends names std code
 /// (`tests::every_name_lowering_looks_up_is_a_helper`). The compiler's hooks lowering calls are
-/// marked `lowered` in velt_common's `std_hooks.rs` instead.
+/// marked `lowered` in velt_common's `std_hooks.rs` instead, and the built-in methods of an `any`
+/// are its `method(…)` rows.
 pub(crate) const HELPER_NAMES: &[&str] = &[
-    "__any",
     velt_common::std_key!(this_fn_apply),
     velt_common::std_key!(proxy_array_call),
     velt_common::std_key!(this_fn_bind),
-    "__debug_line",
     velt_common::std_key!(record_decoded),
-    "__defineGetter__",
-    "__defineSetter__",
     velt_common::std_key!(record_delete),
     velt_common::std_key!(map_entry_at),
     velt_common::std_key!(record_get),
@@ -105,12 +103,8 @@ pub(crate) const HELPER_NAMES: &[&str] = &[
     velt_common::std_key!(record_key_names),
     velt_common::std_key!(proxy_keys),
     velt_common::std_key!(map_live_at),
-    "__lookupGetter__",
-    "__lookupSetter__",
-    "__placeholder",
     velt_common::std_key!(proxy_plain),
     velt_common::std_key!(record_positions),
-    "__proto__",
     velt_common::std_key!(record_set),
     velt_common::std_key!(proxy_target),
     velt_common::std_key!(proxy_get),
@@ -122,7 +116,8 @@ pub(crate) const HELPER_NAMES: &[&str] = &[
 
 /// Is the definition `qualified` (its full name) one of the compiler's helpers: a hook lowering
 /// calls (`velt_common::std_hooks`, `lowered`), a name in [`HELPER_NAMES`], or a built-in method
-/// of a value held as `any` (`any<Type>_<method>`, `velt_vir` `builtin_methods`)?
+/// of a value held as `any` (a `method(…)` row of the table, `velt_common::std_hooks::any_methods`,
+/// which `velt_vir` `builtin_methods` calls), by its last name segment.
 pub(crate) fn is_helper(qualified: &str) -> bool {
     let name = qualified.rsplit(['.', ':']).next().unwrap_or(qualified);
     (velt_common::std_hooks::is_lowered(qualified)
@@ -133,9 +128,7 @@ pub(crate) fn is_helper(qualified: &str) -> bool {
                 && !MODULE_HOOKS.contains(&qualified)
         }))
         || HELPER_NAMES.contains(&name)
-        || name
-            .strip_prefix("any")
-            .is_some_and(|r| r.starts_with(|c: char| c.is_ascii_uppercase()) && r.contains('_'))
+        || velt_common::std_hooks::any_methods::is_any_method(name)
 }
 
 /// The hooks that convert an `any` holding an object to a `Record<string, V>` (`velt_vir`

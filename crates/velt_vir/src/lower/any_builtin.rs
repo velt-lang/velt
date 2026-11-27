@@ -1,14 +1,18 @@
 //! Built-in methods of strings, arrays, numbers and booleans called through `any` (#924): the
-//! `AnyCall` slot of such a type (any_glue.rs) compares the key with the names of the prelude's
-//! functions for its kind (std/lang/hooks/any_methods.velt: `anyStr_<name>(s, args)`,
-//! `anyArr_<name><T>(a, args)` instantiated at the element type, `anyNum_<name>(n, args)`,
-//! `anyBool_<name>(b, args)`) and calls the one named, with the value borrowed and the
-//! arguments packed into an `any[]`; its `any` result is the call's. Another JavaScript
+//! `AnyCall` slot of such a type (any_glue.rs) compares the key with the names of std's methods
+//! for its kind, the hook table's rows of its receiver (velt_common `std_hooks::any_methods`:
+//! std/lang/hooks/any_methods.velt's `anyStr_<name>(s, args)`, `anyArr_<name><T>(a, args)`
+//! instantiated at the element type, `anyNum_<name>(n, args)`, `anyBool_<name>(b, args)`), and
+//! calls the one named, with the value borrowed and the arguments packed into an `any[]`; its
+//! `any` result is the call's. A row's module loaded without its function is an internal error
+//! (`std_defs.rs`); its module not loaded, the method is not in the program. Another JavaScript
 //! built-in is a member not supported yet (`ST_UNSUPPORTED`, a `TypeError` naming #924), and any
 //! other name is not a function (`ST_NOT_FN`: Node's `x.foo is not a function`). Only the names the
 //! program calls through `any` are compared (`Boxing::any_call_keys`), so a program that calls
 //! none of them has the slots it had before.
 
+use velt_common::std_hooks::any_methods::{methods, record_key};
+use velt_common::std_hooks::Receiver;
 use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind};
 
 use super::any_member::{ST_NOT_FN, ST_OK, ST_UNSUPPORTED};
@@ -17,68 +21,48 @@ use super::FnLower;
 use crate::vir::{self, Operand, Place, Ty};
 
 impl FnLower<'_, '_> {
-    /// The name prefix of the prelude's methods for values of the concrete type `ty`, if it
-    /// has built-in methods.
-    pub(super) fn builtin_prefix(&self, ty: TyId) -> Option<&'static str> {
+    /// The receiver of std's methods for values of the concrete type `ty`, if it has built-in
+    /// methods.
+    pub(super) fn builtin_receiver(&self, ty: TyId) -> Option<Receiver> {
         match self.cx.kind(ty) {
-            TyKind::Str => Some("anyStr_"),
+            TyKind::Str => Some(Receiver::Str),
             // An array of nothing but `void` (an empty literal's type) has no element to hand out.
             TyKind::Array(e) if !matches!(self.cx.kind(e), TyKind::Unit | TyKind::Never) => {
-                Some("anyArr_")
+                Some(Receiver::Arr)
             }
-            TyKind::Int(_) | TyKind::Float(_) => Some("anyNum_"),
-            TyKind::Bool => Some("anyBool_"),
+            TyKind::Int(_) | TyKind::Float(_) => Some(Receiver::Num),
+            TyKind::Bool => Some(Receiver::Bool),
             // A function has none here yet: `call`, `apply`, `bind` and `toString` are not
             // supported, and any other name is not a function.
-            TyKind::FnPtr { .. } | TyKind::Closure(_) => Some("anyFn_"),
+            TyKind::FnPtr { .. } | TyKind::Closure(_) => Some(Receiver::Fn),
             // A promise held as `any` (#924): `toString`; `then`, `catch` and `finally` come through
             // sema's own route (`any_promise_members.rs`).
-            TyKind::Promise(..) => Some("anyPromise_"),
+            TyKind::Promise(..) => Some(Receiver::Promise),
             _ => None,
         }
     }
 
-    /// The prelude's methods named `<prefix><name>`, by name, that take the value and an
-    /// `any[]`.
-    fn builtin_methods(&self, prefix: &str) -> Vec<(String, DefId)> {
-        let mut out = vec![];
-        for (i, d) in self.cx.hir.defs.iter().enumerate() {
-            let hir::Def::Fn(f) = d else { continue };
-            let std_fn = [
-                velt_common::std_dir!(lang_hooks),
-                velt_common::std_dir!(lang_record),
-                velt_common::std_dir!(collections),
-            ]
-            .iter()
-            .any(|r| f.name.starts_with(r));
-            // `(value, args)`, or `(value, args, whole)` for a class's (`any_class_call`).
-            if !std_fn || !(2..=3).contains(&f.params.len()) {
-                continue;
-            }
-            let Some((_, short)) = f.name.rsplit_once("::") else {
-                continue;
-            };
-            let Some(name) = short.strip_prefix(prefix) else {
-                continue;
-            };
-            out.push((name.to_string(), DefId(i as u32)));
-        }
-        out
+    /// std's methods of receiver `r` in the program, by name: the hook table's rows of `r`
+    /// (velt_common `std_hooks::any_methods`) whose module the program loads.
+    fn builtin_methods(&self, r: Receiver) -> Vec<(&'static str, DefId)> {
+        methods(r)
+            .filter_map(|(name, h)| Some((name, self.cx.std_hook_if_loaded(&h.qualified())?)))
+            .collect()
     }
 
     /// The `AnyCall` slot body of a value of the concrete type `ty` with built-in methods
     /// (module docs).
     pub(super) fn any_builtin_call(
         &mut self,
-        prefix: &str,
+        r: Receiver,
         (data, key, argv, argc, out): (vir::Local, vir::Local, vir::Local, vir::Local, vir::Local),
         ty: TyId,
     ) {
         let keys = &self.cx.boxing.any_call_keys;
-        let methods: Vec<(String, DefId)> = self
-            .builtin_methods(prefix)
+        let methods: Vec<(&str, DefId)> = self
+            .builtin_methods(r)
             .into_iter()
-            .filter(|(name, _)| keys.contains("") || keys.contains(name))
+            .filter(|(name, _)| keys.contains("") || keys.contains(*name))
             .collect();
         if keys.is_empty() {
             // No call through `any` names a member: the slot as before.
@@ -87,7 +71,7 @@ impl FnLower<'_, '_> {
         }
         // The JavaScript built-ins of this kind the program may call that are not here yet:
         // a `TypeError` naming #924; any other name is not a function, as in Node.
-        let missing: Vec<&str> = js_methods(prefix)
+        let missing: Vec<&str> = js_methods(r)
             .iter()
             .chain(OBJECT_METHODS)
             .copied()
@@ -105,7 +89,7 @@ impl FnLower<'_, '_> {
             if self.cx.fn_def(def).generics as usize != targs.len() {
                 continue;
             }
-            let next = self.on_key(key, &name);
+            let next = self.on_key(key, name);
             let this = match self.cx.kind(ty) {
                 // A number held at another width (`size` read through `any`) is a `number`.
                 TyKind::Int(_) | TyKind::Float(_) if ty != f64_ => {
@@ -135,10 +119,11 @@ impl FnLower<'_, '_> {
 }
 
 impl FnLower<'_, '_> {
-    /// The `AnyCall` slot body of a `Record<string, V>`: std's functions named `anyRec_<name>`
-    /// (std/lang/record/reflect.velt), each called for the key of std's symbol `record<Name>`
-    /// (std/lang/hooks/keys.velt: `r[RECORD_SYM_GET](s)`, which no program's key reaches), given
-    /// the record and the arguments; any other name is not supported yet, as before.
+    /// The `AnyCall` slot body of a `Record<string, V>`: std's methods of a record, the hook
+    /// table's `Receiver::Rec` rows (std/lang/record/reflect.velt's `anyRec_<name>`), each called
+    /// for the key of std's symbol `record<Name>` (std/lang/hooks/keys.velt: `r[RECORD_SYM_GET](s)`,
+    /// which no program's key reaches; `record_key`), given the record and the arguments; any
+    /// other name is not supported yet, as before.
     pub(super) fn any_record_call(
         &mut self,
         (data, key, argv, argc, out): (vir::Local, vir::Local, vir::Local, vir::Local, vir::Local),
@@ -146,9 +131,9 @@ impl FnLower<'_, '_> {
     ) {
         let keys = &self.cx.boxing.any_call_keys;
         let methods: Vec<(String, DefId)> = self
-            .builtin_methods("anyRec_")
+            .builtin_methods(Receiver::Rec)
             .into_iter()
-            .map(|(name, d)| (record_key(&name), d))
+            .map(|(name, d)| (record_key(name), d))
             .filter(|(key, _)| keys.contains(key))
             .collect();
         let Some((k, v)) = self.prelude_record(ty) else {
@@ -233,9 +218,9 @@ impl FnLower<'_, '_> {
 
     /// The methods of a standard library class `d` (a `Map` or `Set`, type `ty`) that glue
     /// cannot call as declared (`forEach`, whose callback has a `throws` type parameter): the
-    /// standard library's `any<Class>_<name>` taking the value and an `any[]`, instantiated
-    /// at the class's type arguments, for the names the program calls through `any`. Continues
-    /// in the block for other names.
+    /// hook table's rows of the class's receiver (`any<Class>_<name>` taking the value and an
+    /// `any[]`), instantiated at the class's type arguments, for the names the program calls
+    /// through `any`. Continues in the block for other names.
     pub(super) fn any_class_call(
         &mut self,
         (data, key, argv, argc): (vir::Local, vir::Local, vir::Local, vir::Local),
@@ -268,10 +253,12 @@ impl FnLower<'_, '_> {
             };
             bd = next;
         };
-        let prefix = format!("any{class}_");
+        let Some(r) = Receiver::of_class(&class) else {
+            return;
+        };
         let keys = &self.cx.boxing.any_call_keys;
-        let methods: Vec<(String, DefId)> = (self.builtin_methods(&prefix).into_iter())
-            .filter(|(name, _)| keys.contains("") || keys.contains(name))
+        let methods: Vec<(&str, DefId)> = (self.builtin_methods(r).into_iter())
+            .filter(|(name, _)| keys.contains("") || keys.contains(*name))
             .collect();
         let Some((_, targs)) = self.plain_adt(base) else {
             return;
@@ -280,7 +267,7 @@ impl FnLower<'_, '_> {
             if self.cx.fn_def(def).generics as usize != targs.len() {
                 continue;
             }
-            let next = self.on_key(key, &name);
+            let next = self.on_key(key, name);
             let this = self.builtin_this(data, ty, def);
             self.call_builtin(def, &targs, this, (argv, argc), outp, Some((data, ty)));
             self.switch_to(next);
@@ -288,19 +275,11 @@ impl FnLower<'_, '_> {
     }
 }
 
-/// The member name of std's symbol `record<Name>` (std/lang/hooks/keys.velt) that std calls a
-/// record's `anyRec_<name>` function by (`std_key!(record_sym_get)` for `symGet`).
-fn record_key(name: &str) -> String {
-    let mut c = name.chars();
-    let first = c.next().map(|f| f.to_ascii_uppercase()).unwrap_or_default();
-    format!("\u{FFFF}Symbol(record{first}{})", c.as_str())
-}
-
 /// The methods of JavaScript's `String`, `Array`, `Number`, `Boolean` and `Function`
 /// prototypes.
-fn js_methods(prefix: &str) -> &'static [&'static str] {
-    match prefix {
-        "anyStr_" => &[
+fn js_methods(r: Receiver) -> &'static [&'static str] {
+    match r {
+        Receiver::Str => &[
             "at",
             "charAt",
             "charCodeAt",
@@ -339,7 +318,7 @@ fn js_methods(prefix: &str) -> &'static [&'static str] {
             "trimStart",
             "valueOf",
         ],
-        "anyArr_" => &[
+        Receiver::Arr => &[
             "at",
             "concat",
             "copyWithin",
@@ -378,15 +357,15 @@ fn js_methods(prefix: &str) -> &'static [&'static str] {
             "values",
             "with",
         ],
-        "anyNum_" => &[
+        Receiver::Num => &[
             "toExponential",
             "toFixed",
             "toPrecision",
             "toString",
             "valueOf",
         ],
-        "anyFn_" => &["apply", "bind", "call", "toString", "valueOf"],
-        "anyPromise_" => &["catch", "finally", "then", "toString", "valueOf"],
+        Receiver::Fn => &["apply", "bind", "call", "toString", "valueOf"],
+        Receiver::Promise => &["catch", "finally", "then", "toString", "valueOf"],
         _ => &["toString", "valueOf"],
     }
 }
