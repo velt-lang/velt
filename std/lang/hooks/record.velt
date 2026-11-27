@@ -12,6 +12,7 @@ import {
   RECORD_HAS,
   RECORD_IS_NULL_PROTO,
 } from "velt/lang/hooks/keys";
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
 
 /** `a === b` on prototypes (or `null`, a prototype-less object's). */
 export function prototypeSame(a: ObjectPrototype | null, b: ObjectPrototype | null): bool {
@@ -69,15 +70,18 @@ export function recordInMaybeNullProto<V>(key: string, r: Record<string, V>): bo
   return r[RECORD_HAS](key) || (!r[RECORD_IS_NULL_PROTO]() && objectPrototypeKey(key));
 }
 
-/** The array index `s` names (canonical decimal, 0 to 2^32 - 2), or -1. */
+/**
+ * The array index `s` names (canonical decimal, 0 to 2^32 - 2), or -1. On bytes (#2816): an
+ * index's digits are ASCII, and a byte of any other character is not a digit.
+ */
 export function arrayIndex(s: string): i64 {
-  const n = s.length as i64;
-  if (n == 0 || n > 10 || (n > 1 && s.charCodeAt(0) == 48)) {
+  const n = strByteLen(s) as u64;
+  if (n == 0 || n > 10 || (n > 1 && strByteAt(s, 0) == 48)) {
     return -1;
   }
   let v: i64 = 0;
-  for (let i: i64 = 0; i < n; i++) {
-    const c = s.charCodeAt(i);
+  for (let i: u64 = 0; i < n; i++) {
+    const c = strByteAt(s, i) as i64;
     if (c < 48 || c > 57) {
       return -1;
     }

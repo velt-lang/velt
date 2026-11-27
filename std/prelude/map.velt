@@ -1,7 +1,7 @@
 // Prelude: `Map<K, V>`, an insertion-ordered hash map with JS `Map` semantics.
 // The layout, ownership and live iteration are described in std/lang/map/layout.velt.
 
-import { hash, holdsNull, keyEq, nullAs, share } from "velt/lang/intrinsics";
+import { hash, holdsNull, keyEq, nullAs, share, strByteAt, strByteLen } from "velt/lang/intrinsics";
 import {
   MAP_ADVANCE,
   MAP_AT,
@@ -280,7 +280,12 @@ export class Map<K, V> {
     if (n == 0) {
       return false;
     }
-    const c = `${this.entryKeys[n - 1]}`.charCodeAt(0);
+    // On its first byte: a digit is one (#2816).
+    const key = `${this.entryKeys[n - 1]}`;
+    if (strByteLen(key) == 0) {
+      return false;
+    }
+    const c = strByteAt(key, 0);
     return c >= 48 && c <= 57;
   }
 

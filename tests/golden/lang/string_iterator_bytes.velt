@@ -1,0 +1,69 @@
+// The iterator of a string walks its bytes (#2816): one character (code point) per step on
+// ASCII, 2- and 3-byte BMP text, astral characters (one 4-byte sequence, two units), lone
+// surrogates (a high or a low one alone, from slicing a pair, String.fromCharCode),
+// a lone high and a lone low concatenated into a pair, and the empty string; through `for of`,
+// spread, `Array.from`, a manual `next()` and a record whose keys look like array indexes.
+
+function units(c: string): string {
+  const out: string[] = [];
+  for (let i = 0; i < c.length; i++) {
+    out.push(c.charCodeAt(i).toString(16));
+  }
+  return out.join(",");
+}
+
+function show(label: string, s: string): void {
+  const parts: string[] = [];
+  for (const c of s) {
+    parts.push(`${c.length}:${units(c)}`);
+  }
+  console.log(label, s.length, parts.length, parts.join(" "));
+}
+
+const smile = "😀";
+const high = smile.slice(0, 1);
+const low = smile.slice(1);
+show("ascii", "abc 123");
+show("bmp", "é€ж中");
+show("astral", "a😀b𝄞");
+show("lone high", "x" + high + "y");
+show("lone low", low + "z");
+show("high at end", "q" + high);
+show("low then high", low + high);
+show("fromCharCode", String.fromCharCode(0xd83d, 0x41, 0xdc00));
+show("units", String.fromCharCode(0xd800) + "é" + String.fromCharCode(0xdfff));
+show("joined", high + low);
+show("empty", "");
+show("mixed", "aé€😀" + high + "z");
+
+const spread = [..."é😀" + low];
+console.log("spread", spread.length, spread.map((c) => c.length).join(","));
+const from = Array.from("ab😀€");
+console.log("from", from.length, from.join("|"));
+
+const it = "€😀"[Symbol.iterator]();
+const a = it.next();
+const b = it.next();
+const c = it.next();
+console.log("next", a.value, a.done, b.value, b.done, c.value, c.done);
+
+let count = 0;
+let kept = "";
+for (const ch of "naïve café 😀 日本語") {
+  count++;
+  if (ch.length == 2 || ch.charCodeAt(0) > 0x7f) {
+    kept += ch;
+  }
+}
+console.log("loop", count, kept);
+
+// Keys that look like array indexes are first in a record's order.
+const r: Record<string, number> = {};
+r["b"] = 1;
+r["10"] = 2;
+r["é"] = 3;
+r["2"] = 4;
+r["01"] = 5;
+r["٣"] = 6;
+console.log(Object.keys(r).join(","));
+console.log(JSON.stringify(r));

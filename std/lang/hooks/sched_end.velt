@@ -348,17 +348,17 @@ function unfinished(e: usize): never {
   // `path:line:col`: Node names the line.
   let at = site;
   const colon = site.lastIndexOf(":");
-  if (colon > 0 && ((colon + 1) as usize) < site.length && allDigits(site, (colon + 1) as usize)) {
+  if (colon > 0 && ((colon + 1) as usize) < site.length && allDigits(site.slice(colon + 1))) {
     at = site.slice(0, colon);
   }
   console.error(`Warning: Detected unsettled top-level await at ${at}`);
   process.exit(13);
 }
 
-function allDigits(s: string, from: usize): bool {
-  for (let i = from; i < s.length; i++) {
-    const c = s.charCodeAt(i as i64);
-    if (c < 48 || c > 57) {
+/** Is every character of `s` a digit? (The string iterator reads bytes: no position, #2816.) */
+function allDigits(s: string): bool {
+  for (const c of s) {
+    if (c < "0" || c > "9") {
       return false;
     }
   }

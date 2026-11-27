@@ -7,7 +7,7 @@
 // starts and nothing is counted but those rare events.
 
 import { Ptr, export as cExport } from "velt/ffi";
-import { exportedAddress, inline, noInline } from "velt/lang/intrinsics";
+import { exportedAddress, inline, noInline, strByteAt, strByteLen } from "velt/lang/intrinsics";
 import * as os from "#sched-os";
 import * as r from "#reactor";
 import * as th from "#sched-thread";
@@ -32,7 +32,7 @@ function period(): usize {
     if (c < "0" || c > "9") {
       return 0;
     }
-    n = n * 10 + ((c.charCodeAt(0) - 48) as usize);
+    n = n * 10 + ((strByteAt(c, 0) - 48) as usize);
     if (n > 3600000) {
       return 0;
     }
@@ -133,12 +133,12 @@ function line(g: usize, at: usize): void {
     s = `${s} | w${i} park=${m.load32(w + t.E_PARK)} cur=${cur === 0 ? 0 : 1}/${state} inbox=${m.load(w + t.E_INBOX) === 0 ? 0 : 1} offer=${m.load(w + t.E_OFFER) === 0 ? 0 : 1} io=${m.load(w + t.E_IHEAD) === 0 ? 0 : 1} rest=${m.load(w + t.E_HEAD) === 0 ? 0 : 1} next=${m.load(w + t.E_NEXT) === 0 ? 0 : 1} queued=${m.load(w + t.E_QUEUED)} qlock=${m.load32(w + t.E_QLOCK)} rlock=${m.load32(b + io.IO_RLOCK)} unparks=${m.load(w + t.E_UNPARKS)} polls=${m.load(w + t.E_POLLS)} progress=${m.load(w + t.E_PROGRESS)} retired=${m.load32(w + t.E_RETIRED)} live=${m.load(b + io.IO_LIVE)} waits=${m.load(b + io.IO_WAITING)} due=${(m.load(b + io.IO_DUE) | m.load(b + io.IO_RDUE)) === 0 ? 0 : 1}`;
   }
   s = `${s}\n`;
-  const len = s.length as usize;
+  const len = strByteLen(s);
   const buf = m.alloc(len + 4);
   let k: usize = 0;
-  for (const c of s) {
-    // Little-endian: the low byte is the character (the line is ASCII), the rest overwritten.
-    m.st32(buf + k, c.charCodeAt(0) as u32);
+  while (k < len) {
+    // Little-endian: the low byte is the line's byte, the rest overwritten.
+    m.st32(buf + k, strByteAt(s, k as u64) as u32);
     k++;
   }
   os.writeStderr(buf, k);

@@ -1,12 +1,22 @@
 // Prelude: `StringIterator`, the iterator of a string: one character (code point) per step.
 
+import { strAsciiWords, strByteAt, strByteLen } from "velt/lang/intrinsics";
+
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+
 /**
  * The iterator of a string (TS's `StringIterator<string>`): one character (code point) per
  * step, as a string.
+ *
+ * It walks the string's bytes, not its UTF-16 positions, so it translates no position (#2816).
+ * The bytes are canonical WTF-8 (rt_abi.md "Strings"): a surrogate pair is always one 4-byte
+ * sequence and a lone surrogate a 3-byte one, so a character is exactly one sequence, its length
+ * read from its lead byte.
  */
 export class StringIterator implements IterableIterator<string>, IteratorObject<string> {
   private text: string;
-  private pos: i64 = 0;
+  /** The byte offset of the next character. */
+  private pos: u64 = 0;
 
   /** An iterator over the characters of `text`. */
   constructor(text: string) {
@@ -15,21 +25,18 @@ export class StringIterator implements IterableIterator<string>, IteratorObject<
 
   /** The next character (code point) as a string, or a `done` result at the end. */
   next(): IteratorResult<string> {
-    if (this.pos >= (this.text.length as i64)) {
+    const at = this.pos;
+    if (at >= (strByteLen(this.text) as u64)) {
       return { done: true };
     }
-    // A high surrogate followed by a low one is one character.
-    let n: i64 = 1;
-    const c = this.text.charCodeAt(this.pos);
-    if (c >= 0xd800 && c < 0xdc00) {
-      const d = this.text.charCodeAt(this.pos + 1);
-      if (d >= 0xdc00 && d < 0xe000) {
-        n = 2;
-      }
+    const b = strByteAt(this.text, at);
+    if (b < 0x80) {
+      this.pos = at + 1;
+      return { value: strAsciiWords(b as u64, 0, 0, 1), done: false };
     }
-    const value = this.text.slice(this.pos, this.pos + n);
-    this.pos += n;
-    return { value: value, done: false };
+    const n: u64 = b < 0xe0 ? 2 : b < 0xf0 ? 3 : 4;
+    this.pos = at + n;
+    return { value: velt_rt_str_byte_slice(this.text, at, at + n), done: false };
   }
 
   /** The iterator itself. */

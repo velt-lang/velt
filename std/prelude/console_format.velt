@@ -5,7 +5,7 @@
 // and converts the other arguments itself (velt_sema `console_format.rs`).
 
 import { anyString } from "velt/lang/hooks/any_text";
-import { anyReflectInfo, inspectNested } from "velt/lang/intrinsics";
+import { anyReflectInfo, inspectNested, strByteAt } from "velt/lang/intrinsics";
 
 declare function velt_rt_strbuf_new(cap: u64, out: string);
 declare function velt_rt_strbuf_finish(buf: string, out: string);
@@ -52,7 +52,7 @@ function consoleInteger(n: number): number {
     return NaN;
   }
   if (a >= 1e21 || (a < 1e-6 && a != 0)) {
-    const lead = (String(a).charCodeAt(0) - 48) as number;
+    const lead = (strByteAt(String(a), 0) - 48) as number;
     return n < 0 ? -lead : lead;
   }
   return n == 0 ? 0 : Math.trunc(n);
