@@ -111,7 +111,7 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
 
 /// The program's arguments (`argv()`: the source file, then what follows it on the command
 /// line) and Node's `process.argv[1]` (the script; `argv[0]` is the running `velt`), in the
-/// variables std reads them from (std/process/args.velt): this process's own arguments are
+/// variables std reads them from (std/process/args_read.velt): this process's own arguments are
 /// velt's. Set first, while this process has one thread.
 fn pass_program_args(input: &std::path::Path, args: &DevArgs) {
     use crate::commands::{argv_env, ARGV_VAR, SCRIPT_VAR};

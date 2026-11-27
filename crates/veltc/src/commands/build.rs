@@ -11,7 +11,7 @@ use crate::driver::{self, Artifact, BuildError, BuildOptions, Session};
 use super::project::Project;
 
 /// Node's `process.argv[1]`: the script `velt run` / `velt test` / `velt dev` runs, passed in
-/// this environment variable, which std reads (std/process/args.velt) and hides from the
+/// this environment variable, which std reads (std/process/args_read.velt) and hides from the
 /// program's own reads of its environment and from its child processes.
 pub(crate) const SCRIPT_VAR: &str = "VELT_SCRIPT";
 

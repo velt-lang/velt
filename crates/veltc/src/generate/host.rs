@@ -118,7 +118,7 @@ fn executable(
     }))
 }
 
-/// `velt __generate-host <root>`, whose program's arguments (std/process/args.velt) are
+/// `velt __generate-host <root>`, whose program's arguments (std/process/args_read.velt) are
 /// `[root]`, and whose `process.argv[1]` is the running `velt`, as the runtime's arguments are.
 fn jit_command(root: &Path, src: &str) -> Result<Command, String> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot find `velt`: {e}"))?;

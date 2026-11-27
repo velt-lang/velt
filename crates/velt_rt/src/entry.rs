@@ -11,7 +11,7 @@
 //! executable carries a small generated `main` that passes `velt_main` to [`velt_rt_start`]). The *non-test* `velt_rt` rlib still
 //! contains `main`, so Rust integration tests must not link it: the ABI tests are compiled into
 //! the unit-test binary instead (see `lib.rs`), and tests/link_check.rs uses the staticlib only.
-//! The command-line arguments are std's (std/process/args.velt reads them from the OS): `main`
+//! The command-line arguments are std's (std/process/args_read.velt reads them from the OS): `main`
 //! and [`velt_rt_start`] take `argc`/`argv` and leave them.
 
 /// Initialize runtime state. Called by `main` before `velt_main`.
@@ -150,7 +150,7 @@ pub unsafe extern "C" fn velt_rt_start(
 ) -> std::ffi::c_int {
     #[cfg(feature = "mimalloc")]
     crate::mem::configure();
-    // std reads the arguments from the OS itself (std/process/args.velt).
+    // std reads the arguments from the OS itself (std/process/args_read.velt).
     let _ = (argc, argv);
     run_main(entry)
 }

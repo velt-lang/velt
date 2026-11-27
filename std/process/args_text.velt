@@ -1,5 +1,5 @@
 // velt/process (internal): the one call through which the arguments' readers (std/process/
-// args.velt, args_posix.velt, args_linux.velt) decode bytes as text, so that a program reading
+// args_read.velt, args_posix.velt, args_linux.velt) decode bytes as text, so that a program reading
 // its arguments compiles the UTF-8 decoder into it once, not inlined at each of their sites.
 
 import { noInline } from "velt/lang/intrinsics";
