@@ -7,3 +7,5 @@
   replacer "0"
   replacer "m"
 {"a":[true],"m":"m:7"}
+{"x":1}
+{"x":[1],"y":2}

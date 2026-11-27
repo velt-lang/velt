@@ -115,9 +115,11 @@ export function holdsJsonValue(v: any): bool {
 }
 
 // 1 while `jsonOfAny` writes what a replacer declared with `any` returned, 2 once a value met
-// again inside itself was written there as `null`, and 3 from then until the walk takes it
-// (`jsonCutTaken`) to throw Node's `TypeError` there (replace_ops.velt). Otherwise (0) such a
-// value is that error at once.
+// again inside itself was cut there (written as `null`), and 3 from when that result has been
+// walked through itself (`jsonCutWalked`) until the walk takes it as it is (`jsonCutTaken`,
+// replace_ops.velt); 4 (a `TypeError`) or 5 (a `RangeError`) when that walk threw, until the
+// walk takes the `null` returned instead and throws it (`jsonCutError`). Otherwise (0) such a
+// value is Node's circular-structure error at once.
 const JSON_CUT = new ThreadLocal<u64>(0);
 
 /**
@@ -137,25 +139,58 @@ export function enter(w: StringBuilder, v: any): bool {
   return false;
 }
 
-/** Starts writing a replacer's result, with a cycle in it cut as `null` (`enter`). */
-export function jsonCutBegin(): void {
+/**
+ * Starts writing a replacer's result, with a cycle in it cut as `null` (`enter`): the state
+ * before, for `jsonCutEnd`.
+ */
+export function jsonCutBegin(): u64 {
+  const before = JSON_CUT.get();
   JSON_CUT.set(1);
+  return before;
 }
 
-/** Ends what `jsonCutBegin` started: whether a cycle was cut (then the walk takes it next). */
-export function jsonCutEnd(): bool {
+/** Ends what `jsonCutBegin` started (`before`: what it returned): whether a cycle was cut. */
+export function jsonCutEnd(before: u64): bool {
   const cut = JSON_CUT.get() == 2;
-  JSON_CUT.set(cut ? 3 : 0);
+  JSON_CUT.set(before == 3 ? 0 : before);
   return cut;
 }
 
-/** Whether the replacer's result just taken is a cycle `jsonCutEnd` cut (once). */
+/** The replacer's result about to be returned has been walked already (`jsonCutTaken`). */
+export function jsonCutWalked(): void {
+  JSON_CUT.set(3);
+}
+
+/** Whether the replacer's result just taken was walked already (`jsonCutWalked`; once). */
 export function jsonCutTaken(): bool {
   if (JSON_CUT.get() != 3) {
     return false;
   }
   JSON_CUT.set(0);
   return true;
+}
+
+/** The walk `jsonCutWalked` names threw (`range`: a `RangeError`, else a `TypeError`). */
+export function jsonCutFailed(range: bool): void {
+  JSON_CUT.set(range ? 5 : 4);
+}
+
+/**
+ * What the walk of the replacer's result just taken threw (`jsonCutFailed`; once): 1 for a
+ * `TypeError`, 2 for a `RangeError`, else 0.
+ */
+export function jsonCutError(): u64 {
+  const s = JSON_CUT.get();
+  if (s != 4 && s != 5) {
+    return 0;
+  }
+  JSON_CUT.set(0);
+  return s - 3;
+}
+
+/** Ends the states above, as a throw through `JSON.stringify(value, replacer)` left them. */
+export function jsonCutReset(): void {
+  JSON_CUT.set(0);
 }
 
 /** A number as its type writes it: an integer exactly, a float as JavaScript does. */

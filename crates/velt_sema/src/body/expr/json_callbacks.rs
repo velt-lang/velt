@@ -7,6 +7,7 @@
 use velt_common::Diagnostic;
 use velt_syntax::ast;
 
+use crate::any::Dynamic;
 use crate::body::FnCx;
 use crate::hir::{self, TyKind};
 
@@ -21,10 +22,27 @@ impl FnCx<'_, '_> {
         matches!(self.cx.ty.kind(ty), TyKind::Adt(d, _) if self.cx.is_json_value(*d))
     }
 
+    /// Does the annotation `t` resolve to `any` or `unknown`? Its own errors are left to the
+    /// parameter's check.
+    fn names_dynamic(&mut self, t: &ast::TypeExpr) -> bool {
+        let errors = self.cx.diags.len();
+        let env = self.env.clone();
+        let ty = self.cx.resolve_type(t, &env);
+        self.cx.diags.truncate(errors);
+        matches!(self.cx.dynamic(ty), Some(Dynamic::Any | Dynamic::Unknown))
+    }
+
     /// `a` as the callback of `what` (`` `JSON.stringify` `` or `` `JsonValue.revive` ``): `None`
-    /// when `a` is no arrow or function expression; `Some(true)` when its value parameter is
-    /// written `JsonValue` (or it takes none), and `Some(false)` when it is not, reported.
-    pub(super) fn json_callback_typed(&mut self, a: &ast::Expr, what: &str) -> Option<bool> {
+    /// when `a` is no arrow or function expression, or (`dynamic`) one whose value parameter is
+    /// written `any` or `unknown` (checked as any function value is); `Some(true)` when its value
+    /// parameter is written `JsonValue` (or it takes none), and `Some(false)` when it is not,
+    /// reported.
+    pub(super) fn json_callback_typed(
+        &mut self,
+        a: &ast::Expr,
+        what: &str,
+        dynamic: bool,
+    ) -> Option<bool> {
         let value = match &a.kind {
             ast::ExprKind::Arrow { params, .. } => {
                 params.get(1).map(|p| (p.name.clone(), p.ty.clone()))
@@ -41,6 +59,9 @@ impl FnCx<'_, '_> {
         };
         if ty.as_ref().is_some_and(|t| self.names_json_value(t)) {
             return Some(true);
+        }
+        if dynamic && ty.as_ref().is_some_and(|t| self.names_dynamic(t)) {
+            return None;
         }
         let v = &name.name;
         self.cx.error(

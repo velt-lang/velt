@@ -87,8 +87,9 @@ impl FnCx<'_, '_> {
         let helper = self.cx.prelude_fn("jsonStringifyReplaced");
         let pty = helper.and_then(|d| self.cx.try_fn(d)?.params.get(1).map(|p| p.ty));
         // An arrow or function expression must write its value parameter `JsonValue`
-        // (`json_callbacks`); its other parameters take their types from `JsonReplacer`.
-        match self.json_callback_typed(a, "`JSON.stringify`") {
+        // (`json_callbacks`); its other parameters take their types from `JsonReplacer`. One
+        // written `any` or `unknown` is checked below, as a function value is.
+        match self.json_callback_typed(a, "`JSON.stringify`", true) {
             Some(false) => return Ok(self.error_expr(a.span)),
             Some(true) if pty.is_some() => {
                 let pty = pty.expect("ICE: checked");

@@ -68,6 +68,16 @@ const arr = [1];
 arr.push(arr);
 attempt("any array:", () => JSON.stringify(arr, keep));
 attempt("any array, left out:", () => JSON.stringify(arr, (k, v) => (k === "1" ? undefined : v)));
+const ad = new Derived();
+ad.other = ad;
+const anyClass = ad;
+attempt("any class:", () => JSON.stringify(anyClass, keep));
+attempt("any class, left out:", () => JSON.stringify(anyClass, (k, v) => (k === "other" ? undefined : v)));
+const rec = {};
+rec["n"] = 1;
+rec["me"] = rec;
+attempt("any record:", () => JSON.stringify(rec, keep));
+attempt("any record, left out:", () => JSON.stringify(rec, (k, v) => (k === "me" ? undefined : v)));
 attempt("tree again:", () => JSON.stringify(root, noParent));
 console.log(JSON.stringify({ at: new Date(0), n: 1 }, viewed));
 

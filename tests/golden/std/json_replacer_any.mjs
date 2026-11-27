@@ -39,3 +39,7 @@ console.log(JSON.stringify({ a: 1 }, root));
 console.log(JSON.stringify({ n: 1, s: 1, b: 1, u: 1, x: 1, f: 1, k: 1 }, scalars));
 console.log(JSON.stringify([1, 2, 3], (k, v) => v));
 console.log(JSON.stringify({ a: [true], m: new Money(7) }, seen));
+console.log(JSON.stringify({ x: 1, y: 2 }, (k, v) => (k === "y" ? undefined : v)));
+console.log(JSON.stringify({ x: 1, y: 2 }, function (k, v) {
+  return k === "x" ? [v] : v;
+}));

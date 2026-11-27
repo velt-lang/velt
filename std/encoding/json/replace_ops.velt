@@ -8,7 +8,7 @@
 
 import { noInline } from "velt/lang/intrinsics";
 import { beginVisit, endVisit } from "velt/reflect";
-import { jsonCutTaken } from "velt/encoding/json/any";
+import { jsonCutError, jsonCutTaken } from "velt/encoding/json/any";
 import { JsonValue } from "velt/prelude/json/json_value";
 import { JsonReplacer } from "velt/prelude/json/layout";
 import {
@@ -18,11 +18,21 @@ import {
   setRevived,
 } from "velt/encoding/json/value_ops";
 
+// The depth of the value the replacer is called for (`jsonReplacerDepth`): where a walk the
+// replacer's result needs starts (`jsonReplacerDepthNow`).
+const JSON_REPLACER_DEPTH = new ThreadLocal<i64>(0);
+
 /** Throws Node's stack overflow `RangeError` past the replacer walk's depth limit. */
 export function jsonReplacerDepth(depth: i64): void {
   if (depth > JSON_CALLBACK_DEPTH) {
     throw jsonCallbackTooDeep();
   }
+  JSON_REPLACER_DEPTH.set(depth);
+}
+
+/** The depth `jsonReplacerDepth` was last given: the replacer being called is at that depth. */
+export function jsonReplacerDepthNow(): i64 {
+  return JSON_REPLACER_DEPTH.get();
 }
 
 /**
@@ -110,11 +120,16 @@ export function jsonReplacedNull(
 }
 
 /**
- * `r`, the replacer's result at `depth`, with its members replaced in turn. A `null` may be a
- * cycle in what a replacer declared with `any` returned: Node's `TypeError` (#3871).
+ * `r`, the replacer's result at `depth`, with its members replaced in turn; as it is when that
+ * was done already (a cycle in what a replacer declared with `any` returned is walked through
+ * that value itself, as Node walks it: `jsonCutTaken`, #3871); a `null` for one whose walk
+ * threw is that error (`jsonCutError`).
  */
 export function jsonReplacedMembers(r: JsonValue, replacer: JsonReplacer, depth: i64): JsonValue {
   if (r.isArray()) {
+    if (jsonCutTaken()) {
+      return r;
+    }
     const out = JsonValue.array();
     const n = r.len();
     for (let i: i64 = 0; i < n; i++) {
@@ -124,6 +139,9 @@ export function jsonReplacedMembers(r: JsonValue, replacer: JsonReplacer, depth:
     return out;
   }
   if (r.isObject()) {
+    if (jsonCutTaken()) {
+      return r;
+    }
     const out = JsonValue.object();
     for (const k of r.keys()) {
       const e = jsonReplaced(k, r.get(k)!, replacer, depth + 1);
@@ -131,8 +149,14 @@ export function jsonReplacedMembers(r: JsonValue, replacer: JsonReplacer, depth:
     }
     return out;
   }
-  if (r.isNull() && jsonCutTaken()) {
-    throw new TypeError("Converting circular structure to JSON");
+  if (r.isNull()) {
+    const thrown = jsonCutError();
+    if (thrown == 1) {
+      throw new TypeError("Converting circular structure to JSON");
+    }
+    if (thrown == 2) {
+      throw jsonCallbackTooDeep();
+    }
   }
   return r;
 }

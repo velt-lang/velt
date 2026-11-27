@@ -57,7 +57,7 @@ impl FnCx<'_, '_> {
             && matches!(self.cx.ty.kind(recv.ty), TyKind::Adt(d, _) if self.cx.is_json_value(*d))
             && args
                 .first()
-                .and_then(|a| self.json_callback_typed(a, "`JsonValue.revive`"))
+                .and_then(|a| self.json_callback_typed(a, "`JsonValue.revive`", false))
                 == Some(false)
         {
             return self.error_expr(span);

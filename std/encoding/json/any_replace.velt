@@ -8,6 +8,7 @@ import { writeJsonAnyRaw } from "velt/encoding/json/any_raw";
 import {
   jsonReplacedMembers,
   jsonReplacerDepth,
+  jsonReplacerDepthNow,
   jsonReplacerKept,
   jsonReplacerView,
   jsonWalkEnter,
@@ -17,6 +18,10 @@ import { pushRevived, setRevived } from "velt/encoding/json/value_ops";
 import { JsonValue } from "velt/prelude/json/json_value";
 import { JsonReplacer } from "velt/prelude/json/layout";
 import { callToJSON, entryCount, entryName, entryValue, identity, typeOf } from "velt/reflect";
+import { RuntimeType } from "velt/reflect/runtime_type";
+
+// The depth levels a walk of a replacer's result (`replaceJsonResult`) counts for its frames.
+const RESULT_WALK_DEPTH: i64 = 16;
 
 /**
  * The dynamic value `v` under `key` replaced (`raw`: its view in its parent's, if that holds
@@ -63,6 +68,39 @@ export function replaceJsonAny(
   if (!jsonPresent(v) || !jsonReplacerKept(r, view)) {
     return jsonReplacedMembers(r, replacer, depth);
   }
+  return replaceKept(v, t, view, replacer, depth);
+}
+
+/**
+ * What a replacer declared with `any` returned for `key`, `r`, which holds a cycle, walked through
+ * `r` itself as Node walks it: each member replaced at its key, a value met again inside itself
+ * Node's circular-structure `TypeError` only when the replacer keeps it (a member it leaves out
+ * or replaces is no cycle). `r`'s own `toJSON` isn't called (that ran before the replacer).
+ */
+export function replaceJsonResult(r: any, key: string, replacer: JsonReplacer): JsonValue {
+  // Inside the replacer's call, with the frames of that call and of this walk on the stack: a
+  // replacer that returns a new cycle at every level reaches the depth limit in fewer levels.
+  const depth = jsonReplacerDepthNow() + RESULT_WALK_DEPTH;
+  let v = r;
+  let t = typeOf(v);
+  while (t.kind == "shared" || t.kind == "proxy") {
+    v = t.kind == "shared" ? entryValue(v, 0) : callToJSON(v, key);
+    t = typeOf(v);
+  }
+  const w = new StringBuilder();
+  writeJsonAnyRaw(w, v, key);
+  return replaceKept(v, t, jsonReplacerView(null, w.take()), replacer, depth);
+}
+
+/** The members of `v` (of type `t`) at `depth`, whose view (`view`) the replacer kept, replaced. */
+function replaceKept(
+  v: any,
+  t: RuntimeType,
+  view: JsonValue,
+  replacer: JsonReplacer,
+  depth: i64,
+): JsonValue {
+  const kind = t.kind;
   if (kind == "array" || kind == "tuple") {
     // On the visit stack while its elements are walked: met again in them is Node's
     // circular-structure `TypeError` (any_raw.velt cut it in the view).
@@ -87,7 +125,7 @@ export function replaceJsonAny(
     return out;
   }
   // A scalar, a `JsonValue` (JSON data: its members are replaced as JSON), a collection's `{}`.
-  return jsonReplacedMembers(r, replacer, depth);
+  return jsonReplacedMembers(view, replacer, depth);
 }
 
 /** The members of `v` (in `order`), whose view the replacer kept, each replaced at its key. */

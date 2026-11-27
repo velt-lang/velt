@@ -7,10 +7,13 @@ import { JsonValue } from "velt/prelude/json/json_value";
 import { propertyList, relayout } from "velt/encoding/json/relayout";
 import { hookCall } from "velt/lang/intrinsics";
 import { StringBuilder } from "velt/text/string_builder";
+import { replaceJsonResult } from "velt/encoding/json/any_replace";
 import {
   holdsJsonValue,
   jsonCutBegin,
   jsonCutEnd,
+  jsonCutFailed,
+  jsonCutWalked,
   jsonPresent,
   writeJsonResult,
 } from "velt/encoding/json/any";
@@ -39,15 +42,19 @@ function jsonStringifyReplaced<T>(value: T, replacer: JsonReplacer): string {
 // A replacer function declared with `any` (`(key: string, value: any) => any`) as a
 // `JsonReplacer` (the compiler calls it): what it returns is the JSON Node writes of it.
 function jsonReplacerOfAny(f: (key: string, value: any) => any): JsonReplacer {
-  return (key: string, value: JsonValue): JsonValue | undefined => jsonOfAny(f(key, value), key);
+  return (key: string, value: JsonValue): JsonValue | undefined => jsonOfAny(f(key, value), key, f);
 }
 
 // What a replacer declared with `any` returned for `key`, as JSON: a `JsonValue` as it is;
 // `undefined`, a function or a symbol left out, as Node leaves them; anything else as Node
 // writes it, without its own `toJSON` (that ran before the replacer, if it was the value). A
-// value met again inside itself is `null` here, and the walk throws Node's circular-structure
-// `TypeError` when it takes the result (`jsonCutTaken`).
-function jsonOfAny(r: any, key: string): JsonValue | undefined {
+// value met again inside itself is cut there: then the result is walked here, through itself
+// (`replaceJsonResult`), and the walk takes it as it is (`jsonCutTaken`).
+function jsonOfAny(
+  r: any,
+  key: string,
+  f: (key: string, value: any) => any,
+): JsonValue | undefined {
   if (!jsonPresent(r)) {
     return undefined;
   }
@@ -55,10 +62,18 @@ function jsonOfAny(r: any, key: string): JsonValue | undefined {
     return r as JsonValue;
   }
   const w = new StringBuilder();
-  jsonCutBegin();
+  const before = jsonCutBegin();
   writeJsonResult(w, r, key);
-  if (jsonCutEnd()) {
-    return JsonValue.of(null);
+  if (jsonCutEnd(before)) {
+    // A replacer can't throw: the walk throws what this walk did when it takes the result.
+    let out = JsonValue.of(null);
+    try {
+      out = replaceJsonResult(r, key, jsonReplacerOfAny(f));
+      jsonCutWalked();
+    } catch (e) {
+      jsonCutFailed(e instanceof RangeError);
+    }
+    return out;
   }
   let out = JsonValue.of(null);
   try {
