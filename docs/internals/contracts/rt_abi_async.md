@@ -22,7 +22,11 @@ executor's workers use the runtime's leaves (§5, §6, §14) through the C waker
 targets velt_rt keeps only the promise functions a program without the executor still calls
 (`velt_rt_fut_share`, `velt_rt_fut_id`, `velt_rt_fut_peek`); a promise shared outside any task (a
 C library's thread) is refused (#3782).
-A WebAssembly program calls the functions of §1 and §2 directly (velt_rt_wasm's executor).
+A JS host's program (`wasm32-unknown-unknown`) calls the functions of §1 and §2 directly
+(velt_rt_wasm's executor). A `wasm32-wasip1` program runs on the executor in Velt, on its one
+thread, as a native one does (#3905); velt_rt_wasm's leaves take its own `cx` (4-byte words), so
+std's WASI variants run file operations as blocking-pool jobs (std/fs/rt_wasi.velt) and await no
+runtime leaf.
 
 ## 1. Awaitable protocol
 

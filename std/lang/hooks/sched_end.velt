@@ -33,8 +33,6 @@ import { export as cExport } from "velt/ffi";
 import {
   exportedAddress,
   fnAddress,
-  futDrop,
-  futPoll,
   noInline,
   slotPut,
   slotTake,
@@ -51,9 +49,7 @@ import * as q from "./sched_queue";
 import * as sl from "./sched_sleep";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
-
-/** The runtime's question of a due `unref()`'d timer, asked as a probe (a heap future). */
-declare c("c") function velt_rt_timer_unref_due$probe(): usize;
+import { runtimeQuiet } from "#sched-quiet";
 
 /** How long a due `unref()`'d timer waits for the worker to park, in nanoseconds. */
 const PATIENCE: u64 = 1000000000;
@@ -115,22 +111,6 @@ export function tlaAt(e: usize, site: string): void {
     slotPut<string>(e + t.E_TLA, site.slice(0));
   }
   m.st(e + t.E_TLA_SET, 1);
-}
-
-/** Has the runtime nothing outstanding: no pending leaf, keep-alive reference or queued task? */
-function runtimeQuiet(e: usize): bool {
-  // SAFETY: the runtime's entry takes nothing and returns a new heap future, owned here.
-  const f = unsafe { velt_rt_timer_unref_due$probe() };
-  // SAFETY: `f` is a live heap future; the probe's `cx` lives in the executor.
-  const r = unsafe { futPoll(f, e + t.E_PROBE_CX) };
-  // The probe's contract (quiet.rs `UnrefDue`): pending while the runtime may be quiet, ready
-  // with 1 when it saw its own end (quiet too), ready with 0 when something is outstanding.
-  const quiet = r === 0 || (m.ld(f + U_RESULT) & 255) !== 0;
-  // SAFETY: owned, polled no more.
-  unsafe {
-    futDrop(f);
-  }
-  return quiet;
 }
 
 /** Has worker `w` a pending `sleep`? */
@@ -203,7 +183,7 @@ function busy(g: usize, self: usize, asking: bool): bool {
   }
   // The runtime first, the inbox again after: a leaf counts until its task polled it ready, and
   // its wake reaches the inbox before that.
-  return !runtimeQuiet(g) || m.load(self + t.E_INBOX) !== 0;
+  return !runtimeQuiet(g + t.E_PROBE_CX) || m.load(self + t.E_INBOX) !== 0;
 }
 
 /** `busy` but for what the runtime has outstanding. */

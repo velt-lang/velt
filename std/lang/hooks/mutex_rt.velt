@@ -1,0 +1,22 @@
+// velt/lang/hooks (internal): a `Mutex`'s slow path where threads can contend (mutex.velt,
+// `#mutex-slow`): the runtime's, which spins a little, then parks the thread, and wakes a parked
+// one on unlock.
+
+declare c("c") function velt_rt_mutex_lock_slow$rt(p: usize): void;
+declare c("c") function velt_rt_mutex_unlock_slow$rt(p: usize): void;
+
+/** Locks the `Mutex` whose lock word is at `p`, held by another thread. */
+export function lockSlow(p: usize): void {
+  // SAFETY: the runtime's slow path on a `Mutex`'s lock word, which it changes only atomically.
+  unsafe {
+    velt_rt_mutex_lock_slow$rt(p);
+  }
+}
+
+/** Unlocks the `Mutex` whose lock word is at `p`, with threads parked on it. */
+export function unlockSlow(p: usize): void {
+  // SAFETY: as `lockSlow`'s; this thread holds the lock.
+  unsafe {
+    velt_rt_mutex_unlock_slow$rt(p);
+  }
+}

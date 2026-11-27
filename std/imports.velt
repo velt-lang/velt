@@ -49,6 +49,7 @@ export const imports: Imports = {
     darwin: "./lang/hooks/reactor_kqueue.velt",
     linux: "./lang/hooks/reactor_epoll.velt",
     win32: "./lang/hooks/reactor_afd.velt",
+    wasi: "./lang/hooks/reactor_wasi.velt",
     default: "./lang/hooks/reactor_none.velt",
   },
   // The two OS calls the executor in Velt's core makes whatever its reactor (std/lang/hooks/
@@ -97,6 +98,16 @@ export const imports: Imports = {
     linux: "./lang/hooks/sched_signal.velt",
     default: "./lang/hooks/sched_signal_none.velt",
   },
+  /**
+   * A `Mutex`'s slow path (std/lang/hooks/mutex.velt): the runtime's where threads can contend,
+   * a deadlock's panic on WASI's one thread.
+   */
+  "#mutex-slow": { wasi: "./lang/hooks/mutex_none.velt", default: "./lang/hooks/mutex_rt.velt" },
+  /**
+   * Whether the runtime has a leaf outstanding at the end of the program (std/lang/hooks/
+   * sched_end.velt): its probe, or, on WASI, where no program awaits a runtime leaf, never.
+   */
+  "#sched-quiet": { wasi: "./lang/hooks/quiet_none.velt", default: "./lang/hooks/quiet_rt.velt" },
   // The threads of the executor in Velt's workers (std/lang/hooks/sched.velt): `pthread_create`
   // on macOS and Linux, `CreateThread` on Windows; elsewhere none (one worker).
   "#sched-thread": {
@@ -122,11 +133,11 @@ export const imports: Imports = {
   },
   // Whether `Promise.race`'s race settles a microtask after its deciding input, as Node does
   // (std/lang/promise/settle.velt, for `Promise.any`): the executor in Velt's does
-  // (std/lang/hooks/sched_race.velt), the runtime's (WebAssembly) does not. Also whether
-  // `Promise.allSettled` can attach to every promise at the call (`settledAtCall`).
+  // (std/lang/hooks/sched_race.velt, native and WASI), the runtime's (a JS host's) does not. Also
+  // whether `Promise.allSettled` can attach to every promise at the call (`settledAtCall`).
   "#promise-race-step": {
-    "std-scheduler": "./lang/promise/race_step_sched.velt",
-    default: "./lang/promise/race_step_rt.velt",
+    js: "./lang/promise/race_step_rt.velt",
+    default: "./lang/promise/race_step_sched.velt",
   },
   // velt/net's TCP functions: the runtime's (std/net/rt.velt), or, compiled with the executor in
   // Velt (`VELT_SCHEDULER=std`, the `std-scheduler` condition), non-blocking sockets on its
@@ -140,12 +151,8 @@ export const imports: Imports = {
   },
   // velt/sync's channel (std/sync/channel_block.velt): how its waits read a poll's `cx` and a
   // waker's table, and the C functions of their heap futures, by the size of a pointer
-  // (WebAssembly's take 4 bytes).
-  "#sync-chan-word": {
-    wasi: "./sync/channel_word_wasm.velt",
-    js: "./sync/channel_word_wasm.velt",
-    default: "./sync/channel_word.velt",
-  },
+  // (a JS host's take 4 bytes; WASI runs the executor in Velt, with 8-byte words, #3905).
+  "#sync-chan-word": { js: "./sync/channel_word_wasm.velt", default: "./sync/channel_word.velt" },
   // velt/sync's hand-offs (std/sync/output.velt): what the thread printed, published through the
   // runtime's latch; nothing to publish on WebAssembly's one thread.
   // velt/lang/bytes's raw moves and zeroing (std/lang/bytes/raw.velt): the C library's `memmove`
@@ -164,7 +171,6 @@ export const imports: Imports = {
     default: "./sync/output.velt",
   },
   "#sync-chan-entry": {
-    wasi: "./sync/channel_entry_wasm.velt",
     js: "./sync/channel_entry_wasm.velt",
     default: "./sync/channel_entry.velt",
   },
@@ -187,7 +193,8 @@ export const imports: Imports = {
   // rt.velt), or, compiled with the executor in Velt (`VELT_SCHEDULER=std`), the same names with
   // whole-file operations and standard input read on its blocking pool (std/lang/hooks/
   // sched_blocking.velt) instead of the runtime's leaves on tokio's blocking threads.
-  "#fs-rt": { "std-scheduler": "./fs/rt_sched.velt", default: "./fs/rt.velt" },
+  // WASI's are the runtime's sync calls run as blocking-pool jobs (std/fs/rt_wasi.velt).
+  "#fs-rt": { native: "./fs/rt_sched.velt", wasi: "./fs/rt_wasi.velt", default: "./fs/rt.velt" },
   // `readAt`'s read off the calling task's thread: on the executor's blocking pool in a native
   // program; on the calling thread elsewhere, where there are no file descriptors to read.
   "#fs-read-at": {
@@ -241,14 +248,11 @@ export const imports: Imports = {
   // Velt (`VELT_SCHEDULER=std`) its own, with `catchUnwind` (std/task/catch_sched.velt).
   "#task-catch": { "std-scheduler": "./task/catch_sched.velt", default: "./task/catch_rt.velt" },
   /**
-   * `AbortSignal`'s signals: under the executor in Velt (`VELT_SCHEDULER=std`) std's own
-   * (std/task/signal_core.velt), else the runtime's (velt_rt_signal_*, WebAssembly's runtime).
+   * `AbortSignal`'s signals: under the executor in Velt (native targets and WASI, #3905) std's
+   * own (std/task/signal_core.velt), else the runtime's (velt_rt_signal_*, a JS host's runtime).
    */
-  "#task-signal": { "std-scheduler": "./task/signal_sched.velt", default: "./task/signal_rt.velt" },
-  "#task-workers": {
-    "std-scheduler": "./task/worker_index_sched.velt",
-    default: "./task/worker_index.velt",
-  },
+  "#task-signal": { js: "./task/signal_rt.velt", default: "./task/signal_sched.velt" },
+  "#task-workers": { js: "./task/worker_index.velt", default: "./task/worker_index_sched.velt" },
   // The limb loops of `BigInt`'s magnitudes (std/math/nat_add.velt): on the limbs' addresses,
   // which the C library's `memset` gives; JS hosts have none, and index the arrays.
   "#nat-rows": { js: "./math/nat_rows_checked.velt", default: "./math/nat_rows_raw.velt" },

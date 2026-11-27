@@ -285,6 +285,7 @@ impl<'h> Cx<'h> {
                 | Work::ModuleDrop
                 | Work::StaticsDrop
                 | Work::CExport(_)
+                | Work::AddressThunk(..)
                 | Work::ArrayGrow
                 | Work::ArrayTooLong
                 | Work::ArrayOwnerDrop
