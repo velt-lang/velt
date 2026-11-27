@@ -322,7 +322,7 @@ impl<R> Call<R> {
         args: [Passed; N],
     ) -> Self {
         let task = super::module_state::executor_task_hook(name);
-        let Some(def) = lw.cx.prelude_def(name) else {
+        let Some(def) = lw.cx.std_hook_if_loaded(name) else {
             // A prebuilt hook whose module the program doesn't load: sema declared it.
             if let Some(hook) = prebuilt_named(name) {
                 return Self::declared(lw, hook, args);
@@ -365,7 +365,7 @@ impl<R> Call<R> {
             hook.name,
             c.name()
         );
-        if hook.prebuilt && lw.cx.prelude_def(name).is_none() {
+        if hook.prebuilt && lw.cx.std_hook_if_loaded(name).is_none() {
             return Self::declared(lw, hook, args);
         }
         Self::must(lw, name, targs, args)
