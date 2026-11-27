@@ -283,17 +283,26 @@ fn arguments_are_read_once() {
     }
 }
 
-/// The arguments are read before the environment first changes (std/process/env_posix.velt
-/// `argsReady`): the readers take velt's variables without the environment's lock, so std's
-/// `setEnv` and `removeEnv` finish that read first. A program that sets or removes the variables
-/// before it reads its arguments still sees its own.
-const CHANGED_FIRST_PROGRAM: &str = r#"import { argv, removeEnv, setEnv } from "velt/process";
+/// The arguments are read before the environment first changes (std/process/env_posix.velt,
+/// env_win32.velt and env_wasm.velt `argsReady`): the readers take velt's variables without the
+/// environment's lock, so std's `setEnv` and `removeEnv` finish that read first. A program that
+/// sets or removes the variables before it reads its arguments still sees its own. And once it
+/// has set or removed one, that variable is its own, read back as set, also by a child, as in
+/// Node.
+const CHANGED_FIRST_PROGRAM: &str = r#"import { argv, envAll, removeEnv, setEnv } from "velt/process";
+import { execSync } from "velt/process/child";
+import { platform } from "velt/os";
 
 function main() {
   setEnv("VELT_ARGV", "5:other");
   removeEnv("VELT_SCRIPT");
   console.log(process.argv[1].endsWith("changed_first.velt"));
   console.log(JSON.stringify(argv().slice(1)));
+  console.log(process.env.VELT_ARGV, process.env.VELT_SCRIPT === undefined);
+  setEnv("VELT_SCRIPT", "/fake/script.velt");
+  console.log(process.env["VELT_SCRIPT"], Object.keys(envAll()).includes("VELT_SCRIPT"));
+  const env = platform() == "win32" ? execSync("cmd", ["/C", "set"]) : execSync("env");
+  console.log(env.stdout.includes("VELT_ARGV=5:other"), env.stdout.includes("VELT_SCRIPT=/fake"));
 }
 "#;
 
@@ -303,8 +312,8 @@ fn arguments_are_read_before_the_environment_changes() {
     let dir = test_dir::TestDir::new();
     let src = dir.path().join("changed_first.velt");
     std::fs::write(&src, CHANGED_FIRST_PROGRAM).unwrap();
-    let want = "true\n[\"a b\",\"\",\"ü\"]\n";
-    for mode in [&["run"][..], &["dev", "--host"]] {
+    let want = "true\n[\"a b\",\"\",\"ü\"]\n5:other true\n/fake/script.velt true\ntrue true\n";
+    for mode in [&["run"][..], &["run", "--release"], &["dev", "--host"]] {
         let out = velt()
             .args(mode)
             .arg(&src)
@@ -314,6 +323,52 @@ fn arguments_are_read_before_the_environment_changes() {
             .output()
             .unwrap();
         assert_eq!(stdout(&out), want, "velt {mode:?}");
+    }
+}
+
+/// The arguments' prebuilt object builds for each native target, so a warm build cache serves it
+/// on every OS: no reader reaches state a program shares (`velt check --target` fills the cache
+/// and then finds the object; on Windows, `passedVar` took its names through string methods,
+/// whose position cache is a program's thread-local value, and the object was refused).
+#[test]
+fn prebuilt_readers_build_for_every_native_target() {
+    let dir = test_dir::TestDir::new();
+    let src = dir.path().join("targets.velt");
+    std::fs::write(
+        &src,
+        "function main() {\n  console.log(process.argv.length);\n}\n",
+    )
+    .unwrap();
+    for target in [
+        "x86_64-pc-windows-msvc",
+        "aarch64-pc-windows-msvc",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+    ] {
+        let cache = dir.path().join(format!("cache-{target}"));
+        for (fill, want) in [(true, false), (false, true)] {
+            let mut cmd = velt();
+            cmd.args(["check", "--target", target])
+                .arg(&src)
+                .env("VELT_BUILD_CACHE", &cache)
+                .env("VELT_STD_OBJECT_STATS", "1")
+                .env_remove("VELT_STD_OBJECT_FILL")
+                .env_remove("VELT_PREBUILT_HOOKS");
+            if fill {
+                cmd.env("VELT_PREBUILT_HOOKS", "fill");
+            }
+            let out = cmd.output().unwrap();
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert!(out.status.success(), "{target}: {err}");
+            assert!(
+                !err.contains("no object of `lang_hooks_process_argv`"),
+                "{target}: {err}"
+            );
+            let found = err.contains("process_argv: object found");
+            assert_eq!(found, want, "{target}, fill {fill}: {err}");
+        }
     }
 }
 

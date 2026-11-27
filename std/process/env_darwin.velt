@@ -4,7 +4,7 @@
 
 import { Ptr } from "velt/ffi/ptr";
 import { addressLoad } from "velt/lang/intrinsics";
-import { ARGV_C, hiddenVar, SCRIPT_C, withoutHidden } from "./env_hidden";
+import { ARGV_C, hiddenVar, ownVar, SCRIPT_C, withoutHidden } from "./env_hidden";
 import * as posix from "./env_posix";
 
 /** `char ***_NSGetEnviron(void)` (<crt_externs.h>): where `environ` is. */
@@ -36,12 +36,16 @@ export function passedVar(argv: bool): string | undefined {
   return argv ? posix.getEnvOnce(ARGV_C) : posix.getEnvOnce(SCRIPT_C);
 }
 
+/** Sets the variable `name` (velt's two, too: the program's own from then on, env_hidden.velt). */
 export function setEnv(name: string, value: string) {
   posix.setEnv(name, value);
+  ownVar(name, false);
 }
 
+/** Removes the variable `name`, as `setEnv`. */
 export function removeEnv(name: string) {
   posix.removeEnv(name);
+  ownVar(name, false);
 }
 
 /** Every variable as `[name, value, …]`, in the table's order. */
