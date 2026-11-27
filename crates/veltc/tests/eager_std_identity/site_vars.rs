@@ -61,6 +61,9 @@ const KNOWN: &[(&str, Kind)] = &[
         "golden/std/catch_panic.velt",
         Kind::Vir("Refused | Error | PanicError::Refused"),
     ),
+    // A `then` callback calling two function values (`late()` and `fail(e)`, the executor's
+    // resolve and reject): one more round with variables, on main before #3893 too (#3925).
+    ("golden/std/streams_order_cancel_later.velt", Kind::Rounds),
     // No promise: `const b: G = a` makes the sets of `F` and `G` one with variables, so the
     // `catch` around `a(1)` may catch an `E2`; without them `F`'s set is `E1` alone, and the
     // `instanceof E2` test is rejected as always false. The same before #2590: #2602.
