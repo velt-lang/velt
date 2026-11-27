@@ -19,7 +19,12 @@ import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
 import { utf8Encode } from "velt/encoding/utf8";
 import { hookCall, noteStdUse, stdUsed } from "velt/lang/intrinsics";
-import { schedStays, schedWorkerCount } from "velt/lang/hooks/sched";
+import {
+  schedKeepAliveAcquire,
+  schedKeepAliveRelease,
+  schedStays,
+  schedWorkerCount,
+} from "velt/lang/hooks/sched";
 import { processEnv } from "velt/lang/hooks/process";
 import * as io from "velt/lang/hooks/sched_io";
 import * as fio from "velt/net/fd_io";
@@ -52,7 +57,11 @@ export async function velt_rt_tcp_listen(addr: string): Promise<IoResult<u64>> {
   if (!devHandover()) {
     return await fs.listenOn(addr);
   }
+  // The runtime's leaf, which the executor does not see: the process stays alive while the
+  // supervisor answers (std/lang/hooks/sched_end.velt).
+  schedKeepAliveAcquire();
   const handed = await rt.velt_rt_tcp_listen(addr);
+  schedKeepAliveRelease();
   if (handed.code !== 0) {
     return handed;
   }

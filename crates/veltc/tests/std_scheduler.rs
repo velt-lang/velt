@@ -769,10 +769,9 @@ fn a_program_without_imports_builds_for_every_reactor() {
     }
 }
 
-/// A promise nobody can settle keeps nothing alive, as in Node and the runtime (quiet.rs): once
-/// the worker would park with no keep-alive reference, no pending I/O and no runtime leaf
-/// outstanding, the program ends with code 0 (stdout flushed), or with Node's 13 when the top
-/// level waits at an `await` (sched_end.velt).
+/// A promise nobody can settle keeps nothing alive, as in Node: once the worker would park with
+/// no keep-alive reference and no pending I/O, the program ends with code 0 (stdout flushed), or
+/// with Node's 13 when the top level waits at an `await` (sched_end.velt).
 #[test]
 fn a_never_settled_promise_exits_like_the_runtime() {
     prints(

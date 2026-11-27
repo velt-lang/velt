@@ -349,6 +349,10 @@ const EXECUTOR_ONLY: &[&str] = &[
     "velt_rt_timer_again",
     "velt_rt_timer_clear",
     "velt_rt_timer_free",
+    // The process lifetime's, since velt_rt's went (#2196).
+    "velt_rt_keep_alive_acquire",
+    "velt_rt_keep_alive_release",
+    "velt_rt_timer_unref_due",
 ];
 
 /// Whether `name`, declared in `paths` and not defined by velt_rt, is a WebAssembly-only leaf:

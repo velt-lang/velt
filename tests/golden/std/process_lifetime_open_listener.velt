@@ -1,0 +1,24 @@
+// A listener with an accept pending keeps the process alive after `main` returns, as an open
+// server does in Node, so an `unref()`'d timeout that falls due meanwhile runs: it connects, the
+// accepted stream answers, and closing the listener lets the process end. An `unref()`'d interval
+// an hour long never runs and does not keep the process alive. The Node twin is the .mjs file.
+// timing: the test is of what keeps the process alive while an `unref()`'d timer falls due.
+import { connect, listen } from "velt/net";
+
+async function main() {
+  const server = await listen("127.0.0.1:0");
+  const accepted = server.accept();
+  setTimeout(async () => {
+    console.log("unref'd timeout runs: the listener keeps the process alive");
+    const c = await connect(`127.0.0.1:${server.port}`);
+    const s = await accepted;
+    await s.write("hi");
+    s.close();
+    console.log("read:", await c.readString());
+    c.close();
+    server.close();
+    console.log("listener closed");
+  }, 20).unref();
+  setInterval(() => console.log("never: an unref'd interval"), 3600000).unref();
+  console.log("main done");
+}

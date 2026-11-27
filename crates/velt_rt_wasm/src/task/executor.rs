@@ -4,7 +4,7 @@
 //! pushes onto the ready queue once. When nothing is ready, the executor waits for the earliest
 //! timer (block_on.rs); if there is no timer either (nor, under a JS host, a pending host
 //! promise), no task can ever be woken again and the program ends, as Node exits with promises
-//! pending (and as the native runtime does, task/quiet.rs).
+//! pending (as the executor in Velt does on native targets, std/lang/hooks/sched_end.velt).
 
 use std::cell::{Cell, RefCell};
 use std::cmp::{Ordering, Reverse};
