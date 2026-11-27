@@ -1,40 +1,49 @@
 // velt/process (internal): what the arguments' readers of macOS and Linux share
 // (std/process/args_darwin.velt, args_linux.velt): C strings as text, and a path resolved as
-// Node's `process.execPath` is (symbolic links followed).
+// Node's `process.execPath` is (symbolic links followed). Paths go to C as the NUL-terminated
+// bytes the OS gave, never as strings.
 
 import { Ptr } from "velt/ffi/ptr";
-import { readCString } from "velt/ffi/read";
-import { strBytesOf } from "velt/ffi/str_bytes";
-import {
-  addressLoad,
-  arraySetLen,
-  arrayWithCapacity,
-  ptrFromAddress,
-  strByteLen,
-  strDataAddress,
-} from "velt/lang/intrinsics";
+import { addressLoad, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+import { textOf } from "./args_text";
 
 declare c("c") function realpath$args(
   path: readonly u8[],
   resolved: Ptr<u8> | null,
 ): Ptr<u8> | null;
 declare c("c") function free$args(p: Ptr<u8> | null): void;
-declare c("c") function memcpy$args(dst: u8[], src: Ptr<u8> | null, n: usize): Ptr<u8>;
+declare c("c") function strlen$args(s: Ptr<u8> | null): usize;
+declare c("c") function memcpy$args(dst: u8[], src: Ptr<u8> | null, n: usize): Ptr<u8> | null;
 
-/** `s`'s UTF-8 and a NUL after it; `s` holds no NUL. */
-export function cBytes(s: string): u8[] {
-  const text = strBytesOf(s);
-  const n = strByteLen(text);
-  const bytes = arrayWithCapacity<u8>(n + 1);
-  arraySetLen(bytes, n + 1);
+/**
+ * `n` bytes zeroed, for a C call to fill: made by length, not with `new Array<u8>(n)`, whose
+ * check of `n` panics at its caller's location and would give every reader of the arguments one
+ * to carry, a copy per call site of `process.argv` (velt_vir track_caller.rs).
+ */
+export function buffer(n: usize): u8[] {
+  const bytes = arrayWithCapacity<u8>(n);
+  arraySetLen(bytes, n);
+  for (let i: usize = 0; i < n; i++) {
+    bytes[i] = 0;
+  }
+  return bytes;
+}
+
+/**
+ * The text of the NUL-terminated string at `at` (an invalid sequence as U+FFFD). Unsafe: `at`
+ * is a readable NUL-terminated string.
+ */
+unsafe function cText(at: Ptr<u8> | null): string {
+  // SAFETY: the caller's statement.
+  const n = unsafe { strlen$args(at) };
+  const bytes = buffer(n);
   if (n > 0) {
-    // SAFETY: `bytes` holds n + 1 bytes and `text`'s n bytes are at its data address.
+    // SAFETY: `bytes` holds `n` bytes, and `at` has `n` before its NUL.
     unsafe {
-      memcpy$args(bytes, Ptr.orNull<u8>(strDataAddress(text)), n);
+      memcpy$args(bytes, at, n);
     }
   }
-  bytes[n] = 0;
-  return bytes;
+  return textOf(bytes, 0, n);
 }
 
 /**
@@ -50,20 +59,27 @@ export function cStrings(table: usize, n: usize): string[] {
       break;
     }
     // SAFETY: a NUL-terminated string, not at 0.
-    out.push(unsafe { readCString(ptrFromAddress<u8>(at)) });
+    out.push(unsafe { cText(Ptr.orNull<u8>(at)) });
   }
   return out;
 }
 
-/** `path` with its symbolic links followed (`realpath`), or as it is when that fails. */
-export function resolved(path: string): string {
-  // SAFETY: `cBytes` is NUL-terminated; a NULL buffer has realpath allocate the result.
-  const p = unsafe { realpath$args(cBytes(path), null) };
+/**
+ * The NUL-terminated path in `path` with its symbolic links followed (`realpath`), or as it is
+ * when that fails.
+ */
+export function resolvedC(path: u8[]): string {
+  // SAFETY: `path` is NUL-terminated; a NULL buffer has realpath allocate the result.
+  const p = unsafe { realpath$args(path, null) };
   if (p === null) {
-    return path;
+    let n: usize = 0;
+    while (n < path.length && path[n] !== 0) {
+      n++;
+    }
+    return textOf(path, 0, n);
   }
   // SAFETY: realpath's NUL-terminated result, freed after it is read.
-  const text = unsafe { readCString(p) };
+  const text = unsafe { cText(p) };
   // SAFETY: realpath's block, freed once.
   unsafe {
     free$args(p);

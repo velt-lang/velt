@@ -5,10 +5,11 @@
 
 import { Ptr } from "velt/ffi/ptr";
 import { wideOf, wideText } from "velt/ffi/wide";
-import { hiddenVar, withoutHidden } from "./env_hidden";
+import { ARGV_VAR, hiddenVar, SCRIPT_VAR, withoutHidden } from "./env_hidden";
 import { addressLoad, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 
 export { executablePath, osArgs } from "./args_win32";
+export { keepArgs, releaseArgs, unpackArgs } from "./args_keep";
 
 declare c("c") function GetEnvironmentVariableW(
   name: readonly u16[],
@@ -41,7 +42,12 @@ export function getEnv(name: string): string | undefined {
   return hiddenVar(name, true) ? undefined : getEnvRaw(name);
 }
 
-/** The variable `name` as it is, the hidden ones included (std/process/args.velt). */
+/** `VELT_ARGV` (`argv`) or `VELT_SCRIPT`, which velt passes (std/process/args.velt). */
+export function passedVar(argv: bool): string | undefined {
+  return getEnvRaw(argv ? ARGV_VAR : SCRIPT_VAR);
+}
+
+/** The variable `name` as it is, the hidden ones included. */
 export function getEnvRaw(name: string): string | undefined {
   const n = wideOf(name);
   if (n === null || !validName(name)) {

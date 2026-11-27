@@ -2,7 +2,7 @@
 // variant, std/imports.velt): the WebAssembly runtime's, which reads WASI's environment (empty in
 // the browser). The working directory is `#cwd-sys`' (std/process/cwd_wasm.velt).
 
-import { hiddenVar, withoutHidden } from "./env_hidden";
+import { ARGV_VAR, hiddenVar, SCRIPT_VAR, withoutHidden } from "./env_hidden";
 
 declare function velt_rt_env_get(name: string, out: string): bool;
 declare function velt_rt_env_set(name: string, value: string);
@@ -14,7 +14,12 @@ export function getEnv(name: string): string | undefined {
   return hiddenVar(name, false) ? undefined : getEnvRaw(name);
 }
 
-/** The variable `name` as it is, the hidden ones included (std/process/args.velt). */
+/** `VELT_ARGV` (`argv`) or `VELT_SCRIPT`, which velt passes (std/process/args.velt). */
+export function passedVar(argv: bool): string | undefined {
+  return getEnvRaw(argv ? ARGV_VAR : SCRIPT_VAR);
+}
+
+/** The variable `name` as it is, the hidden ones included. */
 export function getEnvRaw(name: string): string | undefined {
   let out = "";
   if (velt_rt_env_get(name, out)) {
@@ -40,6 +45,22 @@ export function osArgs(): string[] {
 export function executablePath(): string {
   return "";
 }
+
+/**
+ * Where std/process/args.velt keeps the arguments once read: nowhere here (the JS host has no C
+ * library, and its list, read at each call, is the same two empty strings).
+ */
+export function keepArgs(list: string[]): usize {
+  return 0;
+}
+
+/** Never called here: `keepArgs` keeps nothing. */
+export function unpackArgs(at: usize): string[] {
+  return [];
+}
+
+/** Never called here, as `unpackArgs`. */
+export function releaseArgs(at: usize): void {}
 
 /** Every variable as `[name, value, …]`. */
 export function envPairs(): string[] {
