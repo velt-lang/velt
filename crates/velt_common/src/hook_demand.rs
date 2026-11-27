@@ -101,11 +101,15 @@ pub enum Construct {
     /// values (std/lang/hooks/fn_props.velt), which a function type's `any` slots reach in such
     /// a program only (velt_vir `any_fn_props.rs`).
     FnProps,
+    /// A class extending `Error` declares `get message()` (`velt_sema` `error_message.rs`): the
+    /// glue of an error held as `any` reads its `message` through std's `errorMessage`. Sema
+    /// sets it in such a program only.
+    ErrorMessage,
 }
 
 impl Construct {
     /// Every construct, in bit order ([`ConstructSet`]).
-    pub const ALL: [Construct; 16] = [
+    pub const ALL: [Construct; 17] = [
         Construct::TextInt,
         Construct::TextUint,
         Construct::Format,
@@ -122,6 +126,7 @@ impl Construct {
         Construct::Transfer,
         Construct::MutexHeld,
         Construct::FnProps,
+        Construct::ErrorMessage,
     ];
 
     /// The construct as the ICE names it.
@@ -145,6 +150,7 @@ impl Construct {
             }
             Construct::MutexHeld => "MutexHeld (a Mutex's with in a velt dev build)",
             Construct::FnProps => "FnProps (a write through any: function properties)",
+            Construct::ErrorMessage => "ErrorMessage (a get message() on a class extending Error)",
         }
     }
 

@@ -203,3 +203,8 @@ export const PROTOTYPE_HAS_KEY = Symbol("prototypeHasKey");
 export const PROTOTYPE_SAME_AS = Symbol("prototypeSameAs");
 /** `Record`: a record of a map's entries in its order (the hook `recordFromMap`). */
 export const RECORD_FROM_MAP = Symbol("recordFromMap");
+/**
+ * `Error`: `Error.prototype.message`, what `message` reads on an error made without one; a
+ * program's class extending `Error` overrides it with `get message()`.
+ */
+export const ERROR_MESSAGE = Symbol("errorMessage");

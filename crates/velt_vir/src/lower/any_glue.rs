@@ -281,6 +281,12 @@ impl FnLower<'_, '_> {
                     continue;
                 }
                 let next = self.on_key(key, name);
+                if name == "message" && self.error_message_hooked(ty) {
+                    self.any_get_error_message(&vp, &outp);
+                    self.ret_status(ST_OK);
+                    self.switch_to(next);
+                    continue;
+                }
                 let fty = self.cx.member_ty(ty, i as u32);
                 let f = &self.cx.adt_def(d).fields[i];
                 // A left-out optional field `q?: T` is JavaScript's `undefined` (its type's own

@@ -106,6 +106,7 @@ mod dispatch;
 mod drops;
 mod entry;
 mod epoch_sections;
+mod error_message;
 mod errors;
 mod expr;
 mod ext_exists;
