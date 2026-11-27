@@ -10,7 +10,8 @@
 // element, every write, `in` test and delete goes through the traps, in Node's order.
 
 import { Proxy } from "velt/lang/proxy";
-import { anyMethodCalled, proxyArrayCall, proxyArrayHole } from "velt/lang/intrinsics";
+import { anyMethodCalled, noteStdUse } from "velt/lang/intrinsics";
+import { cutHoles, methodBegin, methodEnd, trapBegin, trapEnd } from "velt/lang/proxy/holes";
 import {
   PROXY_DELETE,
   PROXY_GET,
@@ -110,7 +111,7 @@ export function arraySet(p: Proxy, o: any, key: string, v: any): void {
 
 /**
  * The array behind the proxy `p` (through proxies of proxies): the target a running method's
- * holes are recorded in (velt_rt's `proxy_array`).
+ * holes are recorded in (velt/lang/proxy/holes).
  */
 function arrayTarget(p: Proxy): any {
   let t = p[PROXY_TARGET]();
@@ -122,41 +123,50 @@ function arrayTarget(p: Proxy): any {
 
 /**
  * The traps the generic algorithms below call on the proxy `p`, each a trap call of the method
- * on `p`'s target: holes are recorded in the target (velt_rt's `proxy_array`) only during one,
+ * on `p`'s target: holes are recorded in the target (velt/lang/proxy/holes) only during one,
  * not during the user callbacks the algorithm calls between them.
  */
 export function trapGet(p: Proxy, key: string, o: any): any {
   const t = arrayTarget(p);
-  proxyArrayCall(t, 2);
-  const v = p[PROXY_GET](key, o);
-  proxyArrayCall(t, -2);
-  return v;
+  trapBegin(t);
+  try {
+    return p[PROXY_GET](key, o);
+  } finally {
+    trapEnd();
+  }
 }
 
 /** `p[PROXY_SET](key, v, o)` (see `trapGet`). */
 function trapSet(p: Proxy, key: string, v: any, o: any): boolean {
   const t = arrayTarget(p);
-  proxyArrayCall(t, 2);
-  const ok = p[PROXY_SET](key, v, o);
-  proxyArrayCall(t, -2);
-  return ok;
+  trapBegin(t);
+  try {
+    return p[PROXY_SET](key, v, o);
+  } finally {
+    trapEnd();
+  }
 }
 
 /** `p[PROXY_HAS](key)` (see `trapGet`). */
 export function trapHas(p: Proxy, key: string): boolean {
   const t = arrayTarget(p);
-  proxyArrayCall(t, 2);
-  const yes = p[PROXY_HAS](key);
-  proxyArrayCall(t, -2);
-  return yes;
+  trapBegin(t);
+  try {
+    return p[PROXY_HAS](key);
+  } finally {
+    trapEnd();
+  }
 }
 
 /** `p[PROXY_DELETE](key)` (see `trapGet`). */
 export function trapDelete(p: Proxy, key: string): void {
   const t = arrayTarget(p);
-  proxyArrayCall(t, 2);
-  p[PROXY_DELETE](key);
-  proxyArrayCall(t, -2);
+  trapBegin(t);
+  try {
+    p[PROXY_DELETE](key);
+  } finally {
+    trapEnd();
+  }
 }
 
 /** Moves element `from` to `to` (`has`, then `get` and `set`, or `deleteProperty`). */
@@ -176,17 +186,55 @@ function arrayMove(p: Proxy, o: any, from: number, to: number): void {
  * method is the steps of `splice` that its own algorithm takes in the same order.
  */
 export function proxyArrayInvoke(p: Proxy, name: string, args: any[], o: any): any {
-  // While it runs, `Reflect` records the holes Node's algorithm makes in the target during the
-  // algorithm's trap calls (`trapGet`), and reports them: velt_rt's `proxy_array`.
-  const t = arrayTarget(p);
-  proxyArrayCall(t, 1);
-  const r = callArrayMethod(p, name, args, o);
-  // A shorter length written another way than `Reflect.set` (`t[k] = v` in a trap) cuts the
-  // holes off too.
-  if (Array.isArray(t)) {
-    proxyArrayHole(t, (t.length as number) as i64, 3);
+  // Holes are made only in the trap calls of the algorithms below, each compiled only for a
+  // program that can call its method (`anyMethodCalled`): one that can call none keeps no
+  // records, and `Reflect` reads none (`stdUsed("proxyArrayHoles")`, velt/lang/proxy/keys). A
+  // new algorithm's method is named here too.
+  if (
+    anyMethodCalled("push") ||
+    anyMethodCalled("unshift") ||
+    anyMethodCalled("pop") ||
+    anyMethodCalled("shift") ||
+    anyMethodCalled("splice") ||
+    anyMethodCalled("find") ||
+    anyMethodCalled("includes") ||
+    anyMethodCalled("indexOf") ||
+    anyMethodCalled("lastIndexOf") ||
+    anyMethodCalled("join") ||
+    anyMethodCalled("reverse") ||
+    anyMethodCalled("sort") ||
+    anyMethodCalled("map") ||
+    anyMethodCalled("filter") ||
+    anyMethodCalled("forEach") ||
+    anyMethodCalled("some") ||
+    anyMethodCalled("every") ||
+    anyMethodCalled("slice")
+  ) {
+    return recordedInvoke(p, name, args, o);
   }
-  const h = proxyArrayCall(t, -1);
+  return callArrayMethod(p, name, args, o);
+}
+
+/** `proxyArrayInvoke` of a program that can call an algorithm, which may make holes. */
+function recordedInvoke(p: Proxy, name: string, args: any[], o: any): any {
+  noteStdUse("proxyArrayHoles");
+  // While it runs, `Reflect` records the holes Node's algorithm makes in the target during the
+  // algorithm's trap calls (`trapGet`), and reports them: velt/lang/proxy/holes.
+  const t = arrayTarget(p);
+  methodBegin(t);
+  let r: any = undefined;
+  let h: i64 = -1;
+  try {
+    r = callArrayMethod(p, name, args, o);
+    // A shorter length written another way than `Reflect.set` (`t[k] = v` in a trap) cuts the
+    // holes off too.
+    if (Array.isArray(t)) {
+      cutHoles(t, (t.length as number) as i64);
+    }
+  } finally {
+    // Also when a trap or callback throws: the next method starts from a clean state.
+    h = methodEnd(t);
+  }
   if (h >= 0) {
     // A trap didn't write the shorter length after a delete, or the gap before an element
     // written past the end: Node keeps the holes.

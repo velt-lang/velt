@@ -481,13 +481,6 @@ impl FnLower<'_, '_> {
             (I::AnyReflectHook, [a, k]) => {
                 self.any_reflect(a, super::any_reflect::OP_HOOK, Some(k), ty)
             }
-            (I::ProxyArrayCall, [o, op]) => {
-                let t = self.sub(o.ty);
-                let v = self.expr(o);
-                let (data, _) = self.any_parts(v, t);
-                let op = self.expr(op);
-                self.rt_i64(Rt::ProxyArrayCall, vec![data, op])
-            }
             (I::IsTypedProxy, [x]) => {
                 let t = self.sub(x.ty);
                 if !self.cx.proxiable(t) || self.cx.ty(t) != Ty::Ptr {
@@ -495,13 +488,6 @@ impl FnLower<'_, '_> {
                 }
                 let v = self.expr(x);
                 self.proxy_tagged(v)
-            }
-            (I::ProxyArrayHole, [o, i, op]) => {
-                let t = self.sub(o.ty);
-                let v = self.expr(o);
-                let (data, _) = self.any_parts(v, t);
-                let (i, op) = (self.expr(i), self.expr(op));
-                self.rt_i64(Rt::ProxyArrayHole, vec![data, i, op])
             }
             (I::AnyIsArray, [a]) => self.any_is_array(a),
             (I::AnyKeys, [o]) => self.any_keys(o, ty),
@@ -694,14 +680,5 @@ impl FnLower<'_, '_> {
     pub(super) fn dynamic_undefined_moved(&mut self, any: u32, t: TyId) -> Operand {
         let u = self.dynamic_undefined(any, t);
         self.take_owned(u)
-    }
-}
-
-impl FnLower<'_, '_> {
-    /// A call of the runtime function `r`, which returns an `i64`.
-    fn rt_i64(&mut self, r: Rt, args: Vec<Operand>) -> Operand {
-        let d = self.temp(Ty::I64);
-        self.call_rt(r, args, Some(Place::local(d)));
-        Operand::Copy(Place::local(d))
     }
 }

@@ -100,6 +100,69 @@ fn array_algorithms_only_when_a_method_can_be_called() {
     assert!(ir.contains("proxySort"), "`f.call(p)` can run any method");
 }
 
+/// The names of the array methods `anyMethodCalled("…")` asks about in `text`.
+fn method_names(text: &str) -> std::collections::BTreeSet<String> {
+    let key = "anyMethodCalled(\"";
+    text.match_indices(key)
+        .filter_map(|(at, _)| {
+            let rest = &text[at + key.len()..];
+            rest.find('"').map(|end| rest[..end].to_string())
+        })
+        .collect()
+}
+
+/// `proxyArrayInvoke` keeps the records of holes (velt/lang/proxy/holes) only in a program that
+/// can call an algorithm whose trap calls make them: its list of method names is every name an
+/// algorithm of velt/lang/proxy is compiled for. A method left out of it would run its algorithm
+/// without the records.
+#[test]
+fn hole_records_whenever_an_algorithm_can_run() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/lang/proxy");
+    let (start, end) = (
+        "export function proxyArrayInvoke(",
+        "function recordedInvoke(",
+    );
+    let mut guard = None;
+    let mut algorithms = std::collections::BTreeSet::new();
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        if !name.ends_with(".velt") || name.ends_with(".test.velt") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).unwrap();
+        let Some(a) = text.find(start) else {
+            algorithms.extend(method_names(&text));
+            continue;
+        };
+        let b = a + text[a..]
+            .find(end)
+            .expect("recordedInvoke after proxyArrayInvoke");
+        guard = Some(method_names(&text[a..b]));
+        algorithms.extend(method_names(&text[..a]));
+        algorithms.extend(method_names(&text[b..]));
+    }
+    let guard = guard.expect("proxyArrayInvoke in std/lang/proxy");
+    assert!(!algorithms.is_empty(), "no algorithm found");
+    assert_eq!(
+        guard, algorithms,
+        "proxyArrayInvoke's list of methods differs from the algorithms'"
+    );
+    // A program that can call none keeps no records (its `length` read is still a trap call);
+    // one that reads a method by a computed name and calls it can call every one.
+    // `recordedInvoke` is inlined into `proxyArrayInvoke`; the records' functions are not.
+    let ir = release_ir(READ);
+    for name in ["methodBegin", "methodEnd"] {
+        assert!(!ir.contains(name), "`{name}` for `p.a`");
+    }
+    let computed = "const p = new Proxy([1, 2] as any, {});\nconst m: string = \
+                    [\"po\", \"p\"].join(\"\");\nconsole.log(p[m].call(p) as number);\n";
+    assert!(
+        release_ir(computed).contains("methodBegin"),
+        "`p[m].call(p)` can run any algorithm: it keeps the records"
+    );
+}
+
 #[test]
 fn getter_reads_only_with_a_brand_getter() {
     assert!(!release_ir(READ).contains("classGetterValue"));

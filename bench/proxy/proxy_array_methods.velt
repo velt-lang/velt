@@ -1,0 +1,32 @@
+// Array methods on a proxy of an array (#823): `push`, `pop`, `shift`, `unshift` and `splice`
+// through forwarding traps (each `deleteProperty` records a hole until the shorter length is
+// written), and `indexOf` and `includes` (trap calls, no holes). The records live in
+// std/lang/proxy/holes.velt. bench/proxy/array_methods_ab.sh runs it.
+const raw: number[] = [];
+for (let i = 0; i < 16; i++) {
+  raw.push(i);
+}
+const p: any = new Proxy(raw, {
+  get(t: any, k: string | symbol, r: any): any {
+    return Reflect.get(t, k, r);
+  },
+  set(t: any, k: string | symbol, v: any): boolean {
+    return Reflect.set(t, k, v);
+  },
+  deleteProperty(t: any, k: string | symbol): boolean {
+    return Reflect.deleteProperty(t, k);
+  },
+});
+let total = 0;
+for (let round = 0; round < 2000; round++) {
+  p.push(round);
+  total += p.pop() as number;
+  p.unshift(round);
+  total += p.shift() as number;
+  p.splice(3, 2, round, round + 1);
+  total += p.indexOf(round + 1) as number;
+  if (p.includes(round)) {
+    total += 1;
+  }
+}
+console.log(total, raw.length);

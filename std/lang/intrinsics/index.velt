@@ -31,8 +31,6 @@ export {
   anyToPrimitive,
   holdsDynamic,
   noteStdUse,
-  proxyArrayCall,
-  proxyArrayHole,
   stdUsed,
 } from "velt/lang/intrinsics/any";
 export {
