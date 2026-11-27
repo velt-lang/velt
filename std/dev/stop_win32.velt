@@ -13,6 +13,7 @@ import { addressLoad, addressStore } from "velt/lang/intrinsics";
 import * as bl from "velt/lang/hooks/sched_blocking";
 import * as m from "velt/lang/hooks/sched_mem";
 import { getEnv } from "#env-sys";
+import { monotonicNs } from "#clock";
 
 /** C's `SECURITY_ATTRIBUTES` (never passed) and `OVERLAPPED` (32 bytes, `hEvent` at 24). */
 declare c type _SECURITY_ATTRIBUTES;
@@ -78,8 +79,8 @@ const ERROR_IO_PENDING: u32 = 997;
 const INFINITE: u32 = 0xffffffff;
 const ERROR_FILE_NOT_FOUND: u32 = 2;
 const ERROR_PIPE_BUSY: u32 = 231;
-/** Tries of `connect`, 1 ms apart. */
-const CONNECT_TRIES: i64 = 5000;
+/** How long `connect` tries again while the pipe is busy or not there yet. */
+const CONNECT_MS: u64 = 5000;
 
 // The channel's block: the pipe, its `OVERLAPPED` (with its own event), one byte to read into,
 // the two handles a wait waits for (that event, then `WAKE`).
@@ -122,10 +123,13 @@ export function start(): bool {
 
 /**
  * The supervisor's pipe `wide`, or null. Its one waiting instance may be taken by another
- * connection for a moment: tries again for up to 5 s, as the runtime's side of the dev channel.
+ * connection for a moment: tries again until `CONNECT_MS` have passed, as the runtime's side of
+ * the dev channel (a deadline, not a count of tries: `Sleep(1)` lasts a timer tick, 15.6 ms by
+ * default).
  */
 function connect(wide: readonly u16[]): Ptr<void> | null {
-  for (let i = 0; i < CONNECT_TRIES; i++) {
+  const deadline = monotonicNs() + CONNECT_MS * 1000000;
+  while (true) {
     // SAFETY: `wide` is NUL-terminated; no security attributes, no template.
     const h = unsafe { CreateFileW(wide, READ_WRITE, 0, null, OPEN_EXISTING, OVERLAPPED, null) };
     if (h !== null && Ptr.addressOf(h) !== INVALID_HANDLE) {
@@ -133,7 +137,7 @@ function connect(wide: readonly u16[]): Ptr<void> | null {
     }
     // SAFETY: no precondition.
     const e = unsafe { GetLastError() };
-    if (e !== ERROR_PIPE_BUSY && e !== ERROR_FILE_NOT_FOUND) {
+    if ((e !== ERROR_PIPE_BUSY && e !== ERROR_FILE_NOT_FOUND) || monotonicNs() >= deadline) {
       return null;
     }
     // SAFETY: no precondition.
@@ -141,7 +145,6 @@ function connect(wide: readonly u16[]): Ptr<void> | null {
       Sleep(1);
     }
   }
-  return null;
 }
 
 /** Closes the stop channel. */

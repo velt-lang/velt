@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use super::listeners::Handover;
 
 /// How long a stopped program gets to finish in-flight requests before it is killed (the
-/// runtime drains for up to 1 s after a stop request).
+/// program drains for up to 1.2 s after a stop request: std/dev/stop.velt `DRAIN_MS`).
 const STOP_GRACE: Duration = Duration::from_millis(1500);
 /// Overrides [`STOP_GRACE`], in milliseconds: tests that must act within the grace set it far
 /// longer than a loaded machine can delay them.
