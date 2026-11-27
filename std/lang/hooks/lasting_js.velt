@@ -1,0 +1,59 @@
+// velt/lang/hooks (internal): blocks as long-lived as a thread (mem_raw.velt `lastingZeroed`) and
+// module state blocks (module_blocks.velt `blockZeroed`) on a JS host, the `js` variant of
+// `#mem-lasting` (std/imports.velt). The module has no C library, so they are the runtime's
+// (`velt_rt_alloc`), with their size in a header of 16 bytes before them for the free; the JS
+// host's one thread ends with the module, so none outlives a count. The host has no environment
+// to turn the debug runtime's block counters on.
+
+import { Ptr } from "velt/ffi";
+import { addressLoad, addressStore } from "velt/lang/intrinsics";
+
+declare c("c") function velt_rt_alloc$lasting(size: u64, align: u64): Ptr<u8> | null;
+declare c("c") function velt_rt_free$lasting(p: Ptr<u8> | null, size: u64, align: u64): void;
+
+/** The header before a block: its size, and the block's alignment. */
+const HEADER: usize = 16;
+
+/** `n` bytes set to 0, aligned to 16, freed with `lastingRelease`. */
+export function lastingZeroed(n: usize): usize {
+  // Whole words, which the loop below zeroes.
+  const total = ((n + 7) & ~(7 as usize)) + HEADER;
+  // SAFETY: the runtime's allocator has no precondition; its result is checked.
+  const p = Ptr.addressOf(unsafe { velt_rt_alloc$lasting(total as u64, HEADER as u64) });
+  if (p === 0) {
+    panic("out of memory");
+  }
+  // SAFETY: `p` holds `total` bytes.
+  unsafe {
+    addressStore<usize>(p, total);
+    for (let i: usize = 8; i < total; i += 8) {
+      addressStore<u64>(p + i, 0);
+    }
+  }
+  return p + HEADER;
+}
+
+/** Frees what `lastingZeroed` gave. */
+export function lastingRelease(p: usize): void {
+  const at = p - HEADER;
+  // SAFETY: `p` came from `lastingZeroed`, whose header holds the size, and is not used after.
+  unsafe {
+    const total = addressLoad<usize>(at);
+    velt_rt_free$lasting(Ptr.orNull<u8>(at), total as u64, HEADER as u64);
+  }
+}
+
+/** `n` bytes set to 0, aligned to 16; 0 when there is no memory (never: `lastingZeroed` stops). */
+export function blockZeroed(n: usize): usize {
+  return lastingZeroed(n);
+}
+
+/** Frees what `blockZeroed` gave. */
+export function blockFree(p: usize): void {
+  lastingRelease(p);
+}
+
+/** No environment: the counters stay off. */
+export function statsAsked(): bool {
+  return false;
+}

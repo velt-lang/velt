@@ -41,10 +41,12 @@ export const imports: Imports = {
     native: "./lang/hooks/unwind_itanium.velt",
     default: "./lang/hooks/unwind_none.velt",
   },
-  // The reactor of the executor in Velt (std/lang/hooks/sched_io.velt): what the worker waits in
-  // while it has nothing to run (sockets' readiness and wakes from other threads): kqueue on
-  // macOS, epoll and an eventfd on Linux, `\Device\Afd` polls over an I/O completion port on
-  // Windows; elsewhere no sockets and a spinning wait.
+  /**
+   * The reactor of the executor in Velt (std/lang/hooks/sched_io.velt): what the worker waits in
+   * while it has nothing to run (sockets' readiness and wakes from other threads): kqueue on
+   * macOS, epoll and an eventfd on Linux, `\Device\Afd` polls over an I/O completion port on
+   * Windows; elsewhere no sockets and a spinning wait.
+   */
   "#reactor": {
     darwin: "./lang/hooks/reactor_kqueue.velt",
     linux: "./lang/hooks/reactor_epoll.velt",
@@ -52,10 +54,19 @@ export const imports: Imports = {
     wasi: "./lang/hooks/reactor_wasi.velt",
     default: "./lang/hooks/reactor_none.velt",
   },
-  // The two OS calls the executor in Velt's core makes whatever its reactor (std/lang/hooks/
-  // sched_mem.velt, sched_io_wait.velt): `sched_yield` and `clock_gettime`, or on Windows
-  // `SwitchToThread` and the performance counter.
-  "#sched-os": { win32: "./lang/hooks/os_win32.velt", default: "./lang/hooks/os_posix.velt" },
+  /**
+   * The OS calls the executor in Velt's core makes whatever its reactor (std/lang/hooks/
+   * sched_mem.velt, sched_io_wait.velt, sched_cells.velt): `sched_yield`, `clock_gettime`, a write
+   * to stderr and `abort`, or on Windows `SwitchToThread` and the performance counter, or on a JS
+   * host (no C library) nothing to give the core to, the host's clock and the runtime's own.
+   */
+  "#sched-os": {
+    win32: "./lang/hooks/os_win32.velt",
+    js: "./lang/hooks/os_js.velt",
+    default: "./lang/hooks/os_posix.velt",
+  },
+  /** Blocks as long-lived as a thread: the C library's, or the runtime's on a JS host. */
+  "#mem-lasting": { js: "./lang/hooks/lasting_js.velt", default: "./lang/hooks/lasting_c.velt" },
   // The memory of the symbol records made at run time: `Symbol.for`'s one at a time
   // (std/lang/symbol/registry.velt) and `Symbol()`'s in 4 KiB chunks (record.velt). The C
   // library's where there is one, the compiled code's allocator (not zeroed) in the browser.
@@ -175,9 +186,16 @@ export const imports: Imports = {
     "std-scheduler": "./net/tcp_sched.velt",
     default: "./net/rt.velt",
   },
-  // The C library's socket functions those sockets call (std/net/fd_socket.velt, fd_io.velt,
-  // fd_addr.velt, std/lang/hooks/sched_io_write.velt), or Winsock's under the same names.
-  "#net-calls": { win32: "./net/calls_win32.velt", default: "./net/calls_posix.velt" },
+  /**
+   * The C library's socket functions those sockets call (std/net/fd_socket.velt, fd_io.velt,
+   * fd_addr.velt, std/lang/hooks/sched_io_write.velt), or Winsock's under the same names, or on a
+   * JS host, which has neither, functions that fail as without sockets.
+   */
+  "#net-calls": {
+    win32: "./net/calls_win32.velt",
+    js: "./net/calls_js.velt",
+    default: "./net/calls_posix.velt",
+  },
   // `streamPair`'s two connected sockets (std/net/pair.velt): a `socketpair`, or on Windows,
   // which has none, a loopback connection.
   "#net-pair": { win32: "./net/pair_win32.velt", default: "./net/pair_posix.velt" },

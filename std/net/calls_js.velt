@@ -1,0 +1,147 @@
+// velt/net (internal): the socket functions of `#net-calls` on a JS host, which has no C library
+// and no sockets: the executor in Velt's I/O code is compiled there (std/lang/hooks/
+// sched_io_write.velt) but its reactor supports none (std/lang/hooks/reactor_none.velt), so
+// nothing reaches these with a socket. Each fails as the C function does (-1), with the names and
+// signatures of std/net/calls_posix.velt.
+
+import { StrBytes } from "velt/ffi/str_bytes";
+import { Ptr } from "velt/ffi/ptr";
+import { ptrFromAddress } from "velt/lang/intrinsics";
+import * as m from "velt/lang/hooks/sched_mem";
+
+declare c("c") function memmove$text(dst: Ptr<u8> | null, src: StrBytes, n: usize): Ptr<u8> | null;
+
+/** C's `struct sockaddr`: velt/net passes the addresses of the ones it lays out. */
+export declare c type sockaddr;
+/** C's `struct addrinfo`: `getaddrinfo`'s results, which velt/net reads and frees. */
+export declare c type addrinfo;
+
+export function socket(family: i32, kind: i32, protocol: i32): i32 {
+  return -1;
+}
+
+export function connect$net(fd: i32, addr: Ptr<sockaddr> | null, len: u32): i32 {
+  return -1;
+}
+
+export function bind(fd: i32, addr: Ptr<sockaddr> | null, len: u32): i32 {
+  return -1;
+}
+
+export function listen(fd: i32, backlog: i32): i32 {
+  return -1;
+}
+
+export function getsockopt(
+  fd: i32,
+  level: i32,
+  name: i32,
+  value: Ptr<u8> | null,
+  len: Ptr<u32> | null,
+): i32 {
+  return -1;
+}
+
+export function setsockopt(fd: i32, level: i32, name: i32, value: Ptr<u8> | null, len: u32): i32 {
+  return -1;
+}
+
+export function getsockname(fd: i32, addr: Ptr<sockaddr> | null, len: Ptr<u32> | null): i32 {
+  return -1;
+}
+
+export function getpeername(fd: i32, addr: Ptr<sockaddr> | null, len: Ptr<u32> | null): i32 {
+  return -1;
+}
+
+/** This thread's message: empty, as no call here sets an error to describe. */
+const TEXT_HERE = new ThreadLocal<u64>(0);
+
+/** The message of `errno` `e`: an empty NUL-terminated text, which the caller doesn't free. */
+export function strerror(e: i32): Ptr<u8> {
+  let buf = TEXT_HERE.get() as usize;
+  if (buf === 0) {
+    buf = m.lastingZeroed(8);
+    TEXT_HERE.set(buf as u64);
+  }
+  // SAFETY: `buf` is this thread's zeroed block, never 0.
+  return unsafe { ptrFromAddress<u8>(buf) };
+}
+
+export function close$net(fd: i32): i32 {
+  return -1;
+}
+
+export function close$io(fd: i32): i32 {
+  return -1;
+}
+
+export function recv$net(fd: i32, buf: Ptr<u8> | null, n: usize, flags: i32): isize {
+  return -1;
+}
+
+export function send$io(fd: i32, buf: Ptr<u8> | null, n: usize, flags: i32): isize {
+  return -1;
+}
+
+export function recvfrom$net(
+  fd: i32,
+  buf: Ptr<u8> | null,
+  n: usize,
+  flags: i32,
+  addr: Ptr<sockaddr> | null,
+  len: Ptr<u32> | null,
+): isize {
+  return -1;
+}
+
+export function sendto$net(
+  fd: i32,
+  buf: Ptr<u8> | null,
+  n: usize,
+  flags: i32,
+  addr: Ptr<sockaddr> | null,
+  len: u32,
+): isize {
+  return -1;
+}
+
+export function shutdown$net(fd: i32, how: i32): i32 {
+  return -1;
+}
+
+export function shutdown$io(fd: i32, how: i32): i32 {
+  return -1;
+}
+
+export function read$net(fd: i32, buf: Ptr<u8> | null, n: usize): isize {
+  return -1;
+}
+
+/** Copies a string's bytes to an address. */
+export function bcopy$text(src: StrBytes, dst: Ptr<u8> | null, n: usize): void {
+  // SAFETY: the caller's destination holds `n` bytes, the string as many.
+  unsafe {
+    memmove$text(dst, src, n);
+  }
+}
+
+/** No lookup gives results here: nothing to free. */
+export function freeaddrinfo(ai: Ptr<addrinfo> | null): void {}
+
+/** Is `getaddrinfo`'s failure an OS error, worded as one? No lookup runs here: as POSIX's. */
+export const GAI_OS_ERROR: bool = false;
+
+/** The message of `getaddrinfo`'s failure `e` (as `strerror`). */
+export function gai_strerror(e: i32): Ptr<u8> {
+  return strerror(e);
+}
+
+export function inet_ntop(
+  family: i32,
+  src: Ptr<u8> | null,
+  dst: Ptr<u8> | null,
+  size: u32,
+): Ptr<u8> | null {
+  return null;
+}
