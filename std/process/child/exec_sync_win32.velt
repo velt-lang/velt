@@ -149,15 +149,10 @@ function startRead(p: Pipe): void {
   // SAFETY: the buffer holds `room` bytes and nothing grows it while the read is pending.
   const at = unsafe { arrayDataAddress(p.data) } + len;
   const space = (p.room - len) as u32;
+  const h = m.ptrTo<void>(p.h);
+  const ov = m.ptrTo<_OVERLAPPED>(p.ov);
   // SAFETY: `space` bytes at `at`; the handle is open and overlapped, with its `OVERLAPPED`.
-  const done =
-    unsafe { ReadFile$sync(
-      m.ptrTo<void>(p.h),
-      m.ptr(at),
-      space,
-      null,
-      m.ptrTo<_OVERLAPPED>(p.ov),
-    ) };
+  const done = unsafe { ReadFile$sync(h, m.ptr(at), space, null, ov) };
   issued(p, done);
   if (!p.pending) {
     arraySetLen(p.data, len);
@@ -167,17 +162,13 @@ function startRead(p: Pipe): void {
 /** Starts a write of the input's rest (`size` bytes at `from`) to stdin `p`. */
 function startWrite(p: Pipe, from: usize, size: usize): void {
   const left = size - p.off;
-  const n = left > MOST_WRITE ? MOST_WRITE : left;
-  // SAFETY: `n` bytes at `from + off`, alive until the run is over; the handle is open and
-  // overlapped, with its `OVERLAPPED`.
-  const done =
-    unsafe { WriteFile$sync(
-      m.ptrTo<void>(p.h),
-      m.ptr(from + p.off),
-      n as u32,
-      null,
-      m.ptrTo<_OVERLAPPED>(p.ov),
-    ) };
+  const n = (left > MOST_WRITE ? MOST_WRITE : left) as u32;
+  const h = m.ptrTo<void>(p.h);
+  const ov = m.ptrTo<_OVERLAPPED>(p.ov);
+  const at = from + p.off;
+  // SAFETY: `n` bytes at `at`, alive until the run is over; the handle is open and overlapped,
+  // with its `OVERLAPPED`.
+  const done = unsafe { WriteFile$sync(h, m.ptr(at), n, null, ov) };
   issued(p, done);
 }
 
@@ -199,9 +190,10 @@ function issued(p: Pipe, done: i32): void {
  */
 function finished(p: Pipe, wait: bool): i64 {
   const n = new Out<u32>(0);
+  const h = m.ptrTo<void>(p.h);
+  const ov = m.ptrTo<_OVERLAPPED>(p.ov);
   // SAFETY: the operation on this handle and `OVERLAPPED`, over (its event is set) unless `wait`.
-  const ok =
-    unsafe { GetOverlappedResult(m.ptrTo<void>(p.h), m.ptrTo<_OVERLAPPED>(p.ov), n, wait ? 1 : 0) };
+  const ok = unsafe { GetOverlappedResult(h, ov, n, wait ? 1 : 0) };
   p.pending = false;
   return ok !== 0 ? n.value as i64 : -1;
 }
