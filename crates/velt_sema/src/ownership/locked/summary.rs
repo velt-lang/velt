@@ -95,7 +95,13 @@ impl Summaries {
         // and bits, and grows with its callees' summaries; it is not monotone across passes,
         // though: one computed while a callee had no summary yet (read as an unknown callee,
         // which may store any argument into any argument it modifies) can shrink once that
-        // callee has its own. The pass order is fixed, so the result does not depend on hashing.
+        // callee has its own. Functions that call each other in a cycle can also take turns
+        // (one gains a flow as another loses it, #3857's walks through `A | null` and
+        // `B | null`), so a summary that has changed `SETTLE` times only grows from then on: it
+        // keeps what it had (a flow more is a check more), and the passes end. The pass order
+        // is fixed, so the result does not depend on hashing.
+        const SETTLE: u32 = 8;
+        let mut changes: FxHashMap<DefId, u32> = FxHashMap::default();
         loop {
             let mut changed = false;
             for &d in &fns {
@@ -105,7 +111,7 @@ impl Summaries {
                     }
                 }
                 let i = d.0 as usize;
-                let (new, cs) = if cx.is_frozen(d) {
+                let (mut new, cs) = if cx.is_frozen(d) {
                     let Some(Def::Fn(f)) = cx.defs.get(i).and_then(|x| x.as_ref()) else {
                         continue;
                     };
@@ -122,7 +128,15 @@ impl Summaries {
                 };
                 last_run.insert(d, run);
                 callees.insert(d, cs);
+                let n = changes.entry(d).or_insert(0);
+                if *n >= SETTLE {
+                    if let Some(old) = s.sums.get(&d) {
+                        new.flows.extend(old.flows.iter().copied());
+                        new.promises |= old.promises;
+                    }
+                }
                 if s.sums.get(&d) != Some(&new) {
+                    *n += 1;
                     s.sums.insert(d, new);
                     changed_at.insert(d, run);
                     changed = true;
