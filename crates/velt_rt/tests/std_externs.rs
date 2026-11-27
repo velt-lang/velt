@@ -526,6 +526,8 @@ fn the_parsers_see_the_whole_abi() {
         (params.as_slice(), ret.as_str()),
         (&["ptr".to_string()][..], "ptr")
     );
+    // A floor that shows the parser reads the sources, not the size of the ABI: velt_rt shrinks
+    // as std takes its functions over (#2196, #2563), 199 at the time of writing.
     let defs = rust_definitions(&runtime_sources("velt_rt"));
-    assert!(defs.len() > 200, "found only {} definitions", defs.len());
+    assert!(defs.len() > 150, "found only {} definitions", defs.len());
 }

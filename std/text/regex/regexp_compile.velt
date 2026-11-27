@@ -1,0 +1,19 @@
+// velt/text (internal): compiling a `RegExp`'s pattern (regexp.velt).
+
+import { assemble } from "velt/text/regex/assemble";
+import { RegExpError } from "velt/text/regex/errors";
+import { Program } from "velt/text/regex/program";
+
+/**
+ * The program of `pattern` with `flags`, and the names of its groups in `names`. Throws
+ * `RegExpError` for flags JavaScript refuses and for a pattern that doesn't compile.
+ */
+export function compileRegExp(pattern: string, flags: string, names: string[]): Program {
+  for (let i: i64 = 0; i < (flags.length as i64); i++) {
+    const f = flags[i];
+    if (!"dgimsuvy".includes(f) || flags.indexOf(f) != i || (f == "v" && flags.includes("u"))) {
+      throw new RegExpError(`Invalid flags supplied to RegExp constructor '${flags}'`);
+    }
+  }
+  return assemble(pattern, flags, names);
+}

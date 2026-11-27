@@ -162,13 +162,13 @@ describe("A search off the kept tables", () => {
     const s = "y".repeat(40);
     const m = new Search(0);
     const d = new Dfa(prog, false);
-    d.forward(m, s + "ab1", strByteLen(s) + 3, 0, false, false);
+    d.forward(prog, m, s + "ab1", strByteLen(s) + 3, 0, false, false);
     const t = shared(new DfaTables(d));
     const again = thaw(prog, false, t);
-    again.forward(m, s + "ab1", strByteLen(s) + 3, 0, false, false);
+    again.forward(prog, m, s + "ab1", strByteLen(s) + 3, 0, false, false);
     expect(grew(again, t)).toBe(false);
     // After `c`, the state after `ab`: no new state, one new transition.
-    again.forward(m, s + "c1", strByteLen(s) + 2, 0, false, false);
+    again.forward(prog, m, s + "c1", strByteLen(s) + 2, 0, false, false);
     expect(grew(again, t)).toBe(true);
   });
 });

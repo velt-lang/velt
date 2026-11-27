@@ -1,0 +1,23 @@
+/a/g
+[ /a/g, /b/ ]
+{ r: /a/g, n: 1 }
+Sub /x/y
+[ Sub /x/ ]
+/a/g /c/im /a/g
+"a\\/b" /a\/b/g
+true
+"(?:)" /(?:)/g
+true
+"\\n" /\n/g
+true
+"[/]" /[/]/g
+true
+"\\/" /\//g
+true
+"a\\u2028b" /a\u2028b/g
+true
+"\\nz" /\nz/g
+true
+"x\\ry\\/" /x\ry\//g
+true
+gimsy dg

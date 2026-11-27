@@ -3,12 +3,10 @@
 use super::*;
 
 #[test]
-fn c_libraries_are_decoded_and_only_c_is_no_crate() {
+fn c_libraries_are_decoded() {
     let m = read(&with(
         "native: { c: { sqlite3: { system: { darwin: \"sqlite3\", linux: \"sqlite3\", win32: \"winsqlite3\" } }, blas: { system: { darwin: \"framework:Accelerate\", default: \"openblas\" } } } }, allowNative: [\"sqlite\"]",
     ));
-    // `native` with only `c` is no Rust crate.
-    assert!(m.native.is_none());
     assert_eq!(m.allow_native, ["sqlite"]);
     let libraries = m.c_libraries.as_ref().expect("native.c is decoded");
     let sqlite = &libraries["sqlite3"];
@@ -28,15 +26,10 @@ fn c_libraries_are_decoded_and_only_c_is_no_crate() {
         blas.system_for("x86_64-unknown-linux-gnu"),
         Some("openblas")
     );
-    // With crate keys too, the crate is there.
-    let both = read(&with(
-        "native: { targets: [], c: { z: { system: { default: \"z\" } } } }",
-    ));
-    assert!(both.native.is_some() && both.c_libraries.is_some_and(|c| c.contains_key("z")));
     // A package declaring only the C library's functions says so with an empty `c`: it has
-    // native code, as one with libraries or a crate does, and one without `native` has none.
+    // native code, as one with libraries does, and one without `native` has none.
     let libc_only = read(&with("native: { c: {} }"));
-    assert!(libc_only.native.is_none() && libc_only.has_native_code());
+    assert!(libc_only.has_native_code() && !libc_only.has_bundles());
     assert!(!read(&with("define: {}")).has_native_code());
 }
 
@@ -186,14 +179,7 @@ fn c_libraries_and_allow_native_are_written_back() {
     let text = libc.to_velt();
     assert!(text.contains("native: { c: {} }"), "{text}");
     assert_eq!(read(&text), libc);
-    // Beside a crate.
-    let both = read(&with(
-        "native: { targets: [\"x86_64-unknown-linux-gnu\"], c: {} }",
-    ));
-    assert_eq!(read(&both.to_velt()), both);
-    let json = both.to_json();
-    assert_eq!(json["native"]["c"], serde_json::json!({}));
-    assert_eq!(json["native"]["path"], "native");
+    assert_eq!(libc.to_json()["native"]["c"], serde_json::json!({}));
 }
 
 #[test]
@@ -266,12 +252,12 @@ fn headers_and_unchecked_are_read_checked_and_written_back() {
 }
 
 #[test]
-fn c_sources_are_decoded_and_are_no_crate() {
+fn c_sources_are_decoded() {
     let m = read(&with(
         "native: { targets: [\"aarch64-apple-darwin\"], c: { tiny: { sources: [\"native/a.c\", \"native/sub/b.c\"], headers: [\"native/a.h\", \"<stddef.h>\"], defines: { TINY_X: \"2\", _Y: \"\" } } } }",
     ));
-    // `targets` with `sources` is what they publish: there is no crate.
-    assert!(m.native.is_none() && m.has_bundles() && m.has_native_code());
+    // `targets` with `sources` is what they publish.
+    assert!(m.has_bundles() && m.has_native_code());
     assert_eq!(m.bundle_targets(), ["aarch64-apple-darwin"]);
     let lib = &m.c_libraries.as_ref().unwrap()["tiny"];
     assert_eq!(lib.sources, ["native/a.c", "native/sub/b.c"]);
@@ -285,10 +271,9 @@ fn c_sources_are_decoded_and_are_no_crate() {
     let again = Manifest::parse(&m.to_velt()).unwrap();
     assert_eq!(again.c_libraries, m.c_libraries);
     assert_eq!(again.c_targets, m.c_targets);
-    assert!(again.native.is_none());
     assert_eq!(m.to_json()["native"]["c"]["tiny"]["defines"]["TINY_X"], "2");
     assert_eq!(m.to_json()["native"]["targets"][0], "aarch64-apple-darwin");
-    // No sources: as before, `targets` says there is a crate.
+    // No sources: nothing to publish.
     assert!(!read(&with("native: { c: { x: { unchecked: true } } }")).has_bundles());
 }
 
@@ -368,12 +353,12 @@ fn c_sources_that_are_not_are_errors() {
         "native: { c: { x: { fetch: {}, sources: [\"native/a.c\"] } } }",
     ));
     assert!(!message.contains("Rust crate"), "{message}");
-    // A crate's keys don't go with `sources`, in any order.
+    // A crate's keys are refused, in any order.
     for crate_key in ["path: \"rust\"", "wasm: false"] {
         let (message, _) = error(&with(&format!(
             "native: {{ {crate_key}, c: {{ x: {{ sources: [\"native/a.c\"] }} }} }}"
         )));
-        assert!(message.contains("has no crate yet"), "{message}");
+        assert!(message.contains("was a Rust crate's"), "{message}");
     }
     let m = "export const pkg: Package = { name: \"@s/p\", version: \"1.0.0\", native: { c: { x: { sources: [\"native/a.c\"] } } } };";
     let (message, _) = error(&format!(

@@ -78,7 +78,6 @@ pub(super) fn lower_program_kept<'h>(
         let pass_start = std::time::Instant::now();
         let mut cx = Cx::new(hir, types, counted.clone());
         cx.value_params = value_params.take();
-        cx.native_inits = opts.native_inits.to_vec();
         cx.cell_checks = opts.cell_checks;
         cx.heap_hooks = opts.heap_hooks;
         cx.target = opts

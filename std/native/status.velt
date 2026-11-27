@@ -1,5 +1,5 @@
-// velt/native (internal): `IoStatus`, the result of a runtime or native-package operation that
-// produces nothing (the 32-byte `VeltErr` prefix of `IoResult`, velt/native/result).
+// velt/native (internal): `IoStatus`, the result of a runtime operation that produces nothing
+// (the 32-byte `VeltErr` prefix of `IoResult`, velt/native/result).
 
 import { ioError } from "velt/native/error";
 

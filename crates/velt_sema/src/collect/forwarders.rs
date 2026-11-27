@@ -161,8 +161,8 @@ pub(crate) fn synth_method(
         Target::Slot(slot) => {
             // Vtable entries share one error type (a dispatch group), which has no type params.
             let entry = d
-                .and_then(|d| cx.adt(d))
-                .and_then(|a| a.vtable.get(slot as usize).copied());
+                .and_then(|d| cx.vtable_of(d))
+                .and_then(|v| v.get(slot as usize).copied());
             if let Some(m) = entry {
                 cx.fn_info_mut(def).throw_srcs = vec![ThrowSrc::Call(m, vec![], span)];
             }

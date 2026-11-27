@@ -1,0 +1,81 @@
+// `Object.freeze(x)` of a value made before, of an object type the program writes: the object
+// gets a frozen mark, `Object.isFrozen` reads it, and a write to a frozen object's field
+// throws Node's `TypeError`, which `try` catches (#2623).
+interface ServerAppConfig {
+  name: string;
+  claimedBases?: string[];
+  hits: number;
+}
+
+// sigx's `stampServerAppConfig`: freeze once, pre-seeding the array a later `??=` reads.
+function stamp(config: ServerAppConfig): ServerAppConfig {
+  if (!Object.isFrozen(config)) {
+    config.claimedBases ??= [];
+    Object.freeze(config);
+  }
+  return config;
+}
+
+function attempt(what: string, write: () => void): void {
+  try {
+    write();
+    console.log(what, "written");
+  } catch (e) {
+    console.log(what, e instanceof TypeError, (e as Error).message);
+  }
+}
+
+const frozen: ServerAppConfig = { name: "app", hits: 0 };
+const open: ServerAppConfig = { name: "open", hits: 0 };
+stamp(frozen);
+stamp(frozen);
+console.log(Object.isFrozen(frozen), Object.isFrozen(open), frozen.claimedBases?.length);
+
+attempt("assign", () => {
+  frozen.name = "x";
+});
+attempt("compound", () => {
+  frozen.hits += 1;
+});
+attempt("increment", () => {
+  frozen.hits++;
+});
+attempt("logical", () => {
+  frozen.claimedBases ??= ["never"];
+});
+attempt("bracket", () => {
+  frozen["name"] = "y";
+});
+// Freeze is shallow: the array a frozen object holds stays writable.
+frozen.claimedBases?.push("/api");
+open.hits += 2;
+open.name = "still open";
+console.log(frozen.name, frozen.hits, frozen.claimedBases, open.name, open.hits);
+
+// A value whose type is never written: `isFrozen` tells frozen from not.
+interface Point {
+  x: number;
+  y: number;
+}
+const p: Point = { x: 1, y: 2 };
+const q: Point = { x: 3, y: 4 };
+Object.freeze(p);
+console.log(Object.isFrozen(p), Object.isFrozen(q));
+
+// The same object seen through another type of the same fields: the write is checked too.
+type Pair = { x: number; y: number };
+function bump(v: Pair): void {
+  v.x += 10;
+}
+const r: Pair = { x: 5, y: 6 };
+bump(r);
+Object.freeze(r);
+attempt("view", () => bump(r));
+console.log(r.x);
+
+// Primitives are frozen; other values Velt can't freeze are not.
+console.log(Object.isFrozen(1), Object.isFrozen("s"), Object.isFrozen(true), Object.isFrozen([1]));
+
+// A frozen object is sealed and not extensible; Velt seals objects only by freezing them.
+console.log(Object.isSealed(frozen), Object.isExtensible(frozen), Object.isSealed(open), Object.isExtensible(open));
+console.log(Object.isSealed(2), Object.isExtensible("s"), Object.isExtensible([1]));

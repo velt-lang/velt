@@ -83,7 +83,6 @@ pub(super) fn build(
     let lower = velt_vir::LowerOptions {
         source_map: Some(&sess.sm),
         std_root: Some(std_root),
-        native_inits: &[],
         cell_checks: false,
         debug_info: false,
         target: Some(target),
