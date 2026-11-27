@@ -60,9 +60,48 @@ pub fn stats_of(m: fs::Metadata) -> VeltStat {
             .modified()
             .ok()
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map_or(0.0, |d| d.as_secs_f64() * 1000.0),
+            // Node's `mtimeMs` (`sec * 1e3 + nsec / 1e6`), as std's native `stat` computes it: the
+            // same float for the same file (#3785); `as_secs_f64() * 1000.0` differs in the last
+            // bits for about one time in four.
+            .map_or(0.0, |d| {
+                d.as_secs() as f64 * 1000.0 + d.subsec_nanos() as f64 / 1e6
+            }),
         is_file: m.is_file() as u8,
         is_dir: m.is_dir() as u8,
         is_symlink: m.file_type().is_symlink() as u8,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stats_of;
+    use std::fs;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    /// A file's `mtime_ms` is Node's `sec * 1e3 + nsec / 1e6` to the last bit (#3785): 40
+    /// modification times 1.2345 ms apart, of which `as_secs_f64() * 1000.0` gets 10 wrong.
+    #[test]
+    fn mtime_ms_is_nodes_float() {
+        let path = std::env::temp_dir().join(format!("velt-rt-wasm-mtime-{}", std::process::id()));
+        let file = fs::File::create(&path).expect("create a temporary file");
+        let mut wrong = Vec::new();
+        for k in 0..40u32 {
+            let at = UNIX_EPOCH + Duration::new(1_795_626_242, 919_527_600 + k * 1_234_500);
+            file.set_modified(at).expect("set the modification time");
+            // What the file system kept (it may round the nanoseconds).
+            let kept = fs::metadata(&path)
+                .and_then(|m| m.modified())
+                .expect("read the modification time back")
+                .duration_since(UNIX_EPOCH)
+                .expect("after the epoch");
+            let node = kept.as_secs() as f64 * 1e3 + kept.subsec_nanos() as f64 / 1e6;
+            let got = stats_of(fs::metadata(&path).expect("stat")).mtime_ms;
+            if got.to_bits() != node.to_bits() {
+                wrong.push((kept, got, node));
+            }
+        }
+        drop(file);
+        let _ = fs::remove_file(&path);
+        assert!(wrong.is_empty(), "mtime_ms differs from Node's: {wrong:?}");
     }
 }

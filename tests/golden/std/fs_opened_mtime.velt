@@ -1,0 +1,35 @@
+// A file's mtimeMs is the same number from stat(path) and from the open file's
+// FileReader.openedStats(), as Node's fs.stat and fs.fstat give one (`sec * 1e3 + nsec / 1e6`):
+// a server that looked at a file with stat and then opens it tells by the two whether the path
+// still names that file (#3785: about one modification time in four differed in its last bits).
+import { openRead, remove, stat, writeFile } from "velt/fs";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+
+async function main() {
+  const base = `${tmpdir()}/velt-opened-mtime-${uuidv4()}`;
+  let same = 0;
+  let sizes = 0;
+  const files = 40;
+  for (let i = 0; i < files; i++) {
+    const path = `${base}-${i}.txt`;
+    await writeFile(path, "x".repeat(i + 1));
+    const looked = await stat(path);
+    const r = await openRead(path);
+    const opened = r.openedStats();
+    r.close();
+    if (opened.mtimeMs === looked.mtimeMs) {
+      same++;
+    } else {
+      console.log("differs:", looked.mtimeMs, opened.mtimeMs);
+    }
+    if (opened.size === looked.size) {
+      sizes++;
+    }
+    await remove(path);
+  }
+  console.log("same mtimeMs:", same, "of", files);
+  console.log("same size:", sizes, "of", files);
+}
+
+main();
