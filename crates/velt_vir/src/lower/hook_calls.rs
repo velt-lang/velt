@@ -22,9 +22,11 @@
 //! moved value or a share of a borrowed one: [`Own`]) and returns a [`Call`], which emits the call
 //! the way the site needs it ([`Call::emit`], [`Call::emit_to`], [`Call::emit_std`],
 //! [`Call::emit_owned`]). A hook lowering cannot do without is an ICE when std lacks it; a
-//! `fallback` hook's builder returns `None` when it is missing or unchecked, and the caller calls
-//! the runtime instead. The builder of a hook whose entry lists `constructs(…)` takes the
-//! [`Construct`] the call site lowers, and asserts (in release compilers too: one bit test) that
+//! `fallback` hook's builder returns `None` when the program doesn't load its module or sema left
+//! it unchecked (its module loaded without it is an ICE: std_defs.rs), and the caller writes the
+//! value another way (another hook, or lowering's own glue), never with a runtime extern the hook
+//! replaces (velt_common `hook_replaces.rs`). The builder of a hook whose entry lists
+//! `constructs(…)` takes the [`Construct`] the call site lowers, and asserts (in release compilers too: one bit test) that
 //! sema demanded the hook (`hir::Program::hooks_demanded`, velt_common `hook_demand.rs`): a
 //! construct missing from the table is an ICE naming it. A `prebuilt` hook whose module the
 //! program doesn't load is a call of the function sema declared for it in the module's object
@@ -298,8 +300,8 @@ impl Target {
 }
 
 impl<R> Call<R> {
-    /// The call of hook `name` (a fallback hook): `None` when std lacks it or sema left it
-    /// unchecked.
+    /// The call of hook `name` (a fallback hook): `None` when the program doesn't load its module
+    /// or sema left it unchecked; its module loaded without it is an ICE (std_defs.rs).
     #[inline]
     fn find<const N: usize>(
         lw: &mut FnLower<'_, '_>,
@@ -307,7 +309,7 @@ impl<R> Call<R> {
         targs: Vec<TyId>,
         args: [Passed; N],
     ) -> Option<Self> {
-        let def = (lw.cx.prelude_def(name)).filter(|d| !lw.cx.hir.unchecked.contains(d))?;
+        let def = lw.cx.std_hook_live(name)?;
         Some(Self::with(lw, def, targs, args))
     }
 
@@ -320,7 +322,7 @@ impl<R> Call<R> {
         args: [Passed; N],
     ) -> Self {
         let task = super::module_state::executor_task_hook(name);
-        let Some(def) = lw.cx.prelude_def(name) else {
+        let Some(def) = lw.cx.std_hook_if_loaded(name) else {
             // A prebuilt hook whose module the program doesn't load: sema declared it.
             if let Some(hook) = prebuilt_named(name) {
                 return Self::declared(lw, hook, args);
@@ -331,7 +333,7 @@ impl<R> Call<R> {
                      nothing on it (no live async code or executor extern, velt_sema `lazy_std` \
                      `sched_hooks`)"
                 )),
-                None => ice(format_args!("std without the hook `{name}`")),
+                None => ice(format_args!("std hook `{name}` missing")),
             }
         };
         lw.cx.sched_used |= task.is_some();
@@ -363,7 +365,7 @@ impl<R> Call<R> {
             hook.name,
             c.name()
         );
-        if hook.prebuilt && lw.cx.prelude_def(name).is_none() {
+        if hook.prebuilt && lw.cx.std_hook_if_loaded(name).is_none() {
             return Self::declared(lw, hook, args);
         }
         Self::must(lw, name, targs, args)

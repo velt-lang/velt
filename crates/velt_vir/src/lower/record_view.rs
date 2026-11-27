@@ -81,7 +81,8 @@ impl Cx<'_> {
 
     /// The view types implied by this pass's facts.
     pub(super) fn close_record_views(&mut self, next: &mut Boxing) {
-        if self.facts.record_view_targets.is_empty() || self.prelude_def(VIEW_NEW).is_none() {
+        if self.facts.record_view_targets.is_empty() || self.std_hook_if_loaded(VIEW_NEW).is_none()
+        {
             return;
         }
         next.record_views
@@ -90,7 +91,7 @@ impl Cx<'_> {
 
     /// The hook class `RecordViewSource`, as a type.
     fn view_source_ty(&mut self) -> Option<TyId> {
-        let d: DefId = self.prelude_def(VIEW_SOURCE)?;
+        let d: DefId = self.std_hook_if_loaded(VIEW_SOURCE)?;
         Some(self.intern(TyKind::Adt(d, vec![])))
     }
 }

@@ -185,10 +185,7 @@ impl FnLower<'_, '_> {
         let TyKind::Shared(value_ty) = self.cx.kind(shared_ty) else {
             super::ice("a retired reference that is not `shared`");
         };
-        let d = self
-            .cx
-            .prelude_def(RETIRE)
-            .unwrap_or_else(|| super::ice(format_args!("no `{RETIRE}`")));
+        let d = self.cx.std_hook(RETIRE);
         let owned = match self.cx.hir.def(d) {
             hir::Def::Fn(f) => f
                 .params

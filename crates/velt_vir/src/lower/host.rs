@@ -319,6 +319,5 @@ impl Cx<'_> {
 
 /// The definition of std's host class `qualified` (live with a call of a host function).
 fn hook_def(cx: &Cx<'_>, qualified: &str) -> DefId {
-    cx.prelude_def(qualified)
-        .unwrap_or_else(|| ice(format_args!("no `{qualified}` in velt/host")))
+    cx.std_hook(qualified)
 }

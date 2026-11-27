@@ -483,10 +483,10 @@ impl<'h> Cx<'h> {
             Rt::Free => velt_common::std_hook!(heap_free),
             _ => return,
         };
-        let def = (self.prelude_def(name)).filter(|d| !self.hir.unchecked.contains(d));
-        let Some(def) = def else {
-            ice(format_args!("std without the hook `{name}`"))
-        };
+        let def = self.std_hook(name);
+        if self.hir.unchecked.contains(&def) {
+            ice(format_args!("std hook `{name}` left unchecked"))
+        }
         self.func_for(def, vec![]);
     }
 
