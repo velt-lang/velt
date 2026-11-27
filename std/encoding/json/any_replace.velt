@@ -46,7 +46,11 @@ export function replaceJsonAny(
     return replaceJsonAny(callToJSON(v, key), key, null, replacer, depth, false);
   }
   let text = "";
-  if (raw == null) {
+  if (raw == null && !hook && hooked && t.name == "Date") {
+    // What a `toJSON` returned is not converted again: a `Date` has no enumerable own
+    // properties, as in Node.
+    text = "{}";
+  } else if (raw == null) {
     const w = new StringBuilder();
     writeJsonAnyRaw(w, v, key);
     text = w.take();

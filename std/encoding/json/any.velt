@@ -73,11 +73,15 @@ export function writeJsonAny(w: StringBuilder, v: any, key: string): void {
     // a `JsonValue` only in a program that has some.
     w.append(callToJSON(v, key) as string);
   } else if (kind == "array" || kind == "tuple") {
-    enter(v);
+    if (!enter(w, v)) {
+      return;
+    }
     writeElements(w, v);
     endVisit();
   } else if (kind == "shared") {
-    enter(v);
+    if (!enter(w, v)) {
+      return;
+    }
     writeJsonAny(w, entryValue(v, 0), key);
     endVisit();
   } else if (kind == "class" && t.hasHook("toJSON")) {
@@ -86,11 +90,15 @@ export function writeJsonAny(w: StringBuilder, v: any, key: string): void {
     // No enumerable own properties, as in Node.
     w.append("{}");
   } else if (kind == "object" || kind == "class" || kind == "struct") {
-    enter(v);
+    if (!enter(w, v)) {
+      return;
+    }
     writeMembers(w, v, null);
     endVisit();
   } else if (kind == "record") {
-    enter(v);
+    if (!enter(w, v)) {
+      return;
+    }
     writeMembers(w, v, recordOrder(v));
     endVisit();
   } else if (anyIsPromise(v)) {
@@ -106,11 +114,48 @@ export function holdsJsonValue(v: any): bool {
   return v instanceof JsonValue;
 }
 
-/** Starts writing `v`, which is a cycle when it is being written already. */
-export function enter(v: any): void {
-  if (!beginVisit(identity(v))) {
+// 1 while `jsonOfAny` writes what a replacer declared with `any` returned, 2 once a value met
+// again inside itself was written there as `null`, and 3 from then until the walk takes it
+// (`jsonCutTaken`) to throw Node's `TypeError` there (replace_ops.velt). Otherwise (0) such a
+// value is that error at once.
+const JSON_CUT = new ThreadLocal<u64>(0);
+
+/**
+ * Starts writing `v`: true, or, when `v` is being written already (a cycle), the circular-structure
+ * error, or `null` written for it while a replacer's result is written (`jsonCutBegin`).
+ */
+export function enter(w: StringBuilder, v: any): bool {
+  if (beginVisit(identity(v))) {
+    return true;
+  }
+  const s = JSON_CUT.get();
+  if (s != 1 && s != 2) {
     circular();
   }
+  JSON_CUT.set(2);
+  w.append("null");
+  return false;
+}
+
+/** Starts writing a replacer's result, with a cycle in it cut as `null` (`enter`). */
+export function jsonCutBegin(): void {
+  JSON_CUT.set(1);
+}
+
+/** Ends what `jsonCutBegin` started: whether a cycle was cut (then the walk takes it next). */
+export function jsonCutEnd(): bool {
+  const cut = JSON_CUT.get() == 2;
+  JSON_CUT.set(cut ? 3 : 0);
+  return cut;
+}
+
+/** Whether the replacer's result just taken is a cycle `jsonCutEnd` cut (once). */
+export function jsonCutTaken(): bool {
+  if (JSON_CUT.get() != 3) {
+    return false;
+  }
+  JSON_CUT.set(0);
+  return true;
 }
 
 /** A number as its type writes it: an integer exactly, a float as JavaScript does. */
@@ -132,13 +177,20 @@ function writeHooked(w: StringBuilder, v: any, key: string): void {
 /**
  * Appends `r`, what a `toJSON(key)` returned, as JavaScript writes it: the result's own `toJSON`
  * is not called (#3732), so an instance of a class with one (the value itself, after
- * `return this`, or another) is written by its members; anything else as `writeJsonAny` writes it.
+ * `return this`, or another) is written by its members (a `Date` has none: `{}`); anything else as `writeJsonAny` writes it.
  */
 export function writeJsonResult(w: StringBuilder, r: any, key: string): void {
   if (jsonPresent(r) && !holdsJsonValue(r)) {
     const t = typeOf(r);
     if (t.kind == "class" && t.hasHook("toJSON")) {
-      enter(r);
+      if (t.name == "Date") {
+        // No enumerable own properties, as in Node.
+        w.append("{}");
+        return;
+      }
+      if (!enter(w, r)) {
+        return;
+      }
       writeMembers(w, r, null);
       endVisit();
       return;

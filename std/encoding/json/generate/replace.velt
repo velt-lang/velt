@@ -201,6 +201,10 @@ function body(req: InstanceRequest, out: Output, hook: bool): void {
   // is its own JSON form: no text to write and read back).
   if (k == "string" || k == "boolean") {
     out.line(`const view = ${w.raw} ?? JsonValue.of(${v});`);
+  } else if (k == "date" && !hook) {
+    // What a `toJSON` returned is not converted again: a `Date` has no enumerable own
+    // properties, as in Node.
+    out.line(`const view = ${w.raw} ?? JsonValue.object();`);
   } else {
     const write = out.instance("writeJsonRaw", [id]);
     out.line(`let text = "";`);

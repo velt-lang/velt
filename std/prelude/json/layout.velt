@@ -7,7 +7,13 @@ import { JsonValue } from "velt/prelude/json/json_value";
 import { propertyList, relayout } from "velt/encoding/json/relayout";
 import { hookCall } from "velt/lang/intrinsics";
 import { StringBuilder } from "velt/text/string_builder";
-import { holdsJsonValue, jsonPresent, writeJsonResult } from "velt/encoding/json/any";
+import {
+  holdsJsonValue,
+  jsonCutBegin,
+  jsonCutEnd,
+  jsonPresent,
+  writeJsonResult,
+} from "velt/encoding/json/any";
 
 // `JSON.stringify(value, replacer, space)` (the compiler calls these): `text` is
 // `JSON.stringify(value)`; `keys` the replacer array's JSON text, applied when `filter`; `gap`
@@ -38,7 +44,9 @@ function jsonReplacerOfAny(f: (key: string, value: any) => any): JsonReplacer {
 
 // What a replacer declared with `any` returned for `key`, as JSON: a `JsonValue` as it is;
 // `undefined`, a function or a symbol left out, as Node leaves them; anything else as Node
-// writes it, without its own `toJSON` (that ran before the replacer, if it was the value).
+// writes it, without its own `toJSON` (that ran before the replacer, if it was the value). A
+// value met again inside itself is `null` here, and the walk throws Node's circular-structure
+// `TypeError` when it takes the result (`jsonCutTaken`).
 function jsonOfAny(r: any, key: string): JsonValue | undefined {
   if (!jsonPresent(r)) {
     return undefined;
@@ -47,7 +55,11 @@ function jsonOfAny(r: any, key: string): JsonValue | undefined {
     return r as JsonValue;
   }
   const w = new StringBuilder();
+  jsonCutBegin();
   writeJsonResult(w, r, key);
+  if (jsonCutEnd()) {
+    return JsonValue.of(null);
+  }
   let out = JsonValue.of(null);
   try {
     out = JsonValue.parse(w.take(), { maxDepth: 4294967295 });

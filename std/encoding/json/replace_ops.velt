@@ -8,6 +8,7 @@
 
 import { noInline } from "velt/lang/intrinsics";
 import { beginVisit, endVisit } from "velt/reflect";
+import { jsonCutTaken } from "velt/encoding/json/any";
 import { JsonValue } from "velt/prelude/json/json_value";
 import { JsonReplacer } from "velt/prelude/json/layout";
 import {
@@ -106,7 +107,10 @@ export function jsonReplacedNull(
   return jsonReplacedMembers(r, replacer, depth);
 }
 
-/** `r`, the replacer's result at `depth`, with its members replaced in turn. */
+/**
+ * `r`, the replacer's result at `depth`, with its members replaced in turn. A `null` may be a
+ * cycle in what a replacer declared with `any` returned: Node's `TypeError` (#3871).
+ */
 export function jsonReplacedMembers(r: JsonValue, replacer: JsonReplacer, depth: i64): JsonValue {
   if (r.isArray()) {
     const out = JsonValue.array();
@@ -124,6 +128,9 @@ export function jsonReplacedMembers(r: JsonValue, replacer: JsonReplacer, depth:
       setRevived(out, k, e);
     }
     return out;
+  }
+  if (r.isNull() && jsonCutTaken()) {
+    throw new TypeError("Converting circular structure to JSON");
   }
   return r;
 }
