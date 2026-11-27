@@ -1,6 +1,6 @@
 // velt/process (internal): the two variables velt passes a program its script and arguments in
 // (`VELT_SCRIPT` from `velt run` and `velt test`, `VELT_ARGV` beside it from `velt dev` and the
-// source-generator host: std/process/args.velt reads them). The program's own reads of its
+// source-generator host: std/process/args_read.velt reads them). The program's own reads of its
 // environment leave them out (`process.env.VELT_SCRIPT`, `in`, `Object.keys(process.env)`), and
 // so does the environment a child starts with, which is made from those reads: as when the
 // runtime removed them at start-up.

@@ -9,7 +9,7 @@ import { ARGV_VAR, hiddenVar, SCRIPT_VAR, withoutHidden } from "./env_hidden";
 import { addressLoad, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 
 export { executablePath, osArgs } from "./args_win32";
-export { keepArgs, releaseArgs, unpackArgs } from "./args_keep";
+export { keepArgs, keptArg, keptCount, releaseArgs } from "./args_keep";
 
 declare c("c") function GetEnvironmentVariableW(
   name: readonly u16[],
@@ -42,10 +42,16 @@ export function getEnv(name: string): string | undefined {
   return hiddenVar(name, true) ? undefined : getEnvRaw(name);
 }
 
-/** `VELT_ARGV` (`argv`) or `VELT_SCRIPT`, which velt passes (std/process/args.velt). */
+/** `VELT_ARGV` (`argv`) or `VELT_SCRIPT`, which velt passes (std/process/args_read.velt). */
 export function passedVar(argv: bool): string | undefined {
   return getEnvRaw(argv ? ARGV_VAR : SCRIPT_VAR);
 }
+
+/** Nothing to take: Windows locks the process' environment in each of its functions. */
+export function lockEnv() {}
+
+/** Nothing to give back (`lockEnv`). */
+export function unlockEnv() {}
 
 /** The variable `name` as it is, the hidden ones included. */
 export function getEnvRaw(name: string): string | undefined {

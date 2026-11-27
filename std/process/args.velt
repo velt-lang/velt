@@ -1,150 +1,20 @@
-// velt/process (internal): the command-line arguments (`argv`, `args`, and Node's `process.argv`
-// through std/lang/hooks/process.velt).
-//
-// They are the OS's (`osArgs` of `#env-sys`' variant: std/process/args_darwin.velt,
-// args_linux.velt, args_win32.velt, env_wasi.velt; none in the browser), except when velt runs
-// the program inside its own process (`velt dev`, the source-generator host): there velt passes
-// them in `VELT_ARGV` (std/process/env_hidden.velt), each argument as its length in UTF-8 bytes,
-// a colon and its text (`5:hello3:a b`). `velt run` and `velt test` pass the script in
-// `VELT_SCRIPT` (Node's `process.argv[1]`). The program's own reads of its environment leave
-// both out.
-//
-// They are read once per process, on first use: they can't change while the program runs. Each
-// list is kept where `#env-sys` keeps it (`keepArgs`: std/process/args_keep.velt, a block of the
-// C library's; none in the browser), its address in a static atomic (`ARGV`, `NODE_ARGV`); each
-// call makes a fresh array from it (`unpackArgs`).
+// velt/process (internal): the command-line arguments (`argv`, `args`), read once per process
+// and kept by std/lang/hooks/process_argv.velt (the readers: std/process/args_read.velt); Node's
+// `process.argv` is std/lang/hooks/process.velt's `processArgv`.
 
-import { executablePath, keepArgs, osArgs, passedVar, releaseArgs, unpackArgs } from "#env-sys";
-import { arrayRemove, noInline, strByteAt, strByteLen } from "velt/lang/intrinsics";
-
-declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
-
-/** The address of `argv()`'s list (`keepArgs`), 0 until the first call. */
-const ARGV = new Atomic<usize>(0);
-
-/** The address of `nodeArgv()`'s list, 0 until the first call. */
-const NODE_ARGV = new Atomic<usize>(0);
-
-/**
- * `list` kept for later calls, in `NODE_ARGV` (`node`) or `ARGV`: two first calls race, one list
- * wins and the other is given back. 0 when it could not be kept (read again at the next call).
- */
-function kept(node: bool, list: string[]): usize {
-  const made = keepArgs(list);
-  if (made === 0) {
-    return 0;
-  }
-  const before =
-    node
-      ? NODE_ARGV.compareExchange(0, made, "acqrel", "acquire")
-      : ARGV.compareExchange(0, made, "acqrel", "acquire");
-  if (before === 0) {
-    return made;
-  }
-  releaseArgs(made);
-  return before;
-}
+import { arrayRemove } from "velt/lang/intrinsics";
+import { argList } from "velt/lang/hooks/process";
 
 /** Every command-line argument, starting with the program path (like C's `argv`). */
-@noInline
 export function argv(): string[] {
-  const found = ARGV.load("acquire");
-  if (found !== 0) {
-    return unpackArgs(found);
-  }
-  const list = readArgv();
-  const made = kept(false, list);
-  return made === 0 ? list : unpackArgs(made);
-}
-
-/** The arguments as velt passed them (`VELT_ARGV`), else the OS's. */
-@noInline
-function readArgv(): string[] {
-  const passed = passedVar(true);
-  if (passed !== undefined) {
-    const decoded = decodeArgv(passed);
-    if (decoded !== undefined) {
-      return decoded;
-    }
-  }
-  return osArgs();
+  return argList(false);
 }
 
 /** The arguments after the program path. */
 export function args(): string[] {
-  let all = argv();
+  let all = argList(false);
   if (all.length > 0) {
     arrayRemove(all, 0);
   }
   return all;
-}
-
-/**
- * Node's `process.argv`: `[runtime, script, ...args]`. The runtime is the running executable
- * (the program, or `velt` under `velt dev`); the script is the source file under `velt run`,
- * `velt test` and `velt dev`, else the executable again (as for a Node single-executable
- * application). In WebAssembly both are the module's path (WASI) or empty (the browser).
- */
-@noInline
-export function nodeArgv(): string[] {
-  const found = NODE_ARGV.load("acquire");
-  if (found !== 0) {
-    return unpackArgs(found);
-  }
-  const list = readNodeArgv();
-  const made = kept(true, list);
-  return made === 0 ? list : unpackArgs(made);
-}
-
-/** `nodeArgv()`'s arguments, read from the OS and velt's variables. */
-@noInline
-function readNodeArgv(): string[] {
-  const all = argv();
-  let exe = executablePath();
-  if (exe.length === 0 && all.length > 0) {
-    exe = all[0];
-  }
-  const script = passedVar(false);
-  const out: string[] = [exe, script ?? exe];
-  for (let i: usize = 1; i < all.length; i++) {
-    out.push(all[i]);
-  }
-  return out;
-}
-
-/**
- * `VELT_ARGV`'s arguments: each its length in UTF-8 bytes, ":", its text. Undefined when the text
- * isn't that (the OS's arguments are used then), a length that ends inside a character included.
- */
-export function decodeArgv(text: string): string[] | undefined {
-  const out: string[] = [];
-  const len = strByteLen(text) as u64;
-  let i: u64 = 0;
-  while (i < len) {
-    let n: u64 = 0;
-    let digits: u64 = 0;
-    while (i < len) {
-      const c = strByteAt(text, i);
-      if (c < 48 || c > 57) {
-        break;
-      }
-      n = n * 10 + ((c - 48) as u64);
-      digits++;
-      i++;
-      if (n > len) {
-        return undefined;
-      }
-    }
-    if (digits === 0 || i >= len || strByteAt(text, i) !== 58 || i + 1 + n > len) {
-      return undefined;
-    }
-    const end = i + 1 + n;
-    // The argument starts after an ASCII ":", so only its end can fall inside a character.
-    if (end < len && (strByteAt(text, end) & 0xc0) === 0x80) {
-      return undefined;
-    }
-    out.push(velt_rt_str_byte_slice(text, i + 1, end));
-    i = end;
-  }
-  return out;
 }
