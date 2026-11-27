@@ -1,12 +1,12 @@
 // velt/process (internal): where std/lang/hooks/process_argv.velt keeps the arguments once read,
-// on the targets with a C library (`#env-sys`' native and WASI variants re-export these; the
-// browser's, std/process/env_wasm.velt, keeps none). A list is one block of the C library's: the
+// on the targets with a C library (`#args-sys`' native and WASI variants re-export these; the
+// browser's, std/process/args_none.velt, keeps none). A list is one block of the C library's: the
 // number of arguments, each argument's offset in the block, then per argument its length word for
 // `velt_rt_strbuf_push_bytes` (the bytes, and as many UTF-16 units again when it is ASCII) and its
 // UTF-8, padded to 8 bytes. A read makes the string with the runtime's builder from those bytes,
 // which are known to be well-formed: no decoding again. The block's address goes in a static
 // atomic of a number, which costs a program less to compile than an `Atomic<shared<string[]>>`,
-// whose loads bring the epoch reclaimer in. A published block lives as long as the process,
+// whose loads bring the epoch reclaimer in. A block lives as long as the process,
 // outside the leak counters (as the weak core's memory, std/lang/hooks/weak_mem.velt).
 
 import { Ptr } from "velt/ffi/ptr";
@@ -24,7 +24,6 @@ declare function velt_rt_strbuf_push_bytes(buf: string, bytes: Ptr<u8>, len: u64
 declare function velt_rt_strbuf_finish(buf: string, out: string);
 
 declare c("c") function calloc$argv(n: usize, size: usize): Ptr<u8> | null;
-declare c("c") function free$argv(p: Ptr<u8> | null): void;
 declare c("c") function memcpy$argv(
   dst: Ptr<u8> | null,
   src: Ptr<u8> | null,
@@ -84,7 +83,7 @@ export function keepArgs(list: string[]): usize {
 
 /** The number of arguments in the block at `at` (`keepArgs`). */
 export function keptCount(at: usize): u64 {
-  // SAFETY: a block of `keepArgs`', never freed once published.
+  // SAFETY: a block of `keepArgs`', never freed.
   return unsafe { addressLoad<u64>(at) };
 }
 
@@ -108,12 +107,4 @@ export function keptArg(at: usize, i: u64): string {
   let s = "";
   velt_rt_strbuf_finish(buf, s);
   return s;
-}
-
-/** Gives back the block at `at`, which was never published. */
-export function releaseArgs(at: usize): void {
-  // SAFETY: a block of `keepArgs`' that nothing else holds.
-  unsafe {
-    free$argv(Ptr.orNull<u8>(at));
-  }
 }

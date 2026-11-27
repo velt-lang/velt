@@ -84,10 +84,7 @@ const PRIVATE: &[(&str, &[&str])] = &[
         &["std/lang/hooks/module_blocks"],
     ),
     // The command-line arguments, read once and kept (#2196): `argList` reaches them by role.
-    (
-        "lang_hooks_process_argv",
-        &["std/lang/hooks/process_argv"],
-    ),
+    ("lang_hooks_process_argv", &["std/lang/hooks/process_argv"]),
 ];
 
 /// The private modules of prebuilt module `module_entry` (module docs, "State"): none for a module

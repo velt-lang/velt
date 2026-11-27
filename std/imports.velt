@@ -198,9 +198,11 @@ export const imports: Imports = {
   // A thread lock on an 8-byte word (standard input's buffer): std's inline one on native
   // targets, the runtime's elsewhere (wasm's runtime keeps its own `Mutex` lock).
   "#thread-lock": { native: "./lang/hooks/mutex.velt", default: "./process/thread_lock_rt.velt" },
-  // Reading standard input (std/process/stdin_buffer.velt's refills): `read` on fd 0 on macOS,
-  // Linux and WASI (wasi-libc's), the console's or a pipe's own read on Windows, none under a JS
-  // host.
+  /**
+   * Reading standard input (std/process/stdin_buffer.velt's refills): `read` on fd 0 on macOS,
+   * Linux and WASI (wasi-libc's), the console's or a pipe's own read on Windows, none under a JS
+   * host.
+   */
   "#stdin-sys": {
     win32: "./process/stdin_win32.velt",
     native: "./process/stdin_posix.velt",
@@ -219,10 +221,12 @@ export const imports: Imports = {
     win32: "./process/child/child_win32.velt",
     default: "./process/child/child_posix.velt",
   },
-  // `execSync`'s start, in std without the executor: on macOS and Linux `posix_spawn` (as
-  // `spawn` and `exec` start theirs) and a `poll` loop on the pipes; on Windows `CreateProcessW`
-  // (as `spawn` starts it) and a `WaitForMultipleObjects` loop on overlapped pipes; elsewhere
-  // (WebAssembly) none: it fails with `ENOTSUP`.
+  /**
+   * `execSync`'s start, in std without the executor: on macOS and Linux `posix_spawn` (as
+   * `spawn` and `exec` start theirs) and a `poll` loop on the pipes; on Windows `CreateProcessW`
+   * (as `spawn` starts it) and a `WaitForMultipleObjects` loop on overlapped pipes; elsewhere
+   * (WebAssembly) none: it fails with `ENOTSUP`.
+   */
   "#exec-sync": {
     darwin: "./process/child/exec_sync_posix.velt",
     linux: "./process/child/exec_sync_posix.velt",
@@ -357,17 +361,32 @@ export const imports: Imports = {
     win32: "./lang/cpu/arm_win32.velt",
     default: "./lang/cpu/arm_none.velt",
   },
-  // The environment's variables: the C library's on macOS and Linux (each with its own way to
-  // `environ`), Win32's on Windows, the WebAssembly runtime's there. Nothing in them throws: the
-  // executor reads variables.
+  /**
+   * The environment's variables: the C library's on macOS and Linux (each with its own way to
+   * `environ`), Win32's on Windows, the WebAssembly runtime's there. Nothing in them throws: the
+   * executor reads variables.
+   */
   "#env-sys": {
     darwin: "./process/env_darwin.velt",
     linux: "./process/env_linux.velt",
     win32: "./process/env_win32.velt",
-    wasi: "./process/env_wasi.velt",
     default: "./process/env_wasm.velt",
   },
-  // The working directory (`cwd`, `chdir`), apart from the variables: it throws `IoError`.
+  /**
+   * The command-line arguments as the OS keeps them, and where std keeps them once read
+   * (std/process/args_read.velt, std/lang/hooks/process_argv.velt): apart from the variables,
+   * which every program loads.
+   */
+  "#args-sys": {
+    darwin: "./process/args_darwin.velt",
+    linux: "./process/args_linux.velt",
+    win32: "./process/args_win32.velt",
+    wasi: "./process/args_wasi.velt",
+    default: "./process/args_none.velt",
+  },
+  /**
+   * The working directory (`cwd`, `chdir`), apart from the variables: it throws `IoError`.
+   */
   "#cwd-sys": {
     win32: "./process/cwd_win32.velt",
     native: "./process/cwd_posix.velt",

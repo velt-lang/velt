@@ -19,14 +19,6 @@ export function passedVar(argv: bool): string | undefined {
   return getEnvRaw(argv ? ARGV_VAR : SCRIPT_VAR);
 }
 
-/**
- * Nothing to take: the WebAssembly runtime reads the environment through Rust's, which locks it.
- */
-export function lockEnv() {}
-
-/** Nothing to give back (`lockEnv`). */
-export function unlockEnv() {}
-
 /** The variable `name` as it is, the hidden ones included. */
 export function getEnvRaw(name: string): string | undefined {
   let out = "";
@@ -43,37 +35,6 @@ export function setEnv(name: string, value: string) {
 export function removeEnv(name: string) {
   velt_rt_env_remove(name);
 }
-
-/** The arguments the program was started with: a JS host passes none. */
-export function osArgs(): string[] {
-  return [];
-}
-
-/** The running program's path: none under a JS host. */
-export function executablePath(): string {
-  return "";
-}
-
-/**
- * Where std/lang/hooks/process_argv.velt keeps the arguments once read: nowhere here (the JS host
- * has no C library, and its list, read at each call, is the same two empty strings).
- */
-export function keepArgs(list: string[]): usize {
-  return 0;
-}
-
-/** Never called here: `keepArgs` keeps nothing. */
-export function keptCount(at: usize): u64 {
-  return 0;
-}
-
-/** Never called here, as `keptCount`. */
-export function keptArg(at: usize, i: u64): string {
-  return "";
-}
-
-/** Never called here, as `keptCount`. */
-export function releaseArgs(at: usize): void {}
 
 /** Every variable as `[name, value, …]`. */
 export function envPairs(): string[] {

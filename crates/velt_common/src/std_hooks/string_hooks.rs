@@ -72,11 +72,14 @@ macro_rules! with_string_hooks {
             // (`process.argv`, velt/process's `argv`) reads by role, one at a time, so a program
             // loads the readers only when live code reads them, and calls their prebuilt object
             // where the build cache holds it.
-            /// The number of arguments: of `process.argv`'s `[runtime, script, ...args]` (`true`),
-            /// else of `argv()`'s list.
-            process_arg_count => lang_hooks_process_argv, "argCount", sig((bool) -> u64), prebuilt;
+            /// The number of arguments: of `process.argv`'s `[runtime, script, ...args]` (1), else
+            /// of `argv()`'s list (0).
+            process_arg_count => lang_hooks_process_argv, "argCount", sig((u32) -> u64), prebuilt;
             /// Argument `i` of the list `process_arg_count` counts; "" past the last.
-            process_arg_at => lang_hooks_process_argv, "argAt", sig((bool, u64) -> string), prebuilt;
+            process_arg_at => lang_hooks_process_argv, "argAt", sig((u32, u64) -> string), prebuilt;
+            /// Before std changes the environment: the first read of the arguments, which takes
+            /// velt's variables from it without its lock, done.
+            process_args_ready => lang_hooks_process_argv, "argsReady", sig(() -> void), prebuilt;
 
             // velt/lang/hooks/int_store: a `number` stored into an element of an integer array,
             // converted as a typed array stores it (#3182; `velt_sema` `element_store.rs` calls
