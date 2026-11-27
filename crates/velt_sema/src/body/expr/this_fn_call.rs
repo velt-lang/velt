@@ -2,15 +2,18 @@
 //! parameter (`this_fn_expr.rs`), in a program that has one (it loads std/lang/this_fn/index.velt). A call
 //! `o.m(x)` on an `any` is a slot call that does so already (velt_vir this_fn.rs); the other
 //! member calls whose function is a dynamic value read here call
-//! `callOn(<o.m>, o, [x])`, which passes `o` to such a function and calls any other one
-//! plainly:
+//! `callOn(<o.m>, o, [x])` when the member read is a function, which passes `o` to such a
+//! function and calls any other one plainly; a member that is no function is called plainly
+//! (`o.m(...[x])`), whose `TypeError` names the callee as Node does:
 //!
 //! - `o[k](x)` (an `any` `o`, or an element of an `any[]`, `arr[0](x)`);
-//! - `o.m?.(x)` (`callOptOn`, which evaluates the arguments only when `o.m` is a function);
+//! - `o.m?.(x)` (`undefined` when `o.m` is `null` or `undefined`, without evaluating the
+//!   arguments);
 //! - `o.m(x)` on a typed `o` whose member `m` is a `Function` or an `any`.
 //!
-//! `o` is evaluated once: a variable, `this` or a field path is named twice, anything else is
-//! held in a temporary. The member is read, then the arguments are evaluated, as in JavaScript.
+//! `o` is evaluated once, into a temporary, then the member is read, then the arguments are
+//! evaluated, as in JavaScript: an argument that assigns the object's path does not change the
+//! `this` of the call.
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -177,15 +180,11 @@ impl FnCx<'_, '_> {
                 lw.mk(kind, any, span)
             })
         };
-        // A path of a typed object (`arr` of `arr[0](x)`) is held in a temporary too: passing it
-        // as `callOn`'s `any` would move it, and a `try` body that moves an outer variable keeps
-        // its `catch` from taking the `TypeError` (catch_any.rs).
-        let dynamic = self
-            .trial_type(object)
-            .is_some_and(|t| matches!(self.cx.dynamic(t), Some(Dynamic::Any)));
-        if dynamic && super::method_value::is_path(object) {
-            return build(self, object);
-        }
+        // The object is held in a temporary, read before the member and the arguments: `callOn`
+        // reads it after them, and an argument may assign the path (`o[k](o = p)` passes the
+        // old `o` as `this`, as JavaScript does). For a path of a typed object (`arr` of
+        // `arr[0](x)`), passing it as `callOn`'s `any` would also move it, and a `try` body that
+        // moves an outer variable keeps its `catch` from taking the `TypeError` (catch_any.rs).
         let o = self.expr(object, None, crate::body::Want::Borrow);
         // The temporary of a path is named as the path in a `TypeError` (`arr[0]`).
         let text = super::method_value::is_path(object).then(|| self.callee_text(&o));
