@@ -147,18 +147,17 @@ async function main() {
   const H = plain.port as number;
   const S = secure.port as number;
 
-  const hide = (text: string): string =>
-    text
-      .split(`:${H}`)
-      .join(":<http>")
-      .split(`:${S}`)
-      .join(":<https>")
-      .split(`=${H}`)
-      .join("=<http>")
-      .split(`=${S}`)
-      .join("=<https>")
-      .split(`:${proxyPort}`)
-      .join(":<proxy>");
+  const hide = (text: string): string => text
+    .split(`:${H}`)
+    .join(":<http>")
+    .split(`:${S}`)
+    .join(":<https>")
+    .split(`=${H}`)
+    .join("=<http>")
+    .split(`=${S}`)
+    .join("=<https>")
+    .split(`:${proxyPort}`)
+    .join(":<proxy>");
 
   async function run(name: string, vars: Record<string, string>, urls: string[]) {
     console.log(`== ${name}`);
@@ -184,26 +183,34 @@ async function main() {
     `http://localhost:${H}/a`,
     `http://a.test:${H}/`,
   ]);
-  await run("NODE_USE_ENV_PROXY=true: direct", { NODE_USE_ENV_PROXY: "true", http_proxy: P, https_proxy: P }, [
-    `http://b.test:${H}/`,
-  ]);
+  await run(
+    "NODE_USE_ENV_PROXY=true: direct",
+    { NODE_USE_ENV_PROXY: "true", http_proxy: P, https_proxy: P },
+    [`http://b.test:${H}/`],
+  );
   const withAuth = `http://u:p%40ss@127.0.0.1:${proxyPort}`;
-  await run("http_proxy with credentials, for https: too", { NODE_USE_ENV_PROXY: "1", http_proxy: withAuth }, [
-    `http://c.test:${H}/c`,
-    `http://127.0.0.1:${H}/loopback`,
-    `https://localhost:${S}/s`,
+  await run(
+    "http_proxy with credentials, for https: too",
+    { NODE_USE_ENV_PROXY: "1", http_proxy: withAuth },
+    [`http://c.test:${H}/c`, `http://127.0.0.1:${H}/loopback`, `https://localhost:${S}/s`],
+  );
+  await run("uppercase HTTP_PROXY", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P }, [
+    `http://d.test:${H}/`,
   ]);
-  await run("uppercase HTTP_PROXY", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P }, [`http://d.test:${H}/`]);
   await run("HTTPS_PROXY alone", { NODE_USE_ENV_PROXY: "1", HTTPS_PROXY: P }, [
     `https://localhost:${S}/e`,
     `http://e.test:${H}/`,
   ]);
-  await run("http_proxy over HTTP_PROXY", { NODE_USE_ENV_PROXY: "1", http_proxy: P, HTTP_PROXY: "http://127.0.0.1:1" }, [
-    `http://f.test:${H}/`,
-  ]);
-  await run("an empty http_proxy over HTTP_PROXY", { NODE_USE_ENV_PROXY: "1", http_proxy: "", HTTP_PROXY: P }, [
-    `http://g.test:${H}/`,
-  ]);
+  await run(
+    "http_proxy over HTTP_PROXY",
+    { NODE_USE_ENV_PROXY: "1", http_proxy: P, HTTP_PROXY: "http://127.0.0.1:1" },
+    [`http://f.test:${H}/`],
+  );
+  await run(
+    "an empty http_proxy over HTTP_PROXY",
+    { NODE_USE_ENV_PROXY: "1", http_proxy: "", HTTP_PROXY: P },
+    [`http://g.test:${H}/`],
+  );
   await run(
     "NO_PROXY",
     {
@@ -224,14 +231,19 @@ async function main() {
       `http://n6.test:${H}/`,
     ],
   );
-  await run("no_proxy over NO_PROXY, even empty", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P, no_proxy: "", NO_PROXY: "h.test" }, [
-    `http://h.test:${H}/`,
+  await run(
+    "no_proxy over NO_PROXY, even empty",
+    { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P, no_proxy: "", NO_PROXY: "h.test" },
+    [`http://h.test:${H}/`],
+  );
+  await run("NO_PROXY=*", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P, NO_PROXY: "*" }, [
+    `http://i.test:${H}/`,
   ]);
-  await run("NO_PROXY=*", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P, NO_PROXY: "*" }, [`http://i.test:${H}/`]);
-  await run("redirects between http: and https:", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P, HTTPS_PROXY: P, NO_PROXY: "localhost" }, [
-    `http://r1.test:${H}/to-https?to=${S}`,
-    `https://127.0.0.1:${S}/to-http?to=${H}`,
-  ]);
+  await run(
+    "redirects between http: and https:",
+    { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P, HTTPS_PROXY: P, NO_PROXY: "localhost" },
+    [`http://r1.test:${H}/to-https?to=${S}`, `https://127.0.0.1:${S}/to-http?to=${H}`],
+  );
   await run("a proxy that refuses", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P }, [
     `http://refuse.test:${H}/`,
   ]);

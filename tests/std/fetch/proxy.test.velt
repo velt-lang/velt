@@ -119,7 +119,9 @@ class Setup {
 async function answer(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const auth = req.headers.get("authorization") ?? "-";
-  return new Response(`origin ${req.method} ${url.pathname}${url.search} ${auth} ${await req.text()}`);
+  return new Response(
+    `origin ${req.method} ${url.pathname}${url.search} ${auth} ${await req.text()}`,
+  );
 }
 
 async function setup(): Promise<Setup> {
@@ -153,24 +155,27 @@ describe("fetch through a proxy", () => {
     s.close();
   });
 
-  it("tunnels http: with CONNECT too, as Node, and the proxy never sees the URL's password", async () => {
-    const s = await setup();
-    const url = `http://bob:TARGETPW@localhost:${s.plain}/a/b?c=d`;
-    const got = await outcome(url, { headers: { "x-a": "1" }, proxy: s.proxy });
-    // Nor does the origin, as without a proxy (Node refuses such a URL).
-    expect(got).toBe("200 origin GET /a/b?c=d - ");
-    const head = s.heads.tryReceive() ?? "";
-    expect(head.startsWith(`CONNECT localhost:${s.plain} HTTP/1.1\r\n`)).toBe(true);
-    expect(head.includes("\r\nproxy-authorization: Basic YWxAaWNlOnB3\r\n")).toBe(true);
-    expect(head.includes("TARGETPW") || head.includes("bob")).toBe(false);
-    // The request inside the tunnel names the path alone.
-    const request = s.inner.tryReceive() ?? "";
-    expect(request.startsWith("GET /a/b?c=d HTTP/1.1\r\n")).toBe(true);
-    expect(request.includes("TARGETPW")).toBe(false);
-    expect(request.includes("\r\nx-a: 1\r\n")).toBe(true);
-    expect(request.toLowerCase().includes("proxy-authorization")).toBe(false);
-    s.close();
-  });
+  it(
+    "tunnels http: with CONNECT too, as Node, and the proxy never sees the URL's password",
+    async () => {
+      const s = await setup();
+      const url = `http://bob:TARGETPW@localhost:${s.plain}/a/b?c=d`;
+      const got = await outcome(url, { headers: { "x-a": "1" }, proxy: s.proxy });
+      // Nor does the origin, as without a proxy (Node refuses such a URL).
+      expect(got).toBe("200 origin GET /a/b?c=d - ");
+      const head = s.heads.tryReceive() ?? "";
+      expect(head.startsWith(`CONNECT localhost:${s.plain} HTTP/1.1\r\n`)).toBe(true);
+      expect(head.includes("\r\nproxy-authorization: Basic YWxAaWNlOnB3\r\n")).toBe(true);
+      expect(head.includes("TARGETPW") || head.includes("bob")).toBe(false);
+      // The request inside the tunnel names the path alone.
+      const request = s.inner.tryReceive() ?? "";
+      expect(request.startsWith("GET /a/b?c=d HTTP/1.1\r\n")).toBe(true);
+      expect(request.includes("TARGETPW")).toBe(false);
+      expect(request.includes("\r\nx-a: 1\r\n")).toBe(true);
+      expect(request.toLowerCase().includes("proxy-authorization")).toBe(false);
+      s.close();
+    },
+  );
 
   it("fails when the proxy refuses the tunnel or is not there", async () => {
     const s = await setup();
