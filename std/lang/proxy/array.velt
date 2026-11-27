@@ -10,7 +10,7 @@
 // element, every write, `in` test and delete goes through the traps, in Node's order.
 
 import { Proxy } from "velt/lang/proxy";
-import { anyMethodCalled } from "velt/lang/intrinsics";
+import { anyMethodCalled, noteStdUse } from "velt/lang/intrinsics";
 import { cutHoles, methodBegin, methodEnd, trapBegin, trapEnd } from "velt/lang/proxy/holes";
 import {
   PROXY_DELETE,
@@ -186,6 +186,38 @@ function arrayMove(p: Proxy, o: any, from: number, to: number): void {
  * method is the steps of `splice` that its own algorithm takes in the same order.
  */
 export function proxyArrayInvoke(p: Proxy, name: string, args: any[], o: any): any {
+  // Holes are made only in the trap calls of the algorithms below, each compiled only for a
+  // program that can call its method (`anyMethodCalled`): one that can call none keeps no
+  // records, and `Reflect` reads none (`stdUsed("proxyArrayHoles")`, velt/lang/proxy/keys). A
+  // new algorithm's method is named here too.
+  if (
+    anyMethodCalled("push") ||
+    anyMethodCalled("unshift") ||
+    anyMethodCalled("pop") ||
+    anyMethodCalled("shift") ||
+    anyMethodCalled("splice") ||
+    anyMethodCalled("find") ||
+    anyMethodCalled("includes") ||
+    anyMethodCalled("indexOf") ||
+    anyMethodCalled("lastIndexOf") ||
+    anyMethodCalled("join") ||
+    anyMethodCalled("reverse") ||
+    anyMethodCalled("sort") ||
+    anyMethodCalled("map") ||
+    anyMethodCalled("filter") ||
+    anyMethodCalled("forEach") ||
+    anyMethodCalled("some") ||
+    anyMethodCalled("every") ||
+    anyMethodCalled("slice")
+  ) {
+    return recordedInvoke(p, name, args, o);
+  }
+  return callArrayMethod(p, name, args, o);
+}
+
+/** `proxyArrayInvoke` of a program that can call an algorithm, which may make holes. */
+function recordedInvoke(p: Proxy, name: string, args: any[], o: any): any {
+  noteStdUse("proxyArrayHoles");
   // While it runs, `Reflect` records the holes Node's algorithm makes in the target during the
   // algorithm's trap calls (`trapGet`), and reports them: velt/lang/proxy/holes.
   const t = arrayTarget(p);
