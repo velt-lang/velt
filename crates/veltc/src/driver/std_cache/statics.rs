@@ -24,7 +24,9 @@ pub(super) struct Names {
 }
 
 impl Names {
-    /// Names for `program`'s statics, from their contents (`canon`, `Mode::Link`).
+    /// Names for `program`'s statics, from their contents (`canon`, `Mode::Link`). A static that
+    /// has a symbol already (a process static's word, which every program exports: velt_common
+    /// `prebuilt::static_symbol`; a C library's variable) is named by it.
     pub fn new(program: &vir::Program, canon: &Canon) -> Names {
         let prints: Vec<_> = (0..program.statics.len())
             .map(|i| canon.static_fingerprint(vir::StaticId(i as u32)))
@@ -33,8 +35,11 @@ impl Names {
         for p in &prints {
             *count.entry(*p).or_default() += 1;
         }
-        let names = (prints.iter())
-            .map(|p| (count[p] == 1).then(|| format!("_Vs{p:032x}")))
+        let names = (prints.iter().zip(&program.statics))
+            .map(|(p, s)| match &s.symbol {
+                Some(symbol) => Some(symbol.clone()),
+                None => (count[p] == 1).then(|| format!("_Vs{p:032x}")),
+            })
             .collect();
         Names { names }
     }
