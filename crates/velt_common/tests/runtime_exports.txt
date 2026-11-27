@@ -21,9 +21,6 @@ velt_rt velt_rt_deep_eq_enter
 velt_rt velt_rt_deep_eq_leave
 velt_rt velt_rt_dev_server_drained
 velt_rt velt_rt_dev_server_stop
-velt_rt velt_rt_drop_drain
-velt_rt velt_rt_drop_queue
-velt_rt velt_rt_drop_state
 velt_rt velt_rt_exit
 velt_rt velt_rt_flush
 velt_rt velt_rt_free

@@ -62,6 +62,8 @@ mod object_hooks;
 #[macro_use]
 mod decorator_hooks;
 #[macro_use]
+mod drop_hooks;
+#[macro_use]
 mod promise_hooks;
 #[macro_use]
 mod tls_hooks;

@@ -97,6 +97,7 @@ table! {
     lang_hooks_array_view => "lang/hooks/array_view",
     lang_hooks_async_iter => "lang/hooks/async_iter",
     lang_hooks_class_object => "lang/hooks/class_object",
+    lang_hooks_drop_queue => "lang/hooks/drop_queue",
     lang_hooks_error => "lang/hooks/error",
     lang_hooks_fn_props => "lang/hooks/fn_props",
     lang_hooks_clock => "lang/hooks/clock",

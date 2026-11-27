@@ -21,7 +21,6 @@ pub mod db_rows;
 pub mod debug_alloc;
 pub mod deep_eq;
 pub mod dev;
-pub mod drop_depth;
 pub mod entry;
 pub mod freed;
 pub mod handle;

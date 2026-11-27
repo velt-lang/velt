@@ -1,0 +1,46 @@
+// Ordinary drops, none past the depth limit (#543): objects, arrays of objects, maps and
+// closures made and dropped in a loop, a few of whose types lead back to themselves (so their
+// drops are bracketed, and the bracket's common path is all they pay).
+//
+//   GIT_DIR=<repo> WORK=<dir> bench/program_instr.sh <base> <head> bench/drop_depth/flat.velt
+
+class Point {
+  x: f64;
+  y: f64;
+
+  constructor(x: f64, y: f64) {
+    this.x = x;
+    this.y = y;
+  }
+}
+
+class Item {
+  name: string;
+  tags: string[] = [];
+  parts: Item[] = [];
+
+  constructor(name: string) {
+    this.name = name;
+  }
+}
+
+function main() {
+  let total = 0.0;
+  let n: i64 = 0;
+  for (let r = 0; r < 300000; r++) {
+    const ps: Point[] = [];
+    for (let i = 0; i < 4; i++) {
+      ps.push(new Point(i, r));
+    }
+    total += ps[3].x;
+    const item = new Item("a");
+    item.tags.push("t");
+    item.parts.push(new Item("b"));
+    n += item.parts.length;
+    const m = new Map<string, Item>();
+    m.set("k", item);
+    const f = (k: i64): i64 => k + n;
+    n = f(1) - n + n;
+  }
+  console.log(`${total} ${n}`);
+}

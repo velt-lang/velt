@@ -1,14 +1,14 @@
 //! Drop of self-referential classes (#543): the object drop glue of a list or tree class is a
 //! loop that never calls itself (`lower/glue/drop_chain.rs`); one whose drop nests through an
-//! array is bracketed for the runtime's depth limit (`lower/glue/drop_depth.rs`, emulated by
-//! the interpreter with a small limit). Dropping chains frees every node (the interpreter fails
-//! on leaks and double frees).
+//! array is bracketed for the depth limit (`lower/glue/drop_depth.rs`; a small limit in unit
+//! tests, and std's queue run by the interpreter). Dropping chains frees every node (the
+//! interpreter fails on leaks and double frees).
 
 use velt_sema::hir::{AdtKind, BinOp as B, Def, Program, TyId, UseMode as U};
 
 use super::builder::*;
 use super::builder_m2::*;
-use super::{lower_ok, run};
+use super::{lower_ok, lower_src, run, run_src};
 use crate::vir::{self, Callee, Terminator};
 
 /// A class whose fields are `fields` (a field of type `None` is `Self | null`), and a `main`
@@ -56,46 +56,26 @@ fn chain(fields: &[(&str, Option<TyId>)], link: u32, n: u128) -> Program {
     pb.finish()
 }
 
-/// A class `Node { id, next: Node[] }` and a `main` that builds a chain of `n` nodes through
-/// the arrays, prints `n` and drops it.
-fn array_chain(n: u128) -> Program {
-    let mut pb = PB::new();
-    let t = pb.t;
-    let d = pb.declare();
-    let node = pb.adt_ty(d, vec![]);
-    let next = pb.arr(node);
-    let fields = vec![
-        ("id", t.i64, Some(int(0, t.i64))),
-        ("next", next, Some(array(vec![], next))),
-    ];
-    pb.set_def(d, Def::Adt(adt("Node", AdtKind::Class, fields)));
-    let mut f = FB::new("main", t.unit);
-    let head = f.local("head", node);
-    let i = f.local("i", t.i64);
-    let cur = f.local("cur", node);
-    let body = vec![
-        let_(head, new_obj(d, vec![], node)),
-        let_(i, int(1, t.i64)),
-        while_(
-            None,
-            cmp(B::Lt, f.cp(i), int(n, t.i64), t),
-            vec![
-                let_(cur, new_obj(d, vec![], node)),
-                se(assign(
-                    field(f.bm(cur), 1, U::BorrowMut, next),
-                    array(vec![f.mv(head)], next),
-                    t,
-                )),
-                se(assign(f.bm(head), f.mv(cur), t)),
-                se(cassign(B::Add, f.bm(i), int(1, t.i64), t)),
-            ],
-            None,
-        ),
-        se(print(vec![f.cp(i)], t)),
-    ];
-    pb.add_main(f.build(body));
-    pb.finish()
+/// A class `Node { id, next: Node[] }` and a `main` that builds a chain of 200 nodes through
+/// the arrays, prints 200 and drops it: its drop is bracketed and reaches std's queue, so the
+/// program is loaded with std (std_src.rs).
+const ARRAY_CHAIN: &str = "class Node {
+  id: i64 = 0;
+  next: Node[] = [];
 }
+
+function main() {
+  let head = new Node();
+  let i: i64 = 1;
+  while (i < 200) {
+    const cur = new Node();
+    cur.next = [head];
+    head = cur;
+    i += 1;
+  }
+  console.log(`${i}`);
+}
+";
 
 /// The object drop glue of class `Node`, with its function index.
 fn node_drop_glue(v: &vir::Program) -> (usize, &vir::Function) {
@@ -114,12 +94,20 @@ fn drop_glue_recurses(v: &vir::Program) -> bool {
     })
 }
 
-/// Is the object drop glue of class `Node` bracketed for the runtime's depth limit?
+/// Does the extern `symbol` read the drop state word (`velt_tls_get` of
+/// `crate::tls::DROP_STATE_SLOT`), as every bracketed drop does first?
+pub(super) fn is_drop_state(symbol: &str) -> bool {
+    let id = crate::tls::stable_id(crate::tls::DROP_STATE_SLOT);
+    matches!(crate::tls::TlsCall::of_symbol(symbol),
+        Some(c @ crate::tls::TlsCall::Get { .. }) if c.id() == id)
+}
+
+/// Is the object drop glue of class `Node` bracketed for the depth limit?
 fn drop_glue_bracketed(v: &vir::Program) -> bool {
     let (_, glue) = node_drop_glue(v);
     glue.blocks.iter().any(|b| {
         matches!(&b.term, Terminator::Call { callee: Callee::Extern(e), .. }
-            if v.externs[e.0 as usize].symbol == "velt_rt_drop_state")
+            if is_drop_state(&v.externs[e.0 as usize].symbol))
     })
 }
 
@@ -160,17 +148,25 @@ fn a_silent_field_after_the_link_still_loops() {
 
 #[test]
 fn a_chain_through_arrays_is_bracketed_and_drops_every_node() {
-    // The interpreter queues every drop past depth 4: the chain is dropped from the queue.
-    let p = array_chain(200);
-    let v = lower_ok(&p);
+    // The interpreter queues every drop past depth 4: the chain is dropped from std's queue,
+    // every node freed (run_src fails on leaks).
+    let v = lower_src(ARRAY_CHAIN);
+    let glue = v
+        .funcs
+        .iter()
+        .find(|f| f.symbol.contains("objdrop") && f.symbol.ends_with("4Node"))
+        .unwrap_or_else(|| panic!("no object drop glue for Node:\n{v}"));
     assert!(
-        drop_glue_bracketed(&v),
-        "the array chain drop is not bracketed:
-{v}"
+        glue.blocks.iter().any(|b| matches!(&b.term,
+            Terminator::Call { callee: Callee::Extern(e), .. }
+                if is_drop_state(&v.externs[e.0 as usize].symbol))),
+        "the array chain drop is not bracketed:\n{v}"
     );
-    assert_eq!(
-        run(&p).stdout,
-        "200
-"
+    let out = run_src(ARRAY_CHAIN);
+    assert_eq!(out.stdout, "200\n");
+    assert!(
+        out.drop_states >= 199,
+        "the links are not bracketed: {} bracketed drops",
+        out.drop_states
     );
 }
