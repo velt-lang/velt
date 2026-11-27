@@ -63,6 +63,20 @@ function unlock() {
   LOCK.store(0, "release");
 }
 
+/**
+ * Takes the environment's lock for a caller that reads it through code that cannot take it
+ * (`getEnvHeld`): the arguments' first read (std/lang/hooks/process.velt `argList`), whose
+ * readers may be a prebuilt object's, which keeps no copy of this lock.
+ */
+export function lockEnv() {
+  lock();
+}
+
+/** Gives back the lock `lockEnv` took. */
+export function unlockEnv() {
+  unlock();
+}
+
 /** Whether `name` can name a variable: not empty, no "=" or NUL. */
 function validName(name: string): bool {
   return strByteLen(name) > 0 && !hasByte(name, 61) && !hasByte(name, 0);
@@ -94,15 +108,15 @@ export function getEnv(name: string): string | undefined {
   return value;
 }
 
-/** The variable whose NUL-terminated name is `name`, or undefined when it isn't set. */
-export function getEnvC(name: readonly u8[]): string | undefined {
-  lock();
-  // SAFETY: a NUL-terminated name; the lock keeps the table from changing while it's read.
+/**
+ * The variable whose NUL-terminated name is `name`, or undefined when it isn't set. The caller
+ * holds the lock (`lockEnv`).
+ */
+export function getEnvHeld(name: readonly u8[]): string | undefined {
+  // SAFETY: a NUL-terminated name; the caller's lock keeps the table from changing.
   const at = unsafe { getenv(name) };
   // SAFETY: getenv's value is a NUL-terminated string, in place while the lock is held.
-  const value = at === null ? undefined : unsafe { readCString(at) };
-  unlock();
-  return value;
+  return at === null ? undefined : unsafe { readCString(at) };
 }
 
 /** Sets the variable `name` to `value` (a name or value C can't hold changes nothing). */

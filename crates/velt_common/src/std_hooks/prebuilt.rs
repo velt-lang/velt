@@ -116,6 +116,11 @@ const PRIVATE: &[(&str, &[&str])] = &[
         "lang_hooks_module_blocks",
         &["std/lang/hooks/module_blocks"],
     ),
+    // The command-line arguments, read once and kept (#2196): `argList` reaches them by role.
+    (
+        "lang_hooks_process_argv",
+        &["std/lang/hooks/process_argv"],
+    ),
 ];
 
 /// Per prebuilt module (its table entry): the std modules whose thread-local values its object
