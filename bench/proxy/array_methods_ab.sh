@@ -7,8 +7,10 @@
 #
 #   bench/proxy/array_methods_ab.sh WORKDIR BASE_REF HEAD_REF
 #
-# Each ref is exported to WORKDIR/src-<sha> and built into WORKDIR/target-<sha>. Keep WORKDIR on
-# a Linux file system. Run it from inside the repository, or with GIT_DIR set.
+# Each ref is exported to WORKDIR/src-<sha> and built into WORKDIR/target-<sha>. Both refs compile
+# HEAD_REF's bench file (a base older than it has none), copied to WORKDIR/bench. Every build
+# writes into a fresh directory, so none is skipped as up to date when the script runs again.
+# Keep WORKDIR on a Linux file system. Run it from inside the repository, or with GIT_DIR set.
 set -uo pipefail
 [ $# -ge 3 ] || { echo "usage: bench/proxy/array_methods_ab.sh WORKDIR BASE_REF HEAD_REF" >&2; exit 2; }
 W=$1
@@ -29,6 +31,9 @@ for ref in "$2" "$3"; do
       && CARGO_TARGET_DIR="$W/target-$s" cargo build --release -q -p velt_rt -p velt_rt_shared) || exit 1
   fi
 done
+mkdir -p "$W/bench"
+git show "${shas[1]}:bench/proxy/proxy_array_methods.velt" > "$W/bench/proxy_array_methods.velt" || exit 1
+bench=$W/bench/proxy_array_methods.velt
 # count <sha> <program and args...>: the instructions of one run in that ref's tree.
 count() {
   local s=$1
@@ -39,18 +44,18 @@ count() {
 }
 for s in "${shas[@]}"; do
   v="$W/target-$s/release/velt"
-  b="$W/bin-$s"
-  mkdir -p "$b"
+  b=$(mktemp -d "$W/bin-$s.XXXXXX")
   (cd "$W/src-$s" && VELT_STD="$W/src-$s/std" VELT_BUILD_CACHE=off "$v" build --release \
-    bench/proxy/proxy_array_methods.velt -o "$b/methods") || exit 1
+    "$bench" -o "$b/methods") || exit 1
   (cd "$W/src-$s" && VELT_STD="$W/src-$s/std" VELT_BUILD_CACHE=off "$v" build --release --emit vir \
-    tests/golden/m1/hello.velt > "$b/hello.vir") || exit 1
+    tests/golden/m1/hello.velt > "$W/hello-$s.vir") || exit 1
   echo "$s run methods $(count "$s" "$b/methods")"
-  echo "$s build methods $(count "$s" "$v" build --release bench/proxy/proxy_array_methods.velt -o "$b/m2")"
+  echo "$s build methods $(count "$s" "$v" build --release "$bench" -o "$b/m2")"
   echo "$s build hello $(count "$s" "$v" build --release tests/golden/m1/hello.velt -o "$b/h2")"
   "$b/methods"
+  rm -rf "$b"
 done
-if cmp -s "$W/bin-${shas[0]}/hello.vir" "$W/bin-${shas[1]}/hello.vir"; then
+if cmp -s "$W/hello-${shas[0]}.vir" "$W/hello-${shas[1]}.vir"; then
   echo "hello VIR identical"
 else
   echo "hello VIR differs"

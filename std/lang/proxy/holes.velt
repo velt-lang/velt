@@ -14,7 +14,8 @@
 //
 // Two blocks of words, each `[capacity, length, word × capacity]` from `rawAlloc`, or 0:
 // - the frames, innermost last: a method on target `t` is `t | 1`, a trap call of a method on
-//   `t` is `t` (identities are addresses, so even);
+//   `t` is `t` (identities are addresses, so even: a target is an array, never a tagged pointer
+//   such as a typed proxy's held in an `any`);
 // - the holes, as pairs (target, index).
 
 import {
@@ -185,6 +186,10 @@ export function methodBegin(target: any): void {
 @noInline
 export function methodEnd(target: any): i64 {
   const t = identity(target);
+  const p = FRAMES.get() as usize;
+  if (p != 0 && lengthOf(p) != 0 && wordAt(p, lengthOf(p) - 1) != (t | 1)) {
+    panic("ICE: a proxy's array method ended while another frame was innermost");
+  }
   popFrame();
   let first: i64 = -1;
   if (!running(t)) {
