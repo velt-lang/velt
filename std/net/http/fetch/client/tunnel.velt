@@ -27,6 +27,9 @@ export async function tunnel(
     await ask(s, via, authority, left, signal);
   } catch (e) {
     s.close();
+    if (e instanceof IoError && !e.message.startsWith("fetch failed")) {
+      throw new IoError(e.code, `fetch failed: ${e.message}`);
+    }
     throw e;
   }
 }
