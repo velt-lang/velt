@@ -1,0 +1,47 @@
+// velt/lang/hooks (internal): standard output and standard error through the runtime's writer
+// (`#stdout-sys`, std/imports.velt), on every target for now: the runtime publishes a thread's
+// output at its own hand-offs (nothing to publish here) and flushes at its own exits. Its move
+// into std is the next step of #2196.
+
+declare function velt_rt_write_str(stream: u32, s: string);
+declare function velt_rt_write_bool(stream: u32, v: bool);
+declare function velt_rt_write_byte(stream: u32, c: u8);
+declare function velt_rt_flush(): void;
+declare function velt_rt_stdout_write_bytes(bytes: u8[]);
+
+export function writeStr(stream: u32, s: string): void {
+  velt_rt_write_str(stream, s);
+}
+
+export function writeBool(stream: u32, v: bool): void {
+  velt_rt_write_bool(stream, v);
+}
+
+export function writeByte(stream: u32, c: u8): void {
+  velt_rt_write_byte(stream, c);
+}
+
+export function stdoutWriteBytes(bytes: u8[]): void {
+  velt_rt_stdout_write_bytes(bytes);
+}
+
+export function flushOutput(): void {
+  velt_rt_flush();
+}
+
+/** The runtime publishes at its own hand-offs. */
+export function publishOutput(): void {}
+
+export function threadEnd(): void {}
+
+export function flushIdle(): void {
+  velt_rt_flush();
+}
+
+export function initOutput(): void {}
+
+export function registerExitFlush(): void {}
+
+export function flushForExit(): void {
+  velt_rt_flush();
+}

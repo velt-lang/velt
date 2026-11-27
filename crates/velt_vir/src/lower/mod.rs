@@ -184,6 +184,7 @@ mod spread_object;
 mod srcloc;
 mod stabilize;
 mod static_atomic;
+mod stdout;
 mod stmt;
 mod str_data;
 mod strbuf;

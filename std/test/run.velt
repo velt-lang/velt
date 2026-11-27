@@ -7,7 +7,8 @@ import { Body } from "velt/test/case";
 import { Suite } from "velt/test/suite";
 import { Plan, runPlan } from "velt/test/plan";
 import { files, TestFile } from "velt/test/registry";
-import { velt_rt_clear_throw_loc, velt_rt_flush } from "velt/test/rt";
+import { velt_rt_clear_throw_loc } from "velt/test/rt";
+import { flushOutput } from "velt/lang/hooks/stdout";
 import { errorText, throwLoc } from "velt/lang/intrinsics";
 
 /**
@@ -77,7 +78,7 @@ async function runTests(file: TestFile, from: usize, mark: string | null): Promi
       console.log(`${mark}test ${escapeName(t.name)}`);
     }
     console.log(`${mark}start`);
-    velt_rt_flush();
+    flushOutput();
   }
   let failed: usize = 0;
   let teardownFailed = false;
@@ -127,7 +128,7 @@ async function runTests(file: TestFile, from: usize, mark: string | null): Promi
   if (mark != null) {
     // The runner's wait for the process to end (counting blocks) starts here.
     console.log(`${mark}done`);
-    velt_rt_flush();
+    flushOutput();
   }
   return { failed: failed, teardownFailed: teardownFailed };
 }
@@ -187,5 +188,5 @@ function report(raw: string, error: string | null, mark: string | null) {
       console.log(`    ${line}`);
     }
   }
-  velt_rt_flush();
+  flushOutput();
 }

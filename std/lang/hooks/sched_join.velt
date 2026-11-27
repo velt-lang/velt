@@ -15,8 +15,8 @@ import * as lf from "./sched_share_leaf";
 import * as t from "./sched_task";
 import * as lt from "./sched_task_lost";
 import * as wk from "./sched_wake";
+import { flushForExit } from "./stdout";
 
-declare function velt_rt_flush(): void;
 declare function velt_rt_exit(code: i32): never;
 
 /**
@@ -274,7 +274,7 @@ export function panickedEnd(e: usize, k: usize, kind: u32): void {
 /** Ends the process as an uncaught panic whose message was printed already. */
 @noInline
 function uncaught(): never {
-  velt_rt_flush();
+  flushForExit();
   velt_rt_exit(101);
 }
 

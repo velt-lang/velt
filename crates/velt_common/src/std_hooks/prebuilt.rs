@@ -32,6 +32,12 @@
 //! that loads none of them has the object's copy alone. Sema calls the object only for a program
 //! that loads none of them (`velt_sema` `lazy_std/hook_stubs.rs` `declared`); a program that
 //! does (the core's own white-box tests) loads the module as without the object.
+//!
+//! **Calls out.** State that belongs to the program, such as the buffers of stdout and stderr,
+//! stays in the program: an object reaches it only through the hooks of [`calls_out`], which its
+//! world declares instead of compiling (`veltc` `prebuilt_object.rs`), so the object holds a
+//! call of the hook's symbol and the program that links it defines that function, exported. An
+//! object may call nothing else outside itself but the runtime.
 
 use super::{Hook, HOOKS};
 use crate::hook_sig::{Mode, Sig, T};
@@ -84,6 +90,19 @@ const PRIVATE: &[(&str, &[&str])] = &[
         &["std/lang/hooks/module_blocks"],
     ),
 ];
+
+/// The hooks an object may call in the program that links it (module docs, "Calls out"): the
+/// writer of stdout and stderr (#2196), whose buffers are the program's state, which the number
+/// writers, the allocator's and the panics' reports reach. Each is a lowered hook no construct
+/// lists, of a module every program loads, so every program defines it.
+const CALLS_OUT: &[&str] = &["write_str", "write_byte", "flush_for_exit"];
+
+/// The hooks of [`CALLS_OUT`]: in an object's world each is a declaration, called under the
+/// hook's own symbol (`velt_vir` `mangle` of [`Hook::qualified`]), which every program that links
+/// an object defines and exports.
+pub fn calls_out() -> impl Iterator<Item = &'static Hook> {
+    HOOKS.iter().filter(|h| CALLS_OUT.contains(&h.name))
+}
 
 /// The private modules of prebuilt module `module_entry` (module docs, "State"): none for a module
 /// without state of its own.
@@ -261,6 +280,28 @@ mod tests {
             );
         }
         assert_eq!(of_symbol("velt_hook_f64_to_string"), None);
+    }
+
+    /// Each hook an object may call out to crosses as a prebuilt hook's entry does, is no
+    /// prebuilt hook itself, and is live in every program that loads its module: lowered, listed
+    /// by no construct (`velt_sema` `live_roots.rs` `seed_hooks`).
+    #[test]
+    fn calls_out_are_always_live_hooks_that_cross() {
+        assert_eq!(calls_out().count(), CALLS_OUT.len(), "{CALLS_OUT:?}");
+        for h in calls_out() {
+            assert!(scalar(&h.sig), "{}", h.name);
+            assert!(
+                !h.prebuilt && h.lowered && h.constructs.is_empty(),
+                "{}",
+                h.name
+            );
+            assert!(
+                !super::super::ON_DEMAND_MODULES.contains(&h.module().as_str()),
+                "{}: {} is loaded on demand",
+                h.name,
+                h.module()
+            );
+        }
     }
 
     /// A module's private list names the module itself, and only modules of prebuilt hooks.

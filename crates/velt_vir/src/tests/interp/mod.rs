@@ -236,6 +236,10 @@ impl Interp<'_> {
 
     /// Execute a function; `Err(code)` propagates a process exit (panic / `process.exit`).
     fn call_fn(&mut self, fi: usize, args: Vec<V>) -> Result<V, i32> {
+        let p = self.p;
+        if let Some(v) = self.stdout_hook(&p.funcs[fi].symbol, &args) {
+            return Ok(v);
+        }
         let f = &self.p.funcs[fi];
         let frame_start = self.stack.len();
         let mut slots = vec![];

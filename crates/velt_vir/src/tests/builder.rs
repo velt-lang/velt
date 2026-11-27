@@ -125,6 +125,66 @@ impl PB {
         // `console.log`'s mark of a stdout write (`stdout_written`): nothing to mark here.
         let f = FB::new(velt_common::std_hook!(stdout_written), self.t.unit);
         self.add_fn(f.build(vec![]));
+        self.stream_writers(u32, u8);
+    }
+
+    /// The writers of strings, bools and bytes (std/lang/hooks/stdout.velt `writeStr`,
+    /// `writeBool`, `writeByte`), each forwarding to an extern the interpreter prints with
+    /// (`velt_test_write_str`, `_bool`, `_byte`), and the start's and the exits' hooks
+    /// (`initOutput`, `flushForExit`), which have nothing to do here: the interpreter's output is
+    /// never buffered.
+    fn stream_writers(&mut self, u32: TyId, u8: TyId) {
+        let writers = [
+            (
+                velt_common::std_hook!(write_str),
+                self.t.str,
+                PassMode::Borrow,
+                "velt_test_write_str",
+            ),
+            (
+                velt_common::std_hook!(write_bool),
+                self.t.bool,
+                PassMode::Copy,
+                "velt_test_write_bool",
+            ),
+            (
+                velt_common::std_hook!(write_byte),
+                u8,
+                PassMode::Copy,
+                "velt_test_write_byte",
+            ),
+        ];
+        for (hook, ty, mode, symbol) in writers {
+            let ext = self.declare();
+            self.defs[ext.0 as usize] = Some(Def::ExternFn(ExternFnDef {
+                name: symbol.into(),
+                symbol: symbol.into(),
+                params: vec![u32, ty],
+                ret: self.t.unit,
+                is_async: false,
+                host: None,
+                c: None,
+                is_decorator: false,
+                span: SP,
+            }));
+            let mut f = FB::new(hook, self.t.unit);
+            let stream = f.param("stream", u32, PassMode::Copy);
+            let v = f.param("v", ty, mode);
+            let arg = match mode {
+                PassMode::Borrow => f.bw(v),
+                _ => f.cp(v),
+            };
+            let body = vec![se(call(ext, vec![f.cp(stream), arg], self.t.unit))];
+            self.add_fn(f.build(body));
+        }
+        for hook in [
+            velt_common::std_hook!(flush_for_exit),
+            velt_common::std_hook!(init_output),
+            velt_common::std_hook!(flush_at_exit),
+        ] {
+            let f = FB::new(hook, self.t.unit);
+            self.add_fn(f.build(vec![]));
+        }
     }
 
     /// The float hooks of templates, `String()` and formatting glue (velt_common `std_hooks.rs`

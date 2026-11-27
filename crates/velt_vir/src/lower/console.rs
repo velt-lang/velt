@@ -18,7 +18,7 @@ impl FnLower<'_, '_> {
     pub(super) fn write_text(&mut self, stream: &Operand, text: &str) {
         let s = self.str_lit(text);
         let a = self.operand_addr(s, Ty::Agg(STR_AGG));
-        self.call_rt(Rt::WriteStr, vec![stream.clone(), a], None);
+        self.write_str(stream, a);
     }
 
     /// `console.log(a, b)`: evaluate every argument first (JS order), then write
@@ -89,7 +89,7 @@ impl FnLower<'_, '_> {
             match self.cx.kind(t) {
                 TyKind::Str => {
                     let p = self.operand_addr(v, Ty::Agg(STR_AGG));
-                    self.call_rt(Rt::WriteStr, vec![stream.clone(), p], None);
+                    self.write_str(&stream, p);
                 }
                 // A diverging argument: the print is unreachable.
                 TyKind::Never => {}
@@ -101,7 +101,7 @@ impl FnLower<'_, '_> {
                 TyKind::Literal(LitValue::Bool(b)) => {
                     self.write_text(&stream, if b { "true" } else { "false" })
                 }
-                TyKind::Bool => self.call_rt(Rt::WriteBool, vec![stream.clone(), v], None),
+                TyKind::Bool => self.write_bool(&stream, v),
                 // A number is written with the byte after it, in one write.
                 _ => {
                     self.write_number(stream.clone(), v, t, end);
@@ -134,7 +134,7 @@ impl FnLower<'_, '_> {
             self.log_top(&bp, &p, t);
         }
         self.push_text(&bp, "\n");
-        self.call_rt(Rt::WriteStr, vec![stream, bp.clone()], None);
+        self.write_str(&stream, bp.clone());
         self.call_rt(Rt::StrbufDrop, vec![bp], None);
     }
 
@@ -144,23 +144,15 @@ impl FnLower<'_, '_> {
         match self.cx.kind(ty) {
             TyKind::Str => {
                 let a = self.addr(place);
-                self.call_rt(Rt::WriteStr, vec![stream.clone(), a], None);
+                self.write_str(stream, a);
             }
             TyKind::Bool => {
                 let v = Operand::Copy(place);
-                self.call_rt(Rt::WriteBool, vec![stream.clone(), v], None);
+                self.write_bool(stream, v);
             }
             _ => return self.write_number(stream.clone(), Operand::Copy(place), ty, end),
         }
         self.write_byte(stream, end);
-    }
-
-    pub(super) fn write_byte(&mut self, stream: &Operand, b: u8) {
-        self.call_rt(
-            Rt::WriteByte,
-            vec![stream.clone(), cint(b as i128, Ty::U8)],
-            None,
-        );
     }
 
     /// A number in JS formatting and the byte after it, through std's writers

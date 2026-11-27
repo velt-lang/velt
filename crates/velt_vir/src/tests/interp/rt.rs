@@ -108,6 +108,33 @@ impl Interp<'_> {
         self.write_bytes(out + 16, &(bytes.len().max(1) as u64).to_le_bytes());
     }
 
+    /// A call of std's stdout hooks (std/lang/hooks/stdout.velt), which the interpreter does
+    /// itself instead of running std's writer (its buffers and OS calls): the writers print to
+    /// the interpreter's streams, the flushes have nothing to do. `None` for any other function.
+    pub(super) fn stdout_hook(&mut self, symbol: &str, args: &[super::V]) -> Option<super::V> {
+        let name = symbol.strip_prefix("_V3stdP4langP5hooksP6stdoutN")?;
+        let name = name.trim_start_matches(|c: char| c.is_ascii_digit());
+        match name {
+            "writeStr" => {
+                let s = self.str_text(args[1].s());
+                self.out(args[0].s(), &s);
+            }
+            "writeBool" => {
+                let v = if args[1].s() & 1 == 1 {
+                    "true"
+                } else {
+                    "false"
+                };
+                self.out(args[0].s(), v);
+            }
+            "writeByte" => self.out(args[0].s(), &((args[1].s() as u8) as char).to_string()),
+            "flushOutput" | "publishOutput" | "flushIdle" | "initOutput" | "registerExitFlush"
+            | "flushForExit" => {}
+            _ => return None,
+        }
+        Some(super::V::S(0))
+    }
+
     fn out(&mut self, stream: u64, s: &str) {
         match stream {
             1 => self.stdout.push_str(s),
@@ -156,7 +183,8 @@ impl Interp<'_> {
                 let unit = usize::try_from(a[1] as i64).ok().and_then(|i| units.get(i));
                 return Ok(unit.map_or(-1, |&u| u as i64) as u64);
             }
-            "velt_rt_write_str" => {
+            // The writers of hand-built programs (builder.rs `stream_writers`).
+            "velt_test_write_str" => {
                 let s = self.str_text(a[1]);
                 self.out(a[0], &s);
             }
@@ -168,9 +196,8 @@ impl Interp<'_> {
                 let n = inspect_num(f64::from_bits(a[1]));
                 self.out(a[0], &format!("{n}{}", a[2] as u8 as char))
             }
-            "velt_rt_write_bool" => self.out(a[0], if a[1] & 1 == 1 { "true" } else { "false" }),
-            "velt_rt_write_byte" => self.out(a[0], &((a[1] as u8) as char).to_string()),
-            "velt_rt_flush" => {}
+            "velt_test_write_bool" => self.out(a[0], if a[1] & 1 == 1 { "true" } else { "false" }),
+            "velt_test_write_byte" => self.out(a[0], &((a[1] as u8) as char).to_string()),
             "velt_rt_panic" => {
                 let msg = self.str_text(a[0]);
                 self.stderr.push_str(&format!("panic: {msg}\n"));

@@ -6,8 +6,7 @@
 
 import { memoryFigures } from "#memory-sys";
 import { processEnv } from "velt/lang/hooks/process";
-
-declare function velt_rt_write_str(stream: u32, s: string);
+import { writeStrCold } from "velt/lang/hooks/stdout";
 
 /**
  * What `process.memoryUsage()` returns, in bytes, with Node's field names:
@@ -57,7 +56,7 @@ const EXIT_NOTE = "rc stats: the program called process.exit: no leak verdict\n"
  */
 export function processExit(code: i32): never {
   if (processEnv("VELT_RC_STATS") === "1") {
-    velt_rt_write_str(2, EXIT_NOTE);
+    writeStrCold(2, EXIT_NOTE);
   }
   process.exit(code);
 }

@@ -175,6 +175,11 @@ impl FnLower<'_, '_> {
         if matches!(r, Rt::Panic) && self.panic_in_std(&args) {
             return;
         }
+        // Both end the process: what stdout holds goes out first (stdout.rs). Not before
+        // `panicRaise` above, which a `catchUnwind` may catch.
+        if matches!(r, Rt::Panic | Rt::Exit) {
+            self.flush_for_exit();
+        }
         // The executor in Velt does some of their jobs (sched.rs).
         let Err((args, dest)) = self.sched_rt(r, args, dest) else {
             return;

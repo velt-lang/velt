@@ -613,6 +613,25 @@ pub(in crate::driver) fn found(
     found
 }
 
+/// After lowering a program that may link prebuilt objects (`sess.prebuilt`, what the check
+/// found): the hooks objects call out to (`prebuilt::calls_out`) exported under their own
+/// symbols, with no facts about their pointers from the program's calls, before the optimizer,
+/// which then keeps each whole (it may still inline it into the program's own callers).
+pub(in crate::driver) fn export_calls_out(sess: &Session, program: &mut vir::Program) {
+    if sess.prebuilt.is_empty() {
+        return;
+    }
+    for h in prebuilt::calls_out() {
+        let symbol = velt_vir::mangle::mangle(&h.qualified());
+        let defined =
+            (program.funcs.iter_mut()).find(|f| f.symbol == symbol && !f.blocks.is_empty());
+        if let Some(f) = defined {
+            f.linkage = vir::Linkage::Export;
+            super::prebuilt_object::unknown_callers(f);
+        }
+    }
+}
+
 /// After `program` (for `target`) is optimized: the objects of the prebuilt modules it calls
 /// into, placed for the link after the std cache's own (`hook<n>.<ext>`, linked or copied as
 /// those are), in `sess.std_objects`, and their thread-local values' externs added to `program`,
@@ -629,6 +648,16 @@ pub(in crate::driver) fn link(
     let (objects, tls) = linked_objects(program, &sess.prebuilt).map_err(BuildError::Ice)?;
     if objects.is_empty() {
         return Ok(());
+    }
+    if let Some(missing) = (prebuilt::calls_out())
+        .map(|h| velt_vir::mangle::mangle(&h.qualified()))
+        .find(|s| {
+            !(program.funcs.iter()).any(|f| &f.symbol == s && f.linkage != vir::Linkage::Internal)
+        })
+    {
+        return Err(BuildError::Ice(format!(
+            "ICE: the prebuilt objects call `{missing}`, which the program does not export"
+        )));
     }
     define_tls(program, &tls);
     let place =

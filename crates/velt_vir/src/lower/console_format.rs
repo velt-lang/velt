@@ -143,7 +143,7 @@ impl FnLower<'_, '_> {
             TyKind::Never => false,
             TyKind::Str => {
                 let p = self.operand_addr(v, crate::vir::Ty::Agg(crate::vir::STR_AGG));
-                self.call_rt(Rt::WriteStr, vec![stream.clone(), p], None);
+                self.write_str(stream, p);
                 false
             }
             TyKind::Unit => {
@@ -163,7 +163,7 @@ impl FnLower<'_, '_> {
                 false
             }
             TyKind::Bool => {
-                self.call_rt(Rt::WriteBool, vec![stream.clone(), v], None);
+                self.write_bool(stream, v);
                 false
             }
             _ => super::ice("console format: a value that is not written directly"),
@@ -189,7 +189,7 @@ impl FnLower<'_, '_> {
                 }
             }
         }
-        self.call_rt(Rt::WriteStr, vec![stream.clone(), bp.clone()], None);
+        self.write_str(stream, bp.clone());
         self.call_rt(Rt::StrbufDrop, vec![bp], None);
     }
 

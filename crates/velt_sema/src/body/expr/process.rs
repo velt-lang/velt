@@ -22,7 +22,7 @@ fn synthetic(kind: ast::ExprKind, span: Span) -> ast::Expr {
     }
 }
 
-/// The stream number `velt_rt_write_str` takes for `process.<name>`.
+/// The stream number std's `writeStr` takes for `process.<name>`.
 fn stream_of(name: &str) -> Option<i64> {
     match name {
         "stdout" => Some(1),

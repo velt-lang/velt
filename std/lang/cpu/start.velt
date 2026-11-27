@@ -7,11 +7,11 @@
 
 import { noInline } from "velt/lang/intrinsics";
 import { cpuDisabledBits, envAddress, missingMessage, simdDisabledBits } from "./check";
+import { writeStrCold } from "velt/lang/hooks/stdout";
 
 // The feature word bits the program was built for (the driver fills it in).
 declare function velt_simd_cpu_required(): u64;
 declare function velt_rt_exit(code: i32): never;
-declare function velt_rt_write_str(stream: u32, s: string): void;
 // Stores the feature word every run-time check reads (std/lang/cpu/word.velt).
 declare function velt_simd_cpu_word_set(word: u64): void;
 
@@ -19,9 +19,9 @@ declare function velt_simd_cpu_word_set(word: u64): void;
 @noInline
 function refuse(required: u64, have: u64, arm: bool): never {
   const message = missingMessage(required, have, arm);
-  velt_rt_write_str(2, "error: ");
-  velt_rt_write_str(2, message);
-  velt_rt_write_str(2, "\n");
+  writeStrCold(2, "error: ");
+  writeStrCold(2, message);
+  writeStrCold(2, "\n");
   velt_rt_exit(1);
 }
 

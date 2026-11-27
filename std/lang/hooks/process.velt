@@ -9,15 +9,14 @@
 import { processId } from "#process-pid";
 import { addressLoad, addressStore, inline, noInline } from "velt/lang/intrinsics";
 import { getEnv } from "#env-sys";
-
-declare function velt_rt_write_str(stream: u32, s: string);
+import { writeStr } from "./stdout";
 
 /**
  * Whether this thread wrote to standard output since a hand-off last published its output
- * (`clearStdoutWritten`): the runtime buffers stdout per thread. Set by every write of stdout from
+ * (`clearStdoutWritten`): stdout is buffered per thread. Set by every write of stdout from
  * compiled code: `console.log` (`stdoutWritten`, called by lowering), `process.stdout.write` and
- * `Stdout.write`; the runtime writes stdout for nobody else. True also when the runtime published
- * the buffer since (at the end of every poll): an extra publish, of nothing, is harmless.
+ * `Stdout.write`; nothing else writes stdout. True also when the buffer was published
+ * since (at the end of every poll): an extra publish, of nothing, is harmless.
  */
 const STDOUT_WRITTEN = new ThreadLocal<bool>(false);
 
@@ -94,7 +93,7 @@ export function processWrite(stream: u32, s: string): bool {
   if (stream !== 2) {
     stdoutWritten();
   }
-  velt_rt_write_str(stream, s);
+  writeStr(stream, s);
   return true;
 }
 

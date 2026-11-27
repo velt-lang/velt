@@ -24,9 +24,10 @@ pub struct Hook {
     /// The runtime externs (`velt_rt_*`) whose job this hook does: the compiler must call the
     /// hook, not the extern, for the feature the hook implements (`velt_common`'s test
     /// `hook_replaces.rs` lists every place left that still names one, #2197). An extern the
-    /// hook only wraps is not listed: `processWrite` writes through `velt_rt_write_str`, which
-    /// stays the runtime's job. A hook may also call an extern it replaces for some of its
-    /// inputs: what counts is that the compiler no longer calls it in the hook's place.
+    /// hook only wraps is not listed: `writeStr` writes through the runtime's
+    /// `velt_rt_write_str`, which stays the runtime's job. A hook may also call an extern it
+    /// replaces for some of its inputs: what counts is that the compiler no longer calls it in
+    /// the hook's place.
     pub replaces: &'static [&'static str],
     /// Lowering does without it when the hook is missing or left unchecked (it is one of
     /// [`super::ON_DEMAND_FLOAT`], whose place `number_text` / `number_push` take, or of

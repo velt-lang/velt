@@ -356,8 +356,8 @@ fn snapshot_hello() {
     let v = super::lower_ok(&hello());
     let expected = r#"agg#0 string size=24 align=8 { u64@0, u64@8, u64@16 }
 static#0 align=1 "Hello, Velt!"
-extern#0 velt_rt_write_str(u32, ptr) -> unit
-extern#1 velt_rt_write_byte(u32, u8) -> unit
+extern#0 velt_test_write_str(u32, ptr) -> unit
+extern#1 velt_test_write_byte(u32, u8) -> unit
 
 fn#0 internal _V4main() -> unit {
   let _0: u64
@@ -369,9 +369,9 @@ fn#0 internal _V4main() -> unit {
     call fn#1 _V3stdP4langP5hooksP7processN13stdoutWritten() -> bb1
   bb1:
     _2 = &_1
-    call extern#0 velt_rt_write_str(1_u32, _2) -> bb2
+    call fn#2 _V3stdP4langP5hooksP6stdoutN8writeStr(1_u32, _2) -> bb2
   bb2:
-    call extern#1 velt_rt_write_byte(1_u32, 10_u8) -> bb3
+    call fn#3 _V3stdP4langP5hooksP6stdoutN9writeByte(1_u32, 10_u8) -> bb3
   bb3:
     return ()
 }
@@ -381,11 +381,50 @@ fn#1 internal _V3stdP4langP5hooksP7processN13stdoutWritten() -> unit {
     return ()
 }
 
-fn#2 export velt_main() -> i32 {
+fn#2 internal _V3stdP4langP5hooksP6stdoutN8writeStr(u32, ptr) -> unit {
+  param _0: u32 // stream
+  param _1: ptr [nonnull dereferenceable(24)] // v
   bb0:
-    call fn#0 _V4main() -> bb1
+    call extern#0 velt_test_write_str(_0, _1) -> bb1
   bb1:
+    return ()
+}
+
+fn#3 internal _V3stdP4langP5hooksP6stdoutN9writeByte(u32, u8) -> unit {
+  param _0: u32 // stream
+  param _1: u8 // v
+  bb0:
+    call extern#1 velt_test_write_byte(_0, _1) -> bb1
+  bb1:
+    return ()
+}
+
+fn#4 internal _V3stdP4langP5hooksP6stdoutN12flushForExit() -> unit {
+  bb0:
+    return ()
+}
+
+fn#5 export velt_main() -> i32 {
+  bb0:
+    call fn#6 _V3stdP4langP5hooksP6stdoutN10initOutput() -> bb1
+  bb1:
+    call fn#7 _V3stdP4langP5hooksP6stdoutN17registerExitFlush() -> bb2
+  bb2:
+    call fn#0 _V4main() -> bb3
+  bb3:
+    call fn#4 _V3stdP4langP5hooksP6stdoutN12flushForExit() -> bb4
+  bb4:
     return 0_i32
+}
+
+fn#6 internal _V3stdP4langP5hooksP6stdoutN10initOutput() -> unit {
+  bb0:
+    return ()
+}
+
+fn#7 internal _V3stdP4langP5hooksP6stdoutN17registerExitFlush() -> unit {
+  bb0:
+    return ()
 }
 "#;
     assert_eq!(v.to_string(), expected);
@@ -435,13 +474,13 @@ fn snapshot_greet() {
     _13 = bitor _11, _12
     _14 = add _13, 8_u64
     _16 = &_15
-    call extern#3 velt_rt_strbuf_new(_14, _16) -> bb1
+    call extern#1 velt_rt_strbuf_new(_14, _16) -> bb1
   bb1:
-    call extern#4 velt_rt_strbuf_push_bytes(_16, static#15, 30064771079_u64) -> bb2
+    call extern#2 velt_rt_strbuf_push_bytes(_16, static#15, 30064771079_u64) -> bb2
   bb2:
-    call extern#11 velt_rt_strbuf_push_str(_16, _0) -> bb3
+    call extern#8 velt_rt_strbuf_push_str(_16, _0) -> bb3
   bb3:
-    call extern#12 velt_rt_strbuf_push_byte(_16, 33_u8) -> bb4
+    call extern#9 velt_rt_strbuf_push_byte(_16, 33_u8) -> bb4
   bb4:
     (*_1 as agg#0) = _15
     return ()
