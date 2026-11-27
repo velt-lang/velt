@@ -23,20 +23,25 @@ export function digits(x: f64, n: i64): string {
 
 /** `probeValue` by role. */
 export function value(s: string, start: usize, end: usize): f64 {
-  return hookCall("prebuilt_probe_value", s, start, end);
+  return hookCall("prebuilt_probe_value", s, start, end, false);
+}
+
+/** `probeValue` by role, negated: a `bool` crosses. */
+export function negated(s: string, start: usize, end: usize): f64 {
+  return hookCall("prebuilt_probe_value", s, start, end, true);
 }
 "#;
 
-/// A program calling both hooks.
-const FIRST: &str = r#"import { digits, value } from "velt/zz_prebuilt";
+/// A program calling both hooks, the second with a `bool` either way.
+const FIRST: &str = r#"import { digits, negated, value } from "velt/zz_prebuilt";
 
 function main() {
   console.log(digits(9876543.5, 4), digits(-42, 9), digits(0, 1));
   const s = "ab12c3d4" + "5";
-  console.log(value(s, 2, s.length as usize), value(s, 0, 3));
+  console.log(value(s, 2, s.length as usize), value(s, 0, 3), negated(s, 0, 4));
 }
 "#;
-const FIRST_OUT: &str = "9876 -42 0\n12345 1\n";
+const FIRST_OUT: &str = "9876 -42 0\n12345 1 -12\n";
 
 /// Another program: its own `u8[]`s, classes held in arrays and a sorted array of objects
 /// holding strings (whole-program facts that change how `u8[]` and `string` parameters are

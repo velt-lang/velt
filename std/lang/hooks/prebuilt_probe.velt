@@ -1,6 +1,6 @@
 // velt/lang/hooks (internal): the test of prebuilt hook modules (velt_common
-// `std_hooks/prebuilt.rs`): two hooks that take and return only numbers and strings, with an
-// `u8[]` inside, whose layout a program's other code decides. No std code calls them; veltc's
+// `std_hooks/prebuilt.rs`): two hooks that take and return only numbers, a `bool` and strings,
+// with an `u8[]` inside, whose layout a program's other code decides. No std code calls them; veltc's
 // test `prebuilt_hooks.rs` does, by role, from a std of its own. Loaded only on demand
 // (`ON_DEMAND_MODULES`).
 
@@ -26,8 +26,11 @@ export function probeText(x: f64, digits: i64): string {
   return text;
 }
 
-/** The decimal digits of `s` from byte `start` to `end` (other bytes skipped), as a number. */
-export function probeValue(s: string, start: usize, end: usize): f64 {
+/**
+ * The decimal digits of `s` from byte `start` to `end` (other bytes skipped), as a number,
+ * negated where `negate` is true.
+ */
+export function probeValue(s: string, start: usize, end: usize, negate: bool): f64 {
   const digits: u8[] = [];
   for (let i = start; i < end; i++) {
     const c = strByteAt(s, i as u64);
@@ -39,5 +42,5 @@ export function probeValue(s: string, start: usize, end: usize): f64 {
   for (const d of digits) {
     value = value * 10 + d;
   }
-  return value;
+  return negate ? -value : value;
 }

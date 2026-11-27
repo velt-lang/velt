@@ -131,7 +131,7 @@ pub(super) fn build(
 }
 
 /// The world's root: it imports the hooks of `hooks` from `spec` and calls each once, with
-/// zeros and empty strings (its code is dropped; it only makes them live).
+/// zeros, `false`s and empty strings (its code is dropped; it only makes them live).
 fn root_source(hooks: &[usize], spec: &str) -> String {
     let items: Vec<&str> = hooks.iter().map(|&i| HOOKS[i].item).collect();
     let mut src = format!(
@@ -141,7 +141,11 @@ fn root_source(hooks: &[usize], spec: &str) -> String {
     for &i in hooks {
         let Sig::Fn(f) = &HOOKS[i].sig else { continue };
         let args: Vec<&str> = (f.params.iter())
-            .map(|p| if p.ty == T::Str { "\"\"" } else { "0" })
+            .map(|p| match p.ty {
+                T::Str => "\"\"",
+                T::Bool => "false",
+                _ => "0",
+            })
             .collect();
         src.push_str(&format!("  {}({});\n", HOOKS[i].item, args.join(", ")));
     }

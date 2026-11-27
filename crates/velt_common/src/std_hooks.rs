@@ -200,9 +200,9 @@ with_object_hooks! {
     /// The first `digits` digits of `x`'s whole part (`|x|` below 2^53), from an `u8[]`.
     prebuilt_probe_text => lang_hooks_prebuilt_probe, "probeText", sig((f64, i64) -> string),
         prebuilt;
-    /// The decimal digits of `s` from byte `start` to `end`, as a number.
+    /// The decimal digits of `s` from byte `start` to `end`, as a number, negated (`negate`).
     prebuilt_probe_value => lang_hooks_prebuilt_probe, "probeValue",
-        sig((&string, usize, usize) -> f64), prebuilt;
+        sig((&string, usize, usize, bool) -> f64), prebuilt;
 
     // process_statics.velt: the process-wide statics the runtime reads (#2779), whose addresses
     // `velt_main` hands it first thing (`velt_rt_statics`).
