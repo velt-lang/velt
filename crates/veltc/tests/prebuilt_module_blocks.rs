@@ -200,8 +200,8 @@ fn the_object_s_blocks_are_freed_at_a_counted_normal_exit() {
     }
 }
 
-/// A program without module state calls none of the hooks: it links no object, with the object
-/// in the cache.
+/// A program without module state calls none of the hooks: it links no object of theirs, with the
+/// object in the cache (only std's writer's, which every program calls).
 #[test]
 fn a_program_without_module_state_links_no_object() {
     let tmp = test_dir::TestDir::new();
@@ -210,9 +210,7 @@ fn a_program_without_module_state_links_no_object() {
     assert_eq!(found(&velt(dir, "a.velt", SYNC, &["run"], &[])), "object");
     let hello = velt(dir, "hello.velt", HELLO, &["run"], &[]);
     assert_eq!(text(&hello.stdout), "hello\n");
-    assert!(
-        !text(&hello.stderr).contains("objects linked"),
-        "{}",
-        text(&hello.stderr)
-    );
+    let err = text(&hello.stderr);
+    assert!(!err.contains("module_blocks: object found"), "{err}");
+    assert!(err.contains("prebuilt hooks: 1 objects linked"), "{err}");
 }

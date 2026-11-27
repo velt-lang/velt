@@ -1,8 +1,9 @@
 //! The rows of the hook table for standard output and standard error (#2196):
-//! std/lang/hooks/stdout.velt, which writes through the runtime's writer for now (out_rt.velt).
-//! `console.log` and `console.error` write through the writers (`velt_vir` `console.rs`), and
-//! every exit Velt code reaches calls `flushForExit` first. Not `replaces(…)`: the runtimes keep
-//! `velt_rt_write_str` and the rest, which out_rt.velt forwards to. No construct
+//! std/lang/hooks/stdout.velt, std's writer on a native target (out_native.velt, prebuilt, through
+//! out_hooked.velt) and the WebAssembly runtime's elsewhere (out_rt.velt). `console.log` and `console.error` write through
+//! the writers (`velt_vir` `console.rs`), and every exit Velt code reaches calls `flushForExit`
+//! first. Not `replaces(…)`: a WebAssembly build keeps velt_rt_wasm's `velt_rt_write_str` and the
+//! rest (out_rt.velt forwards to them), while velt_rt's go once nothing calls them. No construct
 //! lists them: every program reaches an exit, and process.velt imports the module, so every
 //! program loads it. Kept apart from the rest of the table ([`super`]), which
 //! [`with_stdout_hooks`] gives on, with these rows after it, to `with_any_hooks!`.
@@ -28,6 +29,32 @@ macro_rules! with_stdout_hooks {
             /// `velt_main`'s start outside the dev JIT: the flush registered with the C library's
             /// `atexit`, for the exits the runtime takes by itself (`entry.rs`).
             flush_at_exit => lang_hooks_stdout, "registerExitFlush", sig(() -> void), lowered;
+            // std's writer on a native target (out_native.velt), which out_hooked.velt reaches
+            // through these alone, by `hookCall`: prebuilt, its buffers in its private modules
+            // (`prebuilt::private`), so that a build linking its object neither loads nor
+            // compiles it (docs/internals/design/std-object.md "Prebuilt hook modules").
+            /// `writeStr` on a native target.
+            out_write_str => lang_hooks_out_native, "writeStr", sig((u32, &string) -> void), prebuilt;
+            /// `writeByte` on a native target.
+            out_write_byte => lang_hooks_out_native, "writeByte", sig((u32, u8) -> void), prebuilt;
+            /// The `n` bytes at address `p` to stdout (`Stdout.write`'s array's).
+            out_write_bytes => lang_hooks_out_native, "writeBytesAt", sig((usize, usize) -> void),
+                prebuilt;
+            /// `flushOutput` on a native target.
+            out_flush => lang_hooks_out_native, "flushOutput", sig(() -> void), prebuilt;
+            /// `publishOutput` on a native target.
+            out_publish => lang_hooks_out_native, "publishOutput", sig(() -> void), prebuilt;
+            /// `threadEnd` on a native target.
+            out_thread_end => lang_hooks_out_native, "threadEnd", sig(() -> void), prebuilt;
+            /// `flushIdle` on a native target.
+            out_flush_idle => lang_hooks_out_native, "flushIdle", sig(() -> void), prebuilt;
+            /// `initOutput` on a native target.
+            out_init => lang_hooks_out_native, "initOutput", sig(() -> void), prebuilt;
+            /// `registerExitFlush` on a native target.
+            out_register_exit_flush => lang_hooks_out_native, "registerExitFlush",
+                sig(() -> void), prebuilt;
+            /// `flushForExit` on a native target.
+            out_flush_for_exit => lang_hooks_out_native, "flushForExit", sig(() -> void), prebuilt;
         }
     };
 }

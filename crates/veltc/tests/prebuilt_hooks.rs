@@ -152,15 +152,51 @@ fn a_prebuilt_hook_calls_its_object_and_loads_its_module_without_one() {
             (found(&served), text(&served.stdout).as_str()),
             ("object", FIRST_OUT)
         );
-        // The probe's object, and std's float printer's (`number_shortest`): the program writes
-        // the f64s `value` returns.
+        // The probe's object, std's float printer's (`number_shortest`): the program writes
+        // the f64s `value` returns; and std's writer's (`out_native`).
         let err = text(&served.stderr);
         assert!(err.contains("number_shortest: object found"), "{err}");
-        assert!(err.contains("prebuilt hooks: 2 objects linked"), "{err}");
+        assert!(err.contains("prebuilt hooks: 3 objects linked"), "{err}");
         if mode == ["run"] {
             let check = velt(dir, "a.velt", FIRST, &["check"], &[]);
             assert_eq!(found(&check), "object");
         }
+    }
+}
+
+/// Standard output and standard error, the exit's flush among them, from several threads.
+const WRITES: &str = r#"async function main() {
+  console.log("one", 2, true);
+  process.stdout.write("partial ");
+  console.error("err", 4);
+  const lines = await Promise.all([1, 2, 3].map(async (i) => {
+    console.log("task", i);
+    return i;
+  }));
+  console.log(lines.length);
+  process.stdout.write("tail");
+  process.exit(0);
+}
+"#;
+const WRITES_OUT: &str = "one 2 true\npartial task 1\ntask 2\ntask 3\n3\ntail";
+
+/// std's writer of stdout and stderr is a prebuilt module (#2196), its buffers private to its
+/// object: a program that links the object writes what one compiling the writer does, stdout
+/// before stderr, and what an exit finds buffered, in debug and release builds.
+#[test]
+fn the_writer_s_object_writes_as_its_module_does() {
+    for mode in [&["run", "--release"][..], &["run"]] {
+        let tmp = test_dir::TestDir::new();
+        let dir = tmp.path();
+        let filled = velt(dir, "w.velt", WRITES, mode, &[FILL]);
+        let err = text(&filled.stderr);
+        assert!(err.contains("out_native: no object"), "{err}");
+        assert_eq!(text(&filled.stdout), WRITES_OUT);
+        let served = velt(dir, "w.velt", WRITES, mode, &[]);
+        let err = text(&served.stderr);
+        assert!(err.contains("out_native: object found"), "{mode:?}: {err}");
+        assert_eq!(text(&served.stdout), WRITES_OUT);
+        assert!(err.contains("err 4\n"), "{err}");
     }
 }
 

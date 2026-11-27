@@ -53,9 +53,10 @@ export const imports: Imports = {
   },
   // The OS calls the executor's core makes whatever its reactor (std/lang/hooks/sched_mem.velt,
   // sched_io_wait.velt): `sched_yield` and `clock_gettime`, or `SwitchToThread` and the performance
-  // counter. `#stdout-sys`: stdout and stderr's writer, the runtime's on every target for now.
+  // counter. `#stdout-sys`: stdout and stderr's writer; `#stdout-os` its own OS calls.
   "#sched-os": { win32: "./lang/hooks/os_win32.velt", default: "./lang/hooks/os_posix.velt" },
-  "#stdout-sys": { default: "./lang/hooks/out_rt.velt" },
+  "#stdout-sys": { native: "./lang/hooks/out_hooked.velt", default: "./lang/hooks/out_rt.velt" },
+  "#stdout-os": { win32: "./lang/hooks/out_win32.velt", default: "./lang/hooks/out_posix.velt" },
   // The memory of the symbol records made at run time: `Symbol.for`'s one at a time
   // (std/lang/symbol/registry.velt) and `Symbol()`'s in 4 KiB chunks (record.velt). The C
   // library's where there is one, the compiled code's allocator (not zeroed) in the browser.

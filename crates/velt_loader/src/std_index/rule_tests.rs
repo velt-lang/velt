@@ -37,6 +37,11 @@ fn loaded(src: &str, sm: &mut SourceMap) -> crate::Loaded {
 /// does one that is gone.
 const KNOWN: &[&str] = &["host_async demands std/io/error: class `IoError` extends `Error`"];
 
+/// Modules loaded on demand elsewhere that every program on a native target loads, so a demand
+/// of them there serves nothing: `Mutex`'s lock, with which the writer of stdout and stderr locks
+/// its shared buffer (`#thread-lock`, #2196). A WebAssembly build's writer is the runtime's.
+const LOADED_BY_EVERY_NATIVE_PROGRAM: &[&str] = &["std/lang/hooks/mutex"];
+
 #[test]
 fn every_module_a_reach_time_hook_demands_may_be_served_in_place() {
     let index = load(&real_std(), None);
@@ -54,6 +59,13 @@ fn every_module_a_reach_time_hook_demands_may_be_served_in_place() {
     for path in velt_common::std_hooks::ON_DEMAND_MODULES {
         let mut sm = SourceMap::default();
         let mut l = loaded("console.log(\"hello\");\n", &mut sm);
+        if LOADED_BY_EVERY_NATIVE_PROGRAM.contains(path) {
+            assert!(
+                l.modules.iter().any(|m| m.path == *path),
+                "{path} is not loaded"
+            );
+            continue;
+        }
         let opts = LoadOptions {
             std_root: Some(real_std()),
             demand_std: true,

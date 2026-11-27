@@ -89,6 +89,18 @@ const PRIVATE: &[(&str, &[&str])] = &[
         "lang_hooks_module_blocks",
         &["std/lang/hooks/module_blocks"],
     ),
+    // std's writer of stdout and stderr (#2196): its buffers, its lock and its counts, which the
+    // program reaches through its entries alone (std/lang/hooks/out_hooked.velt).
+    (
+        "lang_hooks_out_native",
+        &[
+            "std/lang/hooks/out_native",
+            "std/lang/hooks/stdout_buffer",
+            "std/lang/hooks/stdout_block",
+            "std/lang/hooks/out_posix",
+            "std/lang/hooks/out_win32",
+        ],
+    ),
 ];
 
 /// The hooks an object may call in the program that links it (module docs, "Calls out"): the

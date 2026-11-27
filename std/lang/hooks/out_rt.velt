@@ -1,7 +1,7 @@
-// velt/lang/hooks (internal): standard output and standard error through the runtime's writer
-// (`#stdout-sys`, std/imports.velt), on every target for now: the runtime publishes a thread's
-// output at its own hand-offs (nothing to publish here) and flushes at its own exits. Its move
-// into std is the next step of #2196.
+// velt/lang/hooks (internal): standard output and standard error on WebAssembly (`#stdout-sys`'
+// default variant, std/imports.velt): the WebAssembly runtime's writer, which runs every task on
+// one thread (nothing to publish) and flushes at its own exits. Its move into std is the next
+// step of #2196.
 
 declare function velt_rt_write_str(stream: u32, s: string);
 declare function velt_rt_write_bool(stream: u32, v: bool);
@@ -29,7 +29,7 @@ export function flushOutput(): void {
   velt_rt_flush();
 }
 
-/** The runtime publishes at its own hand-offs. */
+/** One thread: nothing to publish. */
 export function publishOutput(): void {}
 
 export function threadEnd(): void {}

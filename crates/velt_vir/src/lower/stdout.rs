@@ -1,7 +1,7 @@
 //! Standard output and standard error through std's hooks (std/lang/hooks/stdout.velt, #2196):
 //! the writers `console.log`, `console.error` and an uncaught error's report call, and the flush
-//! before every exit Velt code reaches (the end of `velt_main`, `process.exit`, a panic). The
-//! writer behind them is the runtime's for now (out_rt.velt).
+//! before every exit Velt code reaches (the end of `velt_main`, `process.exit`, a panic). On a
+//! native target the writer is std's (out_native.velt), elsewhere the runtime's (out_rt.velt).
 
 use super::hook_calls::{self as hooks, ty, HookTy};
 use super::{cint, FnLower};

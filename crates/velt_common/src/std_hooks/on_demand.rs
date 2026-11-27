@@ -64,6 +64,8 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     // A `number` stored into an integer array's element (#3182), demanded where sema finds one.
     "std/lang/hooks/int_store",
     "std/lang/hooks/number_shortest",
+    // std's writer on a native target (#2196), which std/lang/hooks/out_hooked.velt calls by role.
+    "std/lang/hooks/out_native",
     // The blocks of module state (#2196 9c): a native program with module state.
     "std/lang/hooks/module_blocks",
     // The weak core (#3145), demanded by a weak collection's intrinsic (`Construct::Weak`).

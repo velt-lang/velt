@@ -9,8 +9,10 @@ mod no_window;
 mod test_dir;
 
 /// Lines of release IR for hello world, per target: 2,209 to 2,457 when the budget was set (133
-/// before the start-up check).
-const HELLO_BUDGET: usize = 2_600;
+/// before the start-up check); 7,857 to 9,386 with std's writer of stdout and stderr (#2196,
+/// std/lang/hooks/stdout_buffer.velt and the files behind `#stdout-sys`), which every program
+/// compiles where it linked the runtime's: Windows' the most, with its console's UTF-16 writes.
+const HELLO_BUDGET: usize = 9_600;
 
 #[test]
 fn hello_world_with_the_start_up_check_stays_within_its_budget() {

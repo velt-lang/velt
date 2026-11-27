@@ -52,6 +52,7 @@ import * as m from "./sched_mem";
 import * as t from "./sched_task";
 import * as wt from "./sched_io_wait";
 import * as wk from "./sched_wake";
+import { publishOutput, threadEnd } from "./stdout";
 
 /** The pool's block (0 until the first job). */
 const POOL = new Atomic<u64>(0);
@@ -248,6 +249,8 @@ function runJob(n: usize): void {
   const job = unsafe { slotTake<() => void>(n + N_JOB) };
   m.release(n, N_JOB + slotSize<() => void>());
   job();
+  // What the job printed is visible before its end is counted (stdout is buffered per thread).
+  publishOutput();
 }
 
 /** A pool thread: runs jobs until it has been idle for `KEEP_ALIVE_NS`. */
@@ -259,6 +262,7 @@ function blockingMain(arg: Ptr<u8> | null): Ptr<u8> | null {
     const n = next(p);
     unlock(p);
     if (n === 0) {
+      threadEnd();
       return null;
     }
     runJob(n);
