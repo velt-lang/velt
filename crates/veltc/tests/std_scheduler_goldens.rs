@@ -150,9 +150,10 @@ function main() {
 "#;
 
 /// `console.log` of a maybe-promise in a program sema found running nothing on the executor
-/// keeps the runtime's peek (`velt_rt_fut_peek`): the executor's `sched_peek` isn't loaded there
-/// (#2880; its call was an internal compiler error once every program used the executor), with
-/// std on demand and with std up front (`VELT_EAGER_STD=1`, its hooks loaded but unchecked).
+/// peeks with no call: the executor's `sched_peek` isn't loaded there (#2880; its call was an
+/// internal compiler error once every program used the executor), and the runtime has no peek
+/// since #2196 9f (lowering's `0`: nothing is awaited without the executor), with std on demand
+/// and with std up front (`VELT_EAGER_STD=1`, its hooks loaded but unchecked).
 #[test]
 fn a_maybe_promise_printed_by_a_program_without_tasks_builds_and_prints() {
     runtime_support::build_native_runtime(manifest());

@@ -1,0 +1,26 @@
+// console.log of a promise that only runs when it is awaited prints `<pending>` (#2196 9f): a
+// race, an `all`, a timer's promise and an `any`, printed before they are awaited, then again
+// once settled.
+
+async function double(n: number): Promise<number> {
+  return n * 2;
+}
+
+function later(ms: number, v: number): Promise<number> {
+  return new Promise<number>((resolve) => setTimeout(() => resolve(v), ms));
+}
+
+async function main() {
+  const r = Promise.race([double(1), double(9)]);
+  console.log(r);
+  const a = Promise.all([double(2), double(3)]);
+  console.log(a);
+  const t = later(1, 4);
+  console.log(t);
+  const any = Promise.any([double(5), double(1)]);
+  console.log(any);
+  console.log(await r, await a, await t, await any);
+  console.log(r, a, t, any);
+}
+
+main();

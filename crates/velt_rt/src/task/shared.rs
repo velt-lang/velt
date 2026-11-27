@@ -156,26 +156,6 @@ pub unsafe extern "C-unwind" fn velt_rt_fut_share(
     new_handle(h)
 }
 
-/// What `console.log` shows of promise `f`, which its owner holds: 1 when its result is in the
-/// result slot (+16), 0 while it is pending. Nothing is polled, claimed or moved. Only a holder
-/// of a shared promise that settled reads as settled: any other runtime future runs only when it
-/// is awaited.
-///
-/// # Safety
-/// `f` must be a live heap future.
-#[no_mangle]
-pub unsafe extern "C-unwind" fn velt_rt_fut_peek(f: *mut VeltFut) -> u8 {
-    if !is_shared(f) {
-        return 0;
-    }
-    let h = hub(f);
-    let st = h.st.lock();
-    if st.done {
-        std::ptr::copy_nonoverlapping(st.result.as_ptr() as *const u8, slot(f), h.size);
-    }
-    st.done as u8
-}
-
 /// The original future of holder `f`'s shared promise (task/identity.rs); `None` when `f` is not
 /// a holder.
 ///

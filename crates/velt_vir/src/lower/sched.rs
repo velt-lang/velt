@@ -324,10 +324,15 @@ impl FnLower<'_, '_> {
             return Err((args, dest));
         }
         // A program that runs nothing on the executor has no node of it to peek at, and its hooks
-        // are neither loaded nor checked (#2880): `console.log` of a promise there keeps the
-        // runtime's peek, in either std mode.
+        // are neither loaded nor checked (#2880). Every promise there prints as pending: only a
+        // holder awaited until it settled shows its result, and nothing is awaited without the
+        // executor (an `await` makes its tasks live), so the peek is 0 with no call (#2196 9f:
+        // the runtime has no peek).
         if r == Rt::FutPeek && !self.sched_hook_live(velt_common::std_hook!(sched_peek)) {
-            return Err((args, dest));
+            if let Some(d) = dest {
+                self.assign(d, Rvalue::Use(cint(0, Ty::U8)));
+            }
+            return Ok(());
         }
         // Likewise a promise's identity and its aliases: without the executor no holder of its
         // hub exists. The runtime keeps only the identity of a holder of its own hub
