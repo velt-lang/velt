@@ -1,0 +1,27 @@
+// console.log of a spawned task's handle prints `<pending>` until it is awaited, then its result
+// (#2196 9f: the executor's peek tells a join handle without the runtime), at the top level and
+// in a task, for a value and an object result.
+
+async function double(n: number): Promise<number> {
+  return n * 2;
+}
+
+async function named(s: string): Promise<{ name: string }> {
+  return { name: s };
+}
+
+async function main() {
+  const h = spawn(double(4));
+  console.log(h);
+  console.log(await h);
+  console.log(h);
+  const o = spawn(named("velt"));
+  console.log([o]);
+  console.log((await o).name);
+  console.log(o);
+}
+
+const top = spawn(double(1));
+console.log(top);
+await main();
+console.log(await top, top);

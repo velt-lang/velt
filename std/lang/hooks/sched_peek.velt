@@ -2,23 +2,19 @@
 // `schedPeek`): whether a promise settled with its result still in its slot, which `console.log`
 // then prints (`Promise { 42 }`) without claiming it.
 
-import { Ptr } from "velt/ffi";
 import { fnAddress } from "velt/lang/intrinsics";
-import * as jn from "./sched_join";
-import * as rc from "./sched_race";
 import * as m from "./sched_mem";
 import * as node from "./sched_node";
 import * as sh from "./sched_share";
 import * as lf from "./sched_share_leaf";
 
-// A pointer is `Ptr`, as in compiled code's declaration of this symbol.
-declare c("c") function velt_rt_fut_peek$rt(f: Ptr<u8> | null): u8;
-
 /**
  * 1 when promise `f` settled with its result in its slot. A node of this executor's tells by its
- * flags, a holder of a shared one by its hub (sched_share.velt); a spawned task's handle prints
- * as pending; anything else is the runtime's to tell (a leaf, a holder of the runtime's hub, a
- * promise boxed off the worker).
+ * flags, a holder of a shared one by its hub (sched_share.velt), a shared leaf by its role. Any
+ * other promise prints as pending: a spawned task's handle, a join or a race until awaited, and
+ * a runtime leaf or a promise boxed off the worker, which runs only when it is awaited and whose
+ * result is then claimed (every share of one goes to this executor's hub, sched_share_leaf.velt,
+ * so no holder of the runtime's is ever settled here; #2196 9f).
  */
 export function peek(f: usize): u32 {
   if (m.ld(f) === fnAddress(node.nodePoll)) {
@@ -31,10 +27,5 @@ export function peek(f: usize): u32 {
     // A shared leaf's holder (sched_share_leaf.velt): what its role shows, copied to its slot.
     return lf.peek(f) ? 1 : 0;
   }
-  if (jn.isJoin(f) || rc.isRace(f)) {
-    // Pending until awaited, as the runtime's peek of its race says.
-    return 0;
-  }
-  // SAFETY: `f` is a live heap future of the runtime's.
-  return unsafe { velt_rt_fut_peek$rt(m.ptr(f)) } as u32;
+  return 0;
 }
