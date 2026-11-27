@@ -1,0 +1,55 @@
+// A `for...of` over a set calls a subclass's `[Symbol.iterator]` override, also through a
+// variable or parameter typed `Set` (#3820): while a class overrides it, a loop over a `Set`
+// does not take the set's own walk. A subclass without the override, and a plain set, still
+// iterate live.
+
+class Fixed extends Set<number> {
+  [Symbol.iterator](): Iterator<number> {
+    return [100, 200][Symbol.iterator]();
+  }
+}
+class Plain extends Set<number> {}
+
+function each(s: Set<number>): string {
+  const out: number[] = [];
+  for (const x of s) {
+    out.push(x);
+  }
+  return out.join(",");
+}
+
+const asSet: Set<number> = new Fixed();
+asSet.add(1);
+const viaVar: number[] = [];
+for (const x of asSet) {
+  viaVar.push(x);
+}
+const fixed = new Fixed();
+fixed.add(2);
+const direct: number[] = [];
+for (const x of fixed) {
+  direct.push(x);
+}
+console.log(viaVar.join(","), direct.join(","), each(new Fixed()));
+
+const p = new Plain();
+p.add(5);
+p.add(6);
+const ps: number[] = [];
+for (const x of p) {
+  ps.push(x);
+  if (x == 5) {
+    p.delete(6);
+    p.add(7);
+  }
+}
+const s = new Set<number>([1, 2, 3]);
+const ss: number[] = [];
+for (const x of s) {
+  ss.push(x);
+  if (x == 1) {
+    s.delete(2);
+    s.add(9);
+  }
+}
+console.log(ps.join(","), ss.join(","), each(p), each(s));
