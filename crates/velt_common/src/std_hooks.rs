@@ -207,6 +207,8 @@ with_any_hooks! {
     /// The decimal digits of `s` from byte `start` to `end`, as a number, negated (`negate`).
     prebuilt_probe_value => lang_hooks_prebuilt_probe, "probeValue",
         sig((&string, usize, usize, bool) -> f64), prebuilt;
+    /// `STR_EPOCH` as the object reads it: the program's word (`prebuilt.rs` "State").
+    prebuilt_probe_epoch => lang_hooks_prebuilt_probe, "probeEpoch", sig(() -> u64), prebuilt;
 
     // process_statics.velt: the process-wide statics the runtime reads (#2779), whose addresses
     // `velt_main` hands it first thing (`velt_rt_statics`).

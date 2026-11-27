@@ -49,6 +49,7 @@ pub(super) struct Shipped {
     pub bytes: Vec<u8>,
     pub entries: Vec<String>,
     pub tls: Vec<String>,
+    pub statics: Vec<String>,
     pub files: Vec<String>,
 }
 
@@ -61,6 +62,7 @@ struct Manifest {
     object: String,
     entries: Vec<String>,
     tls: Vec<String>,
+    statics: Vec<String>,
     /// Per std file: its content hash and its path below the std root, `/`-separated.
     files: Vec<(String, String)>,
 }
@@ -76,13 +78,16 @@ impl Manifest {
         let compiler = lines.next()?.strip_prefix("compiler ")?.to_string();
         let target = lines.next()?.strip_prefix("target ")?.to_string();
         let object = lines.next()?.strip_prefix("object ")?.to_string();
-        let (mut entries, mut tls, mut files) = (vec![], vec![], vec![]);
+        let (mut entries, mut tls, mut statics, mut files) = (vec![], vec![], vec![], vec![]);
         for line in lines {
             if let Some(e) = line.strip_prefix("entry ") {
                 entries.push(e.to_string());
             } else if let Some(t) = line.strip_prefix("tls ") {
                 velt_vir::tls::TlsCall::of_symbol(t)?;
                 tls.push(t.to_string());
+            } else if let Some(t) = line.strip_prefix("static ") {
+                velt_common::std_hooks::prebuilt::of_static_symbol(t)?;
+                statics.push(t.to_string());
             } else {
                 let (hash, path) = line.strip_prefix("file ")?.split_once('\t')?;
                 files.push((hash.to_string(), path.to_string()));
@@ -99,6 +104,7 @@ impl Manifest {
             object,
             entries,
             tls,
+            statics,
             files,
         })
     }
@@ -113,6 +119,9 @@ impl Manifest {
         }
         for t in &self.tls {
             s.push_str(&format!("tls {t}\n"));
+        }
+        for t in &self.statics {
+            s.push_str(&format!("static {t}\n"));
         }
         for (hash, path) in &self.files {
             s.push_str(&format!("file {hash}\t{path}\n"));
@@ -175,6 +184,7 @@ pub(super) fn find(
         bytes,
         entries: manifest.entries,
         tls: manifest.tls,
+        statics: manifest.statics,
         files,
     })
 }
@@ -212,6 +222,7 @@ pub(super) fn write(
         object: vpm::probe::content_hash(&built.object),
         entries: built.entries.clone(),
         tls: built.tls.clone(),
+        statics: built.statics.clone(),
         files,
     };
     let said = |path: &Path, e: std::io::Error| format!("{}: {e}", path.display());

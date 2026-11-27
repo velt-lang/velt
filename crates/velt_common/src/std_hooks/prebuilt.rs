@@ -32,6 +32,13 @@
 //! that loads none of them has the object's copy alone. Sema calls the object only for a program
 //! that loads none of them (`velt_sema` `lazy_std/hook_stubs.rs` `declared`); a program that
 //! does (the core's own white-box tests) loads the module as without the object.
+//!
+//! Std's process statics (a `process_static` entry, #2779) are the exception to the first rule:
+//! every program defines their words and hands the runtime their addresses (`velt_vir`
+//! `static_atomic.rs`), so the program's word is the one the runtime bumps. An object reaching
+//! one keeps no copy: it imports the program's word under [`static_symbol`], which every
+//! program exports, and its manifest lists each (`static` lines), which a program linking it
+//! defines.
 
 use super::{Hook, HOOKS};
 use crate::hook_sig::{Mode, Sig, T};
@@ -42,6 +49,26 @@ pub const PREFIX: &str = "velt_hook_";
 /// The symbol of hook `h`'s entry point in its module's object: `velt_hook_<entry name>`.
 pub fn symbol(h: &Hook) -> String {
     format!("{PREFIX}{}", h.name)
+}
+
+/// The symbol of process static `h`'s word (module docs, "State"), which every program exports
+/// and objects import: `velt_process_<entry name>`.
+pub fn static_symbol(h: &Hook) -> String {
+    format!("{STATIC_PREFIX}{}", h.name)
+}
+
+/// What every process static's symbol starts with ([`static_symbol`]).
+const STATIC_PREFIX: &str = "velt_process_";
+
+/// The index in [`HOOKS`] of the process static whose word's symbol is `symbol`.
+pub fn of_static_symbol(symbol: &str) -> Option<usize> {
+    let name = symbol.strip_prefix(STATIC_PREFIX)?;
+    (HOOKS.iter()).position(|h| matches!(h.sig, Sig::ProcessStatic) && h.name == name)
+}
+
+/// The process static whose qualified name is `qualified` (a module constant), if it is one.
+pub fn process_static(qualified: &str) -> Option<&'static Hook> {
+    (HOOKS.iter()).find(|h| matches!(h.sig, Sig::ProcessStatic) && h.qualified() == qualified)
 }
 
 /// The index in [`HOOKS`] of the prebuilt hook whose entry point is `symbol`.
@@ -270,5 +297,24 @@ mod tests {
             let (_, h) = of_module(entry).next().expect("a prebuilt module");
             assert!(list.contains(&h.module().as_str()), "{entry}");
         }
+    }
+
+    /// Each process static has a symbol of its own that leads back to it, named by its
+    /// qualified name; no other hook has one.
+    #[test]
+    fn process_statics_have_symbols() {
+        let epoch = process_static("std/lang/hooks/process_statics::STR_EPOCH").expect("STR_EPOCH");
+        assert_eq!(static_symbol(epoch), "velt_process_str_epoch");
+        for (i, h) in HOOKS.iter().enumerate() {
+            let named = of_static_symbol(&static_symbol(h));
+            match h.sig {
+                Sig::ProcessStatic => {
+                    assert_eq!(named, Some(i), "{}", h.name);
+                    assert!(process_static(&h.qualified()).is_some_and(|p| p.name == h.name));
+                }
+                _ => assert_eq!(named, None, "{}", h.name),
+            }
+        }
+        assert_eq!(of_static_symbol("velt_static_atomic_7"), None);
     }
 }

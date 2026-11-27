@@ -15,6 +15,7 @@ mod wasm_tools;
 
 /// The module the programs import: the test hooks by role.
 const PROBE: &str = r#"import { hookCall } from "velt/lang/intrinsics";
+import { STR_EPOCH } from "velt/lang/hooks/process_statics";
 
 /** `probeText` by role. */
 export function digits(x: f64, n: i64): string {
@@ -29,6 +30,21 @@ export function value(s: string, start: usize, end: usize): f64 {
 /** `probeValue` by role, negated: a `bool` crosses. */
 export function negated(s: string, start: usize, end: usize): f64 {
   return hookCall("prebuilt_probe_value", s, start, end, true);
+}
+
+/** `probeEpoch` by role: `STR_EPOCH` as the hook reads it. */
+export function epoch(): u64 {
+  return hookCall("prebuilt_probe_epoch");
+}
+
+/** `STR_EPOCH` as the program reads it. */
+export function ownEpoch(): u64 {
+  return STR_EPOCH.load();
+}
+
+/** Bump `STR_EPOCH` by `n`, as the runtime does. */
+export function bump(n: u64): void {
+  STR_EPOCH.add(n);
 }
 "#;
 
@@ -73,6 +89,21 @@ function main() {
 }
 "#;
 const SECOND_OUT: &str = "r11r21r31r41r51 123 1121314151\n";
+
+/// A program bumping std's process static `STR_EPOCH` and reading it through the hook: the
+/// object reads the program's word, which the runtime bumps (`prebuilt.rs` "State").
+const EPOCH: &str = r#"import { bump, epoch, ownEpoch } from "velt/zz_prebuilt";
+
+function main() {
+  const before = epoch();
+  bump(3);
+  const after = epoch();
+  console.log(after - before, after == ownEpoch());
+  bump(1);
+  console.log(epoch() - after, epoch() == ownEpoch());
+}
+"#;
+const EPOCH_OUT: &str = "3 true\n1 true\n";
 
 /// A std with `velt/zz_prebuilt` added, in `dir` (made once).
 fn std_in(dir: &Path) -> PathBuf {
@@ -257,6 +288,27 @@ fn cache_warm_stores_every_prebuilt_module() {
         assert_eq!(
             (found(&served), text(&served.stdout).as_str()),
             ("object", FIRST_OUT),
+            "{mode:?}"
+        );
+    }
+}
+
+/// An object reading a process static imports the program's word: it sees each bump, in debug and
+/// release builds, where a copy of its own would stay at 0.
+#[test]
+fn an_object_reads_the_programs_process_static() {
+    for mode in [&["run", "--release"][..], &["run"]] {
+        let tmp = test_dir::TestDir::new();
+        let dir = tmp.path();
+        let filled = velt(dir, "e.velt", EPOCH, mode, &[FILL]);
+        assert_eq!(
+            (found(&filled), text(&filled.stdout).as_str()),
+            ("module", EPOCH_OUT)
+        );
+        let served = velt(dir, "e.velt", EPOCH, mode, &[]);
+        assert_eq!(
+            (found(&served), text(&served.stdout).as_str()),
+            ("object", EPOCH_OUT),
             "{mode:?}"
         );
     }
