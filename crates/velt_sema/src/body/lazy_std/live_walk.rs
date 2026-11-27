@@ -213,6 +213,12 @@ pub(super) fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
                 ),
             ..
         } => w.constructs |= Construct::Weak.bit(),
+        // A code unit of a string: past the inline read of an ASCII one, lowering calls std's
+        // translation (velt_vir `lower/strings.rs` `str_char_code_at`).
+        E::Call {
+            callee: Callee::Intrinsic(I::StrCharCodeAt),
+            ..
+        } => w.constructs |= Construct::CharCode.bit(),
         // A `Mutex`'s `with`: std's inline lock (velt_vir `async_fn/sync.rs`). An `RwLock`'s
         // `write` lowers through the same intrinsic and marks it too, unused. Its callback's
         // result leaves the lock transferred (`leave_lock`).

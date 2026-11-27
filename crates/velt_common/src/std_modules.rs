@@ -169,6 +169,7 @@ table! {
     lang_string_case => "lang/string/case",
     lang_string_collate => "lang/string/collate",
     lang_string_fill => "lang/string/fill",
+    lang_string_positions => "lang/string/positions",
     lang_string_replace => "lang/string/replace",
     lang_string_search => "lang/string/search",
     lang_string_split => "lang/string/split",

@@ -1,5 +1,6 @@
-//! Sub-strings and code units: `slice`, `charCodeAt`, `String.fromCharCode` (`repeat`, `padStart`
-//! and `padEnd` are Velt code, std/lang/string/fill.velt, #2198). Positions and lengths count UTF-16 code units (#377 phase 2b).
+//! Sub-strings and code units: `slice`, `String.fromCharCode` (`charCodeAt` past an ASCII string,
+//! `repeat`, `padStart` and `padEnd` are Velt code, std/lang/string/positions.velt and fill.velt,
+//! #2198). Positions and lengths count UTF-16 code units (#377 phase 2b).
 
 use super::units;
 use super::{relative_index, sub_string};
@@ -48,12 +49,14 @@ pub unsafe extern "C" fn velt_rt_str_byte_slice(
     out.write(sub_string(s, start as usize, end as usize));
 }
 
-/// `s.charCodeAt(i)`: the UTF-16 code unit at `i` (the high or the low surrogate of a pair), or
-/// -1 when out of range (JS: NaN). Compiled code reads ASCII strings inline and calls this for
-/// the others.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_str_char_code_at(s: *const VeltStr, i: i64) -> i64 {
-    let s = &*s;
+/// `s.charCodeAt(i)` over the runtime's translation, for its tests: the UTF-16 code unit at `i`
+/// (the high or the low surrogate of a pair), or -1 when out of range. The method itself is std's
+/// (`charCodeAtWide`, std/lang/string/positions.velt, #2816).
+///
+/// # Safety
+/// `s` must be valid.
+#[cfg(test)]
+pub(crate) unsafe fn char_code_at(s: &VeltStr, i: i64) -> i64 {
     match usize::try_from(i) {
         Ok(i) if i < s.units() => {
             let bytes = s.as_bytes();

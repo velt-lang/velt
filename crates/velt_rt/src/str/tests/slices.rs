@@ -5,7 +5,7 @@
 //! layout it was allocated with.
 
 use super::*;
-use crate::str_ops::slice::{velt_rt_str_char_code_at, velt_rt_str_slice};
+use crate::str_ops::slice::{char_code_at, velt_rt_str_slice};
 
 /// Does `s` point into the buffer of `parent`'s bytes?
 fn inside(s: &VeltStr, parent: &VeltStr) -> bool {
@@ -154,7 +154,7 @@ fn char_code_at_loop_work(tail: &VeltStr, want: &[u16]) -> usize {
     work::least_work(|| {
         let before = work::total();
         for (i, &u) in want.iter().enumerate() {
-            let got = unsafe { velt_rt_str_char_code_at(tail, i as i64) };
+            let got = unsafe { char_code_at(tail, i as i64) };
             assert_eq!(got, u as i64, "unit {i}");
         }
         work::total() - before
@@ -224,7 +224,7 @@ fn a_cost_count_ignores_other_threads_freeing_strings() {
                         std::thread::yield_now();
                     }
                 }
-                let got = unsafe { velt_rt_str_char_code_at(&tail.0, i as i64) };
+                let got = unsafe { char_code_at(&tail.0, i as i64) };
                 assert_eq!(got, u as i64, "unit {i}");
             }
             work::total() - before
@@ -249,10 +249,7 @@ fn a_remembered_slice_buffer_bumps_the_epoch_when_freed() {
     unsafe { t.0.unit_to_byte(150) };
     let want = text.encode_utf16().take(300).collect::<Vec<_>>();
     for (i, &u) in want.iter().enumerate().step_by(37) {
-        assert_eq!(
-            unsafe { velt_rt_str_char_code_at(&p.0, i as i64) },
-            u as i64
-        );
+        assert_eq!(unsafe { char_code_at(&p.0, i as i64) }, u as i64);
     }
 }
 

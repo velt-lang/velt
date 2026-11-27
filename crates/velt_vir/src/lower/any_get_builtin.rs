@@ -12,7 +12,6 @@ use velt_sema::hir::{Nothing, TyId, TyKind};
 
 use super::any_has_builtin::PROMISE_PROTO;
 use super::any_member::{ST_OK, ST_UNSUPPORTED};
-use super::rt::Rt;
 use super::{cint, FnLower};
 use crate::vir::{self, BinOp, Operand, Place, Rvalue, Ty};
 use velt_sema::js_protos::{ARRAY_PROTO, NUMBER_PROTO, OBJECT_PROTO, STRING_PROTO};
@@ -70,13 +69,8 @@ impl FnLower<'_, '_> {
     /// `ST_UNSUPPORTED` for a key that starts with a digit (an element index, or no property:
     /// no member name starts with one); continues in the block for another key.
     fn digit_key_unsupported(&mut self, key: vir::Local) {
-        let c = Place::local(self.temp(Ty::I64));
-        self.call_rt(
-            Rt::StrCharCodeAt,
-            vec![Operand::Copy(Place::local(key)), cint(0, Ty::I64)],
-            Some(c.clone()),
-        );
-        let off = Rvalue::Binary(BinOp::Sub, Operand::Copy(c), cint(b'0' as i128, Ty::I64));
+        let c = self.str_lead_bytes(&Operand::Copy(Place::local(key)), 1);
+        let off = Rvalue::Binary(BinOp::Sub, c, cint(b'0' as i128, Ty::I64));
         let off = self.rvalue_temp(Ty::I64, off);
         let off = self.rvalue_temp(Ty::U64, Rvalue::Cast(off, Ty::U64));
         let digit = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, off, cint(10, Ty::U64)));

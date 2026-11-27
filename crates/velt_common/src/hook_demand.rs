@@ -105,11 +105,15 @@ pub enum Construct {
     /// glue of an error held as `any` reads its `message` through std's `errorMessage`. Sema
     /// sets it in such a program only.
     ErrorMessage,
+    /// A code unit of a string that may not be ASCII (`strCharCodeAt`: `charCodeAt`,
+    /// `codePointAt`): past its inline ASCII read, lowering calls std's translation of the
+    /// position (std/lang/string/positions.velt, #2816), which only a program that reads one loads.
+    CharCode,
 }
 
 impl Construct {
     /// Every construct, in bit order ([`ConstructSet`]).
-    pub const ALL: [Construct; 17] = [
+    pub const ALL: [Construct; 18] = [
         Construct::TextInt,
         Construct::TextUint,
         Construct::Format,
@@ -127,6 +131,7 @@ impl Construct {
         Construct::MutexHeld,
         Construct::FnProps,
         Construct::ErrorMessage,
+        Construct::CharCode,
     ];
 
     /// The construct as the ICE names it.
@@ -151,6 +156,7 @@ impl Construct {
             Construct::MutexHeld => "MutexHeld (a Mutex's with in a velt dev build)",
             Construct::FnProps => "FnProps (a write through any: function properties)",
             Construct::ErrorMessage => "ErrorMessage (a get message() on a class extending Error)",
+            Construct::CharCode => "CharCode (strCharCodeAt: a code unit of a string)",
         }
     }
 

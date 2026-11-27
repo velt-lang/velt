@@ -401,10 +401,6 @@ pub enum Effects {
     Any,
     /// Reads memory, writes none (string comparison, hashing).
     ReadOnly,
-    /// Reads memory and writes only state of its own that compiled code never reads: a string's
-    /// position-translation table and lone-surrogate count, built on first use (#377 phase 2b:
-    /// `charCodeAt` on non-ASCII text, `indexOf`).
-    ReadCaching,
     /// Touches no memory: every [`MathOp`].
     None,
     /// Does nothing; a call marks the way it is on as rare (`velt_rt_array_view_cold`).
@@ -415,19 +411,15 @@ impl Effects {
     /// Whether the function writes no memory compiled code reads (so values loaded before a
     /// call are still valid after it, and it frees nothing).
     pub fn writes_nothing_visible(self) -> bool {
-        matches!(
-            self,
-            Effects::None | Effects::ReadOnly | Effects::ReadCaching
-        )
+        matches!(self, Effects::None | Effects::ReadOnly)
     }
 }
 
 /// The runtime functions besides the [`MathOp`]s whose effects are not [`Effects::Any`].
-const EFFECTS: [(&str, Effects); 5] = [
+const EFFECTS: [(&str, Effects); 4] = [
     ("velt_rt_str_cmp", Effects::ReadOnly),
     ("velt_rt_str_eq", Effects::ReadOnly),
     ("velt_rt_str_hash", Effects::ReadOnly),
-    ("velt_rt_str_char_code_at", Effects::ReadCaching),
     ("velt_rt_array_view_cold", Effects::Cold),
 ];
 
@@ -566,7 +558,6 @@ mod tests {
             assert_eq!(effects(op.symbol()), Effects::None, "{op:?}");
         }
         assert_eq!(effects("velt_rt_str_cmp"), Effects::ReadOnly);
-        assert_eq!(effects("velt_rt_str_char_code_at"), Effects::ReadCaching);
         assert_eq!(effects("velt_rt_array_view_cold"), Effects::Cold);
         assert_eq!(effects("velt_simd_u8x16_eq"), Effects::ReadOnly);
         assert_eq!(effects("velt_simd_u8x16_load"), Effects::ReadOnly);
@@ -577,6 +568,6 @@ mod tests {
         assert_eq!(effects("velt_simd_f32x8_load"), Effects::Any);
         assert_eq!(effects("velt_rt_write_str"), Effects::Any);
         assert!(!Effects::Cold.writes_nothing_visible());
-        assert!(Effects::ReadCaching.writes_nothing_visible());
+        assert!(Effects::ReadOnly.writes_nothing_visible());
     }
 }

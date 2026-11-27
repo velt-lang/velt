@@ -81,6 +81,9 @@ pub const DELETED: &[&str] = &[
     // #2196: the generator (std/lang/random/wyrand), which only std called, so no hook replaces it.
     "velt_rt_prng_f64",
     "velt_rt_prng_range",
+    // #2816: `charCodeAt` past an ASCII string (the `string_char_code_at` hook,
+    // std/lang/string/positions.velt).
+    "velt_rt_str_char_code_at",
     // #2196: `**` on floats (std/lang/math/pow, #1676).
     "velt_rt_pow_f64",
     // #2196: `**` on integers (std/lang/hooks/pow_int).

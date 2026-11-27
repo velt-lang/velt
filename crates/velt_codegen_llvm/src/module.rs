@@ -34,8 +34,6 @@ const NORETURN_ATTRS: &str = "#2";
 const PURE_ATTRS: &str = "#3";
 /// Attribute group of runtime functions that only read memory.
 const READONLY_ATTRS: &str = "#4";
-/// Attribute group of runtime functions that read memory and update private caches.
-const READ_CACHING_ATTRS: &str = "#8";
 /// Attribute group of runtime functions whose call marks the way it is on as rare.
 const COLD_ATTRS: &str = "#9";
 /// Attribute groups of the allocator functions (`runtime::Allocator`).
@@ -241,11 +239,6 @@ pub(crate) fn emit_unit_capped(
         out,
         "attributes {READONLY_ATTRS} = {{ nounwind willreturn memory(read) }}"
     );
-    // The caches live in runtime allocations compiled code never touches: inaccessible memory.
-    let _ = writeln!(
-        out,
-        "attributes {READ_CACHING_ATTRS} = {{ nounwind willreturn memory(read, inaccessiblemem: readwrite) }}"
-    );
     // Not `memory(none)`, so that the call stays for the backend to see.
     let _ = writeln!(
         out,
@@ -401,7 +394,6 @@ fn plain_declaration(program: &vir::Program, e: &vir::ExternFn) -> CodegenResult
         (true, _) => NORETURN_ATTRS,
         (false, Effects::None) => PURE_ATTRS,
         (false, Effects::ReadOnly) => READONLY_ATTRS,
-        (false, Effects::ReadCaching) => READ_CACHING_ATTRS,
         (false, Effects::Cold) => COLD_ATTRS,
         (false, Effects::Any) => EXTERN_ATTRS,
     };
