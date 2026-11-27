@@ -3,7 +3,7 @@
 //! printing tuples, hashing structured values. The programs that print numbers or index arrays
 //! are Velt source loaded with the real std (std_src.rs): both go through std's hooks (#2197).
 
-use velt_sema::hir::{AdtKind, Def, PassMode, UseMode as U};
+use velt_sema::hir::{self, AdtKind, Def, PassMode, UseMode as U};
 
 use super::builder::*;
 use super::builder_m2::*;
@@ -121,4 +121,39 @@ fn dispose_hooks() {
         out.stdout,
         "dispose res x\nend\ndispose handle 2\ndispose handle 3\ndispose handle 1\n"
     );
+}
+
+/// A read of a `never` local is unreachable (#3924): sema types `e as Error` of a `then`
+/// handler's reason `e: never` (the promise's rejection set solved empty) as the read of `e`
+/// retyped, which lowered as `()` assigned to the `string` local, and `const x: Error = e` as a
+/// `let` that stored nothing, the local then read uninitialized.
+#[test]
+fn never_local_read_is_unreachable() {
+    let mut pb = PB::new();
+    let t = pb.t;
+    let mut f = FB::new("reason", t.unit);
+    let e = f.param("e", t.never, PassMode::Borrow);
+    let x = f.local("x", t.str);
+    let y = f.local("y", t.str);
+    let body = vec![
+        let_(x, ex(hir::ExprKind::Local(e, U::Borrow), t.str)),
+        let_(y, f.cp(e)),
+        se(print(vec![f.bw(x), f.bw(y)], t)),
+    ];
+    let reason = pb.add_fn(f.build(body));
+    // Only stored: no call can pass a `never`.
+    let ft = pb.fn_ty(vec![t.never], t.unit);
+    let mut f = FB::new("main", t.unit);
+    let g = f.local("g", ft);
+    let body = vec![let_(g, fn_ref(reason, ft)), se(print(vec![s("ok", t)], t))];
+    pb.add_main(f.build(body));
+    let p = pb.finish();
+    let v = super::lower_ok(&p);
+    let r = super::user_fn(&v, "reason");
+    let entry = &r.blocks[0];
+    assert!(
+        entry.stmts.is_empty() && matches!(entry.term, crate::vir::Terminator::Unreachable),
+        "{v}"
+    );
+    assert_eq!(run(&p).stdout, "ok\n");
 }

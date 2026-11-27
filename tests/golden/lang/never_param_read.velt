@@ -1,0 +1,15 @@
+// Functions taking a `never` parameter: no call can pass one, so code reading it is
+// unreachable (#3924); the functions are only stored.
+function store(e: never): void {
+  const x: Error = e;
+  console.log(x.message);
+}
+function cast(e: never): void {
+  const x = e as Error;
+  console.log(x.message);
+}
+const arrow = (e: never): void => {
+  console.log((e as Error).name);
+};
+const fs: ((e: never) => void)[] = [store, cast, arrow];
+console.log("ok", fs.length);

@@ -1,0 +1,27 @@
+// A `then` handler casting its reason, the promise stored into a captured variable from a
+// `queueMicrotask` callback (#3924, the shape of std/streams_order_cancel_later.velt): the
+// promise never rejects, so the handler never runs.
+function later(n: number): Promise<number> {
+  return new Promise((r) => setTimeout(() => r(n), 1));
+}
+
+async function main(): Promise<void> {
+  let settled: Promise<void> | null = null;
+  queueMicrotask(() => {
+    settled = later(1).then(
+      (v) => {
+        console.log("v", v);
+      },
+      (e) => {
+        const x = e as Error;
+        console.log("e", x.message);
+      },
+    );
+  });
+  await later(0);
+  if (settled !== null) {
+    await settled;
+  }
+  console.log("done");
+}
+main();
