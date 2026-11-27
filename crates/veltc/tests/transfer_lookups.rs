@@ -1,7 +1,7 @@
-//! The clone glue of a shared class looks up copies made during a transfer (velt_rt
-//! `transfer_map`) only when a transfer can reach that class. Spawning a closure, passing an
-//! interface value or a class hierarchy to a task must not switch the lookup on for unrelated
-//! shared classes, whose `.clone()` would pay a runtime call outside any transfer (#527).
+//! The clone glue of a shared class looks up copies made during a transfer (std's transfer map,
+//! std/lang/hooks/transfer.velt) only when a transfer can reach that class. Spawning a closure,
+//! passing an interface value or a class hierarchy to a task must not switch the lookup on for
+//! unrelated shared classes, whose `.clone()` would pay a runtime call outside any transfer (#527).
 
 mod no_window;
 mod test_dir;
@@ -23,14 +23,14 @@ fn vir_of(src: &str) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-/// The functions of `vir` whose bodies call `velt_rt_xfer_find`.
+/// The functions of `vir` whose bodies call std's `xferFind`.
 fn lookups(vir: &str) -> Vec<String> {
     let mut current = String::new();
     let mut out = Vec::new();
     for line in vir.lines() {
         if line.starts_with("fn#") {
             current = line.to_string();
-        } else if line.contains("velt_rt_xfer_find(") && !out.contains(&current) {
+        } else if line.contains("transferN8xferFind(") && !out.contains(&current) {
             out.push(current.clone());
         }
     }

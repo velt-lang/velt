@@ -250,6 +250,29 @@ fn every_golden_has_the_same_vir_with_std_up_front_and_on_demand() {
     );
 }
 
+/// Goldens compared on every run, not only in the sample: each a way std up front differs from
+/// std on demand that once stopped a build (a closure's environment holding a cell, whose
+/// transfer entry began a transfer with the map's module loaded up front though nothing in the
+/// program starts one, #3584).
+const ALWAYS: &[&str] = &[
+    "lang/kept_fn_generic_sink.velt",
+    "lang/method_value_on_off.velt",
+];
+
+#[test]
+fn the_goldens_that_once_differed_have_the_same_vir_with_std_up_front_and_on_demand() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden");
+    let home = test_dir::TestDir::new();
+    let built = AtomicUsize::new(0);
+    let found: Vec<String> = (ALWAYS.iter())
+        .filter_map(|name| {
+            differs(&root.join(name), home.path(), &built).map(|w| format!("{name}\n  {w}"))
+        })
+        .collect();
+    assert!(found.is_empty(), "{}", found.join("\n"));
+    assert_eq!(built.into_inner(), ALWAYS.len(), "each builds both ways");
+}
+
 /// A hook module with every kind of item the rule allows (#2161 §2: functions, constants, its own
 /// structs, classes, interfaces, enums and aliases, an `extend` of its own type) and what the
 /// source rewrites work on (an overload, a namespace, a generic arrow, a nested closure group, a
