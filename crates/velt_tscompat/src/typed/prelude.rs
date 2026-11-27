@@ -50,6 +50,8 @@ pub(crate) const TS_GLOBALS: &[&str] = &[
     "Reflect",
     // TypeScript's `ReadonlyMap<K, V>` is a type: Velt's is `Map<K, V>` seen through it.
     "ReadonlyMap",
+    // TypeScript's `ReadonlySetLike<T>`, which `Set`'s `union` and the others take.
+    "ReadonlySetLike",
     // TypeScript's `Record<K, V>` is a type: as one it means the same.
     "Record",
     "String",
@@ -368,6 +370,7 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
             "clear", "delete", "entries", "forEach", "get", "has", "keys", "set", "size", "values",
         ],
     ),
+    ("ReadonlySetLike", &["has", "keys", "size"]),
     (
         "Math",
         &[

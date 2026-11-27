@@ -42,6 +42,25 @@ impl FnCx<'_, '_> {
             self.cx.display(has),
         );
         // The same interface with the same written arguments (`any` against `any`): no note.
-        (h != e).then(|| format!("`{f}` is an `{h}`, not an `{e}`"))
+        if h == e {
+            return None;
+        }
+        let mut note = format!("`{f}` is {} `{h}`, not {} `{e}`", article(&h), article(&e));
+        if Some(want) == self.cx.prelude_iface("ReadonlySetLike") {
+            // `Set`'s algebra takes its own element type (std/collections/set.velt).
+            note.push_str(
+                ": `Set`'s `union`, `intersection` and the other set methods take elements of the \
+                 set's own type (TypeScript's `union<U>`, giving a `Set<T | U>`, is not supported)",
+            );
+        }
+        Some(note)
+    }
+}
+
+/// "an" before a written type that starts with a vowel (`an Iterable<f64>`), "a" otherwise.
+fn article(ty: &str) -> &'static str {
+    match ty.chars().next() {
+        Some(c) if "AEIOUaeiou".contains(c) => "an",
+        _ => "a",
     }
 }
