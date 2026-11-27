@@ -384,6 +384,8 @@ export function anyToRecordAny(o: any): Record<string, any> {
 
 export function anyToRecord<V>(o: any): Record<string, V> {
   const r: Record<string, V> = {};
+  const t: any = touched();
+  r["touched"] = t as V;
   for (const k of Object.keys(o)) {
     r[k] = o[k] as V;
   }
@@ -412,11 +414,26 @@ fn a_module_with_every_kind_of_item_collects_in_the_check_as_up_front() {
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"),
         &std,
     );
-    std::fs::write(std.join("lang/hooks/any_record.velt"), RICH_ANY_RECORD).unwrap();
+    // The rich module in place of the conversions, with the rest of std's module (its record
+    // views): a hook module the program loads defines every hook its table entries name
+    // (velt_sema `lazy_std/demanded.rs`, #3745).
+    let path = std.join("lang/hooks/any_record.velt");
+    let real = std::fs::read_to_string(&path).unwrap();
+    let rest = real
+        .find("/**\n * The value of the own key")
+        .expect("any_record.velt's `anyEntry` and record views");
+    let imports: String = (real.lines())
+        .filter(|l| l.starts_with("import "))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    let module = format!("{imports}{RICH_ANY_RECORD}\n{}", &real[rest..]);
+    std::fs::write(&path, module).unwrap();
     let main = tmp.path().join("main.velt");
     std::fs::write(
         &main,
-        "class Box {\n  size: i64 = 1;\n}\nfunction main() {\n  const a: any = new Box();\n  const r = a as Record<string, any>;\n  console.log(r[\"touched\"]);\n}\n",
+        // A record of strings, which a conversion copies (`anyToRecord`): a `Record<string,
+        // any>` is a view of the object (velt_vir `record_view.rs`).
+        "class Box {\n  size: string = \"1\";\n}\nfunction main() {\n  const a: any = new Box();\n  const r = a as Record<string, string>;\n  console.log(r[\"touched\"]);\n}\n",
     )
     .unwrap();
     let build = |eager: bool| {
