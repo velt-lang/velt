@@ -120,6 +120,44 @@ impl FnLower<'_, '_> {
         true
     }
 
+    /// [`proxy_invoke`](Self::proxy_invoke) in the call slot (data `data`, writing to `*slot_out`):
+    /// in a program whose calls through `any` throw (any_threw.rs), the method's error (its
+    /// trap's) is boxed into `*slot_out` and the slot returns `ST_THREW`, dropping the slot's
+    /// arguments `argv[0..argc]` when `owns_args` (they are not yet moved into the call).
+    fn proxy_invoke_in_call(
+        &mut self,
+        name: &str,
+        (data, argv, argc, slot_out): (vir::Local, vir::Local, vir::Local, vir::Local),
+        ty: TyId,
+        args: Vec<(Place, TyId)>,
+        out: &Place,
+        owns_args: bool,
+    ) -> bool {
+        let Some((d, _)) = self.plain_adt(ty) else {
+            return self.proxy_invoke(name, data, ty, args, out);
+        };
+        let m = self
+            .dyn_members_of(d)
+            .into_iter()
+            .find(|m| m.name == name && m.kind == DynMemberKind::Method);
+        let r = m.and_then(|m| self.ready(ty, &m));
+        let Some((r, e)) = r.and_then(|r| self.slot_catches(r.throws).map(|e| (r, e))) else {
+            return self.proxy_invoke(name, data, ty, args, out);
+        };
+        let this = self.any_this(data, ty);
+        let err = self.any_out(slot_out);
+        let on_error = |s: &mut Self| {
+            if owns_args {
+                s.any_drop_args_all(argv, argc);
+            }
+        };
+        let v = self.call_catching_then(e, &err, vec![], on_error, |s| {
+            s.invoke_ready(&r, this, args)
+        });
+        self.any_box_result(v, &r, out);
+        true
+    }
+
     /// The method `name` of the `Proxy` class without arguments on the proxy `data`: its result,
     /// owned and not boxed (`None`: the program has no such method).
     pub(super) fn proxy_invoke_typed(
@@ -199,12 +237,14 @@ impl FnLower<'_, '_> {
         let f = Place::local(self.temp(avt));
         let k = self.proxy_key(ProxyKey::Str(key));
         let r = self.proxy_receiver(data, ty);
-        if !self.proxy_invoke(
+        // A `get` trap's error leaves the call (`ST_THREW`); the arguments are dropped.
+        if !self.proxy_invoke_in_call(
             velt_common::std_key!(proxy_get),
-            data,
+            (data, argv, argc, out),
             ty,
             vec![(k, any), (r, any)],
             &f,
+            true,
         ) {
             self.any_drop_args_all(argv, argc);
             return self.ret_status(ST_UNSUPPORTED);
@@ -257,12 +297,14 @@ impl FnLower<'_, '_> {
         let r = self.proxy_receiver(data, ty);
         let outp = self.any_out(out);
         let args = vec![(f.clone(), any), (arr, arr_ty), (r, any)];
-        let st = match self.proxy_invoke(
+        // A trap's or a callback's error leaves the call (`ST_THREW`).
+        let st = match self.proxy_invoke_in_call(
             velt_common::std_key!(proxy_array_call),
-            data,
+            (data, argv, argc, out),
             ty,
             args,
             &outp,
+            false,
         ) {
             true => ST_OK,
             false => ST_UNSUPPORTED,
