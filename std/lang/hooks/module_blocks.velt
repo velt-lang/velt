@@ -22,7 +22,9 @@
 
 import { Ptr } from "velt/ffi/ptr";
 import { addressLoad, addressStore, inline, noInline } from "velt/lang/intrinsics";
-import { addressCall } from "velt/lang/intrinsics/future";
+// `init`, `rest` and `drop` take the block and return nothing: called as `stateDrop` calls (a
+// pointer in, nothing out), which is their signature on every target (wasm32 checks it).
+import { stateDrop } from "velt/lang/intrinsics/future";
 
 declare function velt_rt_write_str(stream: u32, s: string);
 declare function velt_rt_flush();
@@ -236,7 +238,7 @@ function dropAll(): void {
     const p = ld(at + 8);
     // SAFETY: the descriptor's `drop` drops the block it initialized, once.
     unsafe {
-      addressCall(ld(desc + DESC_DROP), p);
+      stateDrop(ld(desc + DESC_DROP), p);
     }
     freeBlock(desc, p);
   }
@@ -380,10 +382,10 @@ function newBlock(desc: usize): usize {
   // SAFETY: the descriptor's `init` and `rest` take the block they initialize; `p` is a zeroed
   // block of its size and alignment.
   unsafe {
-    addressCall(ld(desc + DESC_INIT), p);
+    stateDrop(ld(desc + DESC_INIT), p);
     const rest = ld(desc + DESC_REST);
     if (rest !== 0 && !first) {
-      addressCall(rest, p);
+      stateDrop(rest, p);
     }
   }
   return p;
