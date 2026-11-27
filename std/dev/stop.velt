@@ -1,18 +1,35 @@
-// velt/dev (internal): the graceful stop of a server under `velt dev`. Before the supervisor
-// starts the next version of the program, it asks this one to stop: a server that joined then
-// stops accepting (the supervisor keeps the listening socket, so new connections wait for the
-// next version), answers its in-flight requests, and says it `drained`; the runtime exits once
-// every server that joined did (or after a bounded wait). Outside `velt dev` nothing joins.
+// velt/dev (internal): the graceful stop of a server under `velt dev` (rt_abi_async.md §13.2).
+// Before the supervisor starts the next version of the program, it asks this one to stop (SIGTERM
+// on macOS and Linux, `stop` on the stop channel on Windows: `#dev-stop`): a server that joined
+// then stops accepting (the supervisor keeps the listening socket, so new connections wait for the
+// next version), answers its in-flight requests, and says it `drained`; the program exits with
+// status 0 once every server that joined did, or after `DRAIN_MS`. Outside `velt dev` nothing
+// joins.
+//
+// Every server that joins gets a reference to one signal, aborted when the stop request comes.
+// One task listens for it while a server that joined has not drained: the last `drained` wakes it
+// and it ends, giving the stop request back its default (a program with no server to drain is
+// killed, as one that never joined), so a program whose servers all closed can end by itself.
 
-import {
-  velt_rt_dev_server_drained,
-  velt_rt_dev_server_stop,
-  velt_rt_signal_free,
-  velt_rt_signal_reason,
-  velt_rt_signal_wait,
-} from "velt/dev/rt";
+import { exit } from "velt/process/exit";
+import { delay } from "velt/time/timers";
+import { getEnv } from "#env-sys";
+import { monotonicNs } from "#clock";
 import { AbortSignal } from "velt/task";
 import { signalAbort, signalFree, signalNew, signalRetain } from "#task-signal";
+import * as w from "#dev-stop";
+
+/** Longest time in-flight requests get to finish after a stop request (and some for the turns). */
+const DRAIN_MS: u64 = 1200;
+
+/** The signal every server that joined holds a reference to (0: none yet); never freed. */
+const STOP = new Atomic<u64>(0);
+/** Servers that joined and have not drained yet. */
+const ACTIVE = new Atomic<u64>(0);
+/** 1 while the task listening for the stop request runs (or is about to). */
+const LISTENING = new Atomic<u32>(0);
+/** 1 once the stop request came: what joins from then on is stopped at once. */
+const STOPPING = new Atomic<u32>(0);
 
 /**
  * Joins the graceful stop of `velt dev`: a signal aborted once the program is asked to stop
@@ -21,41 +38,92 @@ import { signalAbort, signalFree, signalNew, signalRetain } from "#task-signal";
  * `velt dev`, where nothing waits.
  */
 export function joinStop(): AbortSignal | null {
-  const stop = velt_rt_dev_server_stop();
-  if (stop == 0) {
+  if (!underDev()) {
     return null;
   }
-  const handle = signalNew();
-  const task = spawn(abortOnStop(new Held(stop, signalRetain(handle))));
-  return AbortSignal.adopt(handle);
-}
-
-// The runtime's stop signal and the stop's own reference to the server's signal, both given back
-// when the stop came or its task is dropped.
-class Held {
-  stop: u64;
-  signal: u64;
-
-  constructor(stop: u64, signal: u64) {
-    this.stop = stop;
-    this.signal = signal;
+  ACTIVE.add(1, "acqrel");
+  if (LISTENING.compareExchange(0, 1, "acqrel") === 0) {
+    if (!w.start()) {
+      LISTENING.store(0, "release");
+      ACTIVE.sub(1, "acqrel");
+      return null;
+    }
+    const task = spawn(listen());
   }
-
-  [Symbol.dispose]() {
-    velt_rt_signal_free(this.stop);
-    signalFree(this.signal);
-  }
-}
-
-// Waits for the stop request (the runtime aborts its signal), then aborts the server's signal
-// with the runtime's reason.
-async function abortOnStop(held: Held): Promise<void> {
-  using h = held;
-  await velt_rt_signal_wait(h.stop, false);
-  signalAbort(h.signal, velt_rt_signal_reason(h.stop));
+  return AbortSignal.adopt(signalRetain(stopSignal()));
 }
 
 /** What joined the graceful stop (`joinStop`) finished. */
 export function drained() {
-  velt_rt_dev_server_drained();
+  let n = ACTIVE.load("acquire");
+  while (n > 0) {
+    const seen = ACTIVE.compareExchange(n, n - 1, "acqrel");
+    if (seen === n) {
+      if (n === 1 && STOPPING.load("acquire") === 0) {
+        // The last server that joined is done: the listening task may end.
+        w.wake();
+      }
+      return;
+    }
+    n = seen;
+  }
+}
+
+/** Whether this program runs under `velt dev` (`VELT_DEV_SOCKET` names its dev channel). */
+function underDev(): bool {
+  const socket = getEnv("VELT_DEV_SOCKET");
+  return socket != undefined && socket != "";
+}
+
+/** The servers' signal, made by the first that asks. */
+function stopSignal(): u64 {
+  const s = STOP.load("acquire");
+  if (s !== 0) {
+    return s;
+  }
+  const made = signalNew();
+  const seen = STOP.compareExchange(0, made, "acqrel");
+  if (seen !== 0) {
+    signalFree(made);
+    return seen;
+  }
+  return made;
+}
+
+/**
+ * Listens for the stop request while a server that joined has not drained; once it comes,
+ * aborts the servers' signal, waits for them to drain (up to `DRAIN_MS`) and exits.
+ */
+async function listen(): Promise<void> {
+  while (true) {
+    const e = await w.next();
+    if (e === 1) {
+      break;
+    }
+    if (e < 0) {
+      w.end();
+      LISTENING.store(0, "release");
+      return;
+    }
+    if (ACTIVE.load("acquire") === 0) {
+      w.end();
+      LISTENING.store(0, "release");
+      // A server that joined before the store found the task listening: listen again for it.
+      // One that joined after it started its own task.
+      if (ACTIVE.load("acquire") === 0 || LISTENING.compareExchange(0, 1, "acqrel") !== 0) {
+        return;
+      }
+      if (!w.start()) {
+        LISTENING.store(0, "release");
+        return;
+      }
+    }
+  }
+  STOPPING.store(1, "release");
+  signalAbort(stopSignal(), "the program is stopping");
+  const deadline = monotonicNs() + DRAIN_MS * 1000000;
+  while (ACTIVE.load("acquire") > 0 && monotonicNs() < deadline) {
+    await delay(5);
+  }
+  exit(0);
 }

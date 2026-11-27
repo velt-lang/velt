@@ -1,0 +1,27 @@
+// A restart asks the running version to stop first (SIGTERM, or the stop channel on Windows):
+// what joined velt/dev's graceful stop sees its signal aborted, finishes and says it drained,
+// and the program exits.
+import { drained, joinStop } from "velt/dev";
+import { serve } from "http-server";
+
+function greet(name: string): string {
+  return `hello ${name}`;
+}
+
+async function stopping(signal: AbortSignal) {
+  await signal.whenAborted();
+  console.log(`v1 stopping: ${signal.reason}`);
+  drained();
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(greet("v1"));
+  });
+  const signal = joinStop();
+  if (signal != null) {
+    const task = spawn(stopping(signal));
+  }
+  console.log(`listening on ${server.port}`);
+  await sleep(1000000000);
+}

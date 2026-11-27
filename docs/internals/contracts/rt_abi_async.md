@@ -440,18 +440,17 @@ owns).
 
 Natively the signals are std's (`#task-signal`: std/task/signal_sched.velt over signal_core.velt,
 in raw memory; a wait is a heap future linked into its signal, woken in the order the waits
-began). velt_rt keeps `velt_rt_signal_wait`, `_reason` and `_free` for one signal of its own, the
-graceful stop's (§13.2), until that stop is std's too. WebAssembly's runtime keeps its own:
+began). WebAssembly's runtime keeps its own:
 
 | Symbol (velt_rt_wasm) | Signature | Notes |
 |---|---|---|
 | `velt_rt_signal_new` | `() -> u64` | WebAssembly only. A signal that is not aborted |
 | `velt_rt_signal_retain` | `(u64 s) -> u64` | WebAssembly only. Another reference to it (a scope's child task holds one) |
-| `velt_rt_signal_free` | `(u64 s)` | releases a handle (velt_rt too: its stop signal's) |
+| `velt_rt_signal_free` | `(u64 s)` | WebAssembly only. Releases a handle |
 | `velt_rt_signal_abort` | `(u64 s, const VeltStr* reason)` | WebAssembly only. Aborts it and the signals derived from it (`any`); a no-op if aborted |
 | `velt_rt_signal_aborted` | `(u64 s) -> bool` | WebAssembly only |
-| `velt_rt_signal_reason` | `(u64 s, VeltStr* out)` | the reason (`""` while not aborted) (velt_rt too: its stop signal's) |
-| `velt_rt_signal_wait` | `(u64 s, bool timed) -> VeltFut*` | completes (unit) once aborted; `timed` (a timer may abort it): the wait keeps the process alive (velt_rt too: its stop signal's) |
+| `velt_rt_signal_reason` | `(u64 s, VeltStr* out)` | WebAssembly only. The reason (`""` while not aborted) |
+| `velt_rt_signal_wait` | `(u64 s, bool timed) -> VeltFut*` | WebAssembly only. Completes (unit) once aborted; `timed` (a timer may abort it): the wait keeps the process alive |
 | `velt_rt_signal_any` | `(const VeltArray<u64>* signals) -> u64` | WebAssembly only. Aborted with the first of `signals` that is (its reason); keeps them alive until then |
 
 ### 2.4 Task groups (`taskScope`)
@@ -688,8 +687,7 @@ read while another writes. TLS is Velt's, over these streams or the reactor's so
 
 The HTTP client (std/net/http/fetch/client) and server (packages/http-server) are written in Velt
 on the streams of §6 (TLS in Velt, §14.8): the runtime has no HTTP of its own. Under `velt dev` a server
-joins the graceful stop through velt/dev (std/dev), on `velt_rt_dev_server_stop` /
-`velt_rt_dev_server_drained` (§13.2).
+joins the graceful stop through velt/dev (std/dev, §13.2), which has no runtime functions.
 
 ## 8. Process
 
@@ -1082,22 +1080,19 @@ program version, so connections queue in the kernel backlog across restarts and 
 its port. Without the variable the runtime binds the address itself.
 
 ### 13.2 Stopping
-In dev mode (`VELT_DEV_SOCKET` set, once the program listens) the runtime handles a stop request:
-HTTP servers stop accepting (the supervisor still holds the socket), in-flight requests get up to
-1 s to finish, stdout is flushed and the process exits with status 0. A server written in Velt
-joins through velt/dev's `joinStop` and `drained` (std/dev/stop.velt), on:
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_dev_server_stop` | `() -> VeltSignal` | a runtime signal (§2.3; the caller owns it) aborted once a stop request arrives; null outside dev mode. std waits for it and aborts the server's own `AbortSignal`. The process waits for the server until it reports itself drained (up to 1 s) |
-| `velt_rt_dev_server_drained` | `()` | the server that joined stopped accepting and finished its requests |
+In dev mode (`VELT_DEV_SOCKET` set) std handles a stop request while a server that joined the
+graceful stop (velt/dev's `joinStop`) has not reported itself drained (`drained`;
+std/dev/stop.velt): such servers stop accepting (the supervisor still holds the socket), in-flight
+requests get up to 1 s to finish, stdout is flushed and the process exits with status 0. The
+runtime has no functions for it. While no server has joined, or once every one drained, the stop
+request keeps its default (the program is terminated).
 
 The stop request is:
 - Unix: SIGTERM. Outside dev mode SIGTERM keeps its default action.
-- Windows (no SIGTERM): before its first `listen` request the program opens a **stop channel**, a
-  connection that sends `watch-stop\n` and gets `ok\n`; the supervisor keeps it (by the client
+- Windows (no SIGTERM): when a server joins, the program opens a **stop channel**, a
+  connection that sends `watch-stop\n` and gets `ok\n` (closed again once every server drained); the supervisor keeps it (by the client
   process id) and writes `stop\n` to ask for the stop. The supervisor closing the channel (it
-  exited) also counts as a stop request. A program without a stop channel (it never listened) is
+  exited) also counts as a stop request. A program without a stop channel (no server joined) is
   terminated, like SIGTERM's default action. A Unix supervisor answers `watch-stop` with `err`.
 
 The supervisor kills a program that has not exited 1.5 s after the stop request.

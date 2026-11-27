@@ -1,0 +1,4 @@
+action: restart
+reason: the signature of greet changed
+stdout: v1 stopping: AbortError: the program is stopping
+get /: hello v2 x2
