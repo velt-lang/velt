@@ -5,10 +5,8 @@
 import { describe, expect, it } from "velt/test";
 import { fnAddress } from "velt/lang/intrinsics";
 import { panicText, unwoundFramesDrop } from "velt/lang/hooks/unwind";
+import { xferResume, xferSuspend } from "velt/lang/hooks/transfer";
 import { canCatchPanics, catchPanicAt, catchVeltPanic } from "velt/task/unwind";
-
-declare function velt_rt_xfer_suspend(): u32;
-declare function velt_rt_xfer_resume(depth: u32): void;
 
 function deep(n: number, xs: number[]): number {
   if (n == 0) {
@@ -78,8 +76,8 @@ async function run(f: () => number): Promise<number> {
 
 /** This thread's transfer depth (`suspend` reads it and sets the transfer aside; `resume` undoes). */
 function transferDepth(): u32 {
-  const depth = velt_rt_xfer_suspend();
-  velt_rt_xfer_resume(depth);
+  const depth = xferSuspend();
+  xferResume(depth);
   return depth;
 }
 

@@ -48,6 +48,8 @@ pub use crate::hook_sig::{FnSig, Mode, Param, Sig, T};
 mod hook;
 pub use hook::Hook;
 #[macro_use]
+mod transfer_hooks;
+#[macro_use]
 mod yield_hooks;
 #[macro_use]
 mod weak_hooks;

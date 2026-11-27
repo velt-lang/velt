@@ -74,6 +74,8 @@ export const imports: Imports = {
     wasi: "./lang/hooks/clock_wasi.velt",
     js: "./lang/hooks/clock_js.velt",
   },
+  // The transfer map's memory (lang/hooks/transfer.velt): the C library's; the browser's allocator.
+  "#xfer-mem": { js: "./lang/hooks/xfer_mem_js.velt", default: "./lang/hooks/xfer_mem_c.velt" },
   // The C library calls of the weak core (std/lang/hooks/weak_mem.velt), apart from the
   // executor's so a program without tasks loads none of it: memory, and `sched_yield` or on
   // Windows `SwitchToThread` while its lock is contended.

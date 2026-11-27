@@ -1,5 +1,5 @@
 //! Counted types a transfer can copy: the clone glue of these looks up copies made earlier in
-//! the same transfer (velt_rt `transfer_map`, glue/transfer.rs `find_copy`), so a graph keeps its
+//! the same transfer (std's transfer map, glue/transfer.rs `find_copy`), so a graph keeps its
 //! sharing and cycles on the other thread. Other types never pay for the lookup: a program that
 //! hands nothing to another thread clones exactly as before.
 //!
