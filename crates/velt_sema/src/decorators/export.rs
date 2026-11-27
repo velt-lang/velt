@@ -208,7 +208,13 @@ pub(super) fn check(cx: &mut Ctx, role: Option<DefId>, d: DefId, sig: &ast::FnSi
     let Some((params, ret)) = crossing(cx, d, sig) else {
         return;
     };
-    if let Err(why) = c_name(&name) {
+    // The turns a JS host calls are std's (std/lang/hooks/sched_host.velt): the glue's names.
+    let host_turn = matches!(name.as_str(), "velt_turn" | "velt_settle")
+        && match cx.info.get(d.0 as usize) {
+            Some(DefInfo::Fn(f)) => cx.modules.get(f.module).is_some_and(|m| m.is_std),
+            _ => false,
+        };
+    if let Err(why) = c_name(&name).or_else(|e| if host_turn { Ok(()) } else { Err(e) }) {
         cx.error(
             Diagnostic::error(
                 format!("`{name}` can't be the C name of an `@export` function"),

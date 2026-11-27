@@ -26,12 +26,11 @@ fn narrow_word(cx: &Cx<'_>, t: TyId) -> Option<(Ty, Ty)> {
 }
 
 impl Cx<'_> {
-    /// Does the executor in Velt run this target's programs? Natively and on WASI (its one
-    /// thread); a JS host drives its turns itself and keeps the runtime's executor for now
-    /// (#3905 step 2).
+    /// Does the executor in Velt run this target's programs? Natively, on WASI (its one
+    /// thread) and on a JS host (in the turns the host drives, sched_host.velt; #3905).
     pub(super) fn runs_std_executor(&self) -> bool {
         let t = self.target.trim();
-        !t.starts_with("wasm") || c_call::wasi(t)
+        !t.starts_with("wasm") || c_call::wasi(t) || super::host::js_host(t)
     }
 
     /// The function `fnAddress` names for `def` with `targs` (`fid`, its own) on this target: on

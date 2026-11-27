@@ -318,6 +318,11 @@ with_any_hooks! {
     sched_export_exit => lang_hooks_sched, "schedExportExit", sig(() -> void), lowered;
     /// `velt_rt_block_on`'s job: `(poll, state)`.
     sched_block_on => lang_hooks_sched, "schedBlockOn", sig((usize, usize, u64) -> void), lowered;
+    /// `velt_rt_host_main`'s on a JS host (sched_host.velt): `(poll, state, size, finish, stay)`;
+    /// the turns the host drives run the root.
+    sched_host_main => lang_hooks_sched_host, "schedHostMain", sig((usize, usize, u64, usize, u64) -> void), lowered;
+    /// `velt_rt_host_promise`'s on a JS host: `(id)`, the leaf of the glue's promise `id`.
+    sched_host_promise => lang_hooks_sched_host, "schedHostPromise", sig((u32) -> usize), lowered;
     /// `velt_rt_spawn`'s: `(poll, drop, state, size, align, result_size, result_drop)`, the handle.
     sched_spawn => lang_hooks_sched_spawn, "schedSpawn", sig((usize, usize, usize, u64, u64, u64, usize, usize) -> usize), lowered;
     // The yields' rows: yield_hooks.rs.

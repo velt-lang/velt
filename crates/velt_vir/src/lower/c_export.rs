@@ -34,6 +34,14 @@ const SCHED_EXPORTS: &str = "std_sched_";
 /// modules are loaded whatever it calls, builds the same functions as on demand.
 const BY_ROLE_EXPORTS: &[&str] = &["std_sched_blocking"];
 
+/// A JS host's host-promise leaf (sched_host.velt `hostPoll`, `hostDrop`), whose functions call the
+/// glue: built by its `exportedAddress` only, never seeded (WASI loads the file too, unused).
+const HOST_LEAF_EXPORTS: &[&str] = &["std_sched_host_poll", "std_sched_host_drop"];
+
+/// The turns a JS host calls (sched_host.velt, the glue's `velt_turn()` and `velt_settle(id)`):
+/// module exports of a JS host's program that runs on the executor in Velt, and nowhere else.
+const HOST_TURN_EXPORTS: &[&str] = &["velt_turn", "velt_settle"];
+
 impl Cx<'_> {
     /// Queues the C function of every `@export` of the program (on WebAssembly, reports each).
     pub(super) fn seed_c_exports(&mut self) {
@@ -41,16 +49,20 @@ impl Cx<'_> {
             return;
         }
         if self.target.trim().starts_with("wasm") {
+            if super::host::js_host(&self.target) {
+                for i in 0..self.hir.c_exports.len() {
+                    if HOST_TURN_EXPORTS.contains(&self.hir.c_exports[i].name.as_str()) {
+                        self.func(Work::CExport(i as u32));
+                    }
+                }
+            }
             // The executor in Velt's exports (std/lang/hooks/sched*.velt) are live whenever
-            // `VELT_SCHEDULER=std` is set. A JS host keeps the runtime's executor (lower/sched.rs)
-            // and never takes their addresses; WASI runs the executor in Velt, whose code takes
-            // the address of each it uses (`exportedAddress` builds it). Not seeded, not reported.
-            for e in self
-                .hir
-                .c_exports
-                .iter()
-                .filter(|e| !e.name.starts_with("std_sched_"))
-            {
+            // `VELT_SCHEDULER=std` is set. Both WebAssembly targets run the executor in Velt, whose
+            // code takes the address of each it uses (`exportedAddress` builds it): not seeded, not
+            // reported. A JS host's turns are module exports, seeded above.
+            for e in self.hir.c_exports.iter().filter(|e| {
+                !e.name.starts_with("std_sched_") && !HOST_TURN_EXPORTS.contains(&e.name.as_str())
+            }) {
                 self.c_clashes.push(
                     velt_common::Diagnostic::error(
                         format!("`@export(\"{}\")` has no WebAssembly form: a module has no C callers to link with", e.name),
@@ -64,7 +76,8 @@ impl Cx<'_> {
         // The executor in Velt's own exports wait until the program is known to run on it
         // (`Cx::drain`): one that doesn't leaves them out, as when std is loaded on demand.
         for i in 0..self.hir.c_exports.len() {
-            if !self.hir.c_exports[i].name.starts_with(SCHED_EXPORTS) {
+            let name = self.hir.c_exports[i].name.as_str();
+            if !name.starts_with(SCHED_EXPORTS) && !HOST_TURN_EXPORTS.contains(&name) {
                 self.func(Work::CExport(i as u32));
             }
         }
@@ -74,7 +87,10 @@ impl Cx<'_> {
     pub(super) fn seed_sched_exports(&mut self) {
         for i in 0..self.hir.c_exports.len() {
             let name = self.hir.c_exports[i].name.as_str();
-            if name.starts_with(SCHED_EXPORTS) && !BY_ROLE_EXPORTS.contains(&name) {
+            if name.starts_with(SCHED_EXPORTS)
+                && !BY_ROLE_EXPORTS.contains(&name)
+                && !HOST_LEAF_EXPORTS.contains(&name)
+            {
                 self.func(Work::CExport(i as u32));
             }
         }

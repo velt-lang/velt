@@ -6,8 +6,6 @@
 
 import { IoResult } from "velt/native/result";
 import { promiseAt } from "velt/lang/intrinsics";
-// std's own signal, not `#task-signal`: this file is the executor in Velt's only (a file shared
-// with WebAssembly, whose signals are its runtime's, imports `#task-signal`).
 import { isAborted, waitFuture } from "velt/task/signal_core";
 import * as bd from "velt/lang/hooks/sched_budget";
 import * as io from "velt/lang/hooks/sched_io";
