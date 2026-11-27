@@ -1,0 +1,104 @@
+// velt/process (internal): a Windows command line (`GetCommandLineW`'s) split into arguments, by
+// the rules of the C runtime since 2008, which Rust's `std::env::args` and Node follow too:
+//
+// - the program's name, first, takes every character literally: a quote only switches quoting
+//   on and off, and a space or tab outside quotes ends it;
+// - after it, spaces and tabs outside quotes separate arguments (several are one separator);
+// - backslashes followed by a quote are halved (rounded down), and an odd count escapes the
+//   quote, which is then taken literally; backslashes not followed by a quote are literal;
+// - an unescaped quote switches quoting; inside quotes, two quotes are one literal quote;
+// - an argument still in quotes at the end is kept, even empty.
+//
+// Pure, so std/process/args_cmdline.test.velt checks it on every OS.
+
+import { wideText } from "velt/ffi/wide";
+
+const BACKSLASH: u16 = 92;
+const QUOTE: u16 = 34;
+const SPACE: u16 = 32;
+const TAB: u16 = 9;
+
+function blank(u: u16): bool {
+  return u === SPACE || u === TAB;
+}
+
+/**
+ * The arguments of the command line `units` (UTF-16, without its NUL), program name first; an
+ * empty command line is `[exe()]`, the executable's path, as Rust's `args` answers.
+ */
+export function splitCommandLine(units: u16[], exe: () => string): string[] {
+  const out: string[] = [];
+  const n = units.length;
+  if (n === 0) {
+    out.push(exe());
+    return out;
+  }
+  let i: usize = 0;
+  let cur: u16[] = [];
+  let quoted = false;
+  while (i < n) {
+    const u = units[i];
+    if (u === QUOTE) {
+      quoted = !quoted;
+    } else if (blank(u) && !quoted) {
+      break;
+    } else {
+      cur.push(u);
+    }
+    i++;
+  }
+  out.push(wideText(cur));
+  while (i < n && blank(units[i])) {
+    i++;
+  }
+  cur = [];
+  quoted = false;
+  while (i < n) {
+    const u = units[i];
+    i++;
+    if (blank(u) && !quoted) {
+      out.push(wideText(cur));
+      cur = [];
+      while (i < n && blank(units[i])) {
+        i++;
+      }
+    } else if (u === BACKSLASH) {
+      let count: usize = 1;
+      while (i < n && units[i] === BACKSLASH) {
+        count++;
+        i++;
+      }
+      if (i < n && units[i] === QUOTE) {
+        for (let k: usize = 0; k < count / 2; k++) {
+          cur.push(BACKSLASH);
+        }
+        if (count % 2 === 1) {
+          cur.push(QUOTE);
+          i++;
+        }
+      } else {
+        for (let k: usize = 0; k < count; k++) {
+          cur.push(BACKSLASH);
+        }
+      }
+    } else if (u === QUOTE && quoted) {
+      if (i < n && units[i] === QUOTE) {
+        cur.push(QUOTE);
+        i++;
+      } else if (i < n) {
+        quoted = false;
+      } else {
+        // The end, still quoted: the argument is kept, even empty.
+        break;
+      }
+    } else if (u === QUOTE) {
+      quoted = true;
+    } else {
+      cur.push(u);
+    }
+  }
+  if (cur.length > 0 || quoted) {
+    out.push(wideText(cur));
+  }
+  return out;
+}
