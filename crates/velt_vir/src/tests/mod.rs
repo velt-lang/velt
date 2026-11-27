@@ -53,6 +53,7 @@ mod shape_guard;
 mod srclocs;
 mod start_up_allocs;
 mod std_src;
+mod transfer_sites;
 mod verifier;
 mod vir_ext;
 mod vtable_word;

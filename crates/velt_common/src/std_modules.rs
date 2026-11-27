@@ -139,6 +139,7 @@ table! {
     lang_hooks_sched_yield => "lang/hooks/sched_yield",
     lang_hooks_string => "lang/hooks/string",
     lang_hooks_syntax => "lang/hooks/syntax",
+    lang_hooks_transfer => "lang/hooks/transfer",
     lang_hooks_tuple_elements => "lang/hooks/tuple_elements",
     lang_hooks_unwind => "lang/hooks/unwind",
     lang_hooks_weak => "lang/hooks/weak",

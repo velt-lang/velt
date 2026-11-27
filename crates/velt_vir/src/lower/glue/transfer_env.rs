@@ -84,7 +84,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     /// Prologue answering for a call's copy: the environment copied, with one transfer scope for the
     /// whole environment, so an object reached twice is copied once and a cycle is copied as a cycle
-    /// (velt_rt `transfer_map`); null for an async closure that copies for itself (`copy` false).
+    /// (std's transfer map); null for an async closure that copies for itself (`copy` false).
     fn answer_call_copy(
         &mut self,
         here: Operand,
@@ -105,11 +105,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
                         lw.cx.note_transfer(*t);
                     }
                     if !counted.is_empty() {
-                        lw.call_rt(Rt::XferBegin, vec![], None);
+                        lw.xfer_begin();
                     }
                     let copy = lw.call_entry(copier, vec![e], vec![Ty::Ptr], Ty::Ptr);
                     if !counted.is_empty() {
-                        lw.call_rt(Rt::XferEnd, vec![], None);
+                        lw.xfer_end();
                     }
                     copy
                 }
@@ -281,7 +281,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// `return_env_copy`, running `give_up` before it returns one.
     fn return_env_copy_then(&mut self, env: Operand, give_up: impl FnOnce(&mut Self)) -> Operand {
         let found = self.temp(Ty::Ptr);
-        self.call_rt(Rt::XferFind, vec![env], Some(Place::local(found)));
+        self.xfer_find(env, Place::local(found));
         let f = Operand::Copy(Place::local(found));
         let n = self.cast_to(f.clone(), Ty::Ptr, Ty::U64);
         let is_copy = self.rvalue_temp(
@@ -327,14 +327,14 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     /// `f` (making a captured variable's cell, or a captured object of the code outside every
     /// read, this env's own: `callers_captures`), except in a transfer that keeps what that code
-    /// holds (velt_rt `velt_rt_xfer_keeps`): a `read` callback storing the closure into that
+    /// holds (std's `xferKeeps`): a `read` callback storing the closure into that
     /// code's containers. The closure stays on this thread, beside the variable, so it shares
     /// the variable's cell and the variable's object as in JavaScript. A copy would change only
     /// its own value (`later = () => out.pop()`: the caller's `out` kept its elements), and
     /// keeping the object would count its parts once more, which it holds counted already.
     fn unless_kept(&mut self, f: impl FnOnce(&mut Self)) {
         let keeps = self.temp(Ty::U8);
-        self.call_rt(Rt::XferKeeps, vec![], Some(Place::local(keeps)));
+        self.xfer_keeps(Place::local(keeps));
         let kept = self.rvalue_temp(
             Ty::Bool,
             Rvalue::Binary(

@@ -196,6 +196,7 @@ mod this_fn;
 mod thread_local;
 mod track_caller;
 mod transfer;
+mod transfer_map;
 mod truthy;
 mod type_kinds;
 mod type_tests;
