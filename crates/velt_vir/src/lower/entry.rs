@@ -490,7 +490,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// The prelude `Error` class when class `err` is it or extends it.
-    fn error_root(&mut self, err: TyId) -> Option<DefId> {
+    pub(super) fn error_root(&mut self, err: TyId) -> Option<DefId> {
         let TyKind::Adt(mut d, _) = self.cx.kind(err) else {
             return None;
         };

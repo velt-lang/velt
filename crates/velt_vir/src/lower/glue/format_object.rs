@@ -191,6 +191,11 @@ impl FnLower<'_, '_> {
             pending.clear();
             match self.accessor_label(ty, *index) {
                 Some(label) => self.push_text(buf, label),
+                // An error's `message` shows what a read gives (`error_message.rs`). Only a
+                // class has it, and a class's fields are never optional here.
+                None if n == "message" && self.error_message_hooked(ty) => {
+                    self.format_error_message(buf, place, child);
+                }
                 // A weak field shows its target, or `null` once it is gone (weak_fields.rs).
                 None if self.cx.weak_field(ty, *index).is_some() => {
                     let fp = self.field_place(place, ty, *index);

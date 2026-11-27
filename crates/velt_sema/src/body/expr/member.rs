@@ -84,6 +84,12 @@ impl FnCx<'_, '_> {
             Ok(call) => return Some(call),
             Err(obj) => obj,
         };
+        if prop.name == "message" {
+            match self.error_message_read(obj, want, span) {
+                Ok(h) => return Some(h),
+                Err(o) => obj = o,
+            }
+        }
         if self.cx.union_def(obj.ty).is_some() {
             match self.union_field(obj, prop, want, span) {
                 Ok(h) => return Some(h),
@@ -128,6 +134,11 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         if self.never_member_read(object, prop) {
             return self.error_expr(span);
+        }
+        if matches!(object.kind, ast::ExprKind::Super) {
+            if let Some(h) = self.super_error_message(prop, span) {
+                return h;
+            }
         }
         match self.namespace_member(object, prop) {
             Some(id) if !optional => return self.ident_expr(&id, exp, want),

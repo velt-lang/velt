@@ -25,9 +25,10 @@ impl FnCx<'_, '_> {
         if t.is_bottom(ty) || t.opt_payload(ty).is_some() {
             return false;
         }
-        fields
-            .iter()
-            .any(|(key, _)| self.field_of(ty, &key.name).is_none())
+        fields.iter().any(|(key, _)| {
+            self.field_of(ty, &key.name).is_none()
+                || (key.name == "message" && self.message_is_property(ty))
+        })
     }
 
     /// When the object pattern `fields` takes a method out of `init` (checked from `e`; `const

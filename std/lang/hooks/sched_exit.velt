@@ -68,8 +68,32 @@ import * as wk from "./sched_wake";
  * throws the error again.
  */
 export function uncaughtNow(e: usize): void {
+  KEPT.store(1, "relaxed");
   const at = loc.current();
   m.st(e + t.E_UNCAUGHT, at === 0 ? 1 : at);
+}
+
+/**
+ * 1 once the exit is known to leave blocks of the executor's counted that it cannot give back: an
+ * error a callback threw (`uncaughtNow`; its timer, the timer's turn and the task that runs it are
+ * live), the root of `main` not this thread's to give back (`root`), or worker 0 not taking a
+ * handed exit (`waitForMain`). With the counters on, the exit then says that its report is no
+ * leak verdict (`exitNoted`), as `process.exit` does (std/prelude/process.velt `processExit`).
+ */
+const KEPT = new Atomic<u32>(0);
+
+/** The line `exitNoted` writes just before the report (the leak checks read it: `KEPT`). */
+const KEPT_NOTE =
+  "rc stats: an uncaught error ended the program with tasks live: no leak verdict\n";
+
+declare function velt_rt_write_str(stream: u32, s: string);
+
+/** Ends the process with `code`, after the note that the counts are no leak verdict (`KEPT`). */
+function exitNoted(code: i32): never {
+  if (KEPT.load("relaxed") !== 0 && counting()) {
+    velt_rt_write_str(2, KEPT_NOTE);
+  }
+  process.exit(code);
 }
 
 /** 1 once an exit gave back the executor's blocks (an error in that is not given back twice). */
@@ -105,7 +129,7 @@ export function exitUncaught(code: i32): never {
   if (counting()) {
     mod.dropAtExit();
   }
-  process.exit(code);
+  exitNoted(code);
 }
 
 /**
@@ -117,8 +141,10 @@ export function exitUncaught(code: i32): never {
  * at the end of the poll it runs (its output published then, sched_wake.velt `publishPolled`),
  * or once awake, giving back the root of `main` with the counters on (`root`, #3017). The other
  * workers stop between two polls, so nothing else prints after the report. This thread stops
- * here: the module lock it may hold goes first, so worker 0's poll can finish. A `main` that
- * never yields never ends, as in Node. A second error meanwhile stops its thread too.
+ * here: the module lock it may hold goes first, so worker 0's poll can finish. A second error
+ * meanwhile stops its thread too. A poll of worker 0 that never ends (an endless loop, a loop of
+ * microtasks) would keep the program from ending after its report for good (#3888): when worker 0
+ * has not taken the exit within `HAND_WAIT_MS`, this thread ends the program (`waitForMain`).
  */
 function handToMain(g: usize, code: i32): void {
   // What this thread printed reaches the OS before worker 0 ends the program.
@@ -131,8 +157,38 @@ function handToMain(g: usize, code: i32): void {
       m.or32(t.worker(i) + t.E_RELAX, EXIT_DUE);
     }
     wk.unpark(g);
+    waitForMain(code);
   }
   halt();
+}
+
+/**
+ * How long the worker that handed an exit to worker 0 waits for worker 0 to take it, in
+ * milliseconds. Longer than a poll of `main` that only computes for a while after the report, so
+ * that what it prints still comes first (#3027); a poll that never ends no longer keeps the
+ * program from ending.
+ */
+const HAND_WAIT_MS: f64 = 5000.0;
+
+/**
+ * The exit is handed to worker 0 (`handToMain`), with `code`: when worker 0 has not taken it within
+ * `HAND_WAIT_MS` (its poll never ends), this thread takes it and ends the program, with what worker
+ * 0 printed in that poll not written out. Worker 0 taking it meanwhile ends the program from there.
+ */
+function waitForMain(code: i32): void {
+  const a = atomicAddress(HALT);
+  const end = performance.now() + HAND_WAIT_MS;
+  let left = HAND_WAIT_MS;
+  while (left > 0.0) {
+    // `HALT` never changes: the wait ends by its time (or early, which the loop covers).
+    r.wordWaitFor(a, 0, (left * 1000.0) as u32);
+    left = end - performance.now();
+  }
+  if (HANDED.compareExchange(code + 1, TAKEN, "seqcst", "seqcst") === code + 1) {
+    // Worker 0's poll holds the root of `main`.
+    KEPT.store(1, "relaxed");
+    exitNoted(code);
+  }
 }
 
 /** Is an exit due (`handToMain`)? */
@@ -175,7 +231,7 @@ function takeExitNow(e: usize): void {
     root(e);
     mod.dropAtExit();
   }
-  process.exit(c - 1);
+  exitNoted(c - 1);
 }
 
 /** Are the debug runtime's block counters on (`VELT_RC_STATS=1`)? */
@@ -212,7 +268,11 @@ function giveBack(self: usize): void {
 /** Worker 0 (`g`, this thread) gives back the root of `main` when it is this thread's to give. */
 function root(g: usize): void {
   const k = m.ld(g + t.E_ROOT);
-  if (k === 0 || m.ld(k + t.T_HOME) !== g) {
+  if (k === 0) {
+    return;
+  }
+  if (m.ld(k + t.T_HOME) !== g) {
+    KEPT.store(1, "relaxed");
     return;
   }
   if (t.has(k, t.ROOT_DONE)) {
@@ -228,6 +288,7 @@ function root(g: usize): void {
   }
   if (m.ld(g + t.E_CURRENT) !== k && m.cas32(k + t.T_STATE, t.IDLE, t.DONE) !== t.IDLE) {
     // Queued, or polled on another worker: its references are not this thread's.
+    KEPT.store(1, "relaxed");
     return;
   }
   const tb = m.ld(g + t.E_TIMERS);

@@ -1,0 +1,148 @@
+// `get message()` on a class extending `Error` (#3792), as in JavaScript: `Error`'s constructor
+// gives an error its own `message` only when it is passed one (`""` included), and a read finds
+// that first, else the getter (`Error.prototype.message` replaced). Every way a program reads it
+// agrees: a member read, `String(e)`, `stack`, through `Error`, an error union, a type parameter,
+// `any`, destructuring and optional chaining. Only the first line of `stack` is printed: Node adds
+// the call frames after it.
+
+function head(s: string | undefined): string {
+  return (s ?? "").split("\n")[0];
+}
+
+let calls = 0;
+
+class E extends Error {
+  get message(): string {
+    calls++;
+    return "[" + super.message + "]";
+  }
+}
+
+// A subclass of a subclass: its getter wins, and `super.message` is its base's getter.
+class F extends E {
+  override get message(): string {
+    return "F:" + super.message;
+  }
+}
+
+// A subclass of one with the getter, without its own: the inherited getter.
+class G extends E {}
+
+// Explicit constructors: `super()` and `super(m)` with `m` left out give no own message.
+class C1 extends E {
+  constructor() {
+    super();
+  }
+}
+class C2 extends E {
+  constructor(m?: string) {
+    super(m);
+  }
+}
+
+// A built-in error class's subclass: `new TypeError()` gives no own message either.
+class T extends TypeError {
+  get message(): string {
+    return "T getter";
+  }
+}
+
+// A class with no getter in a program that has one: as before.
+class Plain extends Error {}
+
+const given = new E("given");
+const none = new E();
+console.log(given.message, "|", none.message, "|", calls);
+console.log(String(given), "|", String(none), "|", `${none}`);
+console.log(head(given.stack), "|", head(none.stack));
+
+// An own empty message is a message: the getter is not called.
+const before = calls;
+const empty = new E("");
+console.log(JSON.stringify(empty.message), String(empty), calls - before);
+
+// `undefined` is no message.
+console.log(new E(undefined).message);
+
+console.log(new F().message, "|", new F("own").message, "|", String(new F()));
+console.log(new G().message, "|", new G("own").message);
+console.log(new C1().message, new C2().message, new C2("two").message, new C2(undefined).message);
+console.log(new T().message, "|", new T("t").message, "|", String(new T()));
+console.log(JSON.stringify(new Plain().message), new Plain("p").message, String(new Error()));
+
+// Through `Error`, and an array of errors of several classes.
+const asError: Error = none;
+console.log(asError.message, asError instanceof E);
+const errors: Error[] = [new E(), new Error(), new TypeError(), new F("ff"), new Error("plain")];
+for (const x of errors) {
+  console.log(JSON.stringify(x.message), String(x));
+}
+
+// Writing through `Error` an error that has its own message: the getter stays unreached.
+const written: Error = new E("x");
+written.message = "";
+console.log(JSON.stringify(written.message), Object.hasOwn(given, "message"));
+
+// A caught error union, a type parameter, optional chaining, `any`.
+function thrower(n: number): void {
+  if (n > 0) {
+    throw new E();
+  }
+  throw new TypeError("t");
+}
+for (const n of [1, 0]) {
+  try {
+    thrower(n);
+  } catch (err) {
+    console.log("caught", err.message, `${err}`);
+  }
+}
+function messageOf<X extends Error>(x: X): string {
+  return x.message;
+}
+console.log(messageOf(none), messageOf(given), messageOf(new F()));
+const maybe: E | null = calls > 1000 ? null : none;
+console.log(maybe?.message);
+const held: any = none;
+const heldOwn: any = given;
+console.log(held.message, heldOwn.message, String(held));
+
+// Destructuring: a declaration, a parameter, an assignment.
+const { message, name } = none;
+function messageParam({ message }: E): string {
+  return message;
+}
+let assigned = "";
+({ message: assigned } = new F());
+console.log(message, name, messageParam(none), messageParam(given), assigned);
+
+// A closure and a template.
+const read = () => none.message;
+console.log(read(), `${none.message}!`, none.message.length);
+
+// A read through a structural bound or an interface field calls the getter too (the field's
+// getter slot is `errorMessage`), and never hands the program the "no message" mark.
+function structural<X extends { message: string }>(x: X): string {
+  return x.message;
+}
+function indexed<X extends { message: string }>(x: X): string {
+  return x["message"];
+}
+interface Described {
+  message: string;
+  describe(): string;
+}
+class D extends Error implements Described {
+  get message(): string {
+    return "D getter";
+  }
+  describe(): string {
+    return "/d";
+  }
+}
+function described(d: Described): string {
+  return d.message + d.describe();
+}
+console.log(structural(none), structural(given), structural(new F()), indexed(none), indexed(given));
+console.log(described(new D()), described(new D("own")), structural(new Error()));
+console.log(new D(structural(new D())).message, new E(indexed(new D())).message);

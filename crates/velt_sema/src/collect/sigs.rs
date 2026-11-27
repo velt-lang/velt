@@ -450,9 +450,14 @@ fn adt_methods(cx: &mut Ctx, d: DefId) {
             );
             continue;
         }
-        if cx.adt(d).is_some_and(|a| {
-            a.fields.iter().any(|f| f.name == name.name) || a.statics.contains_key(&name.name)
-        }) {
+        // `get message()` of a class extending `Error` is `Error`'s accessor (`error_message`).
+        let renamed = key == crate::error_message::KEY && name.name != key;
+        if !renamed
+            && cx.adt(d).is_some_and(|a| {
+                a.fields.iter().any(|f| f.name == name.name) || a.statics.contains_key(&name.name)
+            })
+            && !crate::error_message::refuse_setter(cx, d, m)
+        {
             cx.err(
                 format!("`{}` is both a field and a method", name.name),
                 name.span,

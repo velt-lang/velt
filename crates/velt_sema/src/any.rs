@@ -340,6 +340,9 @@ pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<FxHashMap<DefId, Vec<DynMember
                 .iter()
                 .filter(|(k, m)| !m.is_static && !is_private_key(k))
                 .filter(|(_, m)| !(std && cx.fn_info(m.def).is_private))
+                // `Error`'s `message` accessor and its overrides (`crate::error_message`): no
+                // program can name the key, and `message` through `any` calls the hook.
+                .filter(|(k, _)| k.as_str() != crate::error_message::KEY)
                 .map(|(k, m)| (k.clone(), m.def))
                 .collect();
             own.sort();
