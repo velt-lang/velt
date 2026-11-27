@@ -231,6 +231,8 @@ pub(crate) struct Lazy {
     /// In a check by units, the last [`units_live_set`] with the numbers of definitions and of
     /// definition records it was found for: asked again with none added, it is the same.
     pub(crate) units_live_memo: Option<(usize, usize, FxHashSet<DefId>)>,
+    /// The constructs the walk of [`units_live_memo`](Self::units_live_memo) found in that code.
+    pub(crate) units_live_constructs: velt_common::std_hooks::ConstructSet,
 }
 
 impl Lazy {
@@ -265,6 +267,7 @@ impl Lazy {
             live: live::Live::new(),
             stubs: hook_stubs::Stubs::default(),
             units_live_memo: None,
+            units_live_constructs: 0,
         }
     }
 
@@ -740,7 +743,7 @@ crate::units::codec::structs! {
         on, check_all, native_executor, jit, modules, subclasses, user_record, generic_any,
         record_conversion, record_hooks, sched_hooks, cpu_hook, float_text, dyn_held,
         dyn_generic, cycle_closed, cycle_seen, cycles, live, stubs, printable, module_hooks,
-        units_live_memo,
+        units_live_memo, units_live_constructs,
     }
     Mode {
         whole, named,

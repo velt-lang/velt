@@ -125,6 +125,59 @@ fn a_build_by_units_for_windows_lowers_no_posix_only_std_code() {
     }
 }
 
+/// A panic under `catchPanic`, after an `await`.
+const CATCH_PANIC: &str = r#"
+import { catchPanic } from "velt/task";
+
+async function boom(): Promise<number> {
+  await yieldNow();
+  panic("bomb");
+  return 1;
+}
+
+async function main() {
+  try {
+    await catchPanic(() => boom());
+    console.log("returned");
+  } catch (e) {
+    console.log("caught");
+  }
+}
+"#;
+
+/// A program that catches panics runs by units, in either mode, as it does checked whole: the
+/// check demands std's panic path when the std code the program has calls `catchUnwind`, so its
+/// calls get cleanup pads (velt_vir `cleanup.rs`). Without it the panic ended the process
+/// (#3948). A program that doesn't catch gets no panic path, as checked whole. Generated code
+/// catches on macOS and Linux only.
+#[test]
+fn a_run_by_units_catches_a_panic_under_catch_panic() {
+    let dir = test_dir::TestDir::new();
+    std::fs::write(dir.path().join("main.velt"), CATCH_PANIC).unwrap();
+    std::fs::write(dir.path().join("plain.velt"), PROGRAM).unwrap();
+    for mode in ["1", "2"] {
+        let built = velt_by_units_in(dir.path(), mode, &["build", "plain.velt", "--emit", "vir"]);
+        let stderr = String::from_utf8_lossy(&built.stderr);
+        assert!(built.status.success(), "{mode}: {stderr}");
+        let vir = String::from_utf8_lossy(&built.stdout);
+        assert!(
+            !vir.contains("panicRaise"),
+            "{mode}: std's panic path lowered"
+        );
+        if !cfg!(any(target_os = "macos", target_os = "linux")) {
+            continue;
+        }
+        let ran = velt_by_units_in(dir.path(), mode, &["run", "main.velt"]);
+        let stderr = String::from_utf8_lossy(&ran.stderr);
+        assert!(ran.status.success(), "{mode}: {stderr}");
+        assert!(
+            stderr.contains("units: app"),
+            "{mode}: not by units:\n{stderr}"
+        );
+        assert_eq!(String::from_utf8_lossy(&ran.stdout), "caught\n", "{mode}");
+    }
+}
+
 /// A `get` trap throwing a string, read through std's proxy hooks: std's unit inferred the
 /// hooks (and std's callers of them, `callArrayMethod` among them) with the traps' sets empty,
 /// and a round of the app's stage solves the traps' variables from the program's traps again
