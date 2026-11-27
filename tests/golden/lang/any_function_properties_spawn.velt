@@ -1,0 +1,27 @@
+// check: no leaks
+// A function with properties crosses to another task (std/lang/hooks/fn_props_env.velt
+// `envTransfer`): moved when it is the only reference, copied with its properties when shared;
+// a property holding a function with properties of its own crosses with it.
+async function reader(f: any): Promise<string> {
+  await Promise.resolve();
+  return String(f.n) + ":" + f.inner.tag + ":" + String(f.inner()) + ":" + Object.keys(f).join(",");
+}
+function make(i: number): any {
+  const f: any = () => i;
+  const inner: any = () => i * 10;
+  inner.tag = "t" + String(i) + " long enough to be a string on the heap";
+  f.n = i;
+  f.inner = inner;
+  return f;
+}
+const ps: Promise<string>[] = [];
+for (let i = 0; i < 6; i++) {
+  ps.push(spawn(reader(make(i))));
+}
+for (const p of ps) {
+  console.log(await p);
+}
+const shared1: any = make(9);
+const a = spawn(reader(shared1));
+const b = spawn(reader(shared1));
+console.log(await a, await b, shared1.n);

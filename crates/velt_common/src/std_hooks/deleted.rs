@@ -152,4 +152,13 @@ pub const DELETED: &[&str] = &[
     "velt_rt_drop_state",
     "velt_rt_drop_queue",
     "velt_rt_drop_drain",
+    // #2196: the properties of function values and the identities of declared functions
+    // (std/lang/hooks/fn_props.velt).
+    "velt_rt_fnprop_get",
+    "velt_rt_fnprop_set",
+    "velt_rt_fnprop_delete",
+    "velt_rt_fnprop_len",
+    "velt_rt_fnprop_key",
+    "velt_rt_fnprop_identity",
+    "velt_rt_fnprop_identity_of",
 ];

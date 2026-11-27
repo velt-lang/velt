@@ -36,8 +36,9 @@ import * as lat from "velt/net/rt_later";
 import { isTls } from "velt/net/tls/fd_hook";
 import * as tlsOps from "velt/net/tls/fd_hook";
 
-declare function velt_rt_signal_aborted(s: u64): bool;
-declare async function velt_rt_signal_wait(s: u64, timed: bool): Promise<void>;
+// std's own signals, not `#task-signal`: this file is the executor in Velt's only (a file shared
+// with WebAssembly, whose signals are its runtime's, imports `#task-signal`).
+import { signalAborted, signalWait } from "velt/task/signal_sched";
 
 /**
  * Whether listeners come from `velt dev`'s supervisor (`VELT_DEV_SOCKET`, velt_rt's `dev::bind`),
@@ -249,26 +250,26 @@ export async function velt_rt_tcp_readable_within(
   ms: i64,
   signal: u64,
 ): Promise<IoResult<u8>> {
-  if (!tb.ours(s)) {
-    return await rt.velt_rt_tcp_readable_within(s, ms, signal);
-  }
-  if (stdUsed("reactorTls") && isTls(s)) {
+  const runtime = !tb.ours(s);
+  if (!runtime && stdUsed("reactorTls") && isTls(s)) {
     return await tlsReadableWithin(s, ms, signal);
   }
   if (signal === 0) {
-    return await fio.readableWithin(s, ms);
+    return runtime
+      ? await rt.velt_rt_tcp_readable_within(s, ms, 0)
+      : await fio.readableWithin(s, ms);
   }
-  if (velt_rt_signal_aborted(signal)) {
+  if (signalAborted(signal)) {
     return fs.value(0);
   }
-  if (ms < 0) {
+  if (ms < 0 && !runtime) {
     return await readableUntil(s, signal);
   }
-  // The signal's wait is the runtime's: whichever ends first ends the other (dropped). Not
-  // `timed`: the socket's wait keeps the process alive.
-  const within = fio.readableWithin(s, ms);
-  await Promise.race([within.then((_) => {}), velt_rt_signal_wait(signal, false)]);
-  if (velt_rt_signal_aborted(signal)) {
+  // Whichever ends first ends the other (dropped). Not `timed`: the socket's wait keeps the
+  // process alive. A runtime stream (`velt dev`) is given no signal: the signal is std's.
+  const within = runtime ? rt.velt_rt_tcp_readable_within(s, ms, 0) : fio.readableWithin(s, ms);
+  await Promise.race([within.then((_) => {}), signalWait(signal, false)]);
+  if (signalAborted(signal)) {
     return fs.value(0);
   }
   return await within;

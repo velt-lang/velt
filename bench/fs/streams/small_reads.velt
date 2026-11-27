@@ -1,0 +1,23 @@
+// File streams (std/fs/stream_sched.velt): an 8 MB file read 100 bytes at a time through a
+// `FileReader` (80,000 reads). Counted by bench/std_ab.sh (one worker).
+import { openRead, remove, writeFile } from "velt/fs";
+import { tmpdir } from "velt/os";
+
+async function main() {
+  const path = `${tmpdir()}/velt-bench-stream-reads-${Date.now()}.txt`;
+  await writeFile(path, "0123456789".repeat(800000));
+  const r = await openRead(path);
+  let bytes = 0;
+  let reads = 0;
+  let chunk = await r.read(100);
+  while (chunk.length > 0) {
+    bytes += chunk.length;
+    reads++;
+    chunk = await r.read(100);
+  }
+  r.close();
+  await remove(path);
+  console.log(reads, bytes);
+}
+
+main();

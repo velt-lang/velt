@@ -6,7 +6,6 @@
 #[path = "../../../../tests/common/command.rs"]
 pub(crate) mod command;
 mod fake;
-mod fs;
 mod js_table;
 mod net;
 mod shared;

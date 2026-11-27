@@ -175,8 +175,11 @@ impl FnCx<'_, '_> {
                         || self.cx.dynamic(et) == Some(crate::any::Dynamic::Any)
                 }
                 false => {
+                    let f64 = Some(self.cx.ty.f64);
                     et == elem
                         || (self.cx.ty.is_int(et) && self.float_elem(elem).is_some())
+                        // A number literal is a `number` (`literal_as_number`, #3867).
+                        || (self.number_literal_type(et) && self.float_elem(elem) == f64)
                         || self.cx.unify_err_vars(et, elem)
                         || self.widens_at_run_time(et, elem)
                 }

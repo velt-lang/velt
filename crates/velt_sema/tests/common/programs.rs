@@ -383,18 +383,27 @@ pub fn ok_src(src: &str) -> hir::Program {
     p.unwrap()
 }
 
-/// [`ok_src`] of a build that links the prebuilt object of std's float printing
-/// (`number_shortest`, velt_common `std_hooks/prebuilt.rs`), as a build with a warm cache does: a
-/// float printed calls it and checks none of that printing.
+/// [`ok_src`] of a build that links the prebuilt objects of std's float printing
+/// (`number_shortest`, velt_common `std_hooks/prebuilt.rs`) and of `console.log`'s line breaking
+/// (`inspect_layout_text`), as a build with a warm cache does: a float printed calls the first
+/// and checks none of that printing, and a value printed checks none of the layout.
 pub fn ok_src_prebuilt(src: &str) -> hir::Program {
     use velt_common::std_hooks::HOOKS;
     let mut l = load_src(src);
-    // Its module is not loaded: the build links the object instead.
-    l.modules
-        .retain(|m| m.path != "std/lang/hooks/number_shortest");
+    // Their modules are not loaded: the build links the objects instead (std's float printing,
+    // and `console.log`'s line breaking with its private state).
+    const OBJECTS: [&str; 3] = [
+        "std/lang/hooks/number_shortest",
+        "std/lang/hooks/inspect_layout_text",
+        "std/lang/hooks/inspect_layout_atoms",
+    ];
+    l.modules.retain(|m| !OBJECTS.contains(&m.path.as_str()));
     let none = |_: &[String]| None;
     let kept = velt_sema::StdLoads::default();
-    let linked = |i: usize| HOOKS[i].name == "number_shortest";
+    let linked = |i: usize| {
+        HOOKS[i].name == "number_shortest"
+            || (HOOKS[i].prebuilt && HOOKS[i].module_entry == "lang_hooks_inspect_layout_text")
+    };
     let loads = velt_sema::Loads {
         run: &none,
         kept: &kept,

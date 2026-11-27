@@ -105,7 +105,7 @@ reference to a value of `B`":
 | generic function value | the closures of its interface's key, the generic closures, and its interface's node |
 | interface value of type `I<A>` | the *`I<A>` node*, one per instantiation: its value, possibly a counted box, with edges to every concrete type an `I<A>` table was built for (an implementation is of one instantiation, fixed by the type it is for) and to the nodes of the interface types converted to `I<A>` |
 | `any`, `unknown`, `object` | the *dynamics* node: edges to every type an `any` table was built for, the nodes of every instantiation of the interfaces converted to `any`, and the generic closures |
-| closure environment, in a program that writes properties of functions through `any` | the dynamics node: its properties are `any` values it owns (`f.self = f`; velt_rt `fn_props.rs`) |
+| closure environment, in a program that writes properties of functions through `any` | the dynamics node: its properties are `any` values it owns (`f.self = f`; std/lang/hooks/fn_props.velt) |
 | `Promise<T, E>` | `T`, `E` |
 | generator object (`Generator`, `AsyncGenerator`) | its fields, and every local of the generator functions made at that class type (the state of the function it runs) |
 | `shared<T>` | none: a shared value is a copy with an atomic count |
@@ -165,11 +165,11 @@ each object which counted objects it owns, through trace glue ([rt_abi.md](../co
 the same captures as its drop (`closure.rs` `build_env_drop`: owned value captures, and captured
 variables' cells, counted blocks traced like a weak map's boxed value). The environment header
 has no trace entry, which would change every environment's layout and the runtime's own
-three-word environments (`fn_props.rs`); the glue dispatches on the drop entry instead, one
+three-word environments (std/lang/hooks/fn_props_env.velt); the glue dispatches on the drop entry instead, one
 function per closure instance (`Work::EnvDrop`). It compares it with the drop entries of the
 closures made at the value's function type (`Boxing::env_traced`, by key) and visits the
 environment with the matching closure's trace; an environment that matches none (made by the
-runtime, or a drop entry a function property replaced) is left out, a leak at worst. Inside a
+runtime or std, or a drop entry a function property replaced) is left out, a leak at worst. Inside a
 shape-shared instance the drop entry comes from the dictionary, per concrete type, so it is the
 one the comparison names. Environments and cells on a path back to a weak key get `RC_WEAK`, so
 in a program with such glue their releases take the weak-capable sequence (`Boxing::weak_envs`,

@@ -429,25 +429,30 @@ exit for the leak counters.
 
 ### 2.3 Abort signals (`velt/task`)
 
-Each signal's `u64` handle (an `Arc`) is owned by a private `shared` cell in std/task/signal.velt
-and released once, at the cell's last reference; no handle is public. Aborting sets a flag, stores
-the reason and wakes the waiters; it never cancels anything itself. No code pointers are stored.
+Each signal's `u64` handle is owned by a private `shared` cell in std/task/signal.velt and released
+once, at the cell's last reference; no handle is public. Aborting sets a flag, stores the reason and
+wakes the waiters; it never cancels anything itself. No code pointers are stored.
 `AbortSignal.timeout`'s timer is std's, one of Node's timers (`velt_rt_timer_*`,
 std/task/signal_timeout.velt): its promise holds a reference to the signal until the delay is up and
-aborts it with `velt_rt_signal_abort` and a message carrying the delay, and std passes `timed` to a
-wait for it. A signal made by `any` holds strong references to its sources until it is aborted (they
-hold weak ones back).
+aborts it with a message carrying the delay, and std passes `timed` to a wait for it. A signal made
+by `any` holds references to its sources until it is aborted (they reach it only through links it
+owns).
 
-| Symbol | Signature | Notes |
+Natively the signals are std's (`#task-signal`: std/task/signal_sched.velt over signal_core.velt,
+in raw memory; a wait is a heap future linked into its signal, woken in the order the waits
+began). velt_rt keeps `velt_rt_signal_wait`, `_reason` and `_free` for one signal of its own, the
+graceful stop's (§13.2), until that stop is std's too. WebAssembly's runtime keeps its own:
+
+| Symbol (velt_rt_wasm) | Signature | Notes |
 |---|---|---|
-| `velt_rt_signal_new` | `() -> u64` | a signal that is not aborted |
-| `velt_rt_signal_retain` | `(u64 s) -> u64` | another reference to it (a scope's child task holds one) |
-| `velt_rt_signal_free` | `(u64 s)` | releases a handle |
-| `velt_rt_signal_abort` | `(u64 s, const VeltStr* reason)` | aborts it and the signals derived from it (`any`); a no-op if aborted |
-| `velt_rt_signal_aborted` | `(u64 s) -> bool` | |
-| `velt_rt_signal_reason` | `(u64 s, VeltStr* out)` | the reason (`""` while not aborted) |
-| `velt_rt_signal_wait` | `(u64 s, bool timed) -> VeltFut*` | completes (unit) once aborted; `timed` (a timer may abort it): the wait keeps the process alive |
-| `velt_rt_signal_any` | `(const VeltArray<u64>* signals) -> u64` | aborted with the first of `signals` that is (its reason); keeps them alive until then |
+| `velt_rt_signal_new` | `() -> u64` | WebAssembly only. A signal that is not aborted |
+| `velt_rt_signal_retain` | `(u64 s) -> u64` | WebAssembly only. Another reference to it (a scope's child task holds one) |
+| `velt_rt_signal_free` | `(u64 s)` | releases a handle (velt_rt too: its stop signal's) |
+| `velt_rt_signal_abort` | `(u64 s, const VeltStr* reason)` | WebAssembly only. Aborts it and the signals derived from it (`any`); a no-op if aborted |
+| `velt_rt_signal_aborted` | `(u64 s) -> bool` | WebAssembly only |
+| `velt_rt_signal_reason` | `(u64 s, VeltStr* out)` | the reason (`""` while not aborted) (velt_rt too: its stop signal's) |
+| `velt_rt_signal_wait` | `(u64 s, bool timed) -> VeltFut*` | completes (unit) once aborted; `timed` (a timer may abort it): the wait keeps the process alive (velt_rt too: its stop signal's) |
+| `velt_rt_signal_any` | `(const VeltArray<u64>* signals) -> u64` | WebAssembly only. Aborted with the first of `signals` that is (its reason); keeps them alive until then |
 
 ### 2.4 Task groups (`taskScope`)
 
@@ -967,10 +972,8 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_strbuf_push_inspect_key` | `(VeltStrBuf* b, const VeltStr* s)` | an object key as `console.log` shows it: bare if it matches `[A-Za-z_][A-Za-z0-9_]*` (node quotes `$`), else quoted like `push_inspect_str` |
 | `velt_rt_strbuf_push_bool` | `(VeltStrBuf* b, u8 v)` | `true`/`false` |
 | `velt_rt_strbuf_push_byte` | `(VeltStrBuf* b, u8 c)` | punctuation in generated glue |
-| `velt_rt_strbuf_inspect_begin` | `()` | start of a top-level value printed by `console.log`, `${x}` or `String(x)`: the custom inspects' pieces (`inspect_atom`) of the value before are forgotten. Compiled code calls it at every top-level value, next to std's `inspectBegin` (std/lang/hooks/inspect_cycles.velt, which numbers the `<ref *N>` of cycles) where that hook is checked |
-| `velt_rt_strbuf_inspect_atom` | `(const VeltStrBuf* b, u64 start)` | the text from byte `start` to the end of `b` is what a class's `[util.inspect.custom]()` returned: `inspect_layout` keeps it as one piece (node inserts a custom inspect's string as it is). Forgotten at the next `inspect_begin` |
 | `velt_rt_strbuf_len` | `(const VeltStrBuf* b) -> u64` | byte length: where the next value's text starts (for `inspect_layout`) |
-| `velt_rt_strbuf_inspect_layout` | `(VeltStrBuf* b, u64 start)` | re-lays out the text of one printed value, from byte `start` to the end, the way node's `util.inspect` breaks it across lines (`breakLength` 80, 2-space indentation, arrays of more than six short entries in columns (an array's `... n more items` entry on its own line after them), long strings split at line breaks); a value of at most 71 bytes with fewer than six commas and no line break is left alone without being parsed; a custom inspect's text (`velt_rt_strbuf_inspect_atom`) is kept as it is, its lines after the first indented by the value's indentation, as node indents a custom inspect's string. Emitted after each top-level `console.log` / `${}` value that can hold containers |
+| `velt_rt_strbuf_inspect_layout` | `(VeltStrBuf* b, u64 start)` | re-lays out the text of one printed value, from byte `start` to the end, the way node's `util.inspect` breaks it across lines. Compiled code does not call it: std's `inspectLayout` (std/lang/hooks/inspect_layout.velt) lays out what `console.log`, `${}` and `String(x)` print (docs/internals/design/inspect-shapes.md "Line breaking"). Only std's `inspectJsonValue` (std/encoding/json/value_inspect.velt) calls it, for a top-level `JsonValue` array or object |
 | `velt_rt_strbuf_finish` | `(VeltStrBuf* b, VeltStr* out)` | moves the text to `*out`; `*b` becomes empty (reusable, nothing to free) |
 | `velt_rt_strbuf_commit` | `(VeltStrBuf* b, u64 n, u8 ascii)` | the `n` bytes written after the text, in the builder's spare room (a unique heap buffer), become part of it: UTF-8, ASCII when `ascii` is 1 (not counted then) |
 | `velt_rt_strbuf_drop` | `(VeltStrBuf* b)` | abandon an unfinished builder (exception path); zeroes it |
@@ -1086,7 +1089,7 @@ joins through velt/dev's `joinStop` and `drained` (std/dev/stop.velt), on:
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_dev_server_stop` | `() -> VeltSignal` | a signal (the `AbortSignal` handles of §2; the caller owns it) aborted once a stop request arrives; null outside dev mode. The process waits for the server until it reports itself drained (up to 1 s) |
+| `velt_rt_dev_server_stop` | `() -> VeltSignal` | a runtime signal (§2.3; the caller owns it) aborted once a stop request arrives; null outside dev mode. std waits for it and aborts the server's own `AbortSignal`. The process waits for the server until it reports itself drained (up to 1 s) |
 | `velt_rt_dev_server_drained` | `()` | the server that joined stopped accepting and finished its requests |
 
 The stop request is:
@@ -1228,23 +1231,15 @@ std/net/dns/rt.velt) fail with `ENOTSUP`.
 
 ### 14.7 File streams (`velt/fs`)
 
-`VeltFileReader` / `VeltFileWriter` are `Arc`s around a buffered (64 KiB) `std::fs::File`;
-every operation runs on the blocking pool. A writer's last release flushes (errors ignored).
-Lines and text are std code (std/fs/line_buffer.velt): a reader's bytes read ahead, 64 KiB per
-`velt_rt_fs_reader_read`, split at `\n` by `indexOfByte` and decoded there.
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_fs_open_read` | `(const VeltStr* path) -> VeltFut*` | `IoResult<VeltFileReader>` |
-| `velt_rt_fs_open_read_range` | `(const VeltStr* path, u64 start, u64 end) -> VeltFut*` | `IoResult<VeltFileReader>` that reads bytes `start..=end` (both included, as Node's `createReadStream`) and then reports the end of the file; `end` `u64::MAX` = to the end of the file. A `start` past the end of the file, or `end < start`, reads nothing |
-| `velt_rt_fs_reader_opened_stats` | `(VeltFileReader r, IoResult<VeltStat>* out)` | synchronous: the file's `VeltStat` when it was opened (an `fstat` in the open's own blocking call, so no I/O here), whatever its path names now; `size` is the whole file's; `EBADF` once closed |
-| `velt_rt_fs_reader_read` | `(VeltFileReader r, u64 max) -> VeltFut*` | `IoResult<VeltBytes>`, empty = EOF, `max` 0 = 64 KiB |
-| `velt_rt_fs_reader_close` | `(VeltFileReader r)` | |
-| `velt_rt_fs_open_write` | `(const VeltStr* path, u8 append) -> VeltFut*` | `IoResult<VeltFileWriter>`; creates; truncates unless `append` |
-| `velt_rt_fs_writer_write` / `_write_bytes` | `(VeltFileWriter w, const VeltStr* data) -> VeltFut*` / `(VeltFileWriter w, const VeltBytes* data) -> VeltFut*` | `IoResult<()>`; data copied |
-| `velt_rt_fs_writer_flush` | `(VeltFileWriter w) -> VeltFut*` | `IoResult<()>` |
-| `velt_rt_fs_writer_close` | `(VeltFileWriter w) -> VeltFut*` | `IoResult<()>`: flush + close; later writes fail `EPIPE`; idempotent |
-| `velt_rt_fs_writer_free` | `(VeltFileWriter w)` | releases the handle |
+File streams are std code in a native build: std/fs/stream_sched.velt keeps every open reader and
+writer in one table for the process (a reader's file, its range left and its metadata as of the
+open; a writer's file and its 64 KiB buffer), and runs each open, read, write and close on the
+executor's blocking pool, over the C library's file descriptors on macOS and Linux and Win32
+handles on Windows (`#fs-stream-os`). A handle used after `close` fails with `EBADF`; a writer
+released unclosed is flushed then (errors ignored). Lines and text are std code
+(std/fs/line_buffer.velt): a reader's bytes read ahead, 64 KiB per read, split at `\n` by
+`indexOfByte` and decoded there. velt_rt has no file stream functions, and neither has
+velt_rt_wasm: on WebAssembly every open fails with `ENOTSUP` (std/fs/stream_none.velt).
 
 ### 14.8 TLS
 

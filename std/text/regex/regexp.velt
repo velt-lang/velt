@@ -111,7 +111,9 @@ export class RegExp implements Pattern {
   @noInline
   test(s: string, from?: usize): bool {
     if (!isExactClass(this)) {
-      return this.exec(s, from) != null;
+      // As JS's `test` calls `exec(s)`: `from` only when given, so an override's own default
+      // for it applies.
+      return (from == null ? this.exec(s) : this.exec(s, from)) != null;
     }
     if (from == null && (this.global || this.sticky)) {
       return this.exec(s) != null;
@@ -139,7 +141,7 @@ export class RegExp implements Pattern {
    */
   exec(s: string, from?: usize): RegExpMatch | null {
     if (!isExactClass(this)) {
-      return this.execOwn(s, from);
+      return from == null ? this.execOwn(s) : this.execOwn(s, from);
     }
     if (from != null || !(this.global || this.sticky)) {
       return this.execAt(s, from ?? 0);

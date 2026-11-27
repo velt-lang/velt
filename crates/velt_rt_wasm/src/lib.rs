@@ -31,8 +31,6 @@ pub mod cell_owner;
 #[path = "../../velt_rt/src/deep_eq.rs"]
 pub mod deep_eq;
 pub mod entry;
-#[path = "../../velt_rt/src/fn_props.rs"]
-pub mod fn_props;
 #[path = "../../velt_rt/src/freed.rs"]
 pub mod freed;
 pub mod fs;

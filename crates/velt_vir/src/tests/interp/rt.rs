@@ -124,6 +124,12 @@ impl Interp<'_> {
                 b.extend(self.str_bytes(a[1]));
                 self.new_str(a[2], &b);
             }
+            // Bytes `start..end` of a string (std's line breaking replaces a builder's tail).
+            "velt_rt_str_byte_slice" => {
+                let b = self.str_bytes(a[0]);
+                let (start, end) = (a[1] as usize, (a[2] as usize).min(b.len()));
+                self.new_str(a[3], &b[start.min(end)..end]);
+            }
             "velt_test_str_from_f64" => self.new_str(a[1], js_num(f64::from_bits(a[0])).as_bytes()),
             "velt_rt_str_from_bool" => {
                 self.new_str(a[1], if a[0] & 1 == 1 { b"true" } else { b"false" })

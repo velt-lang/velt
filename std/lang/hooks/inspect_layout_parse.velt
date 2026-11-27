@@ -27,7 +27,7 @@ import {
 } from "velt/lang/hooks/inspect_layout_container";
 import { isMoreAt, isNumberAt } from "velt/lang/hooks/inspect_layout_pieces";
 import { splitString } from "velt/lang/hooks/inspect_layout_string";
-import { displayWidth, utf16Units } from "velt/lang/hooks/inspect_layout_width";
+import { displayWidth, plainRun, utf16Units } from "velt/lang/hooks/inspect_layout_width";
 import {
   addressLoad,
   arrayTruncate,
@@ -382,6 +382,7 @@ function skipQuoted(l: Layout): bool {
   const quote = byte(l, l.i);
   let j = l.i + 1;
   while (true) {
+    j = plainRun(l.data as u64, j, l.end, quote);
     if (j >= l.end) {
       return false;
     }

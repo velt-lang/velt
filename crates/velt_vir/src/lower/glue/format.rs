@@ -10,7 +10,7 @@
 //! top-level style. The prelude `Map` prints like node's (format_map.rs), a `JsonValue` like
 //! node prints the parsed value (`{ a: 1, b: [ 2, 'x' ] }`, a string raw at the top level).
 //! A top-level value is written on one line and then broken across lines like node's when it
-//! is too long (velt_rt's `inspect_layout`).
+//! is too long (std's `inspectLayout`, std/lang/hooks/inspect_layout.velt).
 //!
 //! Node's default limits apply as the value is written, so a huge value costs only what is
 //! shown: a container nested deeper than [`DEPTH`] prints as `[Object]`, `[Array]`, `[Name]`,
@@ -140,12 +140,14 @@ impl FnLower<'_, '_> {
         // Node numbers the `<ref *N>` of cycles once per top-level value; the value is printed
         // on one line, then broken across lines like node if too long.
         let end = self.inspect_begin();
-        let start = self.temp(Ty::U64);
-        let len = Some(Place::local(start));
-        self.call_rt(Rt::StrbufLen, vec![buf.clone()], len);
+        let start = self.builder_len(buf);
         self.format_nested(buf, place, ty, depth);
-        let start = Operand::Copy(Place::local(start));
-        self.call_rt(Rt::StrbufInspectLayout, vec![buf.clone(), start], None);
+        // std's `inspectLayout` (std/lang/hooks/inspect_layout.velt), checked where live code
+        // prints such a value: unchecked only without std, where it stays on one line.
+        let (b, at) = (ty::Str::arg(buf.clone()), ty::U64::arg(start));
+        if let Some(layout) = hooks::inspect_layout(self, b, at) {
+            _ = layout.emit(self);
+        }
         if let Some(end) = end {
             _ = end.emit(self);
         }
@@ -499,12 +501,30 @@ impl FnLower<'_, '_> {
         self.terminate(Terminator::Return(unit()));
     }
 
+    /// The text from byte `start` to the end of the builder `buf` is a custom inspect's: std's
+    /// `inspectAtom` (std/lang/hooks/inspect_layout_text.velt) keeps it as one piece when the
+    /// value is broken across lines. Unchecked where nothing is broken across lines.
+    pub(super) fn inspect_atom(&mut self, buf: &Operand, start: Operand) {
+        let (b, at) = (ty::Str::arg(buf.clone()), ty::U64::arg(start));
+        if let Some(atom) = hooks::inspect_atom(self, b, at) {
+            _ = atom.emit(self);
+        }
+    }
+
+    /// The byte length of the builder at address `buf` (no call): where the next value's text
+    /// starts.
+    pub(super) fn builder_len(&mut self, buf: &Operand) -> Operand {
+        let p = match buf {
+            Operand::Copy(p) => proj(p, Proj::Deref(Ty::Agg(vir::STR_AGG))),
+            _ => crate::lower::ice("a builder address that is not a place"),
+        };
+        self.str_bytes(&p)
+    }
+
     /// The start of a top-level value: std's `inspectBegin` (std/lang/hooks/inspect_cycles.velt)
-    /// starts the `<ref *N>` numbering over, and the runtime forgets the pieces of custom inspects
-    /// of the value before. Where std's is unchecked (no object can be printed), the runtime's
-    /// alone. The call of `inspectEnd` that gives back std's state after the value.
+    /// starts the `<ref *N>` numbering over, where it is checked. The call of `inspectEnd` that
+    /// gives back std's state after the value.
     fn inspect_begin(&mut self) -> Option<hooks::Call<ty::Void>> {
-        self.call_rt(Rt::StrbufInspectBegin, vec![], None);
         let begin = hooks::inspect_begin(self)?;
         _ = begin.emit(self);
         hooks::inspect_end(self)

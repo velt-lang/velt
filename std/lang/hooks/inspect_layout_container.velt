@@ -23,7 +23,7 @@ export const N_CLOSE_END: u64 = 2;
 /** Its first entry in `Layout.ent`, and how many. */
 export const N_FIRST: u64 = 3;
 export const N_COUNT: u64 = 4;
-/** `ONE_LINE`, `BROKEN` or `GROUPED`; for `GROUPED`, its columns and their widths in `widest`. */
+/** `ONE_LINE`, `BROKEN` or `GROUPED`; for `GROUPED`, its columns and its widths' place in `ent`. */
 export const N_MODE: u64 = 5;
 export const N_COLUMNS: u64 = 6;
 export const N_WIDEST: u64 = 7;
@@ -51,10 +51,12 @@ export const PEND_WORDS: u64 = ENT_WORDS;
 export class Layout {
   /** The containers, `NODE_WORDS` each, in preorder. */
   node: u64[] = [];
-  /** The entries, `ENT_WORDS` each, each container's together. */
+  /**
+   * The entries, `ENT_WORDS` each, each container's together; after a grouped container's, its
+   * columns' widths, padded to whole records. (One array, not two: each array of an object is a
+   * block of its own, allocated and freed with every value laid out.)
+   */
   ent: u64[] = [];
-  /** The columns' widths of grouped containers. */
-  widest: u64[] = [];
   /** The split strings, in order: their bytes, and their text laid out. */
   splitAt: u64[] = [];
   splitText: string[] = [];
@@ -89,8 +91,9 @@ export class Layout {
   eMore: bool = false;
   /** Raw line breaks in the last container read (exact only). */
   nodeBreaks: u64 = 0;
-  /** The writer's next container and next split string. */
+  /** The writer's next container and next split string, and how many containers there are. */
   wNode: u64 = 0;
+  wNodes: u64 = 0;
   wSplit: u64 = 0;
   /**
    * A lower bound on the capacity of `ent`, which grows only by `reserve`: that makes exactly the
@@ -181,10 +184,14 @@ export function closeContainer(
   node[r + N_FLAGS] = (allNumbers ? 1 : 0) | (more << 1);
   node[r + N_SUBTREE_END] = (node.length as u64) / NODE_WORDS;
   if (isArray && count > 6) {
-    // The entries' display widths are word 2 of their records; the columns' widths go to `widest`.
-    const at = l.widest.length as u64;
-    const c = planColumnsIn(l.pend, base + 2, PEND_WORDS, shown, count, indent, l.widest);
+    // The entries' display widths are word 2 of their records; the columns' widths follow the
+    // entries in `ent`, padded to a whole record so that entries stay at whole records.
+    const at = l.ent.length as u64;
+    const c = planColumnsIn(l.pend, base + 2, PEND_WORDS, shown, count, indent, l.ent);
     if (c > 0) {
+      while ((l.ent.length as u64) % ENT_WORDS != 0) {
+        l.ent.push(0);
+      }
       node[r + N_MODE] = GROUPED;
       node[r + N_COLUMNS] = c;
       node[r + N_WIDEST] = at;
@@ -227,16 +234,16 @@ function measureGrouped(
   const pad = indent + 2;
   let units = openUnits + 1 + pad;
   let width = openWidth + pad;
-  for (let j: u64 = 0; j < shown; j++) {
+  let column: u64 = 0;
+  for (let j: u64 = 0; j < shown; j++, column = column + 1 == cols ? 0 : column + 1) {
     const p = base + j * PEND_WORDS;
-    const column = j % cols;
     const lastInRow = column + 1 == cols || j + 1 == shown;
     if (j > 0 && column == 0) {
       units += 2 + pad;
       width += 1 + pad;
     }
     const w = l.pend[p + 2];
-    const fill = l.widest[at + column] - w;
+    const fill = l.ent[at + column] - w;
     units += l.pend[p + 3];
     width += w;
     if (numbers) {
