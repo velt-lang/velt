@@ -1,7 +1,8 @@
 //! `JSON.stringify(value, replacer, space)`: `JSON.stringify(value)` (unchanged, generated for
-//! the value's type) laid out again by the prelude's `jsonRelayout` with JS's property list (an
-//! array replacer of strings or numbers, or `null`; one only known at run time, an `any`, as Node
-//! reads it) and gap (`space`, a number or a string).
+//! the value's type), or with a replacer function the prelude's `jsonStringifyReplaced` (the
+//! value walked as JavaScript walks it), laid out again by the prelude's `jsonRelayout` with JS's
+//! property list (an array replacer of strings or numbers, or `null`; one only known at run time,
+//! an `any`, as Node reads it) and gap (`space`, a number or a string).
 //! `JSON.stringify(value)` alone never comes here.
 
 use velt_common::{Diagnostic, Span};
@@ -61,10 +62,9 @@ impl FnCx<'_, '_> {
         }
         let text = self.call(callee, type_args, &args[..1], false, None, span);
         let (text, keys, filter) = match self.json_replacer_fn(&args[1]) {
-            // A replacer function rewrites the text first; then only `space` lays it out.
+            // A replacer function walks the value as it is written; then only `space` lays it out.
             Ok(f) => {
-                let str_ = self.cx.ty.str_;
-                let text = self.json_helper_call("jsonReplaceWith", vec![text, f], str_, span);
+                let text = self.json_replaced_call(text, f, span);
                 (text, self.str_lit("", span), false)
             }
             Err((keys, filter)) => (text, keys, filter),
@@ -84,7 +84,7 @@ impl FnCx<'_, '_> {
     /// `(key: string, value: JsonValue) => JsonValue | undefined`, and is returned as `Ok`; an
     /// array of keys or `null` gives `Err` with what `json_replacer` makes of it.
     fn json_replacer_fn(&mut self, a: &ast::Expr) -> Result<hir::Expr, (hir::Expr, bool)> {
-        let helper = self.cx.prelude_fn("jsonReplaceWith");
+        let helper = self.cx.prelude_fn("jsonStringifyReplaced");
         let pty = helper.and_then(|d| self.cx.try_fn(d)?.params.get(1).map(|p| p.ty));
         // An arrow or function expression must write its value parameter `JsonValue`
         // (`json_callbacks`); its other parameters take their types from `JsonReplacer`.
@@ -110,6 +110,41 @@ impl FnCx<'_, '_> {
             }
         }
         Err(self.json_replacer(h, a.span))
+    }
+
+    /// `JSON.stringify(value)` (`call`, checked) with the replacer function `f`: the prelude's
+    /// `jsonStringifyReplaced<T>(value, f)`, which walks the value as JavaScript does, its
+    /// `toJSON(key)` and the replacer per key (#3774). A call already in error stays one.
+    fn json_replaced_call(&mut self, call: hir::Expr, f: hir::Expr, span: Span) -> hir::Expr {
+        let str_ = self.cx.ty.str_;
+        if call.ty == self.cx.ty.error {
+            return self.error_expr(span);
+        }
+        let H::Call {
+            callee: Callee::Def(_, targs),
+            mut args,
+        } = call.kind
+        else {
+            panic!("ICE: `JSON.stringify(value)` checked to something other than a direct call");
+        };
+        let (Some(value), true) = (args.pop(), args.is_empty()) else {
+            panic!("ICE: `JSON.stringify(value)` checked to a call without one argument");
+        };
+        let Some(d) = self.cx.prelude_fn("jsonStringifyReplaced") else {
+            self.cx.err(
+                "`JSON.stringify` with a replacer needs the prelude (std/prelude)",
+                span,
+            );
+            return self.error_expr(span);
+        };
+        // The walk throws a `TypeError` for a root replaced by `undefined`, and what the
+        // replacer and the `toJSON` methods throw.
+        self.call_throws(d, &targs, str_, span);
+        let kind = H::Call {
+            callee: Callee::Def(d, targs),
+            args: vec![value, f],
+        };
+        self.mk(kind, str_, span)
     }
 
     /// The replacer `h` (checked; not a function, not `null`): its keys' JSON text and whether
@@ -222,7 +257,7 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         };
-        // `jsonReplaceWith` throws a `TypeError` for a root replaced by `undefined`.
+        // The layout helpers may throw (`jsonAnyKeys` a `TypeError`).
         self.call_throws(d, &[], ty, span);
         let kind = H::Call {
             callee: Callee::Def(d, vec![]),

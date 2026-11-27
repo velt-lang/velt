@@ -1,0 +1,37 @@
+// A toJSON() that throws, reached by JSON.stringify with a replacer function: one error per
+// method, at the method. The code generated to call it is not blamed (#3774).
+class Boom {
+  toJSON(key: string): string {
+    throw new Error("boom");
+  }
+}
+class MyErr extends Error {}
+class Base {
+  toJSON(): number {
+    if (Math.random() > 2) {
+      throw new MyErr("base");
+    }
+    return 1;
+  }
+}
+class Sub extends Base {
+  x: number = 1;
+}
+class Box<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+  toJSON(key: string): T {
+    if (key == "never") {
+      throw new RangeError("box");
+    }
+    return this.v;
+  }
+}
+function rep(k: string, v: JsonValue): JsonValue | undefined {
+  return v;
+}
+console.log(JSON.stringify({ z: 1, a: new Boom() }, rep));
+console.log(JSON.stringify([new Sub()], rep));
+console.log(JSON.stringify(new Box<string>("s"), rep, 2));

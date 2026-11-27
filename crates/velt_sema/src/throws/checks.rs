@@ -155,7 +155,27 @@ fn first_site(cx: &mut Ctx, srcs: &[ThrowSrc], m: TyId) -> Option<Span> {
     None
 }
 
+/// Does error `m` of generated function `d` come from its call of a class's `toJSON` or
+/// `toString`? A hook that throws is reported at the method (`hooks::check_throws`): the code
+/// generated to call it is not blamed for that error.
+fn from_hook_in_generated(cx: &mut Ctx, d: DefId, m: TyId) -> bool {
+    if !cx.in_generated_file(cx.fn_info(d).name_span) {
+        return false;
+    }
+    let srcs = cx.fn_info(d).throw_srcs.clone();
+    for s in &srcs {
+        let t = src_final(cx, s);
+        if t.is_some_and(|t| cx.error_members(t).contains(&m)) {
+            return matches!(s, ThrowSrc::Call(f, ..) if crate::hooks::is_hook_method(cx, *f));
+        }
+    }
+    false
+}
+
 fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clause: Span) {
+    if from_hook_in_generated(cx, d, m) {
+        return;
+    }
     let at = site_of(cx, d, m);
     let mn = cx.display(m);
     let f = cx.fn_info(d);
