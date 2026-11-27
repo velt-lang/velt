@@ -32,6 +32,12 @@ impl FnCx<'_, '_> {
             Ok(mut c) => {
                 self.cx.assume_empty_in(ty);
                 self.cx.assume_empty_in(exp);
+                // Only while nothing is known to be stored into the variable: once something
+                // is, the assumption fails and the program is checked again with the solved
+                // sets, so the conversion made as before costs nothing more in this check.
+                if c.ty == self.cx.ty.never && self.cx.var_known_empty(ty) {
+                    return Ok(self.never_as_written(c));
+                }
                 c.ty = exp;
                 Ok(c)
             }
@@ -40,6 +46,18 @@ impl FnCx<'_, '_> {
                 Err(p)
             }
         }
+    }
+
+    /// `c`, a value typed by an error-set variable alone and assumed empty (`e as Error` of a
+    /// `then` handler's reason when the promise never rejects, #3924): a `never` value, as in a
+    /// check without variables, not one of the type it converts to, which would be a read of
+    /// nothing stored as a value. Reading a local of it moves nothing: a check without
+    /// variables passes a `never` parameter as `Copy`.
+    fn never_as_written(&mut self, mut c: hir::Expr) -> hir::Expr {
+        if let hir::ExprKind::Local(_, m @ hir::UseMode::Move) = &mut c.kind {
+            *m = hir::UseMode::Copy;
+        }
+        c
     }
 
     /// A conversion from or to a union whose types hold only the traps' error-set variables

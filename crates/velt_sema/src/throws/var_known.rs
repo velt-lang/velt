@@ -239,6 +239,13 @@ impl Ctx<'_> {
         (params.iter()).any(|p| self.fn_sites.rejects.iter().any(|(r, _)| r == p))
     }
 
+    /// Is `t` a variable nothing is known to be stored into yet? Assumed empty, it is `never`
+    /// (`FnCx::coerce_as_written`).
+    pub(crate) fn var_known_empty(&mut self, t: TyId) -> bool {
+        self.err_var(t)
+            .is_some_and(|v| self.var_known(v).is_empty())
+    }
+
     /// A value of type `t` is called: a `reject` checked as a value just before is called, not
     /// passed on ([`Ctx::value_typed_by_vars`]).
     pub(crate) fn reject_called(&mut self, t: TyId) {

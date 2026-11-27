@@ -299,6 +299,9 @@ fn rejecting_promises_stored_into_promise_types_written_without_errors_take_one_
         assert_eq!(rounds(p), 1, "program C{i}");
     }
     assert_eq!(rounds(GROWS), 2);
+    // A handler casting the reason of a promise that never rejects: its set is solved empty, as
+    // the one round assumed (#3924).
+    assert_eq!(rounds(NEVER_REASON), 1);
     // A diagnostic of an overload tried and dropped shows no type the program's do.
     assert_eq!(rounds(OVERLOAD_TRIED), 1);
     // A program without sites that reports a warning, or an error, is checked once: it shows
@@ -306,6 +309,27 @@ fn rejecting_promises_stored_into_promise_types_written_without_errors_take_one_
     assert_eq!(rounds_reporting(WARNS, false), 1);
     assert_eq!(rounds_reporting(FAILS, true), 1);
 }
+
+/// `then` and `catch` handlers casting the reason of `later`'s promise, which never rejects
+/// (#3924): stored, read through, unstored, and assigned from a `queueMicrotask` callback.
+const NEVER_REASON: &str = r#"
+function later(n: number): Promise<number> {
+  return new Promise((r) => setTimeout(() => r(n), 1));
+}
+async function main(): Promise<void> {
+  const s: Promise<void> = later(1).then((v) => { console.log("v", v); }, (e) => { const x = e as Error; });
+  await s;
+  let m = "none";
+  await later(2).then((v) => { console.log("v", v); }, (e) => { m = (e as Error).message; });
+  await later(3).catch((e) => { const x = e as Error; return 0; });
+  let settled: Promise<void> | null = null;
+  queueMicrotask(() => {
+    settled = later(4).then((v) => { console.log("v", v); }, (e) => { const x = e as Error; });
+  });
+  console.log(m);
+}
+main();
+"#;
 
 /// `=== null` on an `i64 | undefined`, always false: a warning, and no site.
 const WARNS: &str = r#"

@@ -276,6 +276,13 @@ impl FnLower<'_, '_> {
 
     fn local_expr(&mut self, id: LocalId, mode: UseMode) -> Operand {
         if self.info[id.0 as usize].vir.is_none() {
+            // A `never` local (a callback's parameter for the reason of a promise that never
+            // rejects, #3924): no value reaches it, so code reading one is unreachable, also
+            // where sema typed the read as what it is converted to (`e as Error`).
+            let ty = self.info[id.0 as usize].ty;
+            if matches!(self.cx.kind(ty), velt_sema::hir::TyKind::Never) {
+                self.terminate(vir::Terminator::Unreachable);
+            }
             return unit();
         }
         let p = self.local_place(id);

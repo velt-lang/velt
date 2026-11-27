@@ -1,0 +1,67 @@
+// A cast of a `then` handler's reason when the promise never rejects (#3924): `later`'s
+// rejection set is empty, so the reason is `never` and the handler never runs.
+function later(n: number): Promise<number> {
+  return new Promise((r) => setTimeout(() => r(n), 1));
+}
+
+async function main(): Promise<void> {
+  const s: Promise<void> = later(1).then(
+    (v) => {
+      console.log("v", v);
+    },
+    (e) => {
+      const x = e as Error;
+      console.log("e", x.message);
+    },
+  );
+  await s;
+  // The cast read through: `(e as Error).message`, kept in a `let`.
+  let m = "none";
+  const t = later(2).then(
+    (v) => {
+      console.log("v", v);
+    },
+    (e) => {
+      m = (e as Error).message;
+    },
+  );
+  await t;
+  console.log("m", m);
+  // Not stored: the promise of `then` is the expression's value only.
+  await later(3).then(
+    (v) => console.log("v", v),
+    (e) => {
+      const x = e as Error;
+      console.log("e", x.name);
+    },
+  );
+  // A `catch` handler's reason cast the same way.
+  await later(4).catch((e) => {
+    const x = e as Error;
+    console.log("caught", x.message);
+    return 0;
+  });
+  // A number read through the cast: added to a captured counter, a `catch` handler's
+  // result, and a `catch` after a `then`.
+  let n = 0;
+  await later(5).then(
+    (v) => {
+      n += v;
+    },
+    (e) => {
+      const x = e as Error;
+      n += x.message.length;
+    },
+  );
+  const c = await later(6).catch((e) => (e as Error).message.length);
+  await later(7)
+    .then((v) => {
+      n += v;
+    })
+    .catch((e) => {
+      console.log("e", (e as Error).message);
+    });
+  console.log("n", n, "c", c);
+  console.log("done");
+}
+main();
