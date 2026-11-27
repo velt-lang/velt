@@ -239,6 +239,29 @@ pub(super) fn ref_atomic(cx: &Ctx, d: DefId, args: &[TyId]) -> bool {
     !scalar && cx.prelude_adt("Atomic") == Some(d)
 }
 
+/// Drops, of the types `types[from..]` that walking `d` found, its own `Atomic<T>` when `d` is a
+/// method of `Atomic` (live with the class, or every method once a member of an `any` is read):
+/// its `T` is the `Atomic`'s parameter, which says nothing of what the `Atomic`s of live code
+/// hold. Each of those has its type where it is made or passed. The class is live already.
+pub(super) fn forget_own_atomic(cx: &Ctx, d: DefId, types: &mut Vec<TyId>, from: usize) {
+    let DefInfo::Fn(f) = &cx.info[d.0 as usize] else {
+        return;
+    };
+    let atomic = cx.prelude_adt("Atomic");
+    if f.owner.is_none() || f.owner != atomic || types.len() <= from {
+        return;
+    }
+    let own = |t: &TyId| match cx.ty.kind(*t) {
+        TyKind::Adt(a, args) => {
+            Some(*a) == atomic
+                && matches!(args.as_slice(), [p] if matches!(cx.ty.kind(*p), TyKind::Param(_)))
+        }
+        _ => false,
+    };
+    let found = types.split_off(from);
+    types.extend(found.into_iter().filter(|t| !own(t)));
+}
+
 /// The bit of a kind of type an implementation may be for, other than a class or struct (0 for
 /// the others).
 pub(super) fn kind_bit(kind: &TyKind) -> u32 {

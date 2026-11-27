@@ -348,6 +348,7 @@ fn walk_set(cx: &mut Ctx) {
                 pending.push(d);
                 continue;
             }
+            roots::forget_own_atomic(cx, d, &mut w.types, start.0);
             super::hook_stubs::demand_hook_calls(cx, d);
             if program_code(cx, d) {
                 constructs::note_program_code(cx, &w, start);

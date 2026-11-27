@@ -906,6 +906,12 @@ fn the_epoch_reclaimer_is_checked_only_for_an_atomic_that_holds_a_reference() {
     for f in epoch {
         assert!(!checked(&p, f), "{f} is checked for a static atomic");
     }
+    // A member of an `any` read makes every method of a live class live, `Atomic`'s among them:
+    // their `Atomic<T>` is no `Atomic` of the program's.
+    let p = ok_src("function f(x: any) {\n  console.log(x.a);\n}\nfunction main() {\n  f(1);\n}\n");
+    for f in epoch {
+        assert!(!checked(&p, f), "{f} is checked for a member of an `any`");
+    }
     let references = [
         "interface B {\n  n: u64;\n}\nfunction main() {\n  const a = new Atomic<shared<B>>(shared({ n: 1 }));\n  a.store(shared({ n: 2 }));\n  console.log(\"hi\");\n}\n",
         "class N {\n  next: Atomic<shared<N> | null> = new Atomic<shared<N> | null>(null);\n}\nfunction main() {\n  const n = new N();\n  if (n.next.load() === null) {\n    console.log(\"hi\");\n  }\n}\n",
