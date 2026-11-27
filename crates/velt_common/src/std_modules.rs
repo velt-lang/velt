@@ -106,6 +106,7 @@ table! {
     lang_hooks_heap => "lang/hooks/heap",
     lang_hooks_iter => "lang/hooks/iter",
     lang_hooks_json => "lang/hooks/json",
+    lang_hooks_json_replace => "lang/hooks/json_replace",
     lang_hooks_inspect => "lang/hooks/inspect",
     lang_hooks_inspect_cycles => "lang/hooks/inspect_cycles",
     lang_hooks_inspect_layout => "lang/hooks/inspect_layout",

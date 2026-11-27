@@ -1,0 +1,90 @@
+nested:
+  replacer "" {"a":{"name":"a"},"inner":{"c":{"name":"c"},"d":[{"name":"d0"},{"name":"d1"}]},"b":{"name":"b"}}
+  toJSON a key="a"
+  replacer "a" "a"
+  replacer "inner" {"c":{"name":"c"},"d":[{"name":"d0"},{"name":"d1"}]}
+  toJSON c key="c"
+  replacer "c" "c"
+  replacer "d" [{"name":"d0"},{"name":"d1"}]
+  toJSON d0 key="0"
+  replacer "0" "d0"
+  toJSON d1 key="1"
+  replacer "1" "d1"
+  toJSON b key="b"
+  replacer "b" "b"
+{"a":"a","inner":{"c":"c","d":["d0","d1"]},"b":"b"}
+root toJSON:
+  toJSON top key=""
+  replacer "" {"a":{"name":"a"},"inner":{"c":{"name":"c"},"d":[{"name":"d0"},{"name":"d1"}]},"b":{"name":"b"}}
+  toJSON a key="a"
+  replacer "a" "a"
+  replacer "inner" {"c":{"name":"c"},"d":[{"name":"d0"},{"name":"d1"}]}
+  toJSON c key="c"
+  replacer "c" "c"
+  replacer "d" [{"name":"d0"},{"name":"d1"}]
+  toJSON d0 key="0"
+  replacer "0" "d0"
+  toJSON d1 key="1"
+  replacer "1" "d1"
+  toJSON b key="b"
+  replacer "b" "b"
+{"a":"a","inner":{"c":"c","d":["d0","d1"]},"b":"b"}
+toJSON returning this:
+  toJSON self
+  replacer "" {"x":1,"h":{"name":"h"}}
+  replacer "x" 1
+  toJSON h key="h"
+  replacer "h" "h"
+{"x":1,"h":"h"}
+array:
+  replacer "" [{"name":"p"},{"name":"q"}]
+  toJSON p key="0"
+  replacer "0" "p"
+  toJSON q key="1"
+  replacer "1" "q"
+["p","q"]
+date:
+  replacer "" {"label":"d","when":{}}
+  replacer "label" "d"
+  replacer "when" "1970-01-01T00:00:00.000Z"
+{"label":"d","when":"1970-01-01T00:00:00.000Z"}
+filter:
+  replacer ""
+  toJSON a key="a"
+  replacer "a"
+  replacer "inner"
+  toJSON b key="b"
+  replacer "b"
+{"a":"a"}
+replaced:
+  replacer "" {"a":{"name":"a"},"inner":{"c":{"name":"c"},"d":[{"name":"d0"},{"name":"d1"}]},"b":{"name":"b"}}
+  toJSON a key="a"
+  replacer "a" "a"
+  replacer "inner" {"c":{"name":"c"},"d":[{"name":"d0"},{"name":"d1"}]}
+  replacer "z" [1]
+  replacer "0" 1
+  toJSON b key="b"
+  replacer "b" "b"
+{"a":"a","inner":{"z":[1]},"b":"b"}
+any:
+  replacer "" {"a":{"name":"a"},"inner":{"c":{"name":"c"},"d":[{"name":"d0"},{"name":"d1"}]},"b":{"name":"b"}}
+  toJSON a key="a"
+  replacer "a" "a"
+  replacer "inner" {"c":{"name":"c"},"d":[{"name":"d0"},{"name":"d1"}]}
+  toJSON c key="c"
+  replacer "c" "c"
+  replacer "d" [{"name":"d0"},{"name":"d1"}]
+  toJSON d0 key="0"
+  replacer "0" "d0"
+  toJSON d1 key="1"
+  replacer "1" "d1"
+  toJSON b key="b"
+  replacer "b" "b"
+{"a":"a","inner":{"c":"c","d":["d0","d1"]},"b":"b"}
+spaced:
+  replacer "" [{"name":"s"}]
+  toJSON s key="0"
+  replacer "0" "s"
+[
+ "s"
+]

@@ -1,0 +1,36 @@
+// A replacer function that throws, passed to JSON.stringify inside a function with a `throws`
+// clause: the errors are the program's, at the replacer and the function. The code generated for
+// the walk is not blamed: its function types are its declaration's, not sites that take the
+// replacer's errors (#3774).
+class Q {
+  toJSON(key: string): string {
+    return key;
+  }
+}
+function h(q: Q): string throws RangeError {
+  return JSON.stringify(q, (k: string, v: JsonValue): JsonValue | undefined => {
+    if (k === "x") throw new Error("e");
+    return v;
+  });
+}
+function g(q: Q): string throws RangeError {
+  return JSON.stringify({ q, n: 1 }, (k: string, v: JsonValue): JsonValue | undefined => {
+    if (k === "x") throw new Error("e");
+    return v;
+  });
+}
+function strict(k: string, v: JsonValue): JsonValue | undefined {
+  if (k === "x") throw new Error("e");
+  return v;
+}
+function named(xs: number[]): string throws RangeError {
+  return JSON.stringify({ xs, at: new Q() }, strict);
+}
+function held(q: Q): string throws RangeError {
+  const r = (k: string, v: JsonValue): JsonValue | undefined => {
+    if (k === "x") throw new Error("e");
+    return v;
+  };
+  return JSON.stringify([q, "s"], r);
+}
+console.log(h(new Q()), g(new Q()), named([1]), held(new Q()));

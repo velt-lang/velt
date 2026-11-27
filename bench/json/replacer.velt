@@ -1,0 +1,53 @@
+// `JSON.stringify(value, replacer)` over typed rows, with and without `toJSON` members: the cost
+// of the replacer's walk (bench/json/replacer_ab.sh compares it with the walk over the parsed
+// text that main had before #3774).
+
+class Stamp {
+  t: number;
+  constructor(t: number) {
+    this.t = t;
+  }
+  toJSON(): string {
+    return `t${this.t}`;
+  }
+}
+
+interface Point {
+  x: number;
+  y: number;
+}
+
+interface Plain {
+  id: i64;
+  name: string;
+  tags: string[];
+  p: Point;
+}
+
+interface Hooked {
+  id: i64;
+  name: string;
+  at: Stamp;
+  p: Point;
+}
+
+function keep(k: string, v: JsonValue): JsonValue | undefined {
+  return v;
+}
+
+function main(): void {
+  const plain: Plain[] = [];
+  const hooked: Hooked[] = [];
+  for (let i: i64 = 0; i < 2000; i++) {
+    plain.push({ id: i, name: `row ${i}`, tags: ["a", "b"], p: { x: (i as number) * 0.5, y: 2 } });
+    hooked.push({ id: i, name: `row ${i}`, at: new Stamp(i as number), p: { x: (i as number) * 0.5, y: 2 } });
+  }
+  let total = 0;
+  for (let round = 0; round < 10; round++) {
+    total += JSON.stringify(plain, keep).length;
+    total += JSON.stringify(hooked, keep).length;
+  }
+  console.log(total);
+}
+
+main();

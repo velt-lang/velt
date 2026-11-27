@@ -80,7 +80,9 @@ use velt_syntax::ast;
 
 use locate::Origin;
 pub use locate::{module_path, PackageImports, PackageResolver};
-pub use more::{demand_std_on, executor_module, load_more, tls_module, LoadState};
+pub use more::{
+    demand_std_on, executor_module, json_replace_module, load_more, tls_module, LoadState,
+};
 use paths::{file_key, is_std_path, shown_in_package, shown_path};
 pub use resolve::resolve_module;
 pub use spec::{resolve_spec, ModuleRef};

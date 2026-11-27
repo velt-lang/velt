@@ -104,6 +104,13 @@ fn hook_methods(cx: &Ctx) -> Vec<(DefId, DefId, &'static str)> {
     out
 }
 
+/// Is `f` a class's own `toString` / `toJSON` method, or the adapter glue calls one through?
+pub(crate) fn is_hook_method(cx: &Ctx, f: DefId) -> bool {
+    hook_methods(cx)
+        .iter()
+        .any(|&(_, m, _)| m == f || cx.hook_adapters.get(&m) == Some(&f))
+}
+
 /// After the bodies are checked: report a `toString` / `toJSON` method of a shape glue cannot
 /// call, and give each other one that is not already a plain hook its adapter.
 pub(crate) fn check_shapes(cx: &mut Ctx) {
