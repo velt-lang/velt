@@ -1,6 +1,8 @@
 //! The `velt dev` protocol between the supervisor and the program (rt_abi_async.md §13): one
-//! request per connection to the supervisor's dev channel (`VELT_DEV_SOCKET`). Both sides live
-//! here so they cannot drift apart; the transport is per platform:
+//! request per connection to the supervisor's dev channel (`VELT_DEV_SOCKET`). Both sides of
+//! every request live here so they cannot drift apart, except the program side of the stop
+//! channel, which is std's (std/dev/stop_win32.velt; `protocol_round_trip` writes its lines).
+//! The transport is per platform:
 //! - `unix`: a Unix socket; listeners travel as file descriptors (`SCM_RIGHTS`);
 //! - `windows`: a named pipe; listeners travel as `WSAPROTOCOL_INFOW` records
 //!   (`WSADuplicateSocketW` for the requesting process, `WSASocketW` on its side).
@@ -143,19 +145,6 @@ pub fn reply_err(stream: &Stream, message: &str) -> io::Result<()> {
     (&*stream).write_all(line.as_bytes())
 }
 
-/// Program side: open the stop channel (a `watch-stop` request the supervisor acknowledged).
-pub fn watch_stop(socket: &OsStr) -> io::Result<Stream> {
-    let stream = connect(socket)?;
-    (&stream).write_all(b"watch-stop\n")?;
-    expect_line(&stream, "ok")?;
-    Ok(stream)
-}
-
-/// Program side: block until the supervisor asks this program to stop (or goes away).
-pub fn wait_stop(stream: &Stream) {
-    let _ = read_line_unbuffered(stream);
-}
-
 /// Supervisor side: acknowledge a `watch-stop` request (keep `stream` for [`reply_stop`]).
 pub fn reply_watching(stream: &Stream) -> io::Result<()> {
     (&*stream).write_all(b"ok\n")
@@ -221,8 +210,11 @@ mod tests {
             assert_eq!(listener.local_addr().unwrap().port(), port);
             let err = request(&socket, "bad").unwrap_err();
             assert_eq!(err.to_string(), "no such host");
-            let stop = watch_stop(&socket).unwrap();
-            wait_stop(&stop);
+            // The program side of the stop channel is std's (std/dev/stop_win32.velt): its lines.
+            let stop = connect(&socket).unwrap();
+            (&stop).write_all(b"watch-stop\n").unwrap();
+            assert_eq!(read_line_unbuffered(&stop).unwrap(), "ok");
+            assert_eq!(read_line_unbuffered(&stop).unwrap(), "stop");
         });
         let s = server.accept().unwrap();
         let failed = Request::Built {

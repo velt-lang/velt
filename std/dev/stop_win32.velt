@@ -1,0 +1,297 @@
+// velt/dev (internal): how a program under `velt dev` hears the stop request on Windows
+// (std/dev/stop.velt), which has no SIGTERM: the stop channel (crates/velt_rt/src/dev/handover:
+// `watch-stop\n` to the supervisor's dev pipe, `ok\n` back; the supervisor later writes `stop\n`,
+// or goes away). The pipe is opened for overlapped I/O, so a wait for the stop on the executor's
+// blocking pool also ends at `wake` (an event it waits for beside the read), with no thread left
+// blocked in a read nobody can end. Closed by `end`, the supervisor kills the program at its next
+// reload instead of asking (it has no server to drain).
+
+import { Out } from "velt/ffi/out";
+import { Ptr } from "velt/ffi/ptr";
+import { wideOf } from "velt/ffi/wide";
+import { addressLoad, addressStore } from "velt/lang/intrinsics";
+import * as bl from "velt/lang/hooks/sched_blocking";
+import * as m from "velt/lang/hooks/sched_mem";
+import { getEnv } from "#env-sys";
+import { monotonicNs } from "#clock";
+
+/** C's `SECURITY_ATTRIBUTES` (never passed) and `OVERLAPPED` (32 bytes, `hEvent` at 24). */
+declare c type _SECURITY_ATTRIBUTES;
+declare c type _OVERLAPPED;
+
+declare c("c") function CreateFileW(
+  name: readonly u16[],
+  access: u32,
+  share: u32,
+  security: Ptr<_SECURITY_ATTRIBUTES> | null,
+  disposition: u32,
+  flags: u32,
+  template: Ptr<void> | null,
+): Ptr<void> | null;
+declare c("c") function ReadFile(
+  file: Ptr<void> | null,
+  buf: Ptr<void> | null,
+  n: u32,
+  read: Ptr<u32> | null,
+  overlapped: Ptr<_OVERLAPPED> | null,
+): i32;
+declare c("c") function WriteFile(
+  file: Ptr<void> | null,
+  buf: Ptr<void> | null,
+  n: u32,
+  written: Ptr<u32> | null,
+  overlapped: Ptr<_OVERLAPPED> | null,
+): i32;
+declare c("c") function GetOverlappedResult(
+  file: Ptr<void> | null,
+  overlapped: Ptr<_OVERLAPPED> | null,
+  n: Out<u32>,
+  wait: i32,
+): i32;
+declare c("c") function CancelIoEx(
+  file: Ptr<void> | null,
+  overlapped: Ptr<_OVERLAPPED> | null,
+): i32;
+declare c("c") function CreateEventW(
+  security: Ptr<_SECURITY_ATTRIBUTES> | null,
+  manual: i32,
+  initial: i32,
+  name: Ptr<u16> | null,
+): Ptr<void> | null;
+declare c("c") function SetEvent(event: Ptr<void> | null): i32;
+declare c("c") function WaitForMultipleObjects(
+  count: u32,
+  handles: Ptr<Ptr<void>> | null,
+  all: i32,
+  ms: u32,
+): u32;
+declare c("c") function CloseHandle(h: Ptr<void> | null): i32;
+declare c("c") function GetLastError(): u32;
+declare c("c") function Sleep(ms: u32): void;
+
+/** `GENERIC_READ | GENERIC_WRITE`. */
+const READ_WRITE: u32 = 0xc0000000;
+const OPEN_EXISTING: u32 = 3;
+/** `FILE_FLAG_OVERLAPPED`. */
+const OVERLAPPED: u32 = 0x40000000;
+const INVALID_HANDLE: usize = 0xffffffffffffffff;
+const ERROR_IO_PENDING: u32 = 997;
+const INFINITE: u32 = 0xffffffff;
+const ERROR_FILE_NOT_FOUND: u32 = 2;
+const ERROR_PIPE_BUSY: u32 = 231;
+/** How long `connect` tries again while the pipe is busy or not there yet. */
+const CONNECT_MS: u64 = 5000;
+
+// The channel's block: the pipe, its `OVERLAPPED` (with its own event), one byte to read into,
+// the two handles a wait waits for (that event, then `WAKE`).
+const C_PIPE: usize = 0;
+const C_OV: usize = 8;
+const C_BYTE: usize = 40;
+const C_WAIT: usize = 48;
+const C_SIZE: usize = 64;
+
+/** The open channel's block (0: none). */
+const CHANNEL = new Atomic<u64>(0);
+/** The auto-reset event `wake` sets (0: none yet); never closed. */
+const WAKE = new Atomic<u64>(0);
+
+/** Opens the stop channel; false when the supervisor can't be reached. */
+export function start(): bool {
+  const name = getEnv("VELT_DEV_SOCKET");
+  const wide = name == undefined ? null : wideOf(name);
+  if (wide == null || wakeEvent() === 0) {
+    return false;
+  }
+  const h = connect(wide);
+  if (h === null) {
+    return false;
+  }
+  // SAFETY: a manual-reset event for the overlapped operations, unnamed.
+  const ev = unsafe { CreateEventW(null, 1, 0, null) };
+  const c = m.zeroed(C_SIZE);
+  m.st(c + C_PIPE, Ptr.addressOf(h));
+  m.st(c + C_OV + 24, ev === null ? 0 : Ptr.addressOf(ev));
+  m.st(c + C_WAIT, m.ld(c + C_OV + 24));
+  m.st(c + C_WAIT + 8, WAKE.load("acquire") as usize);
+  if (ev === null || !send(c, "watch-stop\n") || !expect(c, "ok\n")) {
+    close(c);
+    return false;
+  }
+  CHANNEL.store(c as u64, "release");
+  return true;
+}
+
+/**
+ * The supervisor's pipe `wide`, or null. Its one waiting instance may be taken by another
+ * connection for a moment: tries again until `CONNECT_MS` have passed, as the runtime's side of
+ * the dev channel (a deadline, not a count of tries: `Sleep(1)` lasts a timer tick, 15.6 ms by
+ * default).
+ */
+function connect(wide: readonly u16[]): Ptr<void> | null {
+  const deadline = monotonicNs() + CONNECT_MS * 1000000;
+  while (true) {
+    // SAFETY: `wide` is NUL-terminated; no security attributes, no template.
+    const h = unsafe { CreateFileW(wide, READ_WRITE, 0, null, OPEN_EXISTING, OVERLAPPED, null) };
+    if (h !== null && Ptr.addressOf(h) !== INVALID_HANDLE) {
+      return h;
+    }
+    // SAFETY: no precondition.
+    const e = unsafe { GetLastError() };
+    if ((e !== ERROR_PIPE_BUSY && e !== ERROR_FILE_NOT_FOUND) || monotonicNs() >= deadline) {
+      return null;
+    }
+    // SAFETY: no precondition.
+    unsafe {
+      Sleep(1);
+    }
+  }
+}
+
+/** Closes the stop channel. */
+export function end(): void {
+  const c = CHANNEL.exchange(0, "acqrel") as usize;
+  if (c !== 0) {
+    close(c);
+  }
+}
+
+/** The next event: 1 the stop was requested (or the supervisor went away), 0 `wake` was called. */
+export async function next(): Promise<i32> {
+  const c = CHANNEL.load("acquire") as usize;
+  if (c === 0) {
+    return -1;
+  }
+  return await bl.run((): i32 => waitStop(c));
+}
+
+/** Wakes `next` (now, or the next call if none waits). */
+export function wake(): void {
+  const e = WAKE.load("acquire") as usize;
+  if (e !== 0) {
+    // SAFETY: the event `wakeEvent` made, never closed.
+    unsafe {
+      SetEvent(m.ptrTo<void>(e));
+    }
+  }
+}
+
+/** `WAKE`, made once (0 when Windows refused it). */
+function wakeEvent(): usize {
+  const e = WAKE.load("acquire");
+  if (e !== 0) {
+    return e as usize;
+  }
+  // SAFETY: an auto-reset event, unnamed.
+  const made = unsafe { CreateEventW(null, 0, 0, null) };
+  if (made === null) {
+    return 0;
+  }
+  const seen = WAKE.compareExchange(0, Ptr.addressOf(made) as u64, "acqrel");
+  if (seen !== 0) {
+    // SAFETY: the event just made, used by nothing else.
+    unsafe {
+      CloseHandle(made);
+    }
+    return seen as usize;
+  }
+  return Ptr.addressOf(made);
+}
+
+/** On a pool thread: reads until the end of a line or of the channel (1), or `wake` (0). */
+function waitStop(c: usize): i32 {
+  while (true) {
+    // SAFETY: the block's pipe, `OVERLAPPED` and byte, alive until `end` (after this wait).
+    const ok = unsafe { ReadFile(pipe(c), m.ptrTo<void>(c + C_BYTE), 1, null, ov(c)) };
+    // SAFETY: no precondition.
+    if (ok === 0 && unsafe { GetLastError() } !== ERROR_IO_PENDING) {
+      return 1;
+    }
+    // SAFETY: the two event handles at `C_WAIT`.
+    const r = unsafe { WaitForMultipleObjects(2, m.ptrTo<Ptr<void>>(c + C_WAIT), 0, INFINITE) };
+    if (r === 1) {
+      // `wake`: the read is cancelled, unless it completed meanwhile.
+      // SAFETY: the read in flight on the block's pipe.
+      unsafe {
+        CancelIoEx(pipe(c), ov(c));
+      }
+    }
+    const n = new Out<u32>(0);
+    // SAFETY: the read in flight, waited for to its end.
+    if (unsafe { GetOverlappedResult(pipe(c), ov(c), n, 1) } === 0) {
+      return r === 1 ? 0 : 1;
+    }
+    // SAFETY: the block's byte, after the read into it ended.
+    if (n.value === 1 && unsafe { addressLoad<u8>(c + C_BYTE) } === 10) {
+      return 1;
+    }
+    if (r === 1) {
+      return 0;
+    }
+  }
+}
+
+/** Writes ASCII `line` (the handshake, before any wait), a byte at a time. */
+function send(c: usize, line: string): bool {
+  for (let i: i64 = 0; i < (line.length as i64); i++) {
+    // SAFETY: the block's byte.
+    unsafe {
+      addressStore<u8>(c + C_BYTE, line.charCodeAt(i) as u8);
+    }
+    if (!once(c, true)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Reads one line, which must be ASCII `line` (the handshake's answer). */
+function expect(c: usize, line: string): bool {
+  for (let i: i64 = 0; i < (line.length as i64); i++) {
+    // SAFETY: the block's byte, after the read into it ended.
+    if (!once(c, false) || (unsafe { addressLoad<u8>(c + C_BYTE) } as i64) !== line.charCodeAt(i)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Writes or reads the block's byte, waiting for the operation to end: whether it moved it. */
+function once(c: usize, write: bool): bool {
+  const n = new Out<u32>(0);
+  const byte = m.ptrTo<void>(c + C_BYTE);
+  let started: i32 = 0;
+  if (write) {
+    // SAFETY: the block's byte and `OVERLAPPED`, waited for below before they are used again.
+    started = unsafe { WriteFile(pipe(c), byte, 1, null, ov(c)) };
+  } else {
+    // SAFETY: as for the write.
+    started = unsafe { ReadFile(pipe(c), byte, 1, null, ov(c)) };
+  }
+  // SAFETY: no precondition.
+  if (started === 0 && unsafe { GetLastError() } !== ERROR_IO_PENDING) {
+    return false;
+  }
+  // SAFETY: the operation just started on the block's pipe.
+  return unsafe { GetOverlappedResult(pipe(c), ov(c), n, 1) } !== 0 && n.value === 1;
+}
+
+function pipe(c: usize): Ptr<void> | null {
+  return m.ptrTo<void>(m.ld(c + C_PIPE));
+}
+
+function ov(c: usize): Ptr<_OVERLAPPED> | null {
+  return m.ptrTo<_OVERLAPPED>(c + C_OV);
+}
+
+/** Closes the block's pipe and event and frees it. */
+function close(c: usize): void {
+  const ev = m.ld(c + C_OV + 24);
+  // SAFETY: the block's own handles, used by nothing after this.
+  unsafe {
+    CloseHandle(pipe(c));
+    if (ev !== 0) {
+      CloseHandle(m.ptrTo<void>(ev));
+    }
+  }
+  m.release(c, C_SIZE);
+}

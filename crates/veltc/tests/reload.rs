@@ -514,6 +514,39 @@ fn quiet_host_prints_no_diagnostics() {
     assert_eq!(host(true), (Some(1), String::new()));
 }
 
+/// Windows: a stop channel whose pipe is not there gives up after its deadline (5 s), not
+/// after a count of 1 ms sleeps (a timer tick each, 15.6 ms by default: about 78 s), so
+/// `joinStop` returns null and the program goes on.
+#[cfg(windows)]
+#[test]
+fn a_stop_channel_with_no_pipe_gives_up_in_seconds() {
+    let dir = TestDir::new();
+    save(
+        &dir.path().join("main.velt"),
+        "import { joinStop } from \"velt/dev\";\nfunction main() {\n  console.log(joinStop() == null);\n}\n",
+    );
+    let started = Instant::now();
+    let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["run", "main.velt"])
+        .env("VELT_DEV_SOCKET", r"\\.\pipe\velt-dev-no-such-pipe")
+        .current_dir(dir.path())
+        .output()
+        .expect("run velt");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        stdout.trim(),
+        "true",
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // The build takes some of it; the 5 s deadline plus a build stays well under this.
+    assert!(
+        started.elapsed() < Duration::from_secs(45),
+        "joinStop took {:?}",
+        started.elapsed()
+    );
+}
+
 /// A second SIGTERM exits at once, and takes the program along: the program is killed when
 /// `velt dev` exits, instead of draining or running on, orphaned. Checked by how the program
 /// ended, not by how soon: the test process becomes the subreaper of its descendants, so the

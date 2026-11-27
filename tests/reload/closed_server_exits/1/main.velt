@@ -1,0 +1,11 @@
+// A server that joined the graceful stop and then shut down by itself leaves nothing behind that
+// keeps the program alive: it ends on its own, as it would outside `velt dev`.
+import { serve } from "http-server";
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response("v1");
+  });
+  await server.shutdown();
+  console.log("server closed");
+}

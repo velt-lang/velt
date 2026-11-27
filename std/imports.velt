@@ -274,8 +274,15 @@ export const imports: Imports = {
    * file descriptors (`#fd-system`), or Win32's handles on Windows.
    */
   "#fs-stream-os": { win32: "./fs/stream_os/win32.velt", default: "./fs/stream_os/posix.velt" },
-  // What a `MappedFile` is made of (velt/fs): a mapping of the file (`mmap` through
-  // `#fd-system`, Win32's file mappings on Windows), the file read into memory on WebAssembly.
+  /**
+   * How `velt dev`'s stop request reaches a program (std/dev/stop.velt): SIGTERM, or the stop
+   * channel on Windows.
+   */
+  "#dev-stop": { win32: "./dev/stop_win32.velt", default: "./dev/stop_posix.velt" },
+  /**
+   * What a `MappedFile` is made of (velt/fs): a mapping of the file (`mmap` through
+   * `#fd-system`, Win32's file mappings on Windows), the file read into memory on WebAssembly.
+   */
   "#mapped-source": {
     win32: "./fs/mapped_win32.velt",
     wasi: "./fs/mapped_buffer.velt",

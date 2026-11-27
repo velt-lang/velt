@@ -1,0 +1,37 @@
+// velt/dev (internal): how a program under `velt dev` hears the stop request on macOS and Linux
+// (std/dev/stop.velt): the supervisor sends SIGTERM, which the executor's signals deliver
+// (std/lang/hooks/sched_signal.velt). Elsewhere (no POSIX signals, or no reactor) `start` fails
+// and nothing joins the stop.
+
+import * as sig from "#sched-signal-hook";
+
+/** `SIGTERM` (15 on macOS and Linux). */
+const SIGTERM: i32 = 15;
+
+/** Starts listening for the stop request; false where it can't be heard. */
+export function start(): bool {
+  return sig.watch(SIGTERM);
+}
+
+/** Stops listening: SIGTERM has its default action again (it ends the program). */
+export function end(): void {
+  sig.unwatch(SIGTERM);
+}
+
+/** The next event: 1 the stop was requested, 0 `wake` was called, -1 nothing can come. */
+export async function next(): Promise<i32> {
+  while (true) {
+    const s = await sig.next();
+    if (s === SIGTERM) {
+      return 1;
+    }
+    if (s <= 0) {
+      return s;
+    }
+  }
+}
+
+/** Wakes `next` (now, or the next call if none waits). */
+export function wake(): void {
+  sig.wake();
+}
