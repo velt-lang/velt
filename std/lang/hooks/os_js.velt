@@ -1,0 +1,35 @@
+// velt/lang/hooks (internal): the OS calls of the executor in Velt's core (`#sched-os`) on a JS
+// host, which has one thread and no C library: no other thread to give the core to, the host's
+// monotonic clock (`velt:clock`, as clock_js.velt reads it) and the runtime's stderr.
+
+import { addressLoad } from "velt/lang/intrinsics";
+
+declare host("velt:clock") function now(): f64;
+declare function velt_rt_write_byte(stream: u32, b: u8): void;
+declare function velt_rt_exit(code: i32): never;
+
+/** One thread: nothing to give the core to. */
+export function yieldCore(): void {}
+
+/** The monotonic clock in nanoseconds (the host has one: `clock` is the reactor's `MONOTONIC`). */
+export function monotonicNs(clock: i32): u64 {
+  return (now() * 1000000.0) as u64;
+}
+
+/** Writes the `n` bytes at `buf` to stderr (a debug view's line). */
+export function writeStderr(buf: usize, n: usize): void {
+  for (let i: usize = 0; i < n; i++) {
+    // SAFETY: `n` bytes at `buf`.
+    unsafe {
+      velt_rt_write_byte(2, addressLoad<u8>(buf + i));
+    }
+  }
+}
+
+/** Ends the program at once with `abort`'s code (134): no C library, the runtime's exit. */
+export function abortProcess(): void {
+  // SAFETY: no precondition; the program ends here.
+  unsafe {
+    velt_rt_exit(134);
+  }
+}

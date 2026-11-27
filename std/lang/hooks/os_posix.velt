@@ -7,6 +7,8 @@ import { Ptr } from "velt/ffi/ptr";
 import * as m from "./sched_mem";
 
 declare c("c") function sched_yield$sched(): i32;
+/** The C library's `abort`. */
+declare c("c") function abort(): void;
 /** C's `struct timespec`, which `clock_gettime` fills. */
 declare c type timespec;
 
@@ -38,5 +40,13 @@ export function writeStderr(buf: usize, n: usize): void {
   // SAFETY: `n` bytes at `buf`.
   unsafe {
     write$os(2, m.ptr(buf), n);
+  }
+}
+
+/** Ends the process at once with the C library's `abort` (a debug check's report came first). */
+export function abortProcess(): void {
+  // SAFETY: no precondition; the program ends here.
+  unsafe {
+    abort();
   }
 }

@@ -42,6 +42,7 @@ import * as wn from "./sched_node_woken";
 import * as fg from "./sched_foreign";
 import { taskId } from "./sched_id";
 import * as pk from "./sched_peek";
+import * as rt from "./sched_root";
 import * as run from "./sched_run";
 import * as sl from "./sched_sleep";
 import * as mv from "./sched_sleep_move";
@@ -86,28 +87,7 @@ export function schedExportExit(): void {
  */
 export function schedBlockOn(poll: usize, state: usize, stay: u64): void {
   const e = exec();
-  // The modules' initializers ran as the start of the root task's poll if they used the executor
-  // (sched_foreign.velt `initTask`): their microtasks share its queue.
-  let k = fg.mainBegins(e);
-  if (stay !== 0) {
-    sp.stay(e);
-  }
-  if (k === 0) {
-    // The executor's reference and this one: the root is read after it is done.
-    k = mk.task(e, poll, 0, 0, 0, 0, 2);
-    m.st(k + t.T_TRANSFER, 0);
-  } else {
-    m.st(k + t.T_POLL, poll);
-    m.store32(k + t.T_STATE, t.SCHEDULED);
-  }
-  m.st(k + t.T_JOIN_STATE, 0);
-  m.st(k + t.T_ROOT, state);
-  m.st32(k + t.T_FLAGS, m.ld32(k + t.T_FLAGS) | t.ROOT);
-  wk.push(e, k);
-  // The synchronous code before is done: tasks may take the module lock.
-  mod.handOver();
-  // A park that finds nothing left to happen while it runs ends the program (sched_end.velt).
-  m.st(e + t.E_ROOT, k);
+  const k = rt.rootBegin(e, poll, state, stay);
   if (m.ld32(e + t.E_MODE) === 0 && m.ld(e + t.E_LAZY) === 0) {
     // The only thread at the executor: the root runs here.
     while (!t.rootLeft(k, false)) {
@@ -130,13 +110,7 @@ export function schedBlockOn(poll: usize, state: usize, stay: u64): void {
       loop.turn(e);
     }
   }
-  m.st(e + t.E_ROOT, 0);
-  if ((m.load32(k + t.T_FLAGS) & t.COUNTED) === 0) {
-    // Finished (sched_main_end.velt `mainFinish`): a wake that pushed after its take of the woken
-    // stack and read the state before `DONE` left its reference there; this reference keeps `k`.
-    wn.giveBackWoken(k);
-  }
-  wk.release(k);
+  rt.rootEnd(e, k);
 }
 
 /**
@@ -151,10 +125,7 @@ export function schedFinish(code: i32): void {
     return;
   }
   if (code !== 0) {
-    if (wk.counting()) {
-      mod.dropAtExit();
-    }
-    st.report();
+    rt.finishFailed();
     return;
   }
   mod.handOver();
@@ -163,9 +134,7 @@ export function schedFinish(code: i32): void {
   // captured. A park waits for them (their keep-alive references), and a job's end wakes worker 0.
   if (m.ld32(e + t.E_MODE) === 0 && m.ld(e + t.E_LAZY) === 0) {
     // Tasks spawned by threads that aren't workers count too (`E_LIVE_F`, sched_foreign.velt).
-    while (
-      m.ld(e + t.E_LIVE) !== 0 || m.load(e + t.E_LIVE_F) !== 0 || m.load(e + t.E_BLOCKING) !== 0
-    ) {
+    while (rt.soloLive(e)) {
       loop.turnSolo(e);
     }
   } else {
@@ -181,16 +150,7 @@ export function schedFinish(code: i32): void {
       loop.turn(e);
     }
   }
-  wk.settleWakes();
-  mv.settle(e);
-  // Streams dropped unclosed stay open to the end, as the runtime's: their buffers go now.
-  tb.releaseBuffers();
-  if (wk.counting()) {
-    // The block counters see what module state holds as freed (velt_rt entry.rs `finish` then
-    // drops the function properties and statics); otherwise it is kept to the end, as in Node.
-    mod.dropAtExit();
-  }
-  st.report();
+  rt.finishTail(e);
 }
 
 /**
