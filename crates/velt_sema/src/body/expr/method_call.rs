@@ -340,11 +340,17 @@ impl FnCx<'_, '_> {
                 };
                 let args = &args[..];
                 let this_recv = self.this_recv(&recv);
+                // Std's own general fill slot: a program's may fill more parameters.
+                let general = fill.as_ref().is_some_and(|t| t.trailing.is_none());
                 let (c, slot, throws_def) = match &fill {
                     Some(t) => (self.fill_callable(&c, t, span), t.slot, t.entry),
                     None => (c, slot, def),
                 };
+                let mark = self.undefined_args.len();
                 let ck = self.check_call(&c, slots, args, exp, span);
+                if fill.is_none() || general {
+                    self.note_left_out((def, general), args, span, mark);
+                }
                 let recv = self.receiver(recv, None, self.this_mode(def), self.is_async_fn(def));
                 let mut all = vec![recv];
                 all.extend(ck.args);
@@ -414,7 +420,11 @@ impl FnCx<'_, '_> {
         // A promise set into a `Map` (or pushed) whose type is a site (`throws::promise_sites`).
         let stored = self.stored_arg_site(&recv, &name, args);
         let outer = std::mem::replace(&mut self.cx.fn_sites.push, stored);
+        let mark = self.undefined_args.len();
         let ck = self.check_call(&c, slots, args, exp, span);
+        if self.cx.fn_info(def).this.is_some() {
+            self.note_left_out((def, false), args, span, mark);
+        }
         self.cx.fn_sites.push = outer;
         self.note_async_args(def, &ck.args);
         let this_recv = self.this_recv(&recv);
