@@ -20,7 +20,7 @@ functions of §1 and §2 (velt_vir `lower/sched.rs`; the externs std declares ar
 velt_common `std_hooks::SCHED_EXTERNS`), and the hooks keep the semantics this file states. The
 executor's workers use the runtime's leaves (§5, §6, §14) through the C waker of §1. On native
 targets velt_rt keeps only the promise functions a program without the executor still calls
-(`velt_rt_fut_share`, `velt_rt_fut_id`, `velt_rt_fut_peek`); a promise shared outside any task (a
+(`velt_rt_fut_share`, `velt_rt_fut_id`); a promise shared outside any task (a
 C library's thread) is refused (#3782).
 A WebAssembly program calls the functions of §1 and §2 directly (velt_rt_wasm's executor).
 
@@ -158,7 +158,7 @@ typedef struct VeltCx {                              // what `cx` points to (2 p
 | `velt_rt_fut_id` | `(VeltFut* f) -> u64` | the identity of promise `f` (§1.3): what `===` and `Set` / `Map` keys compare and hash for a promise; the same for every holder of a shared promise; null gives 0. Natively only std's `schedFutId` calls it, for a holder of the runtime's hub (a promise shared on a C library's thread, #2196 9e); WebAssembly also follows converted promises (below) |
 | `velt_rt_fut_alias` | `(VeltFut* w, VeltFut* inner, void (*quiet_drop)(void* slot))` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, #2196 9e: natively std's `schedFutAlias`, std/lang/hooks/sched_share_alias.velt]. Converted promise `w` (from `velt_rt_fut_box`, not yet run) wraps or awaits `inner` (a holder, borrowed): `w` stands for the promise `inner` holds when that one is shared (§1.3); `quiet_drop` drops `w`'s result without a report (null: nothing to drop). No-op for anything else |
 | `velt_rt_fut_views` | `(u8 on)` | WebAssembly only (velt_rt_wasm, a no-op there) [velt_rt's removed, #2196 9e: natively std's `schedFutViews`]. The holders `velt_rt_fut_share` makes until it is called with 0 are *views* (§1.3), through which a converted promise awaits the promise it stands for |
-| `velt_rt_fut_peek` | `(VeltFut* f) -> u8` | what `console.log` shows of a promise its owner holds: `1` when its result is in the slot (+16; a `Result` tag first for a promise that can reject), `0` while pending. Polls, claims and moves nothing. A future that only runs when awaited (a runtime leaf, a join handle, a combinator, a promise created outside a task) reads as pending |
+| `velt_rt_fut_peek` | `(VeltFut* f) -> u8` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, #2196 9f: natively std's `schedPeek`, std/lang/hooks/sched_peek.velt, and `0` with no call in a program without the executor, where nothing is awaited]. What `console.log` shows of a promise its owner holds: `1` when its result is in the slot (+16; a `Result` tag first for a promise that can reject), `0` while pending. Polls, claims and moves nothing. A future that only runs when awaited (a runtime leaf, a join handle, a combinator, a promise created outside a task) reads as pending |
 | `velt_rt_futs_handled` | `(VeltFut* const* futs, u64 n, void (*quiet_drop)(void* slot))` | WebAssembly only, as `velt_rt_fut_start_rejecting`. The `n` futures are handed to a combinator (`race`, `any`, `all`), which handles their rejections like JS: a started promise among them that is dropped unfinished later disposes of its result with `quiet_drop` (null: nothing to drop) instead of its `result_drop`, so a rejection is not reported (§1.1). No-op for other futures. Called before the combinator takes the futures. |
 
 Bounded drop nesting (#543) is std's (std/lang/hooks/drop_queue.velt, #2196): a drop that can nest (glue whose type leads back to itself) counts itself in this thread's state word, std's `STATE` (`ThreadLocal<u32>`), which compiled code reads and writes inline as a `velt_tls_*` value (rt_abi.md "Thread-local values"; velt_vir `tls::DROP_STATE_SLOT`): bits 0..29 count the drops under way, bit 30 says something was queued, bit 31 that the queue is being drained. Per drop: `n = STATE; if (n & 0x3fffffff) >= 128 { dropQueue(value, drop) } else { STATE = n + 1; <drop>; m = STATE - 1; STATE = m; if m == 1 << 30 { dropDrain() } }`. `dropQueue` keeps `value` and its drop glue (a closure env's drop, a field or struct value moved to a heap box, or a box with its last reference) for the end of the outermost drop and sets the queued bit; `dropDrain` drops the queued values, which may queue more, in the order they were queued, then gives the queue's block back and clears the word. A caught panic (std/task/unwind.velt) restores the word and drops what is still queued (`dropRecover`).
@@ -229,7 +229,7 @@ shares a promise never calls it, and its futures are unchanged.
   completion, and its own result drop reports an unhandled rejection. A waiting holder that is
   dropped wakes the others, so the first of them drives the promise.
 - The runtime functions that recognize boxed promises by their header (`velt_rt_fut_start`,
-  `velt_rt_futs_handled`) treat a holder as some other future. `velt_rt_fut_peek` reads the
+  `velt_rt_futs_handled`) treat a holder as some other future. A peek (`console.log`) reads the
   settled result.
 - `velt_rt_fut_transfer` of a holder (the holder goes to another task: `spawn`, a channel, a
   closure capturing it) hands it over: a new holder awaits the promise on this task inside a
