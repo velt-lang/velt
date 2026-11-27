@@ -713,9 +713,12 @@ The command-line arguments (`argv()`, `args()`, Node's `process.argv`) are std c
 (std/process/args.velt), which reads them from the OS (`#env-sys`: `_NSGetArgv` on macOS,
 `/proc/self/cmdline` on Linux, `GetCommandLineW` split by the C runtime's rules on Windows, WASI's
 `args_get`; none in the browser). A program velt runs in its own process (`velt dev`, the
-generator host) gets them in `VELT_ARGV`; `velt run`, `velt test` and `velt dev` pass Node's
-`process.argv[1]` in `VELT_SCRIPT`. std's reads of the environment leave both out, and so do the
-environments of the program's child processes.
+generator host) gets them in `VELT_ARGV` (each argument as its length in UTF-8 bytes, `:` and
+its text); `velt run`, `velt test` and `velt dev` pass Node's `process.argv[1]` in
+`VELT_SCRIPT`. std's reads of the environment leave both out, and so do the environments of the
+program's child processes. The lists are read once per process, on first use, and kept in a block
+of the C library's (std/process/args_keep.velt); `process.argv` reaches them by role, from a hook
+module loaded on demand (std/lang/hooks/process_argv.velt).
 
 `process.memoryUsage()` is std code on native targets (`#memory-sys`: std/process/
 memory_linux.velt reads `/proc/self/statm`, its resident pages and, for `heapUsed`, those no file

@@ -1,15 +1,14 @@
 // velt/lang/hooks (internal): the compiler's hooks for the builtin `process` namespace
 // (std-layout.md §10b): `process.stdout.write(s)` / `process.stderr.write(s)` (`processWrite`),
-// `process.env.NAME` / `process.env[name]` (`processEnv`), `process.argv` (`processArgv`) and
-// the mark of a top-level `await` (`topLevelAwaitAt`). The rest of Node's `process` is in
-// `velt/process` (https://veltlang.com/docs/std/process/). Also the mark of what this thread wrote
-// to standard output (`stdoutWritten`), which `console.log` and every std writer of stdout set and
-// velt/sync's hand-offs read (std/sync/output.velt, #2771).
+// `process.env.NAME` / `process.env[name]` (`processEnv`), `process.argv` (`processArgv`, its
+// list loaded on demand) and the mark of a top-level `await` (`topLevelAwaitAt`). The rest of
+// Node's `process` is in `velt/process` (https://veltlang.com/docs/std/process/). Also the mark
+// of what this thread wrote to standard output (`stdoutWritten`), which `console.log` and every
+// std writer of stdout set and velt/sync's hand-offs read (std/sync/output.velt, #2771).
 
 import { processId } from "#process-pid";
-import { addressLoad, addressStore, inline, noInline } from "velt/lang/intrinsics";
+import { addressLoad, addressStore, hookCall, inline, noInline } from "velt/lang/intrinsics";
 import { getEnv } from "#env-sys";
-import { nodeArgv } from "velt/process/args";
 
 declare function velt_rt_write_str(stream: u32, s: string);
 
@@ -106,10 +105,11 @@ export function processEnv(name: string): string | undefined {
 
 /**
  * Node's `process.argv`: `[runtime, script, ...args]` (the running executable, the script under
- * `velt run` / `velt dev` or the executable again, then the arguments).
+ * `velt run` / `velt dev` or the executable again, then the arguments). By role: the readers
+ * (std/lang/hooks/process_argv.velt) load only where live code reads it.
  */
 export function processArgv(): string[] {
-  return nodeArgv();
+  return hookCall("process_node_argv");
 }
 
 /** Node's `process.pid`: this process's id. */

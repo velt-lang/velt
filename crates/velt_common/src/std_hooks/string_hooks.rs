@@ -1,5 +1,5 @@
 //! The string methods' rows of the hook table (std/lang/string/, #2198), and a byte range as a
-//! string and a number stored into an integer array (#2196, #3182): the searches, `trim`,
+//! string, `process.argv`'s list and a number stored into an integer array (#2196, #3182): the searches, `trim`,
 //! `repeat`, `padStart` / `padEnd`, `split`, `replace` / `replaceAll` and the case mapping, which
 //! the prelude's methods call by role (`hookCall`), so a program loads a method's module only
 //! when live code calls it; `replace` with a function, which sema calls; and `Date`'s zone name,
@@ -79,6 +79,11 @@ macro_rules! with_string_hooks {
             /// `b.utf8Slice(start, end)` with its positions clamped (`from <= to <= b.length`).
             bytes_range_text => lang_bytes_range_text, "rangeText", sig((&[u8], usize, usize) -> string),
                 replaces("velt_rt_bytes_range_to_str_lossy"), bench("bytes_utf8");
+
+            // velt/lang/hooks/process_argv: `process.argv`'s list (#2196), which `processArgv`
+            // calls by role, so a program loads the arguments' readers only when live code reads it.
+            /// `process.argv`'s `[runtime, script, ...args]`.
+            process_node_argv => lang_hooks_process_argv, "nodeArgv", sig(() -> [string]);
 
             // velt/lang/hooks/int_store: a `number` stored into an element of an integer array,
             // converted as a typed array stores it (#3182; `velt_sema` `element_store.rs` calls

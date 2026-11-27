@@ -1,23 +1,29 @@
 // velt/process (internal): where std/process/args.velt keeps the arguments once read, on the
 // targets with a C library (`#env-sys`' native and WASI variants re-export these; the browser's,
-// std/process/env_wasm.velt, keeps none). A list is one block of the C library's: the text's
-// length, the number of arguments, then each argument's UTF-8 ended by a NUL (no argument holds
-// one). Its address goes in a static atomic of a number, which costs a program less to compile
-// than an `Atomic<shared<string[]>>`, whose loads bring the epoch reclaimer in. A published block
-// lives as long as the process, outside the leak counters (as the weak core's memory,
-// std/lang/hooks/weak_mem.velt).
+// std/process/env_wasm.velt, keeps none). A list is one block of the C library's: the number of
+// arguments, then per argument its length word for `velt_rt_strbuf_push_bytes` (the bytes, and
+// as many UTF-16 units again when it is ASCII) and its UTF-8, padded to 8 bytes. A read makes
+// each string with the runtime's builder from those bytes, which are known to be well-formed:
+// no decoding again. The block's address goes in a static atomic of a number, which costs a
+// program less to compile than an `Atomic<shared<string[]>>`, whose loads bring the epoch
+// reclaimer in. A published block lives as long as the process, outside the leak counters (as
+// the weak core's memory, std/lang/hooks/weak_mem.velt).
 
 import { Ptr } from "velt/ffi/ptr";
 import {
   addressLoad,
   addressStore,
-  arraySetLen,
   arrayWithCapacity,
   noInline,
+  ptrFromAddress,
   strByteLen,
   strDataAddress,
+  strLen,
 } from "velt/lang/intrinsics";
-import { textOf } from "./args_text";
+
+declare function velt_rt_strbuf_new(cap: u64, out: string);
+declare function velt_rt_strbuf_push_bytes(buf: string, bytes: Ptr<u8>, len: u64);
+declare function velt_rt_strbuf_finish(buf: string, out: string);
 
 declare c("c") function calloc$argv(n: usize, size: usize): Ptr<u8> | null;
 declare c("c") function free$argv(p: Ptr<u8> | null): void;
@@ -26,39 +32,51 @@ declare c("c") function memcpy$argv(
   src: Ptr<u8> | null,
   n: usize,
 ): Ptr<u8> | null;
-declare c("c") function memcpy$argvTo(dst: u8[], src: Ptr<u8> | null, n: usize): Ptr<u8> | null;
 
-/** The bytes of a block before its text: the text's length, then the number of arguments. */
-const HEAD: usize = 16;
+/** `n` rounded up to a multiple of 8. */
+function padded(n: usize): usize {
+  return (n + 7) & ~(7 as usize);
+}
 
-/** `list` in a new block, its address; 0 when the C library has no memory for it. */
+/**
+ * `list` in a new block, its address; 0 when the C library has no memory for it, or an argument
+ * is longer than a length word holds (4 GiB: no OS passes one).
+ */
 export function keepArgs(list: string[]): usize {
-  let n: usize = 0;
+  let n: usize = 8;
   for (let i: usize = 0; i < list.length; i++) {
-    n += strByteLen(list[i]) + 1;
+    const len = strByteLen(list[i]);
+    if (len > 0xffffffff) {
+      return 0;
+    }
+    n += 8 + padded(len);
   }
   // SAFETY: calloc has no precondition; the result is checked.
-  const p = unsafe { calloc$argv(1, HEAD + n) };
+  const p = unsafe { calloc$argv(1, n) };
   if (p === null) {
     return 0;
   }
   const at = Ptr.addressOf(p);
-  // SAFETY: the block holds `HEAD + n` bytes, zeroed: each argument's bytes go before a 0.
+  // SAFETY: the block holds `n` bytes: the count, then each argument's word and padded bytes.
   unsafe {
-    addressStore<usize>(at, n);
-    addressStore<usize>(at + 8, list.length);
+    addressStore<usize>(at, list.length);
   }
-  let to = at + HEAD;
+  let to = at + 8;
   for (let i: usize = 0; i < list.length; i++) {
     const s = list[i];
     const len = strByteLen(s);
+    const units = strLen(s) == len ? len : 0;
+    // SAFETY: inside the block, as above.
+    unsafe {
+      addressStore<u64>(to, (len as u64) | ((units as u64) << 32));
+    }
     if (len > 0) {
       // SAFETY: `len` bytes at `s`'s data address (well-formed: decoded text), room for them.
       unsafe {
-        memcpy$argv(Ptr.orNull<u8>(to), Ptr.orNull<u8>(strDataAddress(s)), len);
+        memcpy$argv(Ptr.orNull<u8>(to + 8), Ptr.orNull<u8>(strDataAddress(s)), len);
       }
     }
-    to += len + 1;
+    to += 8 + padded(len);
   }
   return at;
 }
@@ -67,24 +85,24 @@ export function keepArgs(list: string[]): usize {
 @noInline
 export function unpackArgs(at: usize): string[] {
   // SAFETY: a block of `keepArgs`', never freed once published.
-  const n = unsafe { addressLoad<usize>(at) };
-  // SAFETY: as above.
-  const count = unsafe { addressLoad<usize>(at + 8) };
-  const bytes = arrayWithCapacity<u8>(n);
-  arraySetLen(bytes, n);
-  if (n > 0) {
-    // SAFETY: `bytes` holds `n` bytes, the block's text as many.
-    unsafe {
-      memcpy$argvTo(bytes, Ptr.orNull<u8>(at + HEAD), n);
-    }
-  }
+  const count = unsafe { addressLoad<usize>(at) };
   const out = arrayWithCapacity<string>(count);
-  let start: usize = 0;
-  for (let i: usize = 0; i < n; i++) {
-    if (bytes[i] === 0) {
-      out.push(textOf(bytes, start, i));
-      start = i + 1;
+  let from = at + 8;
+  for (let i: usize = 0; i < count; i++) {
+    // SAFETY: inside the block (its layout above).
+    const word = unsafe { addressLoad<u64>(from) };
+    const len = (word & 0xffffffff) as usize;
+    let buf = "";
+    velt_rt_strbuf_new(len as u64, buf);
+    if (len > 0) {
+      // SAFETY: the block's `len` bytes of well-formed UTF-8 after the word, only read.
+      const bytes = unsafe { ptrFromAddress<u8>(from + 8) };
+      velt_rt_strbuf_push_bytes(buf, bytes, word);
     }
+    let s = "";
+    velt_rt_strbuf_finish(buf, s);
+    out.push(s);
+    from += 8 + padded(len);
   }
   return out;
 }
