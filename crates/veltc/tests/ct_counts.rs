@@ -126,8 +126,40 @@ fn cc(program: &Path, out: &Path, args: &[&str]) -> Result<(), String> {
     }
 }
 
-/// What scripts/ct-shim.c counts of tests/ct_counts/thread.c, with its second thread or without.
-fn thread_probe_count(dir: &Path, shim: &Path, thread: bool) -> u64 {
+/// What scripts/ct-shim.c prints when the probe's other threads never settled (ct-counts.py's
+/// `UNSETTLED`).
+const UNSETTLED: &str = "ct-shim: the other threads never settled before the count started";
+
+/// scripts/ct-shim.c and tests/ct_counts/thread.c built into a temporary directory with a
+/// secret and a stop file, or `None` (skipped) where the shim doesn't build.
+fn thread_probe() -> Option<(tempfile::TempDir, std::path::PathBuf)> {
+    if !can_run() {
+        return None;
+    }
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let shim = dir.path().join("ct-shim.so");
+    let made = cc(
+        &root.join("../../scripts/ct-shim.c"),
+        &shim,
+        &["-shared", "-fPIC", "-O1", "-ldl"],
+    );
+    if let Err(e) = made {
+        skip(&format!(
+            "scripts/ct-shim.c doesn't build (valgrind's headers?): {e}"
+        ));
+        return None;
+    }
+    let probe = root.join("tests/ct_counts/thread.c");
+    cc(&probe, &dir.path().join("thread"), &["-O1", "-pthread"]).expect("thread.c builds");
+    std::fs::write(dir.path().join("secret.bin"), [7u8; 32]).expect("the secret is written");
+    std::fs::write(dir.path().join("secret.bin.stop"), b"").expect("the stop file is written");
+    Some((dir, shim))
+}
+
+/// What scripts/ct-shim.c counts of tests/ct_counts/thread.c, with `thread` as its `CT_THREAD`
+/// (no second thread without one), and valgrind's stderr.
+fn thread_probe_count(dir: &Path, shim: &Path, thread: Option<&str>) -> (u64, String) {
     let secret = dir.join("secret.bin");
     let stop = dir.join("secret.bin.stop");
     let mut cmd = Command::new("valgrind");
@@ -147,17 +179,18 @@ fn thread_probe_count(dir: &Path, shim: &Path, thread: bool) -> u64 {
     .env("VELT_CT_SECRET", &secret)
     .env("VELT_CT_STOP", &stop)
     .env_remove("CT_THREAD");
-    if thread {
-        cmd.env("CT_THREAD", "1");
+    if let Some(t) = thread {
+        cmd.env("CT_THREAD", t);
     }
     let out = cmd.output().expect("valgrind runs");
-    let text = String::from_utf8_lossy(&out.stderr);
+    let text = String::from_utf8_lossy(&out.stderr).into_owned();
     assert!(out.status.success(), "the thread probe failed:\n{text}");
     let refs = text
         .lines()
         .find_map(|l| l.split("I refs:").nth(1))
         .unwrap_or_else(|| panic!("no count in:\n{text}"));
-    refs.trim().replace(',', "").parse().expect("a count")
+    let n = refs.trim().replace(',', "").parse().expect("a count");
+    (n, text)
 }
 
 /// What is counted is the code under test, not the work of a thread that started just before
@@ -169,34 +202,32 @@ fn thread_probe_count(dir: &Path, shim: &Path, thread: bool) -> u64 {
 /// threads (its system call wrappers), a few hundred instructions, never by that work.
 #[test]
 fn a_thread_started_before_the_secret_is_not_counted() {
-    if !can_run() {
+    let Some((dir, shim)) = thread_probe() else {
         return;
-    }
-    let dir = tempfile::tempdir().expect("a temporary directory");
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let shim = dir.path().join("ct-shim.so");
-    let made = cc(
-        &root.join("../../scripts/ct-shim.c"),
-        &shim,
-        &["-shared", "-fPIC", "-O1", "-ldl"],
-    );
-    if let Err(e) = made {
-        skip(&format!(
-            "scripts/ct-shim.c doesn't build (valgrind's headers?): {e}"
-        ));
-        return;
-    }
-    let probe = root.join("tests/ct_counts/thread.c");
-    cc(&probe, &dir.path().join("thread"), &["-O1", "-pthread"]).expect("thread.c builds");
-    std::fs::write(dir.path().join("secret.bin"), [7u8; 32]).expect("the secret is written");
-    std::fs::write(dir.path().join("secret.bin.stop"), b"").expect("the stop file is written");
-    let alone = thread_probe_count(dir.path(), &shim, false);
+    };
+    let (alone, _) = thread_probe_count(dir.path(), &shim, None);
     for _ in 0..3 {
-        let with = thread_probe_count(dir.path(), &shim, true);
+        let (with, text) = thread_probe_count(dir.path(), &shim, Some("1"));
+        assert!(!text.contains(UNSETTLED), "{text}");
         assert!(
             with.abs_diff(alone) < 1_000,
             "the count with a second thread is {with}, without it {alone}: the thread's work \
              was counted"
         );
     }
+}
+
+/// A thread that never stops running can't be waited for: the shim gives up after two seconds
+/// and says so, and ct-counts.py runs the secret again, then fails as that, never as a count
+/// that depends on the secret.
+#[test]
+fn a_thread_that_never_waits_is_reported() {
+    let Some((dir, shim)) = thread_probe() else {
+        return;
+    };
+    let (_, text) = thread_probe_count(dir.path(), &shim, Some("spin"));
+    assert!(
+        text.contains(UNSETTLED),
+        "no report of the unsettled start:\n{text}"
+    );
 }

@@ -210,21 +210,33 @@ def build(source, kind, out):
 ONE_THREAD = {"VELT_THREADS": "1", "VELT_RESCUE": "0"}
 
 
+# What scripts/ct-shim.c prints when the probe's other threads were still running after two
+# seconds: the count may then include their work, which says nothing about the secret.
+UNSETTLED = "ct-shim: the other threads never settled before the count started"
+
+
 def count(exe, env, secret_file, shim=None):
     """The instructions the probe executes for the secret in `secret_file`. With the shim, only
     from its read of the secret to its read of the stop file (or to the end): the code under
-    test, without the process's start and end."""
+    test, without the process's start and end. A run whose other threads never settled is run
+    once more; a second one fails the check as that, not as a count that depends on the
+    secret."""
     region = ["--instr-at-start=no"] if shim else []
     extra = {"LD_PRELOAD": shim, "VELT_CT_STOP": stop_file(secret_file)} if shim else {}
-    run = subprocess.run(
-        ["valgrind", "--tool=cachegrind", "--cache-sim=no", "--cachegrind-out-file=/dev/null",
-         *region, exe, secret_file],
-        capture_output=True, text=True,
-        env={**os.environ, **env, **ONE_THREAD, "VELT_CT_SECRET": secret_file, **extra})
-    found = re.search(r"I\s+refs:\s+([\d,]+)", run.stderr)
-    if run.returncode != 0 or not found:
-        sys.exit(f"the probe failed under valgrind:\n{run.stdout}{run.stderr}")
-    return int(found.group(1).replace(",", ""))
+    for attempt in range(2):
+        run = subprocess.run(
+            ["valgrind", "--tool=cachegrind", "--cache-sim=no", "--cachegrind-out-file=/dev/null",
+             *region, exe, secret_file],
+            capture_output=True, text=True,
+            env={**os.environ, **env, **ONE_THREAD, "VELT_CT_SECRET": secret_file, **extra})
+        found = re.search(r"I\s+refs:\s+([\d,]+)", run.stderr)
+        if run.returncode != 0 or not found:
+            sys.exit(f"the probe failed under valgrind:\n{run.stdout}{run.stderr}")
+        if UNSETTLED not in run.stderr:
+            return int(found.group(1).replace(",", ""))
+    sys.exit(f"threads never settled: twice the probe's other threads were still running two "
+             f"seconds after it read its secret, so its count is not the code under test's "
+             f"(scripts/ct-shim.c); is the machine overloaded?\n{run.stderr[-2000:]}")
 
 
 def stop_file(secret_file):

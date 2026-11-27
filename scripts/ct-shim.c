@@ -34,6 +34,10 @@ static int is_file(int fd, const char *var) {
     return strcmp(path, want) == 0;
 }
 
+// What the shim prints when the other threads never stopped running before counting started
+// (ct-counts.py and crates/veltc/tests/ct_counts.rs look for it).
+#define UNSETTLED "ct-shim: the other threads never settled before the count started"
+
 // The CPU time the process's other threads have used (ns, /proc/self/task/<tid>/schedstat), and
 // in `all_waiting` whether each of them is waiting (state S or D in .../stat); -1 when the
 // threads can't be listed.
@@ -77,8 +81,10 @@ static long long others(int *all_waiting) {
 // count changes from run to run by thousands of instructions, and ct-counts.py reports it as a
 // count that depends on the secret (#3942). Valgrind runs one thread at a time: while this one
 // sleeps, the others run until they wait. Settled is three sleeps of a millisecond in a row in
-// which no other thread used CPU time and each was waiting; at most two seconds. What it runs
-// is not counted (instrumentation is still off).
+// which no other thread used CPU time and each was waiting; at most two seconds, after which it
+// says so on stderr (UNSETTLED), so that ct-counts.py runs the secret again instead of taking
+// the count for one that depends on the secret. What it runs is not counted (instrumentation
+// is still off).
 static void settle(void) {
     int stable = 0;
     long long before = -2;
@@ -90,6 +96,7 @@ static void settle(void) {
         stable = now == before && waiting ? stable + 1 : 0;
         before = now;
     }
+    if (stable < 3) fputs(UNSETTLED "\n", stderr);
 }
 
 ssize_t read(int fd, void *buf, size_t count) {
