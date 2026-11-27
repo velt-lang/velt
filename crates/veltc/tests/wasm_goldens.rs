@@ -272,6 +272,8 @@ const WASI_STD: &[&str] = &[
     "half_dot_bf16_lengths_short",
     "half_dot_lengths",
     "half_dot_lengths_short",
+    // velt/net on WASI fails without the runtime's leaves, whose `cx` std's executor lacks (#3920).
+    "net_connect_fails",
     "random",
     "simd_aes",
     "simd_any",

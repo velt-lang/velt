@@ -1,0 +1,24 @@
+// A connection (or a `fetch`) that can't be made fails with an `IoError` the program catches:
+// the port is closed natively (`ECONNREFUSED`), and a WebAssembly program has no sockets
+// (`ENOTSUP`: on wasm32-wasip1, which runs the executor in Velt and can't await the runtime's
+// leaves, std's TCP functions answer without the runtime; they panicked there in a debug build).
+
+import { connect, connectTls } from "velt/net";
+import { IoError } from "velt/io";
+
+async function attempt(what: string, f: () => Promise<unknown>) {
+  try {
+    await f();
+    console.log(what, "connected");
+  } catch (e) {
+    const known = e instanceof IoError && (e.code === "ECONNREFUSED" || e.code === "ENOTSUP");
+    console.log(what, "failed", known);
+  }
+}
+
+await attempt("connect", () => connect("127.0.0.1:9"));
+await attempt("connectTls", () => connectTls("127.0.0.1:9"));
+await attempt("fetch", async () => {
+  await fetch("http://127.0.0.1:9/");
+});
+console.log("done");
