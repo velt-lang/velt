@@ -1,5 +1,5 @@
 //! The drop of a struct value whose fields may lead back to its own type (#543,
-//! `lower/glue/drop_depth.rs`): each such field is bracketed for the runtime's depth limit, as a
+//! `lower/glue/drop_depth.rs`): each such field is bracketed for the depth limit, as a
 //! class's are, so a null field drops without the bracket, and long chains through struct values
 //! still drop from the queue (the interpreter's limit is 4) without leaks.
 
@@ -44,10 +44,10 @@ fn drop_glue<'a>(v: &'a vir::Program, name: &str) -> &'a vir::Function {
         .unwrap_or_else(|| panic!("no `{sym}` in:\n{v}"))
 }
 
-/// Does block `b` end in a call of the runtime's drop state?
+/// Does block `b` end in a read of the drop state word?
 fn calls_drop_state(v: &vir::Program, b: &vir::BasicBlock) -> bool {
     matches!(&b.term, Terminator::Call { callee: Callee::Extern(e), .. }
-        if v.externs[e.0 as usize].symbol == "velt_rt_drop_state")
+        if super::drop_chain::is_drop_state(&v.externs[e.0 as usize].symbol))
 }
 
 #[test]

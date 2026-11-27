@@ -3,12 +3,7 @@
 
 import { DEFAULT_REASON } from "velt/task/errors";
 import { TaskGroup } from "velt/task/group";
-import {
-  velt_rt_signal_abort,
-  velt_rt_signal_free,
-  velt_rt_signal_new,
-  velt_rt_signal_retain,
-} from "velt/task/rt";
+import { signalAbort, signalFree, signalNew, signalRetain } from "#task-signal";
 import { ABORT_ERROR, AbortSignal, signalCell } from "velt/task/signal";
 import { spawnHandled } from "velt/lang/intrinsics";
 
@@ -42,10 +37,10 @@ class GroupObj {
 
   [Symbol.dispose]() {
     if (!this.ended) {
-      velt_rt_signal_abort(this.sig, "\u0000the task scope was cancelled");
+      signalAbort(this.sig, "\u0000the task scope was cancelled");
       this.group.close();
     }
-    velt_rt_signal_free(this.sig);
+    signalFree(this.sig);
   }
 }
 
@@ -70,7 +65,7 @@ export class TaskScope<E> {
   #group: shared<Mutex<GroupObj>>;
   #g: shared<TaskGroup>;
   #sig: AbortSignal;
-  // The scope's runtime signal (alive as long as `group`); each child retains its own.
+  // The scope's underlying signal (alive as long as `group`); each child retains its own.
   #sigH: u64;
   #errors: FirstError<E>;
   #cancelOnError: bool;
@@ -111,7 +106,7 @@ export class TaskScope<E> {
     }
     // Only plain values and shared cells go to the child (its own signal reference), so
     // `scope.spawn(work(scope.signal))` doesn't hand the task anything reachable from `scope`.
-    const sig = velt_rt_signal_retain(this.#sigH);
+    const sig = signalRetain(this.#sigH);
     // The scope fails with the child's error, so a handle nobody awaits drops it quietly.
     return spawnHandled(scopeChild<T, E>(this.#g, sig, this.#errors, this.#cancelOnError, p));
   }
@@ -119,7 +114,7 @@ export class TaskScope<E> {
   /** Aborts the scope's signal. */
   cancel(reason: string = DEFAULT_REASON) {
     // Marked: the reason is an `AbortError` with this message, also through an `AbortSignal.any`.
-    velt_rt_signal_abort(this.#sigH, ABORT_ERROR + reason);
+    signalAbort(this.#sigH, ABORT_ERROR + reason);
   }
 }
 
@@ -135,7 +130,7 @@ class ChildGuard {
   }
 
   [Symbol.dispose]() {
-    velt_rt_signal_free(this.sig);
+    signalFree(this.sig);
     this.group.leave();
   }
 }
@@ -154,7 +149,7 @@ async function scopeChild<T, E>(
   } catch (e) {
     recordFirst<E>(errors, e);
     if (cancelOnError) {
-      velt_rt_signal_abort(signal, "\u0000a task in the scope failed");
+      signalAbort(signal, "\u0000a task in the scope failed");
     }
     throw e;
   }
@@ -173,10 +168,10 @@ export async function taskScope<T, E>(
   options: ScopeOptions = {},
 ): Promise<T> throws E {
   const cancelOnError = options.cancelOnError ?? true;
-  const cell = signalCell(velt_rt_signal_new());
+  const cell = signalCell(signalNew());
   const h = cell.with((s) => s.raw());
   const g = shared(new TaskGroup());
-  const group = shared(new Mutex<GroupObj>(new GroupObj(g, velt_rt_signal_retain(h))));
+  const group = shared(new Mutex<GroupObj>(new GroupObj(g, signalRetain(h))));
   const errors: FirstError<E> = shared(new Mutex<E[]>([]));
   const scope = new TaskScope<E>(group, new AbortSignal(cell), errors, g, cancelOnError);
   const result: T[] = [];
@@ -185,7 +180,7 @@ export async function taskScope<T, E>(
   } catch (e) {
     recordFirst<E>(errors, e);
     if (cancelOnError) {
-      velt_rt_signal_abort(h, "\u0000the task scope failed");
+      signalAbort(h, "\u0000the task scope failed");
     }
   }
   // The last child closes the channel (also before this receive starts).

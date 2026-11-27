@@ -31,7 +31,6 @@ const PURE_RUNTIME: &[&str] = &[
     "exit",
     "f64",
     "flush",
-    "fnprop",
     "free",
     "fut",
     "futs",

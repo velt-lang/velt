@@ -31,6 +31,17 @@ export function memoryOf(cursor: shared<Cursor>, prog: Program, slots: usize): S
   return m;
 }
 
+/**
+ * A fresh cursor (`lastIndex` 0) for a copy of the regex whose cursor is `c`, which shares its
+ * program: the tables its automatons worked out so far are the copy's too (#3883).
+ */
+export function cursorCopy(c: shared<Cursor>): shared<Cursor> {
+  const n = new Cursor();
+  n.ends.store(c.ends.load("acquire"), "release");
+  n.starts.store(c.starts.load("acquire"), "release");
+  return shared(n);
+}
+
 /** Keeps the tables of `m`'s automatons in `cursor` for the next calls, when they worked out
  * more. */
 export function keepTables(cursor: shared<Cursor>, m: Search): void {

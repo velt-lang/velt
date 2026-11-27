@@ -13,6 +13,7 @@ import {
   unwoundFramesDrop,
 } from "velt/lang/hooks/unwind";
 import { processEnv } from "velt/lang/hooks/process";
+import { dropRecover, dropState } from "velt/lang/hooks/drop_queue";
 
 declare function velt_rt_xfer_suspend(): u32;
 declare function velt_rt_xfer_resume(depth: u32): void;
@@ -55,12 +56,13 @@ export unsafe function catchPanicRaw(f: () => void): usize {
     f();
     return 0;
   }
+  const drops = dropState();
   // SAFETY: the exception object goes to the caller, who owns it.
   const e = unsafe { catchUnwind(f) };
   leaveCatch();
   if (e != 0) {
     caughtPanic();
-    caught();
+    caught(drops);
   }
   return e;
 }
@@ -78,21 +80,26 @@ export unsafe function catchPanicAt(code: usize, arg: usize): usize {
     }
     return 0;
   }
+  const drops = dropState();
   // SAFETY: the exception object goes to the caller, who owns it.
   const e = unsafe { catchUnwindAt(code, arg) };
   leaveCatch();
   if (e != 0) {
     caughtPanic();
-    caught();
+    caught(drops);
   }
   return e;
 }
 
 /**
  * After a caught panic: the state the panicked code left open on this thread is closed, as the
- * runtime's own catch does (`velt_rt::panic::catch`).
+ * runtime's own catch does (`velt_rt::panic::catch`); `drops` is the drop state word when the
+ * catch began.
  */
-function caught() {
+function caught(drops: u32) {
+  // A panic in a drop (a `[Symbol.dispose]()`) left the depth of bounded drop nesting up, and
+  // maybe values queued: the depth goes back to the catch's, and the queue is dropped.
+  dropRecover(drops);
   // A panic inside a transfer (a value going to `spawn` that can't, a copy that failed) left its
   // depth up: every later transfer of this thread would nest in it. `f` runs as user code, where
   // the depth is 0 (a transfer suspends around the user code it calls), so close what is open:

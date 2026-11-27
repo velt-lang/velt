@@ -57,6 +57,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             lw.push_scope(ScopeKind::Block);
             let code = lw.run_async_main(def);
             lw.sched_finish(&code);
+            lw.fn_props_exit();
             lw.terminate(Terminator::Return(code));
             lw.scopes.clear();
             return lw.finish_export();
@@ -89,6 +90,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
             code
         };
+        lw.fn_props_exit();
         lw.terminate(Terminator::Return(code));
         lw.scopes.clear();
         lw.finish_export()
@@ -488,7 +490,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// The prelude `Error` class when class `err` is it or extends it.
-    fn error_root(&mut self, err: TyId) -> Option<DefId> {
+    pub(super) fn error_root(&mut self, err: TyId) -> Option<DefId> {
         let TyKind::Adt(mut d, _) = self.cx.kind(err) else {
             return None;
         };

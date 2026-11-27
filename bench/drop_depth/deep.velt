@@ -1,0 +1,56 @@
+// Drops past the depth limit (#543, std/lang/hooks/drop_queue.velt): long chains and deep trees
+// through arrays, whose drops queue and drain, and many small trees whose drops are bracketed but
+// stay below the limit (the common path: the state word read and written, no call).
+//
+//   GIT_DIR=<repo> WORK=<dir> bench/program_instr.sh <base> <head> bench/drop_depth/deep.velt
+
+class Node {
+  id: i64;
+  kids: Node[] = [];
+
+  constructor(id: i64) {
+    this.id = id;
+  }
+}
+
+function chain(n: i64): Node {
+  let head = new Node(n - 1);
+  for (let i = n - 2; i >= 0; i--) {
+    const b = new Node(i);
+    b.kids.push(head);
+    head = b;
+  }
+  return head;
+}
+
+/** A tree of `depth` levels, `fan` children each. */
+function tree(depth: i64, fan: i64): Node {
+  const t = new Node(depth);
+  if (depth > 0) {
+    for (let i: i64 = 0; i < fan; i++) {
+      t.kids.push(tree(depth - 1, fan));
+    }
+  }
+  return t;
+}
+
+function main() {
+  let sum: i64 = 0;
+  for (let r = 0; r < 20; r++) {
+    const c = chain(50000);
+    sum += c.id;
+  }
+  for (let r = 0; r < 200000; r++) {
+    const t = tree(3, 2);
+    sum += t.id;
+  }
+  for (let r = 0; r < 20; r++) {
+    // 1000 chains of 300 under one node: values queued while others drain.
+    const root = new Node(0);
+    for (let k: i64 = 0; k < 1000; k++) {
+      root.kids.push(chain(300));
+    }
+    sum += root.kids.length;
+  }
+  console.log(`${sum}`);
+}

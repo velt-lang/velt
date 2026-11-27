@@ -124,6 +124,12 @@ impl Interp<'_> {
                 b.extend(self.str_bytes(a[1]));
                 self.new_str(a[2], &b);
             }
+            // Bytes `start..end` of a string (std's line breaking replaces a builder's tail).
+            "velt_rt_str_byte_slice" => {
+                let b = self.str_bytes(a[0]);
+                let (start, end) = (a[1] as usize, (a[2] as usize).min(b.len()));
+                self.new_str(a[3], &b[start.min(end)..end]);
+            }
             "velt_test_str_from_f64" => self.new_str(a[1], js_num(f64::from_bits(a[0])).as_bytes()),
             "velt_rt_str_from_bool" => {
                 self.new_str(a[1], if a[0] & 1 == 1 { b"true" } else { b"false" })
@@ -246,12 +252,6 @@ impl Interp<'_> {
                 self.write_bytes(a[0], &n.to_le_bytes());
                 return Ok((n == 0) as u64);
             }
-            "velt_rt_drop_state" => {
-                self.drops.calls += 1;
-                return Ok(self.drop_state());
-            }
-            "velt_rt_drop_queue" => self.drop_queue(a[0], a[1]),
-            "velt_rt_drop_drain" => self.drop_drain()?,
             m if m.starts_with("velt_atomic_") => return Ok(self.atomic(m, a)),
             m if m.starts_with("velt_tls_") => {
                 let call = crate::tls::TlsCall::of_symbol(m)
@@ -260,8 +260,9 @@ impl Interp<'_> {
                     crate::tls::TlsCall::Get { id, init, .. } => {
                         return Ok(self.tls.get(&id).copied().unwrap_or(init))
                     }
-                    crate::tls::TlsCall::Set { id, .. } => {
-                        self.tls.insert(id, a[0]);
+                    crate::tls::TlsCall::Set { id, init, .. } => {
+                        let old = self.tls.insert(id, a[0]).unwrap_or(init);
+                        self.drops.on_set(id, old, a[0]);
                     }
                 }
             }

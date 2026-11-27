@@ -1,9 +1,9 @@
 // velt/fs (internal): the functions velt/fs calls in a WebAssembly build (the default variant of
-// `#fs-rt`, std/imports.velt; a native build uses rt_sched.velt, which takes the file streams
-// from here): the runtime's (docs/internals/contracts/rt_abi_async.md §5 and §14.7) and the
-// layouts they return, for whole files, directories and file streams, and Velt code for
-// renaming, linking and copying (`#fs-paths`: wasi-libc's calls under WASI, `ENOTSUP` under a JS
-// host).
+// `#fs-rt`, std/imports.velt; a native build uses rt_sched.velt): the runtime's
+// (docs/internals/contracts/rt_abi_async.md §5) and the layouts they return, for whole files and
+// directories, Velt code for renaming, linking and copying (`#fs-paths`: wasi-libc's calls under
+// WASI, `ENOTSUP` under a JS host), and file streams, which fail with `ENOTSUP`
+// (stream_none.velt).
 //
 // Extern conventions (the lowering ABI of `declare function`, rt_abi_async.md §3.1): `string`/
 // struct params are passed as `const T*`; a struct result becomes a trailing out-pointer and the
@@ -18,6 +18,21 @@ import { checkPathArg } from "velt/fs/path_arg";
 import { utf8Encode } from "velt/encoding/utf8";
 import { take } from "velt/fs/whole/done";
 import { copyAt, readlinkAt, realpathAt, renameAt, symlinkAt } from "#fs-paths";
+
+// File streams: none on WebAssembly (`ENOTSUP`).
+export {
+  velt_rt_fs_open_read,
+  velt_rt_fs_open_read_range,
+  velt_rt_fs_open_write,
+  velt_rt_fs_reader_close,
+  velt_rt_fs_reader_opened_stats,
+  velt_rt_fs_reader_read,
+  velt_rt_fs_writer_close,
+  velt_rt_fs_writer_flush,
+  velt_rt_fs_writer_free,
+  velt_rt_fs_writer_write,
+  velt_rt_fs_writer_write_bytes,
+} from "./stream_none";
 
 declare async function velt_rt_fs_read_file_bytes(path: string): Promise<IoResult<u8[]>>;
 declare async function velt_rt_fs_write_file(path: string, data: string): Promise<IoStatus>;
@@ -39,25 +54,6 @@ declare function velt_rt_fs_lstat_sync(path: string): IoResult<Stats>;
 declare function velt_rt_fs_mkdir_sync(path: string, recursive: bool): IoStatus;
 declare function velt_rt_fs_remove_sync(path: string, recursive: bool): IoStatus;
 declare function velt_rt_fs_exists_sync(path: string): bool;
-
-export declare async function velt_rt_fs_open_read(path: string): Promise<IoResult<u64>>;
-export declare async function velt_rt_fs_open_read_range(
-  path: string,
-  start: u64,
-  end: u64,
-): Promise<IoResult<u64>>;
-export declare function velt_rt_fs_reader_opened_stats(r: u64): IoResult<Stats>;
-export declare async function velt_rt_fs_reader_read(r: u64, max: u64): Promise<IoResult<u8[]>>;
-export declare function velt_rt_fs_reader_close(r: u64);
-export declare async function velt_rt_fs_open_write(
-  path: string,
-  append: bool,
-): Promise<IoResult<u64>>;
-export declare async function velt_rt_fs_writer_write(w: u64, data: string): Promise<IoStatus>;
-export declare async function velt_rt_fs_writer_write_bytes(w: u64, data: u8[]): Promise<IoStatus>;
-export declare async function velt_rt_fs_writer_flush(w: u64): Promise<IoStatus>;
-export declare async function velt_rt_fs_writer_close(w: u64): Promise<IoStatus>;
-export declare function velt_rt_fs_writer_free(w: u64);
 
 // The runtime's `VeltDirents`: sorted names and, at the same index, each one's kind (0 other,
 // 1 file, 2 directory, 3 symlink).

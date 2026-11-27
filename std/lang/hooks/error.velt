@@ -1,8 +1,11 @@
 // velt/lang/hooks (internal): the compiler's hooks for errors (std-layout.md §10b): the first
-// line of Node's report of an error nothing catches (velt_vir `entry.rs`), and the
-// `Error.prototype.toString` text the prelude's `Error` shares with it, and the key of the method
-// std's error classes set their `name` with.
+// line of Node's report of an error nothing catches (velt_vir `entry.rs`), the
+// `Error.prototype.toString` text the prelude's `Error` shares with it, the key of the method
+// std's error classes set their `name` with, and `message` as JavaScript reads it in a program
+// whose class extending `Error` declares `get message()` (velt_sema `error_message.rs`).
 
+import { ERROR_MESSAGE } from "velt/lang/hooks/keys";
+import { strBorrowedWords, strDataAddress } from "velt/lang/intrinsics/string";
 import { Symbol } from "velt/lang/symbol";
 
 /** `Error.prototype.toString` of an error with `name` and `message`. */
@@ -42,3 +45,34 @@ export function uncaughtHeader(e: Error, cls: string): string {
  * Programs never see the symbol, so they cannot override the method.
  */
 export const ERROR_NAME = Symbol("errorName");
+
+// The bytes `noMessage()` points at: no program's string starts at them, so an empty string there
+// is told from every other.
+const NO_MESSAGE_ANCHOR = "velt: an error made without a message";
+
+/**
+ * The message `Error`'s constructor and the built-in error classes' (`TypeError`, …) default to,
+ * in a program where a class extending `Error` declares `get message()`: an empty string at an
+ * address of its own, which means "made without a message" (`errorMessage`). JavaScript's error
+ * then has no own `message`, and reading it reaches the getter. Everywhere else the compiler
+ * places `""` for the call instead, so other programs compile as if it were not there.
+ */
+export function noMessage(): string {
+  const anchor = NO_MESSAGE_ANCHOR;
+  return strBorrowedWords(strDataAddress(anchor) as u64, 0);
+}
+
+/**
+ * `e.message` as JavaScript reads it in a program where a class extending `Error` declares
+ * `get message()`: the error's own message when it was given one (`""` included), else
+ * `Error.prototype.message` as the class has it (its `get message()`, or `""`). The compiler
+ * reads every `message` of an error through this in such a program.
+ */
+export function errorMessage(e: Error): string {
+  const own = e.message;
+  const anchor = NO_MESSAGE_ANCHOR;
+  if (own.length != 0 || strDataAddress(own) != strDataAddress(anchor)) {
+    return own;
+  }
+  return e[ERROR_MESSAGE];
+}

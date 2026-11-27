@@ -52,6 +52,8 @@ mod yield_hooks;
 #[macro_use]
 mod weak_hooks;
 #[macro_use]
+mod inspect_layout_hooks;
+#[macro_use]
 mod string_hooks;
 #[macro_use]
 mod module_hooks;
@@ -60,13 +62,14 @@ mod object_hooks;
 #[macro_use]
 mod decorator_hooks;
 #[macro_use]
+mod drop_hooks;
+#[macro_use]
 mod promise_hooks;
 #[macro_use]
 mod tls_hooks;
 pub use module_hooks::BLOCKS_MODULE_ENTRY;
 
-// The table: these rows, then `Object.*`'s, TLS's, promises' through `any`, the decorators', module
-// state's, the string methods' and the weak core's (`*_hooks.rs`), given to `hooks!` together.
+// The table: these rows, then each `*_hooks.rs` file's (the `with_*_hooks!` chain), to `hooks!`.
 with_object_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
@@ -571,7 +574,6 @@ with_object_hooks! {
     /// `sort(cmp)` of a view: the mirror sorted by the stable sort and written back.
     array_view_sort => lang_hooks_array_view, "arrayViewSort", sig(<A, B>(&mut ArrayView(A), &Fn((A, A) -> B), &Fn((B) -> bool)) -> void), lowered;
 
-
     // record.velt: `k in r` for a key known only at run time, and `===` on prototypes.
     /// `a === b` on prototypes (`velt_sema` `object_prototypes.rs`).
     prototype_same => lang_hooks_record, "prototypeSame", sig((&or_null(ObjectPrototype), &or_null(ObjectPrototype)) -> bool);
@@ -581,9 +583,11 @@ with_object_hooks! {
     record_in => lang_hooks_record, "recordIn", sig(<A>(&string, &Record(string, A)) -> bool);
     /// `record_in` in a program that calls `Object.create(null)`.
     record_in_maybe_null_proto => lang_hooks_record, "recordInMaybeNullProto", sig(<A>(&string, &Record(string, A)) -> bool);
-    // error.velt: the first line of the report of an uncaught error (`velt_vir` `entry.rs`).
+    // error.velt: the report of an uncaught error (`velt_vir` `entry.rs`); where a class declares `get message()`, `Error`'s default message and `e.message` (`error_message.rs`).
     /// The first line of Node's report of an uncaught error (`E [TypeError]: m`).
     uncaught_header => lang_hooks_error, "uncaughtHeader", sig((&Error, &string) -> string), lowered;
+    error_no_message => lang_hooks_error, "noMessage", sig(() -> string);
+    error_message => lang_hooks_error, "errorMessage", sig((&Error) -> string), lowered, constructs(ErrorMessage);
 
     // string.velt: the characters a `for...of` over a string iterates.
     /// The code points `for (const c of s)` iterates (`velt_sema` `loops.rs`).
@@ -762,7 +766,7 @@ mod lookup;
 pub use lookup::{find, is_lowered};
 mod on_demand;
 pub mod prebuilt;
-pub use on_demand::{on_demand, INSPECT_SHAPES, ON_DEMAND_FLOAT, ON_DEMAND_MODULES};
+pub use on_demand::*;
 
 #[cfg(test)]
 #[path = "std_hooks_tests.rs"]

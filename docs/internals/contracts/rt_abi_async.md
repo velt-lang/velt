@@ -133,9 +133,6 @@ typedef struct VeltCx {                              // what `cx` points to (2 p
 | `velt_rt_xfer_keep_begin` | `()` | `velt_rt_xfer_begin` of a value a `read` callback keeps in its caller's containers (§9.1): when it is the outermost one, the transfer glue keeps the lock-set objects the reader did not make (the caller's) with one more reference instead of copying them |
 | `velt_rt_xfer_share_begin` | `()` | `velt_rt_xfer_begin` of a value sema transferred out of a `read` callback into a container of the code outside every read (§9.1): when it is the outermost one, the transfer glue keeps an object the reader made and still references (`LOCAL`, count above 1) instead of copying it, through `velt_rt_lk_share_made`, and transfers its parts in turn; a copy it makes of what the reader shares with the value is transferred in turn, so it is no longer `LOCAL` either |
 | `velt_rt_xfer_keeps` | `() -> u8` | 1 inside a transfer `velt_rt_xfer_keep_begin` started, 2 inside one `velt_rt_xfer_share_begin` started, else 0 |
-| `velt_rt_drop_state` | `() -> u32*` | this thread's drop state word, which generated code updates in place around a drop that can nest (glue whose type leads back to itself, #543): bits 0..30 count the drops under way, bit 30 says something was queued, bit 31 that the queue is being drained. Per drop: `n = *w; if (n & 0x3fffffff) >= 128 { drop_queue(...) } else { *w = n + 1; <drop>; m = *w - 1; *w = m; if m == 1 << 30 { drop_drain() } }` |
-| `velt_rt_drop_queue` | `(void* value, void (*drop)(void* value))` | drop `value` with `drop` (glue that takes it over: a closure env's drop, a field or struct value moved to a heap box, or a box with its last reference) when the outermost drop on this thread ends, and set the queued bit; at once while the thread is torn down |
-| `velt_rt_drop_drain` | `()` | called by the outermost drop when it ends with the queued bit set: drops the queued values (which may queue more) in the order they were queued, then clears the word |
 | `velt_rt_yield_now` | `(void* cx)` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, #2196: native programs yield on the executor in Velt, std/lang/hooks/sched_yield.velt `schedYield`, which returns the yield's token (`POLL`, 0: it has no record and goes on once the poll its task's root yielded it in is over, which the task's `YIELDED` state marks, whatever cx asks, or it was made off the workers; not 0: its held record on its task's yield list). A cx is told apart by its address: a yield with the task's own cx (`T_CX`) is the root's, one poll's first with no yield block in use, and takes one test; a child polled with a copy of its parent's cx (the same two words at another address) takes the task path that orders several yields of one poll. Only the inline `Promise.all` polls its children so (velt_vir async_fn/all.rs `child_cx`); everything else passes its own cx or the one it was given: `await yieldNow()` keeps it across its suspension, hands it to `schedYieldReady(cx, record)` when it resumes (it goes on once that record's turn came, whatever cx polls it), and to `schedYieldDrop(record)` from its cancel, #3611, #3687; so does `velt_rt_yield_now_fut` below, `schedYieldFut`]. `await yieldNow()` inline: call it, then `return 0`; resumes after other ready tasks. No allocation. |
 | `velt_rt_yield_now_fut` | `() -> VeltFut*` | WebAssembly only, as `velt_rt_yield_now`. `yieldNow()` as a value; result: none |
 | `velt_rt_await_tick` | `(void* cx) -> u64` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, #2196: native programs take `await` steps and queue microtasks on the executor in Velt, std/lang/hooks/sched_micro.velt]. The step of an `await` when the word is not 0: 0 to go on now (nothing else can run first, or the waiter's step was queued by `velt_rt_latch_open` already), else the ticket of an entry queued at the back of the task's microtask queue for `cx`'s waker. No allocation. |
@@ -163,6 +160,8 @@ typedef struct VeltCx {                              // what `cx` points to (2 p
 | `velt_rt_fut_views` | `(u8 on)` | WebAssembly only (velt_rt_wasm, a no-op there) [velt_rt's removed, #2196 9e: natively std's `schedFutViews`]. The holders `velt_rt_fut_share` makes until it is called with 0 are *views* (§1.3), through which a converted promise awaits the promise it stands for |
 | `velt_rt_fut_peek` | `(VeltFut* f) -> u8` | what `console.log` shows of a promise its owner holds: `1` when its result is in the slot (+16; a `Result` tag first for a promise that can reject), `0` while pending. Polls, claims and moves nothing. A future that only runs when awaited (a runtime leaf, a join handle, a combinator, a promise created outside a task) reads as pending |
 | `velt_rt_futs_handled` | `(VeltFut* const* futs, u64 n, void (*quiet_drop)(void* slot))` | WebAssembly only, as `velt_rt_fut_start_rejecting`. The `n` futures are handed to a combinator (`race`, `any`, `all`), which handles their rejections like JS: a started promise among them that is dropped unfinished later disposes of its result with `quiet_drop` (null: nothing to drop) instead of its `result_drop`, so a rejection is not reported (§1.1). No-op for other futures. Called before the combinator takes the futures. |
+
+Bounded drop nesting (#543) is std's (std/lang/hooks/drop_queue.velt, #2196): a drop that can nest (glue whose type leads back to itself) counts itself in this thread's state word, std's `STATE` (`ThreadLocal<u32>`), which compiled code reads and writes inline as a `velt_tls_*` value (rt_abi.md "Thread-local values"; velt_vir `tls::DROP_STATE_SLOT`): bits 0..29 count the drops under way, bit 30 says something was queued, bit 31 that the queue is being drained. Per drop: `n = STATE; if (n & 0x3fffffff) >= 128 { dropQueue(value, drop) } else { STATE = n + 1; <drop>; m = STATE - 1; STATE = m; if m == 1 << 30 { dropDrain() } }`. `dropQueue` keeps `value` and its drop glue (a closure env's drop, a field or struct value moved to a heap box, or a box with its last reference) for the end of the outermost drop and sets the queued bit; `dropDrain` drops the queued values, which may queue more, in the order they were queued, then gives the queue's block back and clears the word. A caught panic (std/task/unwind.velt) restores the word and drops what is still queued (`dropRecover`).
 
 `Promise.all([a(), b()])` with a static list should be compiled inline instead (children embedded,
 each polled until done, done-flags in the state): no allocation.
@@ -430,25 +429,30 @@ exit for the leak counters.
 
 ### 2.3 Abort signals (`velt/task`)
 
-Each signal's `u64` handle (an `Arc`) is owned by a private `shared` cell in std/task/signal.velt
-and released once, at the cell's last reference; no handle is public. Aborting sets a flag, stores
-the reason and wakes the waiters; it never cancels anything itself. No code pointers are stored.
+Each signal's `u64` handle is owned by a private `shared` cell in std/task/signal.velt and released
+once, at the cell's last reference; no handle is public. Aborting sets a flag, stores the reason and
+wakes the waiters; it never cancels anything itself. No code pointers are stored.
 `AbortSignal.timeout`'s timer is std's, one of Node's timers (`velt_rt_timer_*`,
 std/task/signal_timeout.velt): its promise holds a reference to the signal until the delay is up and
-aborts it with `velt_rt_signal_abort` and a message carrying the delay, and std passes `timed` to a
-wait for it. A signal made by `any` holds strong references to its sources until it is aborted (they
-hold weak ones back).
+aborts it with a message carrying the delay, and std passes `timed` to a wait for it. A signal made
+by `any` holds references to its sources until it is aborted (they reach it only through links it
+owns).
 
-| Symbol | Signature | Notes |
+Natively the signals are std's (`#task-signal`: std/task/signal_sched.velt over signal_core.velt,
+in raw memory; a wait is a heap future linked into its signal, woken in the order the waits
+began). velt_rt keeps `velt_rt_signal_wait`, `_reason` and `_free` for one signal of its own, the
+graceful stop's (§13.2), until that stop is std's too. WebAssembly's runtime keeps its own:
+
+| Symbol (velt_rt_wasm) | Signature | Notes |
 |---|---|---|
-| `velt_rt_signal_new` | `() -> u64` | a signal that is not aborted |
-| `velt_rt_signal_retain` | `(u64 s) -> u64` | another reference to it (a scope's child task holds one) |
-| `velt_rt_signal_free` | `(u64 s)` | releases a handle |
-| `velt_rt_signal_abort` | `(u64 s, const VeltStr* reason)` | aborts it and the signals derived from it (`any`); a no-op if aborted |
-| `velt_rt_signal_aborted` | `(u64 s) -> bool` | |
-| `velt_rt_signal_reason` | `(u64 s, VeltStr* out)` | the reason (`""` while not aborted) |
-| `velt_rt_signal_wait` | `(u64 s, bool timed) -> VeltFut*` | completes (unit) once aborted; `timed` (a timer may abort it): the wait keeps the process alive |
-| `velt_rt_signal_any` | `(const VeltArray<u64>* signals) -> u64` | aborted with the first of `signals` that is (its reason); keeps them alive until then |
+| `velt_rt_signal_new` | `() -> u64` | WebAssembly only. A signal that is not aborted |
+| `velt_rt_signal_retain` | `(u64 s) -> u64` | WebAssembly only. Another reference to it (a scope's child task holds one) |
+| `velt_rt_signal_free` | `(u64 s)` | releases a handle (velt_rt too: its stop signal's) |
+| `velt_rt_signal_abort` | `(u64 s, const VeltStr* reason)` | WebAssembly only. Aborts it and the signals derived from it (`any`); a no-op if aborted |
+| `velt_rt_signal_aborted` | `(u64 s) -> bool` | WebAssembly only |
+| `velt_rt_signal_reason` | `(u64 s, VeltStr* out)` | the reason (`""` while not aborted) (velt_rt too: its stop signal's) |
+| `velt_rt_signal_wait` | `(u64 s, bool timed) -> VeltFut*` | completes (unit) once aborted; `timed` (a timer may abort it): the wait keeps the process alive (velt_rt too: its stop signal's) |
+| `velt_rt_signal_any` | `(const VeltArray<u64>* signals) -> u64` | WebAssembly only. Aborted with the first of `signals` that is (its reason); keeps them alive until then |
 
 ### 2.4 Task groups (`taskScope`)
 
@@ -968,10 +972,8 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_strbuf_push_inspect_key` | `(VeltStrBuf* b, const VeltStr* s)` | an object key as `console.log` shows it: bare if it matches `[A-Za-z_][A-Za-z0-9_]*` (node quotes `$`), else quoted like `push_inspect_str` |
 | `velt_rt_strbuf_push_bool` | `(VeltStrBuf* b, u8 v)` | `true`/`false` |
 | `velt_rt_strbuf_push_byte` | `(VeltStrBuf* b, u8 c)` | punctuation in generated glue |
-| `velt_rt_strbuf_inspect_begin` | `()` | start of a top-level value printed by `console.log`, `${x}` or `String(x)`: the custom inspects' pieces (`inspect_atom`) of the value before are forgotten. Compiled code calls it at every top-level value, next to std's `inspectBegin` (std/lang/hooks/inspect_cycles.velt, which numbers the `<ref *N>` of cycles) where that hook is checked |
-| `velt_rt_strbuf_inspect_atom` | `(const VeltStrBuf* b, u64 start)` | the text from byte `start` to the end of `b` is what a class's `[util.inspect.custom]()` returned: `inspect_layout` keeps it as one piece (node inserts a custom inspect's string as it is). Forgotten at the next `inspect_begin` |
 | `velt_rt_strbuf_len` | `(const VeltStrBuf* b) -> u64` | byte length: where the next value's text starts (for `inspect_layout`) |
-| `velt_rt_strbuf_inspect_layout` | `(VeltStrBuf* b, u64 start)` | re-lays out the text of one printed value, from byte `start` to the end, the way node's `util.inspect` breaks it across lines (`breakLength` 80, 2-space indentation, arrays of more than six short entries in columns (an array's `... n more items` entry on its own line after them), long strings split at line breaks); a value of at most 71 bytes with fewer than six commas and no line break is left alone without being parsed; a custom inspect's text (`velt_rt_strbuf_inspect_atom`) is kept as it is, its lines after the first indented by the value's indentation, as node indents a custom inspect's string. Emitted after each top-level `console.log` / `${}` value that can hold containers |
+| `velt_rt_strbuf_inspect_layout` | `(VeltStrBuf* b, u64 start)` | re-lays out the text of one printed value, from byte `start` to the end, the way node's `util.inspect` breaks it across lines. Compiled code does not call it: std's `inspectLayout` (std/lang/hooks/inspect_layout.velt) lays out what `console.log`, `${}` and `String(x)` print (docs/internals/design/inspect-shapes.md "Line breaking"). Only std's `inspectJsonValue` (std/encoding/json/value_inspect.velt) calls it, for a top-level `JsonValue` array or object |
 | `velt_rt_strbuf_finish` | `(VeltStrBuf* b, VeltStr* out)` | moves the text to `*out`; `*b` becomes empty (reusable, nothing to free) |
 | `velt_rt_strbuf_commit` | `(VeltStrBuf* b, u64 n, u8 ascii)` | the `n` bytes written after the text, in the builder's spare room (a unique heap buffer), become part of it: UTF-8, ASCII when `ascii` is 1 (not counted then) |
 | `velt_rt_strbuf_drop` | `(VeltStrBuf* b)` | abandon an unfinished builder (exception path); zeroes it |
@@ -1087,7 +1089,7 @@ joins through velt/dev's `joinStop` and `drained` (std/dev/stop.velt), on:
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_dev_server_stop` | `() -> VeltSignal` | a signal (the `AbortSignal` handles of §2; the caller owns it) aborted once a stop request arrives; null outside dev mode. The process waits for the server until it reports itself drained (up to 1 s) |
+| `velt_rt_dev_server_stop` | `() -> VeltSignal` | a runtime signal (§2.3; the caller owns it) aborted once a stop request arrives; null outside dev mode. std waits for it and aborts the server's own `AbortSignal`. The process waits for the server until it reports itself drained (up to 1 s) |
 | `velt_rt_dev_server_drained` | `()` | the server that joined stopped accepting and finished its requests |
 
 The stop request is:
@@ -1229,23 +1231,15 @@ std/net/dns/rt.velt) fail with `ENOTSUP`.
 
 ### 14.7 File streams (`velt/fs`)
 
-`VeltFileReader` / `VeltFileWriter` are `Arc`s around a buffered (64 KiB) `std::fs::File`;
-every operation runs on the blocking pool. A writer's last release flushes (errors ignored).
-Lines and text are std code (std/fs/line_buffer.velt): a reader's bytes read ahead, 64 KiB per
-`velt_rt_fs_reader_read`, split at `\n` by `indexOfByte` and decoded there.
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_fs_open_read` | `(const VeltStr* path) -> VeltFut*` | `IoResult<VeltFileReader>` |
-| `velt_rt_fs_open_read_range` | `(const VeltStr* path, u64 start, u64 end) -> VeltFut*` | `IoResult<VeltFileReader>` that reads bytes `start..=end` (both included, as Node's `createReadStream`) and then reports the end of the file; `end` `u64::MAX` = to the end of the file. A `start` past the end of the file, or `end < start`, reads nothing |
-| `velt_rt_fs_reader_opened_stats` | `(VeltFileReader r, IoResult<VeltStat>* out)` | synchronous: the file's `VeltStat` when it was opened (an `fstat` in the open's own blocking call, so no I/O here), whatever its path names now; `size` is the whole file's; `EBADF` once closed |
-| `velt_rt_fs_reader_read` | `(VeltFileReader r, u64 max) -> VeltFut*` | `IoResult<VeltBytes>`, empty = EOF, `max` 0 = 64 KiB |
-| `velt_rt_fs_reader_close` | `(VeltFileReader r)` | |
-| `velt_rt_fs_open_write` | `(const VeltStr* path, u8 append) -> VeltFut*` | `IoResult<VeltFileWriter>`; creates; truncates unless `append` |
-| `velt_rt_fs_writer_write` / `_write_bytes` | `(VeltFileWriter w, const VeltStr* data) -> VeltFut*` / `(VeltFileWriter w, const VeltBytes* data) -> VeltFut*` | `IoResult<()>`; data copied |
-| `velt_rt_fs_writer_flush` | `(VeltFileWriter w) -> VeltFut*` | `IoResult<()>` |
-| `velt_rt_fs_writer_close` | `(VeltFileWriter w) -> VeltFut*` | `IoResult<()>`: flush + close; later writes fail `EPIPE`; idempotent |
-| `velt_rt_fs_writer_free` | `(VeltFileWriter w)` | releases the handle |
+File streams are std code in a native build: std/fs/stream_sched.velt keeps every open reader and
+writer in one table for the process (a reader's file, its range left and its metadata as of the
+open; a writer's file and its 64 KiB buffer), and runs each open, read, write and close on the
+executor's blocking pool, over the C library's file descriptors on macOS and Linux and Win32
+handles on Windows (`#fs-stream-os`). A handle used after `close` fails with `EBADF`; a writer
+released unclosed is flushed then (errors ignored). Lines and text are std code
+(std/fs/line_buffer.velt): a reader's bytes read ahead, 64 KiB per read, split at `\n` by
+`indexOfByte` and decoded there. velt_rt has no file stream functions, and neither has
+velt_rt_wasm: on WebAssembly every open fails with `ENOTSUP` (std/fs/stream_none.velt).
 
 ### 14.8 TLS
 

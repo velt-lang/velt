@@ -1,0 +1,289 @@
+// velt/fs (internal): file streams (`openRead`, `openWrite`, their `FileReader`s and
+// `FileWriter`s) under the executor in Velt, with the names and signatures of the runtime's
+// (std/fs/rt.velt), re-exported by rt_sched.velt. The files are the operating system's
+// (`#fs-stream-os`: descriptors on macOS and Linux, Win32 handles on Windows); every open, read,
+// write and close is a job on the executor's blocking pool (std/lang/hooks/sched_blocking.velt),
+// as whole files are.
+//
+// A stream is a handle into one table for the process (a `Mutex` in a static atomic, as
+// velt/fs/line_buffer's): a handle is unique per open, so copies of one `FileReader` (a handle
+// struct) share one entry, and a handle used after `close` finds none (`EBADF`). An entry is
+// claimed (`busy`) for each operation, which then runs without the lock; another operation on it
+// waits in the entry's queue (parked: no worker turns for it) and gets the turn when the ones
+// that asked before it are done, so reads and writes started together run in the order they were
+// started, as Node's do. Closing a reader while a read is in flight closes its file when that
+// read ends; operations waiting behind it fail with `EBADF`. A writer buffers up to 64 KiB, as the
+// runtime's did; releasing one that was not closed flushes it on the releasing thread, its errors
+// lost.
+
+import { hookCall } from "velt/lang/intrinsics";
+import { IoResult } from "velt/native/result";
+import { IoStatus, ioStatusOf } from "velt/native/status";
+import { Stats } from "velt/fs/stats";
+import { Done } from "velt/fs/whole/done";
+import { OsFile } from "velt/fs/stream_os/os_file";
+import { closeOs, openReadOs, openWriteOs, readOs, writeOs } from "#fs-stream-os";
+import { utf8Encode } from "velt/encoding/utf8";
+import { StreamLeft } from "velt/fs/stream_left";
+import { StreamTable } from "velt/fs/stream_table";
+import { CLOSED, GONE, StreamTurn, WAIT } from "velt/fs/stream_turn";
+
+/** A writer's buffer: writes smaller than this are gathered until it would overflow. */
+const BUFFER: usize = 65536;
+/** A read's size when `max` is 0, and its most. */
+const DEFAULT_READ: u64 = 65536;
+const MOST_READ: u64 = 16777216;
+
+/** The process's streams, made on first use. */
+const TABLE = new Atomic<shared<Mutex<StreamTable>> | null>(null);
+
+function table(): shared<Mutex<StreamTable>> {
+  const found = TABLE.load("acquire");
+  if (found != null) {
+    return found;
+  }
+  // Two first calls race: one table wins, the other is dropped.
+  TABLE.compareExchange(null, shared(new Mutex<StreamTable>(new StreamTable())), "acqrel");
+  const made = TABLE.load("acquire");
+  if (made == null) {
+    panic("ICE: the file stream table is set once and never cleared");
+  }
+  return made;
+}
+
+/** The status of a handle used after `close` (as the runtime's handle tables report it). */
+function closed(): IoStatus {
+  return { code: 16, message: "handle is closed" };
+}
+
+/**
+ * Takes the turn of handle `h` (a writer's, or a reader's): its entry's state then. While another
+ * operation has it, this one waits in the entry's queue, behind the ones that asked before, until
+ * the turn is handed to it.
+ */
+async function turn(h: u64, writer: bool): Promise<StreamTurn> {
+  const first = table().with((s) => s.claim(h));
+  if (first.status != WAIT) {
+    return first;
+  }
+  const w = Promise.withResolvers<void>();
+  const wake = w.resolve;
+  const queued = table().with((s) => s.wait(h, wake));
+  if (queued.status != WAIT) {
+    return queued;
+  }
+  await w.promise;
+  const t = table().with((s) => s.handed(h));
+  if (t.status != GONE) {
+    return t;
+  }
+  // Closed while this operation waited with the turn in hand: the turn goes back, which ends
+  // the stream as the operation in flight at its close would have.
+  if (writer) {
+    settle(table().with((s) => s.releaseWriter(h, null, false)));
+  } else {
+    finish(table().with((s) => s.release(h, 0)));
+  }
+  return { status: CLOSED, os: 0, left: 0, buffered: 0, shut: false };
+}
+
+/** Runs `job` on the blocking pool. */
+async function blocking<T>(job: () => Done<T>): Promise<Done<T>> {
+  return await hookCall<Done<T>>("sched_blocking_run", job);
+}
+
+// ---- Readers. ----
+
+async function openReader(path: string, start: u64, end: u64): Promise<IoResult<u64>> {
+  // No file has a byte past `i64::MAX` (where `lseek` stops): such a start reads nothing.
+  const beyond = start > 9223372036854775807;
+  const d = await blocking<OsFile>(() => openReadOs(path, beyond ? 0 : start));
+  const f = d.value;
+  if (f === null) {
+    const e = ioStatusOf(d.error);
+    return { code: e.code, message: e.message, value: 0 };
+  }
+  let left: u64 = 18446744073709551615;
+  if (beyond) {
+    left = 0;
+  } else if (end != 18446744073709551615) {
+    left = end + 1 > start ? end + 1 - start : 0;
+  }
+  const h = table().with((s) => s.addReader(f.os, left, f.stats));
+  return { code: 0, message: "", value: h };
+}
+
+export async function velt_rt_fs_open_read(path: string): Promise<IoResult<u64>> {
+  return await openReader(path, 0, 18446744073709551615);
+}
+
+/**
+ * Reads bytes `start..=end` (inclusive, as Node's `createReadStream`; `end` the largest u64: to
+ * the end of the file), then reports the end of the file.
+ */
+export async function velt_rt_fs_open_read_range(
+  path: string,
+  start: u64,
+  end: u64,
+): Promise<IoResult<u64>> {
+  return await openReader(path, start, end);
+}
+
+export function velt_rt_fs_reader_opened_stats(r: u64): IoResult<Stats> {
+  const st = table().with((s) => s.statsOf(r));
+  if (st === null) {
+    const c = closed();
+    return {
+      code: c.code,
+      message: c.message,
+      value: { size: 0, mtimeMs: 0, file: false, dir: false, symlink: false },
+    };
+  }
+  return { code: 0, message: "", value: st };
+}
+
+/** One read of `n` bytes at most: the bytes read (fewer at the end of the file, none there). */
+function readChunk(os: u64, n: usize): Done<u8[]> {
+  const bytes: u8[] = new Array<u8>(n as number).fill(0);
+  const d = readOs(os, bytes, 0, n);
+  const got = d.value;
+  if (got === null) {
+    return { value: null, error: d.error };
+  }
+  bytes.length = got as number;
+  return { value: bytes, error: null };
+}
+
+/** The next 1..max bytes (`max` 0: 64 KiB), empty at the end of the file. */
+export async function velt_rt_fs_reader_read(r: u64, max: u64): Promise<IoResult<u8[]>> {
+  const t = await turn(r, false);
+  if (t.status == CLOSED) {
+    const c = closed();
+    return { code: c.code, message: c.message, value: [] };
+  }
+  const size = max == 0 ? DEFAULT_READ : max < MOST_READ ? max : MOST_READ;
+  const n = size < t.left ? size : t.left;
+  if (n == 0) {
+    finish(table().with((s) => s.release(r, 0)));
+    return { code: 0, message: "", value: [] };
+  }
+  const os = t.os;
+  const d = await blocking<u8[]>(() => readChunk(os, n as usize));
+  const bytes = d.value;
+  const got: u64 = bytes === null ? 0 : bytes.length as u64;
+  finish(table().with((s) => s.release(r, got)));
+  if (bytes === null) {
+    const e = ioStatusOf(d.error);
+    return { code: e.code, message: e.message, value: [] };
+  }
+  return { code: 0, message: "", value: bytes };
+}
+
+/** Closes a reader (its file once no read is in flight); closing it again does nothing. */
+export function velt_rt_fs_reader_close(r: u64) {
+  const os = table().with((s) => s.closeReader(r));
+  if (os != 0) {
+    closeOs(os);
+  }
+}
+
+/** After a reader's turn: wakes who got it next, and closes the file it left (0: none). */
+function finish(left: StreamLeft) {
+  for (const wake of left.wake) {
+    wake();
+  }
+  if (left.os != 0) {
+    closeOs(left.os);
+  }
+}
+
+// ---- Writers. ----
+
+/** Creates (or truncates, or with `append` extends) `path` for buffered writing. */
+export async function velt_rt_fs_open_write(path: string, append: bool): Promise<IoResult<u64>> {
+  const d = await blocking<u64>(() => openWriteOs(path, append));
+  const os = d.value;
+  if (os === null) {
+    const e = ioStatusOf(d.error);
+    return { code: e.code, message: e.message, value: 0 };
+  }
+  return { code: 0, message: "", value: table().with((s) => s.addWriter(os)) };
+}
+
+/** Writes `buffered` and then `data` (either may be empty) to file `os`, then closes it (`close`). */
+function writeBoth(os: u64, buffered: u8[], data: u8[], close: bool): Done<bool> {
+  let failed = writeOs(os, buffered, 0, buffered.length as usize);
+  if (failed === null) {
+    failed = writeOs(os, data, 0, data.length as usize);
+  }
+  if (close) {
+    closeOs(os);
+  }
+  return failed === null ? { value: true, error: null } : { value: null, error: failed };
+}
+
+/**
+ * Writer `w`'s operation: `data` added to its buffer, written out with it when the buffer
+ * would overflow (`flush`: always), the file closed after (`close`).
+ */
+async function writerOp(w: u64, data: u8[], flush: bool, close: bool): Promise<IoStatus> {
+  const t = await turn(w, true);
+  if (t.status == CLOSED) {
+    return close ? { code: 0, message: "" } : closed();
+  }
+  if (t.shut) {
+    settle(table().with((s) => s.releaseWriter(w, null, false)));
+    return close ? { code: 0, message: "" } : { code: 10, message: "the file writer is closed" };
+  }
+  const held = t.buffered;
+  if (!flush && held + (data.length as usize) <= BUFFER) {
+    // Gathered: no write yet.
+    settle(table().with((s) => s.releaseWriter(w, data, false)));
+    return { code: 0, message: "" };
+  }
+  const buffered = table().with((s) => s.takeBuffer(w));
+  const os = t.os;
+  const d = await blocking<bool>(() => writeBoth(os, buffered, data, close));
+  settle(table().with((s) => s.releaseWriter(w, null, close)));
+  return d.error === null ? { code: 0, message: "" } : ioStatusOf(d.error);
+}
+
+export async function velt_rt_fs_writer_write(w: u64, data: string): Promise<IoStatus> {
+  return await writerOp(w, utf8Encode(data), false, false);
+}
+
+export async function velt_rt_fs_writer_write_bytes(w: u64, data: u8[]): Promise<IoStatus> {
+  return await writerOp(w, data.slice(0), false, false);
+}
+
+/** Pushes buffered data to the operating system. */
+export async function velt_rt_fs_writer_flush(w: u64): Promise<IoStatus> {
+  return await writerOp(w, [], true, false);
+}
+
+/** Flushes, then closes the file; later writes fail with `EPIPE`. Closing twice is fine. */
+export async function velt_rt_fs_writer_close(w: u64): Promise<IoStatus> {
+  return await writerOp(w, [], true, true);
+}
+
+/**
+ * Releases a writer handle; one not closed is flushed here (errors lost) and its file closed.
+ * Releasing it again does nothing. An operation in flight finishes the release when it ends.
+ */
+export function velt_rt_fs_writer_free(w: u64) {
+  settle(table().with((s) => s.freeWriter(w)));
+}
+
+/**
+ * After a writer's turn: wakes who got it next; what a released writer left is written (errors
+ * lost) and its file closed.
+ */
+function settle(left: StreamLeft) {
+  for (const wake of left.wake) {
+    wake();
+  }
+  if (left.os != 0) {
+    const ignored = writeOs(left.os, left.bytes, 0, left.bytes.length as usize);
+    closeOs(left.os);
+  }
+}

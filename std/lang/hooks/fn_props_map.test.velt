@@ -1,0 +1,92 @@
+// velt/lang/hooks (tests): the address maps of function properties (fn_props_map.velt), run by
+// `velt test std/`. Environments allocated one after another hash to slots far apart, so a
+// program rarely makes keys collide: these tests choose keys that do, and check that a removal
+// shifts the pairs after it back where a lookup finds them.
+import { describe, expect, it } from "velt/test";
+import { mapAnyKey, mapGet, mapRemove, mapSet } from "velt/lang/hooks/fn_props_map";
+import { alloc, free, ld, slotOf } from "velt/lang/hooks/weak_mem";
+
+/** `n` keys (addresses, multiples of 8) whose home slot in a map of 16 slots is `home`. */
+function keysAt(home: usize, n: number): usize[] {
+  const out: usize[] = [];
+  let k: usize = 8;
+  while (out.length < n) {
+    if (slotOf(k, 16) === home) {
+      out.push(k);
+    }
+    k += 8;
+  }
+  return out;
+}
+
+describe("fn_props_map", () => {
+  it("finds the keys probed past a removed one", () => {
+    const field = alloc(8);
+    const [a, b, c] = keysAt(3, 3);
+    const [d] = keysAt(4, 1);
+    mapSet(field, a, 1);
+    mapSet(field, b, 2);
+    mapSet(field, c, 3);
+    mapSet(field, d, 4);
+    expect(mapRemove(field, a)).toBe(1);
+    expect(mapGet(field, a)).toBe(0);
+    expect(mapGet(field, b)).toBe(2);
+    expect(mapGet(field, c)).toBe(3);
+    expect(mapGet(field, d)).toBe(4);
+    expect(mapRemove(field, c)).toBe(3);
+    expect(mapGet(field, b)).toBe(2);
+    expect(mapGet(field, d)).toBe(4);
+    expect(mapRemove(field, a)).toBe(0);
+    expect(mapRemove(field, b)).toBe(2);
+    expect(mapRemove(field, d)).toBe(4);
+    // Emptied, the map is freed.
+    expect(ld(field)).toBe(0);
+    expect(mapAnyKey(field)).toBe(0);
+    free(field);
+  });
+
+  it("wraps around the end of the slots", () => {
+    const field = alloc(8);
+    const [a, b, c] = keysAt(15, 3);
+    const [d] = keysAt(0, 1);
+    mapSet(field, a, 1);
+    mapSet(field, b, 2);
+    mapSet(field, c, 3);
+    mapSet(field, d, 4);
+    expect(mapRemove(field, b)).toBe(2);
+    expect(mapGet(field, a)).toBe(1);
+    expect(mapGet(field, c)).toBe(3);
+    expect(mapGet(field, d)).toBe(4);
+    expect(mapRemove(field, a)).toBe(1);
+    expect(mapGet(field, c)).toBe(3);
+    expect(mapGet(field, d)).toBe(4);
+    mapRemove(field, c);
+    mapRemove(field, d);
+    expect(ld(field)).toBe(0);
+    free(field);
+  });
+
+  it("keeps every pair through growth and removals", () => {
+    const field = alloc(8);
+    for (let i: usize = 1; i <= 300; i++) {
+      mapSet(field, i * 24, i);
+    }
+    mapSet(field, 24, 1000);
+    for (let i: usize = 1; i <= 300; i += 2) {
+      mapRemove(field, i * 24);
+    }
+    let found: usize = 0;
+    for (let i: usize = 2; i <= 300; i += 2) {
+      if (mapGet(field, i * 24) === i) {
+        found++;
+      }
+    }
+    expect(found).toBe(150);
+    expect(mapGet(field, 24)).toBe(0);
+    while (mapAnyKey(field) !== 0) {
+      mapRemove(field, mapAnyKey(field));
+    }
+    expect(ld(field)).toBe(0);
+    free(field);
+  });
+});

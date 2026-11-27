@@ -172,7 +172,7 @@ impl FnLower<'_, '_> {
     /// constructor shared (`this` stored elsewhere) only loses this reference.
     fn drop_half_built(&mut self, p: &Place, ty: TyId) {
         let obj = Operand::Copy(p.clone());
-        let free = |lw: &mut Self| lw.drop_fields_and_free(p, ty);
+        let free = |lw: &mut Self| lw.drop_fields_and_free(p, ty, 0);
         if self.cx.counted(ty) {
             let weak = self.cx.weak_capable(ty);
             self.release_of(obj, ty, weak, free);
@@ -182,9 +182,9 @@ impl FnLower<'_, '_> {
     }
 
     /// Drop the fields of the class object at `p` and free it, without its `[Symbol.dispose]()`.
-    fn drop_fields_and_free(&mut self, p: &Place, ty: TyId) {
+    fn drop_fields_and_free(&mut self, p: &Place, ty: TyId, from: u32) {
         for (i, t) in self.cx.adt_field_tys(ty).into_iter().enumerate() {
-            if self.cx.needs_drop(t) {
+            if i as u32 >= from && self.cx.needs_drop(t) {
                 let fp = self.field_place(p, ty, i as u32);
                 self.drop_glue(fp, t);
             }
@@ -230,7 +230,7 @@ impl FnLower<'_, '_> {
                 self.switch_to(join);
             }
             DropEntry::HalfBuilt(p, ty) => self.drop_half_built(p, *ty),
-            DropEntry::Disposing(p, ty) => self.drop_fields_and_free(p, *ty),
+            DropEntry::Disposing(p, ty, from) => self.drop_fields_and_free(p, *ty, *from),
             DropEntry::Local(id) => self.drop_local(*id),
             DropEntry::Rest(p, ty, pat) => self.drop_rest(p.clone(), *ty, pat),
             DropEntry::ConsumedArray { arr, next, elem } => self.drop_consumed(arr, *next, *elem),

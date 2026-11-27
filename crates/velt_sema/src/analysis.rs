@@ -190,6 +190,7 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
         return;
     }
     timings::pass("hooks::check_throws", || hooks::check_throws(cx));
+    crate::error_message::check_throws(cx);
     decorators::export_throws(cx);
     let uses = timings::pass("record_keys::check_instantiations", || {
         record_keys::check_instantiations(cx)

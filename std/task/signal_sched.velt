@@ -1,0 +1,65 @@
+// velt/task (internal): the abort signals behind `AbortSignal` (signal.velt) under the executor in
+// Velt (`VELT_SCHEDULER=std`, the `std-scheduler` variant of `#task-signal`): std's own
+// (signal_core.velt). A signal is a handle; each holder releases its reference with `signalFree`.
+
+import { promiseAt } from "velt/lang/intrinsics";
+import { publishOutput } from "#sync-output";
+import * as c from "velt/task/signal_core";
+
+/** A new signal that is not aborted. */
+export function signalNew(): u64 {
+  return c.create() as u64;
+}
+
+/** Another reference to signal `s` (for a holder that releases it on its own). */
+export function signalRetain(s: u64): u64 {
+  c.retain(s as usize);
+  return s;
+}
+
+/** Releases a reference to signal `s`. */
+export function signalFree(s: u64): void {
+  c.release(s as usize);
+}
+
+/**
+ * Aborts signal `s` with `reason` (a no-op if it is aborted already) and every signal derived
+ * from it; wakes the tasks waiting for it, after what this thread printed is published.
+ */
+export function signalAbort(s: u64, reason: string): void {
+  publishOutput();
+  c.abort(s as usize, reason);
+}
+
+/** Whether signal `s` is aborted. */
+export function signalAborted(s: u64): bool {
+  return c.isAborted(s as usize);
+}
+
+/** Signal `s`'s reason (`""` while it is not aborted). */
+export function signalReason(s: u64): string {
+  return c.reason(s as usize);
+}
+
+/**
+ * Completes once signal `s` is aborted (never, if it never is). `timed`: a timer may abort it, so
+ * the wait keeps the process alive, as a wait for a timer does.
+ */
+export function signalWait(s: u64, timed: bool): Promise<void> {
+  // SAFETY: a new heap future of a unit result, owned by the promise.
+  return unsafe { promiseAt<void>(c.waitFuture(s as usize, timed)) };
+}
+
+/**
+ * A new signal aborted as soon as any of `signals` is (at once with the first aborted already,
+ * in their order), with that signal's reason; it keeps them alive until then.
+ */
+export function signalAny(signals: u64[]): u64 {
+  const any = c.create();
+  for (const s of signals) {
+    if (!c.link(s as usize, any)) {
+      break;
+    }
+  }
+  return any as u64;
+}

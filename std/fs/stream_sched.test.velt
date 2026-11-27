@@ -1,0 +1,230 @@
+// velt/fs (tests): file streams under the executor in Velt (std/fs/stream_sched.velt): a handle
+// used after `close` fails with EBADF, a reader closed with a read in flight lets that read end,
+// copies of one reader read in turn, reads and writes started together run in the order they were
+// started, operations waiting behind a close fail with EBADF, a writer's buffer reaches the file
+// on `flush`, `close` and when it is released unclosed, a write after `close` fails with EPIPE, and
+// a reader whose file is descriptor 0 is closed like any other.
+import { openRead, openWrite, readFile, readFileSync, remove, writeFile } from "velt/fs";
+import { platform, tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+import { describe, expect, it } from "velt/test";
+import { IoError } from "velt/io";
+import { unwrapIo } from "velt/native/result";
+import { closeFd } from "#fd-system";
+import {
+  velt_rt_fs_open_read_range,
+  velt_rt_fs_open_write,
+  velt_rt_fs_reader_close,
+  velt_rt_fs_reader_read,
+  velt_rt_fs_writer_close,
+  velt_rt_fs_writer_free,
+  velt_rt_fs_writer_write,
+} from "velt/fs/stream_sched";
+
+function temp(name: string): string {
+  return `${tmpdir()}/velt-stream-${uuidv4()}-${name}`;
+}
+
+// The code of what `f` throws, or "none".
+async function codeOf(f: () => Promise<void> throws IoError): Promise<string> {
+  try {
+    await f();
+  } catch (e) {
+    return e.code;
+  }
+  return "none";
+}
+
+// Reads one byte at a time from a copy of the reader until the end: what it read.
+async function oneByOne(h: u64): Promise<string> {
+  let out = "";
+  while (true) {
+    const b = unwrapIo(await velt_rt_fs_reader_read(h, 1));
+    if (b.length == 0) {
+      return out;
+    }
+    out += String.fromCharCode(b[0] as number);
+  }
+}
+
+describe("stream_sched", () => {
+  it("fails with EBADF after close, and closes twice quietly", async () => {
+    const path = temp("closed");
+    await writeFile(path, "abc");
+    const r = await openRead(path);
+    r.close();
+    r.close();
+    expect(
+      await codeOf(async () => {
+        const b = await r.read();
+      }),
+    ).toBe("EBADF");
+    await remove(path);
+  });
+
+  it("lets a read in flight end when its reader is closed", async () => {
+    const path = temp("flight");
+    await writeFile(path, "0123456789");
+    const r = await openRead(path);
+    const pending = r.read(4);
+    r.close();
+    expect((await pending).length).toBe(4);
+    await remove(path);
+  });
+
+  it("reads in turn through copies of one reader", async () => {
+    const path = temp("turns");
+    const text = "abcdefghijklmnopqrstuvwxyz0123456789";
+    await writeFile(path, text);
+    const h = unwrapIo(await velt_rt_fs_open_read_range(path, 2, 18446744073709551615));
+    const a = spawn(oneByOne(h));
+    const b = spawn(oneByOne(h));
+    const both = (await a) + (await b);
+    expect(both.length).toBe(text.length - 2);
+    const sorted = both.split("").sort().join("");
+    expect(sorted).toBe(text.slice(2).split("").sort().join(""));
+    velt_rt_fs_reader_close(h);
+    await remove(path);
+  });
+
+  it("runs reads started together in the order they were started", async () => {
+    const path = temp("read-order");
+    await writeFile(path, "0123456789abcdefghijklmnopqrstuvwxyz");
+    const r = await openRead(path);
+    const reads: Promise<u8[], IoError>[] = [];
+    for (let i = 0; i < 36; i++) {
+      reads.push(r.read(1));
+    }
+    let got = "";
+    for (const p of reads) {
+      got += String.fromCharCode((await p)[0] as number);
+    }
+    expect(got).toBe("0123456789abcdefghijklmnopqrstuvwxyz");
+    r.close();
+    await remove(path);
+  });
+
+  it("runs writes started together in the order they were started", async () => {
+    const path = temp("write-order");
+    const w = await openWrite(path);
+    const writes: Promise<void, IoError>[] = [];
+    let want = "";
+    for (let i = 0; i < 12; i++) {
+      // Larger than the buffer (written at once) and small (gathered), in turn.
+      const piece = i % 3 == 2 ? `<${i}>` : `${i % 10}`.repeat(70000);
+      writes.push(w.write(piece));
+      want += piece;
+    }
+    for (const p of writes) {
+      await p;
+    }
+    await w.close();
+    expect(await readFile(path)).toBe(want);
+    await remove(path);
+  });
+
+  it("fails the reads waiting behind a close with EBADF", async () => {
+    const path = temp("close-waiting");
+    await writeFile(path, "0123456789");
+    const r = await openRead(path);
+    const first = r.read(4);
+    const second = r.read(4);
+    const third = r.read(4);
+    r.close();
+    expect((await first).length).toBe(4);
+    expect(
+      await codeOf(async () => {
+        const b = await second;
+      }),
+    ).toBe("EBADF");
+    expect(
+      await codeOf(async () => {
+        const b = await third;
+      }),
+    ).toBe("EBADF");
+    await remove(path);
+  });
+
+  it("writes large and small pieces in order", async () => {
+    const path = temp("pieces");
+    const w = await openWrite(path);
+    let want = "";
+    for (let i = 0; i < 300; i++) {
+      const piece = i % 50 == 0 ? "x".repeat(70000) : `${i},`;
+      await w.write(piece);
+      want += piece;
+    }
+    await w.flush();
+    expect((await readFile(path)).length).toBe(want.length);
+    await w.close();
+    await w.close();
+    expect(await readFile(path)).toBe(want);
+    expect(
+      await codeOf(async () => {
+        await w.write("late");
+      }),
+    ).toBe("EBADF");
+    await remove(path);
+  });
+
+  it("flushes a writer released without close", async () => {
+    const path = temp("released");
+    const w = unwrapIo(await velt_rt_fs_open_write(path, false));
+    const s = await velt_rt_fs_writer_write(w, "kept");
+    expect(s.code).toBe(0);
+    velt_rt_fs_writer_free(w);
+    velt_rt_fs_writer_free(w);
+    expect(readFileSync(path)).toBe("kept");
+    await remove(path);
+  });
+
+  it("refuses a write after close until the writer is released", async () => {
+    const path = temp("shut");
+    const w = unwrapIo(await velt_rt_fs_open_write(path, false));
+    expect((await velt_rt_fs_writer_write(w, "a")).code).toBe(0);
+    expect((await velt_rt_fs_writer_close(w)).code).toBe(0);
+    expect((await velt_rt_fs_writer_close(w)).code).toBe(0);
+    // EPIPE (10): the file is closed, the handle not yet released.
+    expect((await velt_rt_fs_writer_write(w, "b")).code).toBe(10);
+    velt_rt_fs_writer_free(w);
+    // EBADF (16): released.
+    expect((await velt_rt_fs_writer_write(w, "c")).code).toBe(16);
+    expect(readFileSync(path)).toBe("a");
+    await remove(path);
+  });
+
+  it("names the path when an open fails", async () => {
+    const path = temp("missing");
+    let message = "";
+    try {
+      const r = await openRead(path);
+      r.close();
+    } catch (e) {
+      message = e.message;
+    }
+    // The whole message, path included; Windows shows the path with its own separator.
+    const shown = platform() == "win32" ? path.replaceAll("/", "\\") : path;
+    expect(message).toBe(`ENOENT: no such file or directory, open '${shown}'`);
+  });
+
+  // Last: it frees descriptor 0 (the tests read no standard input), which later opens then get.
+  it("closes a reader whose file is descriptor 0", async () => {
+    if (platform() == "win32") {
+      // A Win32 handle is never 0.
+      return;
+    }
+    const path = temp("fd0");
+    await writeFile(path, "kept");
+    // Once before, so whatever the first stream makes the process open is open already.
+    const warm = await openRead(path);
+    warm.close();
+    expect(closeFd(0)).toBe(0);
+    // The lowest free descriptor: 0.
+    const r = await openRead(path);
+    expect(await r.readString()).toBe("kept");
+    r.close();
+    // The reader's close closed descriptor 0: closing it again fails.
+    expect(closeFd(0)).toBe(-1);
+    await remove(path);
+  });
+});
