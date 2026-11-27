@@ -1,12 +1,17 @@
 // velt/process/child (internal): `execSync`'s start where no other variant of `#exec-sync`
-// (std/imports.velt) runs it (WebAssembly): the runtime's `velt_rt_child_output_sync`. macOS and
-// Linux start the child in std (exec_sync_posix.velt), Windows has its own (exec_sync_win32.velt).
+// (std/imports.velt) runs it (WebAssembly): no child can start there, so it fails with `ENOTSUP`,
+// as `spawn` and `exec` do (std/process/child/rt.velt). macOS and Linux start the child in std
+// (exec_sync_posix.velt), Windows too (exec_sync_win32.velt).
 
 import { IoResult } from "velt/native/result";
 import { CommandSpec } from "velt/process/child/spec";
-import { RawOutput, velt_rt_child_output_sync } from "./rt";
+import { RawOutput } from "./rt";
 
 /** Runs `spec` to completion with `input`, blocking the calling thread. */
 export function outputSync(spec: CommandSpec, input: string): IoResult<RawOutput> {
-  return velt_rt_child_output_sync(spec, input);
+  return {
+    code: 12,
+    message: `spawn ${spec.program}: operation not supported on this platform`,
+    value: { code: 0, stdout: "", stderr: "" },
+  };
 }

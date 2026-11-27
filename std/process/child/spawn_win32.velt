@@ -24,6 +24,7 @@ import * as wk from "velt/lang/hooks/sched_wake";
 import * as cl from "velt/process/child/command_line_win32";
 import { freeList, handleList } from "velt/process/child/handle_list_win32";
 import * as pw from "velt/process/child/pipes_win32";
+import * as sp from "velt/process/child/sync_pipe_win32";
 import { CommandSpec } from "velt/process/child/spec";
 
 /** C's `STARTUPINFOW` (also the head of `STARTUPINFOEXW`). */
@@ -115,24 +116,6 @@ export class Started {
   stderr: usize = 0;
 }
 
-/** Does any text of `spec` hold a NUL (which no Windows string can)? */
-function holdsNul(spec: CommandSpec): bool {
-  if (spec.program.includes("\0") || spec.cwd.includes("\0")) {
-    return true;
-  }
-  for (const a of spec.args) {
-    if (a.includes("\0")) {
-      return true;
-    }
-  }
-  for (const v of spec.env) {
-    if (v.includes("\0")) {
-      return true;
-    }
-  }
-  return false;
-}
-
 /**
  * A copy of handle `h` the child can inherit (`close`: `h` is closed by the copy); 0 when `h`
  * is none, and `INVALID_HANDLE` when the copy failed (`GetLastError` says why).
@@ -161,20 +144,34 @@ function inheritable(h: usize, close: bool): usize {
 
 /**
  * The child's handle for stream `i` (0 stdin, 1 stdout, 2 stderr) in `mode` (0 inherit, 1 pipe,
- * 2 the null device), with the parent's end of a pipe in `out`; `INVALID_HANDLE` on failure.
+ * 2 the null device, 3 a pipe whose parent end is overlapped: `execSync`'s,
+ * std/process/child/sync_pipe_win32.velt), with the parent's end of a pipe in `out`;
+ * `INVALID_HANDLE` on failure.
  */
 function streamFor(i: u32, mode: u32, out: Started): usize {
-  if (mode === 1) {
-    const r = new Out<Ptr<void> | null>(null);
-    const w = new Out<Ptr<void> | null>(null);
-    // SAFETY: two handles are written; no security attributes (not inheritable).
-    if (unsafe { CreatePipe(r, w, null, PIPE_SIZE) } === 0) {
-      return INVALID_HANDLE;
+  if (mode === 1 || mode === 3) {
+    let parent: usize = 0;
+    let childEnd: usize = 0;
+    if (mode === 3) {
+      const ends = sp.overlappedPipe(i);
+      if (ends == null) {
+        return INVALID_HANDLE;
+      }
+      parent = ends!.parent;
+      childEnd = ends!.child;
+    } else {
+      const r = new Out<Ptr<void> | null>(null);
+      const w = new Out<Ptr<void> | null>(null);
+      // SAFETY: two handles are written; no security attributes (not inheritable).
+      if (unsafe { CreatePipe(r, w, null, PIPE_SIZE) } === 0) {
+        return INVALID_HANDLE;
+      }
+      const readEnd = Ptr.addressOf<void>(r.value);
+      const writeEnd = Ptr.addressOf<void>(w.value);
+      parent = i === 0 ? writeEnd : readEnd;
+      childEnd = i === 0 ? readEnd : writeEnd;
     }
-    const readEnd = Ptr.addressOf<void>(r.value);
-    const writeEnd = Ptr.addressOf<void>(w.value);
-    const parent = i === 0 ? writeEnd : readEnd;
-    const child = inheritable(i === 0 ? readEnd : writeEnd, true);
+    const child = inheritable(childEnd, true);
     if (child === INVALID_HANDLE) {
       pw.closeHandle(parent);
       return INVALID_HANDLE;
@@ -250,7 +247,7 @@ export function resolve(spec: CommandSpec, env: string[], out: Started): string 
     out.error = ERROR_INVALID_PARAMETER;
     return null;
   }
-  if (holdsNul(spec)) {
+  if (cl.holdsNul(spec)) {
     out.error = ERROR_INVALID_PARAMETER;
     out.message = "nul byte found in provided data";
     return null;
@@ -269,8 +266,8 @@ export function resolve(spec: CommandSpec, env: string[], out: Started): string 
 
 /**
  * Starts `spec` with stdio modes `modes` (`stdin | stdout << 2 | stderr << 4`; 0 inherit, 1
- * pipe, 2 the null device): the child's process handle and id and the parent's ends of its
- * pipes, or the Windows error it failed with.
+ * pipe, 2 the null device, 3 an overlapped pipe): the child's process handle and id and the
+ * parent's ends of its pipes, or the Windows error it failed with.
  */
 export function start(spec: CommandSpec, modes: u32): Started {
   const out = new Started();
@@ -289,7 +286,7 @@ export function start(spec: CommandSpec, modes: u32): Started {
   for (let i: u32 = 0; i < 3; i++) {
     const h = streamFor(i, (modes >> (2 * i)) & 3, out);
     if (h === INVALID_HANDLE) {
-      out.error = pw.lastError();
+      out.error = sp.errorNow();
       break;
     }
     m.st(handles + 8 * (i as usize), h);
@@ -340,7 +337,7 @@ function launch(
   // The list of the handles the child inherits (none: no list, and nothing inherited).
   const list = count > 0 ? handleList(handles + 24, count) : 0;
   if (count > 0 && list === 0) {
-    out.error = pw.lastError();
+    out.error = sp.errorNow();
   }
   m.st32(si + SI_CB, (count > 0 ? SIEX_SIZE : SI_SIZE) as u32);
   m.st32(si + SI_FLAGS, STARTF_USESTDHANDLES);
@@ -367,7 +364,7 @@ function launch(
       );
     }
     if (done === 0) {
-      out.error = pw.lastError();
+      out.error = sp.errorNow();
     } else {
       out.process = m.ld(pi + PI_PROCESS);
       out.pid = m.ld32(pi + PI_PID);

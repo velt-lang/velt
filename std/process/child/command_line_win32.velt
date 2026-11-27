@@ -227,6 +227,24 @@ export function block(env: string[]): u16[] {
   return out;
 }
 
+/** Does any text of `spec` hold a NUL (which no Windows string can)? */
+export function holdsNul(spec: CommandSpec): bool {
+  if (spec.program.includes("\0") || spec.cwd.includes("\0")) {
+    return true;
+  }
+  for (const a of spec.args) {
+    if (a.includes("\0")) {
+      return true;
+    }
+  }
+  for (const v of spec.env) {
+    if (v.includes("\0")) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Does `name` name a batch file (`.bat` or `.cmd`, any case)? As Windows opens it: without the
  * dots and spaces at its end (`x.bat.` and `x.bat ` open `x.bat`).

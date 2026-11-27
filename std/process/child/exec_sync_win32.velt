@@ -1,38 +1,206 @@
-// velt/process/child (internal): `execSync`'s start on Windows (`#exec-sync`, std/imports.velt).
-// The runtime's `velt_rt_child_output_sync` runs it, but the program is found first as `exec`
-// and `spawn` find it (Node's libuv lookup, std/process/child/command_line_win32.velt), and a
-// batch file is refused (`EINVAL`) as they refuse it, so the three agree: Rust's `Command` would
-// look elsewhere and run a batch file through `cmd.exe`.
+// velt/process/child (internal): `execSync`'s start on Windows (`#exec-sync`, std/imports.velt),
+// blocking the calling thread as Node's `spawnSync` does. The child starts as `spawn` and `exec`
+// start theirs (std/process/child/spawn_win32.velt: the program found as libuv finds it, a batch
+// file refused with `EINVAL`, the command line and environment made as libuv makes them). Its
+// stdout and stderr are pipes, its stdin a pipe when there is input (the null device otherwise),
+// each a named pipe whose parent end is overlapped (std/process/child/sync_pipe_win32.velt): one
+// loop keeps a read pending on each output and a write of the input
+// (std/process/child/sync_io_win32.velt), waits for whichever ends first
+// (`WaitForMultipleObjects` on their events) and starts the next, so a child that fills one pipe
+// while this side waits on another never deadlocks. Then the process handle is waited for and its
+// exit code read. Nothing of the executor runs: the pipes are this thread's alone.
+//
+// A Windows call that fails fails the run with its error (`spawnSync x CODE`), as Node's
+// `spawnSync` fails when libuv reports one: before the child starts when a pipe's event can't be
+// made, else with the child ended first. Only the child's end of a pipe closing is no error.
+// `$VELT_TEST_EXEC_SYNC_FAIL` makes one step's call fail, for tests (`FAIL_VAR`).
 
 import { IoResult } from "velt/native/result";
-import * as cl from "velt/process/child/command_line_win32";
+import { Out } from "velt/ffi/out";
+import { Ptr } from "velt/ffi/ptr";
+import { arraySetLen, strByteLen, strDataAddress } from "velt/lang/intrinsics";
+import { strBytesOf } from "velt/ffi/str_bytes";
+import * as m from "velt/lang/hooks/mem_raw";
 import { CommandSpec } from "velt/process/child/spec";
 import * as sw from "velt/process/child/spawn_win32";
-import { RawOutput, velt_rt_child_output_sync } from "./rt";
+import * as io from "velt/process/child/sync_io_win32";
+import * as sp from "velt/process/child/sync_pipe_win32";
+import { getEnv } from "#env-sys";
+import { RawOutput } from "./rt";
 
-/** Runs `spec` to completion with `input`, blocking the calling thread. */
-export function outputSync(spec: CommandSpec, input: string): IoResult<RawOutput> {
+declare c("c") function WaitForMultipleObjects(
+  count: u32,
+  handles: Ptr<Ptr<void>> | null,
+  waitAll: i32,
+  ms: u32,
+): u32;
+declare c("c") function WaitForSingleObject$sync(h: Ptr<void> | null, ms: u32): u32;
+declare c("c") function GetExitCodeProcess$sync(h: Ptr<void> | null, code: Out<u32>): i32;
+declare c("c") function TerminateProcess$sync(h: Ptr<void> | null, code: u32): i32;
+
+const INFINITE: u32 = 0xffffffff;
+const WAIT_OBJECT_0: u32 = 0;
+const WAIT_FAILED: u32 = 0xffffffff;
+/**
+ * For tests: the step whose Windows call fails (`sp.injected`, `ERROR_NOT_ENOUGH_MEMORY`), one
+ * of `event` (making a pipe's event), `read`, `write`, `wait` (for the pipes) and `exit` (the
+ * exit code).
+ */
+const FAIL_VAR = "VELT_TEST_EXEC_SYNC_FAIL";
+
+/**
+ * Waits for the child of process handle `h` to end: its exit code, or minus the Windows error
+ * when that failed (`fail`: a test's failure of `GetExitCodeProcess`).
+ */
+function exitCode(h: usize, fail: bool): i64 {
+  const code = new Out<u32>(0);
+  // SAFETY: a process handle this function's caller owns.
+  unsafe {
+    if (WaitForSingleObject$sync(m.ptrTo<void>(h), INFINITE) !== WAIT_OBJECT_0) {
+      return -(sp.errorNow() as i64);
+    }
+    const got = fail ? (sp.injected() as i32) : GetExitCodeProcess$sync(m.ptrTo<void>(h), code);
+    if (got === 0) {
+      return -(sp.errorNow() as i64);
+    }
+  }
+  return code.value as i64;
+}
+
+/** The result of a run of `spec` that failed: `got`'s error, as `spawnSync x CODE`. */
+function failed(spec: CommandSpec, got: sw.Started): IoResult<RawOutput> {
+  const st = sw.failure(spec.program, got);
+  return { code: st.code, message: st.message, value: { code: 0, stdout: "", stderr: "" } };
+}
+
+/** `failed` with Windows error `e`. */
+function failedWith(spec: CommandSpec, e: u32): IoResult<RawOutput> {
   const got = new sw.Started();
-  const program = sw.resolve(spec, cl.environment(spec), got);
-  if (program == null) {
-    const st = sw.failure(spec.program, got);
-    return { code: st.code, message: st.message, value: { code: 0, stdout: "", stderr: "" } };
+  got.error = e;
+  return failed(spec, got);
+}
+
+/**
+ * Runs `spec` to completion with `input`, blocking the calling thread. No output is reported as
+ * a whole run's when it is not: any failure but the child's end of a pipe closing fails the run.
+ */
+export function outputSync(spec: CommandSpec, input: string): IoResult<RawOutput> {
+  const fail = getEnv(FAIL_VAR) ?? "";
+  // The input's UTF-8 bytes, in the string itself (a lone surrogate as U+FFFD), alive below.
+  const text = strBytesOf(input);
+  const size = strByteLen(text);
+  const from = size === 0 ? 0 : strDataAddress(text);
+  // Each pipe's `OVERLAPPED` and event, made before the child starts (stdin's only with input).
+  const ovs: usize[] = [0, 0, 0];
+  for (let i: usize = size === 0 ? 1 : 0; i < 3; i++) {
+    const ov = io.overlapped(fail == "event");
+    if (ov === 0) {
+      const e = sp.errorNow();
+      for (const made of ovs) {
+        io.freeOverlapped(made);
+      }
+      return failedWith(spec, e);
+    }
+    ovs[i as i64] = ov;
   }
-  const found: CommandSpec = {
-    program: program,
-    args: spec.args.clone(),
-    cwd: spec.cwd.clone(),
-    env: spec.env.clone(),
-    stdio: spec.stdio,
-    clearEnv: spec.clearEnv,
-  };
-  const ran = velt_rt_child_output_sync(found, input);
-  const prefix = `spawn ${program}: `;
-  if (ran.code !== 0 && ran.message.startsWith(prefix)) {
-    // Worded as the program given (`spawn fake: …`), not the file found, as `spawn` and `exec`
-    // word it: `SpawnError` reads that (spawn_error.velt).
-    const text = ran.message.slice(prefix.length as i64);
-    return { code: ran.code, message: `spawn ${spec.program}: ${text}`, value: ran.value };
+  // Stdin is a pipe only when there is input; the child reads end of stream otherwise.
+  const got = sw.start(spec, (size === 0 ? 2 : 3) | (3 << 2) | (3 << 4));
+  if (got.process === 0) {
+    for (const made of ovs) {
+      io.freeOverlapped(made);
+    }
+    return failed(spec, got);
   }
-  return ran;
+  const pipes = [
+    io.pipeOf(got.stdin, ovs[0]),
+    io.pipeOf(got.stdout, ovs[1]),
+    io.pipeOf(got.stderr, ovs[2]),
+  ];
+  // The events of the pending operations, and which pipe each is.
+  const events = m.zeroed(24);
+  const which: usize[] = [0, 0, 0];
+  // The Windows error that fails the run (0: none).
+  let error: u32 = 0;
+  while (error === 0) {
+    let n: usize = 0;
+    for (let i: usize = 0; i < 3 && error === 0; i++) {
+      const p = pipes[i as i64];
+      if (p.h !== 0 && !p.pending) {
+        if (i === 0) {
+          io.startWrite(p, from, size, fail == "write");
+        } else {
+          io.startRead(p, fail == "read");
+        }
+        error = p.error;
+      }
+      if (p.h !== 0) {
+        m.st(events + 8 * n, io.eventOf(p));
+        which[n as i64] = i;
+        n++;
+      }
+    }
+    if (error !== 0 || n === 0) {
+      break;
+    }
+    let w: u32 = WAIT_FAILED;
+    if (fail == "wait") {
+      sp.injected();
+    } else {
+      // SAFETY: `n` event handles at `events`, each of an operation pending.
+      w = unsafe { WaitForMultipleObjects(n as u32, m.ptrTo<Ptr<void>>(events), 0, INFINITE) };
+    }
+    if (w >= WAIT_OBJECT_0 + (n as u32)) {
+      error = sp.errorNow();
+      break;
+    }
+    const i = which[w as i64];
+    const p = pipes[i as i64];
+    const moved = io.finished(p, false);
+    if (moved < 0 && !io.closedEnd(p.error, i === 0)) {
+      error = p.error;
+      if (i !== 0) {
+        arraySetLen(p.data, p.kept);
+      }
+    } else if (i === 0) {
+      // The child closed its stdin when the write failed: the rest is dropped, and the run goes
+      // on, as Node's `spawnSync` does.
+      p.off += moved > 0 ? (moved as usize) : 0;
+      if (moved < 0 || p.off >= size) {
+        io.endPipe(p);
+      }
+    } else if (moved < 0) {
+      // `ERROR_BROKEN_PIPE`: every handle to the child's end is closed.
+      arraySetLen(p.data, p.kept);
+      io.endPipe(p);
+    } else {
+      arraySetLen(p.data, p.kept + (moved as usize));
+    }
+  }
+  m.release(events, 24);
+  if (error !== 0) {
+    // The run failed: the child is ended first (its pipes then end too), as Node's `spawnSync`
+    // kills it on a pipe's error.
+    // SAFETY: the child's process handle; one that ended already refuses, which is no matter.
+    unsafe {
+      TerminateProcess$sync(m.ptrTo<void>(got.process), 1);
+    }
+  }
+  for (const p of pipes) {
+    if (p.pending) {
+      io.cancel(p);
+    }
+    io.endPipe(p);
+  }
+  const code = exitCode(got.process, error === 0 && fail == "exit");
+  sp.closeHandle(got.process);
+  if (error === 0 && code < 0) {
+    error = (-code) as u32;
+  }
+  if (error !== 0) {
+    return failedWith(spec, error);
+  }
+  const stdout = pipes[1].data.utf8Slice();
+  const stderr = pipes[2].data.utf8Slice();
+  const ran: RawOutput = { code: code as i32, stdout: stdout, stderr: stderr };
+  return { code: 0, message: "", value: ran };
 }

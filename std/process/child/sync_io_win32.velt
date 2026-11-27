@@ -1,0 +1,246 @@
+// velt/process/child (internal): the overlapped reads and writes of `execSync` on Windows
+// (std/process/child/exec_sync_win32.velt runs the loop): one `Pipe` per stream of the child, the
+// parent's overlapped end of a pipe made by std/process/child/sync_pipe_win32.velt, with its own
+// `OVERLAPPED` and event. A Windows error that is not the child's end closing is kept on the pipe
+// (`Pipe.error`), and fails the run.
+//
+// `OVERLAPPED` is laid out in raw memory at the Windows SDK's offsets for 64-bit Windows
+// (minwinbase.h): two words for the system, the offset, then the event at 24.
+
+import { Out } from "velt/ffi/out";
+import { Ptr } from "velt/ffi/ptr";
+import { arrayDataAddress, arrayReserve, arraySetLen } from "velt/lang/intrinsics";
+import * as m from "velt/lang/hooks/mem_raw";
+import * as sp from "velt/process/child/sync_pipe_win32";
+
+/** C's `OVERLAPPED`. */
+declare c type _OVERLAPPED;
+/** C's `SECURITY_ATTRIBUTES`: never passed. */
+declare c type _SECURITY_ATTRIBUTES;
+
+declare c("c") function ReadFile$sync(
+  file: Ptr<void> | null,
+  buf: Ptr<u8> | null,
+  n: u32,
+  read: Ptr<u32> | null,
+  overlapped: Ptr<_OVERLAPPED> | null,
+): i32;
+declare c("c") function WriteFile$sync(
+  file: Ptr<void> | null,
+  buf: Ptr<u8> | null,
+  n: u32,
+  written: Ptr<u32> | null,
+  overlapped: Ptr<_OVERLAPPED> | null,
+): i32;
+declare c("c") function GetOverlappedResult(
+  file: Ptr<void> | null,
+  overlapped: Ptr<_OVERLAPPED> | null,
+  n: Out<u32>,
+  wait: i32,
+): i32;
+declare c("c") function CreateEventW(
+  attributes: Ptr<_SECURITY_ATTRIBUTES> | null,
+  manualReset: i32,
+  initialState: i32,
+  name: Ptr<u16> | null,
+): Ptr<void> | null;
+declare c("c") function CancelIoEx(
+  file: Ptr<void> | null,
+  overlapped: Ptr<_OVERLAPPED> | null,
+): i32;
+
+const ERROR_BROKEN_PIPE: u32 = 109;
+const ERROR_NO_DATA: u32 = 232;
+const ERROR_PIPE_NOT_CONNECTED: u32 = 233;
+const ERROR_IO_PENDING: u32 = 997;
+/** The size of an `OVERLAPPED`, and where its event is. */
+const OV_SIZE: usize = 32;
+const OV_EVENT: usize = 24;
+/** A pipe's buffer's first size, and the least it grows by. */
+const CHUNK: usize = 65536;
+/** The spare room below which a buffer grows before the next read (it reads into the rest). */
+const MIN_READ: usize = 4096;
+/** The most one write passes. */
+const MOST_WRITE: usize = 0x40000000;
+
+/**
+ * One pipe of the child: the parent's overlapped end (0 once it ended), its `OVERLAPPED` and
+ * event, whether an operation is pending on it, and the Windows error its last one failed with;
+ * for an output, what it gave, in one buffer that grows by doubling (`room` its capacity, `kept`
+ * the bytes before the pending read); for stdin, how much of the input is written.
+ */
+export class Pipe {
+  h: usize = 0;
+  ov: usize = 0;
+  pending: bool = false;
+  error: u32 = 0;
+  data: u8[] = [];
+  room: usize = 0;
+  kept: usize = 0;
+  off: usize = 0;
+}
+
+/**
+ * An `OVERLAPPED` with its event (manual reset, as overlapped I/O wants), or 0 when the event
+ * could not be made (`sp.lastError` says why; `fail`: a test's, `sp.injected`).
+ */
+export function overlapped(fail: bool): usize {
+  let ev: usize = 0;
+  if (fail) {
+    ev = sp.injected();
+  } else {
+    // SAFETY: no security attributes or name.
+    ev = Ptr.addressOf<void>(unsafe { CreateEventW(null, 1, 0, null) });
+  }
+  if (ev === 0) {
+    return 0;
+  }
+  const ov = m.zeroed(OV_SIZE);
+  m.st(ov + OV_EVENT, ev);
+  return ov;
+}
+
+/** Frees `OVERLAPPED` `ov` (0: none) and its event. */
+export function freeOverlapped(ov: usize): void {
+  if (ov !== 0) {
+    sp.closeHandle(m.ld(ov + OV_EVENT));
+    m.release(ov, OV_SIZE);
+  }
+}
+
+/** A pipe for parent end `h` (0: none, ended) with `OVERLAPPED` `ov` (freed here when no `h`). */
+export function pipeOf(h: usize, ov: usize): Pipe {
+  const p = new Pipe();
+  p.h = h;
+  p.ov = ov;
+  if (h === 0) {
+    endPipe(p);
+  }
+  return p;
+}
+
+/** The event of `p`'s operation. */
+export function eventOf(p: Pipe): usize {
+  return m.ld(p.ov + OV_EVENT);
+}
+
+/** Closes `p`'s end (its operation is over), and frees its event and `OVERLAPPED`. */
+export function endPipe(p: Pipe): void {
+  if (p.h !== 0) {
+    sp.closeHandle(p.h);
+    p.h = 0;
+  }
+  freeOverlapped(p.ov);
+  p.ov = 0;
+  p.pending = false;
+}
+
+/** Starts a read on output `p` into the spare room of its buffer (grown first when short). */
+export function startRead(p: Pipe, fail: bool): void {
+  const len = p.data.length;
+  if (p.room - len < MIN_READ) {
+    const want = len + CHUNK > 2 * p.room ? len + CHUNK : 2 * p.room;
+    arrayReserve(p.data, want - len);
+    p.room = want;
+  }
+  // The spare room, which only the read writes; the buffer is not touched until it is over.
+  arraySetLen(p.data, p.room);
+  p.kept = len;
+  // SAFETY: the buffer holds `room` bytes and nothing grows it while the read is pending.
+  const at = unsafe { arrayDataAddress(p.data) } + len;
+  const space = (p.room - len) as u32;
+  const h = m.ptrTo<void>(p.h);
+  const ov = m.ptrTo<_OVERLAPPED>(p.ov);
+  let done: i32 = 0;
+  if (fail) {
+    done = sp.injected() as i32;
+  } else {
+    // SAFETY: `space` bytes at `at`; the handle is open and overlapped, with its `OVERLAPPED`.
+    done = unsafe { ReadFile$sync(h, m.ptr(at), space, null, ov) };
+  }
+  issued(p, done, true);
+  if (!p.pending) {
+    arraySetLen(p.data, len);
+  }
+}
+
+/** Starts a write of the input's rest (`size` bytes at `from`) to stdin `p`. */
+export function startWrite(p: Pipe, from: usize, size: usize, fail: bool): void {
+  const left = size - p.off;
+  const n = (left > MOST_WRITE ? MOST_WRITE : left) as u32;
+  const h = m.ptrTo<void>(p.h);
+  const ov = m.ptrTo<_OVERLAPPED>(p.ov);
+  const at = from + p.off;
+  let done: i32 = 0;
+  if (fail) {
+    done = sp.injected() as i32;
+  } else {
+    // SAFETY: `n` bytes at `at`, alive until the run is over; the handle is open and overlapped,
+    // with its `OVERLAPPED`.
+    done = unsafe { WriteFile$sync(h, m.ptr(at), n, null, ov) };
+  }
+  issued(p, done, false);
+}
+
+/**
+ * Whether Windows error `e` of an operation on a pipe (`reading` it, else writing) means the
+ * child's end is closed: the end of an output, or input the child no longer reads (whose rest
+ * is dropped and the run goes on, as Node's `spawnSync` does). Any other error fails the run.
+ */
+export function closedEnd(e: u32, reading: bool): bool {
+  return (
+    e === ERROR_BROKEN_PIPE || (!reading && (e === ERROR_NO_DATA || e === ERROR_PIPE_NOT_CONNECTED))
+  );
+}
+
+/**
+ * After `ReadFile` / `WriteFile` on `p` returned `done`: pending, whether it finished already
+ * (the event is set then too) or runs on; ended when the child's end is closed; any other
+ * failure ends it with its `error`.
+ */
+function issued(p: Pipe, done: i32, reading: bool): void {
+  if (done !== 0) {
+    p.pending = true;
+    return;
+  }
+  const e = sp.errorNow();
+  if (e === ERROR_IO_PENDING) {
+    p.pending = true;
+    return;
+  }
+  if (!closedEnd(e, reading)) {
+    p.error = e;
+  }
+  endPipe(p);
+}
+
+/**
+ * The bytes `p`'s operation moved, once it is over (`wait`: block until it is); -1 when it failed,
+ * with the Windows error in `p.error`.
+ */
+export function finished(p: Pipe, wait: bool): i64 {
+  const n = new Out<u32>(0);
+  const h = m.ptrTo<void>(p.h);
+  const ov = m.ptrTo<_OVERLAPPED>(p.ov);
+  // SAFETY: the operation on this handle and `OVERLAPPED`, over (its event is set) unless `wait`.
+  const ok = unsafe { GetOverlappedResult(h, ov, n, wait ? 1 : 0) };
+  p.pending = false;
+  if (ok === 0) {
+    p.error = sp.errorNow();
+    return -1;
+  }
+  return n.value as i64;
+}
+
+/** Cancels `p`'s pending operation and waits until it is over, so its buffer can go. */
+export function cancel(p: Pipe): void {
+  // SAFETY: the pending operation of this handle and `OVERLAPPED`; one that is over already
+  // refuses, and the wait below returns at once.
+  unsafe {
+    CancelIoEx(m.ptrTo<void>(p.h), m.ptrTo<_OVERLAPPED>(p.ov));
+  }
+  finished(p, true);
+  if (p.data.length > p.kept) {
+    arraySetLen(p.data, p.kept);
+  }
+}

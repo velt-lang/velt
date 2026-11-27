@@ -1,7 +1,7 @@
-// velt/process/child (internal): `CommandSpec`, what the runtime is told to run: the program, its
-// arguments and environment, and where its standard streams go.
+// velt/process/child (internal): `CommandSpec`, what a child runs: the program, its arguments and
+// environment, and where its standard streams go.
 
-/** The runtime's `VeltCommand`, field by field (the layout must match child/command.rs). */
+/** A child to start: what `spawn`, `exec` and `execSync` give each OS's start. */
 export struct CommandSpec {
   program: string;
   args: string[];

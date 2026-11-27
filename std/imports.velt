@@ -207,10 +207,10 @@ export const imports: Imports = {
     wasi: "./process/stdin_posix.velt",
     default: "./process/stdin_none.velt",
   },
-  // velt/process/child's runtime functions: the runtime's (std/process/child/rt.velt, which
-  // WebAssembly can't run), or, compiled with the executor in Velt, its own (child_sched.velt),
-  // which `#child-os` serves: `posix_spawn` with the exit and the pipes on its reactor, or on
-  // Windows `CreateProcessW` with the exit wait and the pipes on its blocking pool.
+  // velt/process/child's child processes: with the executor in Velt (native builds) its own
+  // (child_sched.velt), which `#child-os` serves: `posix_spawn` with the exit and pipes on its
+  // reactor, or `CreateProcessW` with the exit wait and pipes on its blocking pool on Windows;
+  // otherwise (WebAssembly) rt.velt, where no child starts (`ENOTSUP`).
   "#child-rt": {
     "std-scheduler": "./process/child/child_sched.velt",
     default: "./process/child/rt.velt",
@@ -219,10 +219,10 @@ export const imports: Imports = {
     win32: "./process/child/child_win32.velt",
     default: "./process/child/child_posix.velt",
   },
-  // `execSync`'s start: on macOS and Linux std's (`posix_spawn`, as `spawn` and `exec` start
-  // theirs, and a `poll` loop on the pipes, without the executor); on Windows the runtime's,
-  // after the program is found and checked as `exec` does it; elsewhere (WebAssembly) the
-  // runtime's alone.
+  // `execSync`'s start, in std without the executor: on macOS and Linux `posix_spawn` (as
+  // `spawn` and `exec` start theirs) and a `poll` loop on the pipes; on Windows `CreateProcessW`
+  // (as `spawn` starts it) and a `WaitForMultipleObjects` loop on overlapped pipes; elsewhere
+  // (WebAssembly) none: it fails with `ENOTSUP`.
   "#exec-sync": {
     darwin: "./process/child/exec_sync_posix.velt",
     linux: "./process/child/exec_sync_posix.velt",

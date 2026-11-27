@@ -1200,29 +1200,18 @@ result with the string builder (§12.1) and `velt_rt_str_byte_slice`.
 
 ### 14.3 Child processes (`velt/process/child`)
 
-```c
-typedef struct {                 // std/process/child/spec.velt `CommandSpec` (104 bytes)
-    VeltStr program;             // looked up in PATH when it has no separator
-    VeltStrArray args;           // after the program name
-    VeltStr cwd;                 // "" = the parent's
-    VeltStrArray env;            // name, value, name, value, … added to the environment
-    uint32_t stdio;              // stdin | stdout << 2 | stderr << 4; 0 inherit, 1 pipe, 2 ignore
-    uint8_t clear_env;           // 1 = start from an empty environment
-} VeltCommand;
-typedef struct { int32_t code; uint32_t pad; VeltStr stdout; VeltStr stderr; } VeltOutput;  // 56 bytes
-```
-Only `execSync` is the runtime's, on Windows and WebAssembly only; macOS and Linux start it in
-std (std/process/child/exec_sync_posix.velt: `posix_spawn`, a `poll` loop on its pipes and
-`waitpid`, without the executor). `spawn` and `exec` are std's own on every native target
+No runtime function: child processes are std's own. `execSync` blocks its thread without the
+executor: std/process/child/exec_sync_posix.velt on macOS and Linux (`posix_spawn`, a `poll`
+loop on its pipes and `waitpid`), std/process/child/exec_sync_win32.velt on Windows
+(`CreateProcessW` with named pipes whose parent ends are overlapped, one
+`WaitForMultipleObjects` loop on their reads and the input's write, then the process handle's
+wait); on WebAssembly it fails with `ENOTSUP`, as `spawn` and `exec` do. `spawn` and `exec` are
+std's own on every native target
 (std/process/child/child_sched.velt: `posix_spawn` with the exit and the pipes on the executor's
 reactor on macOS and Linux, `CreateProcessW` with the exit wait and the pipes on its blocking
 pool on Windows). Exit codes: the process's code (std reports `128 + signal` for a child killed
 by a signal on macOS and Linux). Spawn failures are `IoResult` errors whose message starts with
 `spawn <program>: `.
-
-| Symbol | Signature | Notes |
-|---|---|---|
-| `velt_rt_child_output_sync` | `(const VeltCommand* spec, const VeltStr* input, IoResult<VeltOutput>* out)` | run to completion, blocking: stdout/stderr piped and drained concurrently, `input` (empty = none, stdin is then null) written then closed; output decoded lossily; `spec.stdio` ignored |
 
 ### 14.4 Standard input (`velt/process`)
 

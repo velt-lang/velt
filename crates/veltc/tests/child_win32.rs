@@ -123,7 +123,7 @@ async function main(): Promise<i32> {
 #[test]
 fn execsync_finds_a_program_as_exec_does() {
     // A program in the child's working directory, given by a bare name: libuv's lookup (Node's)
-    // looks there first; Rust's `Command`, which `execSync` runs, would not.
+    // looks there first; Rust's `Command`, which `execSync` ran once, would not.
     let dir = test_dir::TestDir::new();
     let (code, out) = build_and_run(
         dir.path(),
@@ -268,5 +268,66 @@ async function main(): Promise<i32> {
     assert_eq!(
         (code, out.as_str()),
         (Some(0), "fed read 2048000\nexit 0\n")
+    );
+}
+
+#[test]
+fn a_failed_windows_call_fails_execsync() {
+    // `$VELT_TEST_EXEC_SYNC_FAIL` makes one step's Windows call fail with ERROR_NOT_ENOUGH_MEMORY
+    // (std/process/child/exec_sync_win32.velt). Each failure throws, as Node's `spawnSync` does
+    // when libuv reports a pipe's error; none gives a run's partial output as its result. A pipe's
+    // event fails before the child starts (no marker file); a read, a write or a wait fails with
+    // the child ended at once (it would run 40 s); the exit code's read after it ended.
+    let dir = test_dir::TestDir::new();
+    let (code, out) = build_and_run(
+        dir.path(),
+        "failing",
+        r#"import { execSync, SpawnError } from "velt/process/child";
+import { existsSync } from "velt/fs";
+import { removeEnv, setEnv } from "velt/process";
+
+function run(step: string, line: string, input: string): string {
+  setEnv("VELT_TEST_EXEC_SYNC_FAIL", step);
+  const started = Date.now();
+  let got = "";
+  try {
+    const r = execSync("cmd.exe", ["/d", "/c", line], { input: input });
+    got = `ran ${r.code} [${r.stdout.trim()}]`;
+  } catch (err) {
+    got = err instanceof SpawnError ? `${err.code} ${err.message}` : `other ${err.message}`;
+  }
+  removeEnv("VELT_TEST_EXEC_SYNC_FAIL");
+  const waited = Date.now() - started < 20000 ? "" : " (waited for the child)";
+  return `${step}: ${got}${waited}`;
+}
+
+function main(): i32 {
+  const long = "ping -n 40 127.0.0.1 >nul & echo out";
+  console.log(run("event", "echo ran> marker.txt & echo out", ""));
+  console.log(`marker: ${existsSync("marker.txt")}`);
+  console.log(run("event", "echo out", "input"));
+  console.log(run("read", long, ""));
+  console.log(run("write", long, "input"));
+  console.log(run("wait", long, ""));
+  console.log(run("exit", "echo out", ""));
+  console.log(run("", "echo out", "input"));
+  return 0;
+}
+"#,
+        &[],
+    );
+    assert_eq!(
+        (code, out.as_str()),
+        (
+            Some(0),
+            "event: ENOMEM spawnSync cmd.exe ENOMEM\n\
+             marker: false\n\
+             event: ENOMEM spawnSync cmd.exe ENOMEM\n\
+             read: ENOMEM spawnSync cmd.exe ENOMEM\n\
+             write: ENOMEM spawnSync cmd.exe ENOMEM\n\
+             wait: ENOMEM spawnSync cmd.exe ENOMEM\n\
+             exit: ENOMEM spawnSync cmd.exe ENOMEM\n\
+             : ran 0 [out]\n"
+        )
     );
 }

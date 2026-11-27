@@ -1,0 +1,179 @@
+// velt/process/child (internal): the pipes of `execSync` on Windows
+// (std/process/child/exec_sync_win32.velt), made as libuv makes the pipes of a child: a named pipe
+// whose parent end is overlapped, so one thread can read stdout and stderr and write stdin at once
+// and wait for whichever is ready (an anonymous pipe is synchronous only). The child's end is an
+// ordinary synchronous handle, as with `spawn`'s anonymous pipes (std/process/child/spawn_win32.velt
+// makes it inheritable). The name is this process's id and the address of a block alive while the
+// pipe is made, so no two pipes of the system share it; `FILE_FLAG_FIRST_PIPE_INSTANCE` refuses a
+// name taken anyway, and the next try adds a count.
+
+import { Ptr } from "velt/ffi/ptr";
+import * as m from "velt/lang/hooks/mem_raw";
+import * as cl from "velt/process/child/command_line_win32";
+
+/** C's `SECURITY_ATTRIBUTES`: never passed (the child's end is made inheritable by a copy). */
+declare c type _SECURITY_ATTRIBUTES;
+
+declare c("c") function CreateNamedPipeW(
+  name: Ptr<u16> | null,
+  openMode: u32,
+  pipeMode: u32,
+  maxInstances: u32,
+  outSize: u32,
+  inSize: u32,
+  timeout: u32,
+  attributes: Ptr<_SECURITY_ATTRIBUTES> | null,
+): Ptr<void> | null;
+declare c("c") function CreateFileW$sync(
+  name: Ptr<u16> | null,
+  access: u32,
+  share: u32,
+  attributes: Ptr<_SECURITY_ATTRIBUTES> | null,
+  disposition: u32,
+  flags: u32,
+  template: Ptr<void> | null,
+): Ptr<void> | null;
+declare c("c") function CloseHandle$sync(h: Ptr<void> | null): i32;
+declare c("c") function GetCurrentProcessId(): u32;
+declare c("c") function GetLastError$sync(): u32;
+declare c("c") function SetLastError$sync(e: u32): void;
+
+const INVALID_HANDLE: usize = 0xffffffffffffffff;
+const PIPE_ACCESS_INBOUND: u32 = 0x1;
+const PIPE_ACCESS_OUTBOUND: u32 = 0x2;
+const FILE_FLAG_FIRST_PIPE_INSTANCE: u32 = 0x80000;
+const FILE_FLAG_OVERLAPPED: u32 = 0x40000000;
+/** Byte mode, blocking for the child's end, no remote client. */
+const PIPE_REJECT_REMOTE_CLIENTS: u32 = 0x8;
+const GENERIC_READ: u32 = 0x80000000;
+const GENERIC_WRITE: u32 = 0x40000000;
+/** The child's stdin also gets this, as libuv's does (it may set its pipe's state). */
+const FILE_WRITE_ATTRIBUTES: u32 = 0x100;
+const OPEN_EXISTING: u32 = 3;
+const ERROR_ACCESS_DENIED: u32 = 5;
+const ERROR_NOT_ENOUGH_MEMORY: u32 = 8;
+const ERROR_GEN_FAILURE: u32 = 31;
+const ERROR_PIPE_BUSY: u32 = 231;
+/** A pipe's buffer, as `spawn`'s pipes have. */
+const PIPE_SIZE: u32 = 65536;
+
+/** A pipe made by `overlappedPipe`: the parent's (overlapped) end and the child's. */
+export struct PipeEnds {
+  parent: usize;
+  child: usize;
+}
+
+/** The calling thread's last Windows error, read right after the failed call. */
+export function lastError(): u32 {
+  // SAFETY: no precondition.
+  return unsafe { GetLastError$sync() };
+}
+
+/**
+ * The error of a call that failed, read right after it; never 0, so the failure is never taken
+ * for success (`ERROR_GEN_FAILURE` when the call left none).
+ */
+export function errorNow(): u32 {
+  const e = lastError();
+  return e !== 0 ? e : ERROR_GEN_FAILURE;
+}
+
+/** Sets the calling thread's last Windows error to `e`. */
+function setLastError(e: u32): void {
+  // SAFETY: no precondition.
+  unsafe {
+    SetLastError$sync(e);
+  }
+}
+
+/**
+ * A failure made on purpose in place of a call's (tests, `$VELT_TEST_EXEC_SYNC_FAIL`:
+ * exec_sync_win32.velt): the last error set to `ERROR_NOT_ENOUGH_MEMORY` as the failed call would
+ * set it, and the 0 it would return.
+ */
+export function injected(): usize {
+  setLastError(ERROR_NOT_ENOUGH_MEMORY);
+  return 0;
+}
+
+/** Closes handle `h` (not 0). */
+export function closeHandle(h: usize): void {
+  // SAFETY: a handle the caller owns, not used after.
+  unsafe {
+    CloseHandle$sync(m.ptrTo<void>(h));
+  }
+}
+
+/**
+ * A pipe for the child's stream `i` (0 stdin, which the child reads; 1 stdout and 2 stderr, which
+ * it writes), the parent's end overlapped; null when it could not be made (`lastError` says why).
+ */
+export function overlappedPipe(i: u32): PipeEnds | null {
+  // Alive until the pipe is made: its address makes the name unique.
+  const mark = m.zeroed(8);
+  let ends: PipeEnds | null = null;
+  // The error of the last try, set again at the end: the frees after it may change it.
+  let failed: u32 = 0;
+  for (let attempt = 0; attempt < 16 && ends == null; attempt++) {
+    // SAFETY: no precondition.
+    const pid = unsafe { GetCurrentProcessId() };
+    const name = cl.unitsOf(`\\\\.\\pipe\\velt-exec-${pid}-${mark}-${attempt}`);
+    const p = cl.wide(name);
+    const inbound = i !== 0;
+    let parent: usize = 0;
+    // SAFETY: a NUL-terminated name; no security attributes (the parent's end is not inherited).
+    unsafe {
+      parent = Ptr.addressOf<void>(
+        CreateNamedPipeW(
+          m.ptrTo<u16>(p),
+          (inbound ? PIPE_ACCESS_INBOUND : PIPE_ACCESS_OUTBOUND) |
+            FILE_FLAG_FIRST_PIPE_INSTANCE |
+            FILE_FLAG_OVERLAPPED,
+          PIPE_REJECT_REMOTE_CLIENTS,
+          1,
+          PIPE_SIZE,
+          PIPE_SIZE,
+          0,
+          null,
+        ),
+      );
+    }
+    if (parent === INVALID_HANDLE || parent === 0) {
+      const e = errorNow();
+      failed = e;
+      m.release(p, cl.wideSize(name));
+      if (e === ERROR_ACCESS_DENIED || e === ERROR_PIPE_BUSY) {
+        continue;
+      }
+      break;
+    }
+    let child: usize = 0;
+    // SAFETY: as above; the pipe's one instance is open, so this connects to it.
+    unsafe {
+      child = Ptr.addressOf<void>(
+        CreateFileW$sync(
+          m.ptrTo<u16>(p),
+          inbound ? GENERIC_WRITE : GENERIC_READ | FILE_WRITE_ATTRIBUTES,
+          0,
+          null,
+          OPEN_EXISTING,
+          0,
+          null,
+        ),
+      );
+    }
+    m.release(p, cl.wideSize(name));
+    if (child === INVALID_HANDLE || child === 0) {
+      failed = errorNow();
+      closeHandle(parent);
+      break;
+    }
+    ends = { parent: parent, child: child };
+  }
+  m.release(mark, 8);
+  if (ends == null) {
+    // What the caller reads: the error that failed, never 0.
+    setLastError(failed);
+  }
+  return ends;
+}
