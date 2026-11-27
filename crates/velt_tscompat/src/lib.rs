@@ -43,7 +43,6 @@ pub const RULES: &[&str] = &[
     "declare-fn",
     "decorator",
     "int-division",
-    "object-in-template",
     "default-sort",
     "map-iter-as-array",
     "velt-global",

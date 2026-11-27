@@ -127,9 +127,10 @@ fn runnable_samples() -> Vec<(String, String)> {
 /// The fewest runnable behaviour samples. The Node test below checks them only nightly, so the
 /// floor is also checked in every pull request (`enough_behaviour_samples_run`): a change that
 /// drops samples (a lint rule removed, a `main` renamed) lowers it in the same pull request
-/// instead of turning the nightly red. 2 since the `json-map` sample went with its rule (Velt now
-/// writes a `Map` as `{}`, as Node does).
-const MIN_RUNNABLE_SAMPLES: usize = 2;
+/// instead of turning the nightly red. 1 since the `json-map` sample went with its rule (Velt now
+/// writes a `Map` as `{}`, as Node does) and the `object-in-template` one with its own (a
+/// promise's text is `[object Promise]`, as in Node, #3757).
+const MIN_RUNNABLE_SAMPLES: usize = 1;
 
 #[test]
 fn enough_behaviour_samples_run() {
