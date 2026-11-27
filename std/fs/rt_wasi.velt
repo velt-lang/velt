@@ -14,7 +14,20 @@ import { Dirent } from "velt/fs/dirent";
 import { Stats } from "velt/fs/stats";
 import { checkPathArg } from "velt/fs/path_arg";
 import { hookCall } from "velt/lang/intrinsics";
-import { DirentList, dirents } from "./rt";
+import {
+  DirentList,
+  dirents,
+  velt_rt_fs_append_file_sync,
+  velt_rt_fs_exists_sync,
+  velt_rt_fs_lstat_sync,
+  velt_rt_fs_mkdir_sync,
+  velt_rt_fs_read_dir_sync,
+  velt_rt_fs_read_dir_typed_sync,
+  velt_rt_fs_read_file_bytes_sync,
+  velt_rt_fs_remove_sync,
+  velt_rt_fs_stat_sync,
+  velt_rt_fs_write_file_sync,
+} from "./rt";
 
 export {
   velt_rt_fs_open_read,
@@ -48,17 +61,6 @@ export {
   realpathSync,
   realpath,
 } from "./rt";
-
-declare function velt_rt_fs_read_file_bytes_sync(path: string): IoResult<u8[]>;
-declare function velt_rt_fs_write_file_sync(path: string, data: string): IoStatus;
-declare function velt_rt_fs_append_file_sync(path: string, data: string): IoStatus;
-declare function velt_rt_fs_read_dir_sync(path: string): IoResult<string[]>;
-declare function velt_rt_fs_read_dir_typed_sync(path: string): IoResult<DirentList>;
-declare function velt_rt_fs_stat_sync(path: string): IoResult<Stats>;
-declare function velt_rt_fs_lstat_sync(path: string): IoResult<Stats>;
-declare function velt_rt_fs_mkdir_sync(path: string, recursive: bool): IoStatus;
-declare function velt_rt_fs_remove_sync(path: string, recursive: bool): IoStatus;
-declare function velt_rt_fs_exists_sync(path: string): bool;
 
 /** The file's bytes, read by a job of the blocking pool. */
 async function bytesJob(path: string): Promise<IoResult<u8[]>> {
