@@ -4,7 +4,7 @@
 // again once the literal holds it (#3728; fixed by #3399). Each shape below released the
 // field's buffer once too often, so the local's string was freed while still in use.
 
-// A record literal whose later operand moves a field in a branch (crew's hub, `queue`).
+// A record literal whose later operand moves a field in a branch.
 type Item = { id: string; dir: string; role?: string; tags?: string[] };
 type Cmd = { dir: string; tags: string[]; system: string };
 
@@ -14,30 +14,30 @@ function queue(cmds: Cmd[], s: Item, start: bool): void {
 }
 
 // An array literal of a parameter's fields in an async function that later moves another field
-// inside a `try` (crew's runner, `cloudSay`).
-type Say = { session: string; text: string; resume: string };
-type Note = { session: string; n: i64 };
+// inside a `try`.
+type Say = { key: string; text: string; resume: string };
+type Note = { key: string; n: i64 };
 
 async function note(x: Note): Promise<void> {
   if (x.n > 100) {
-    throw new Error(x.session);
+    throw new Error(x.key);
   }
 }
 
 async function sayArgs(c: Say): Promise<string[]> {
   const args: string[] = [];
-  for (const a of ["-p", c.text, "--cloud", c.resume]) {
+  for (const a of ["-p", c.text, "--to", c.resume]) {
     args.push(a);
   }
   try {
-    await note({ session: c.session, n: args.length });
+    await note({ key: c.key, n: args.length });
   } catch (e) {
     // not reached
   }
   return args;
 }
 
-// A record literal of the fields of a loop's element, in a loop (crew's hub, `parseReleases`).
+// A record literal of the fields of a loop's element, in a loop.
 type Release = { tagName: string; name: string; publishedAt: string; isDraft: bool; isLatest: bool };
 type ReleaseInfo = { tag: string; name: string; publishedAt: string; latest: bool };
 
@@ -60,7 +60,7 @@ function churn(n: i64): i64 {
   return filler.length;
 }
 
-const items: Item[] = [{ id: "s1", dir: `/home/someone/${"x".repeat(40)}`, role: `coordinator ${"r".repeat(40)}` }];
+const items: Item[] = [{ id: "s1", dir: `/home/someone/${"x".repeat(40)}`, role: `lead ${"r".repeat(40)}` }];
 for (let i = 0; i < 3; i++) {
   let cmds: Cmd[] = [];
   const s = items.find((x) => x.id === "s1");
@@ -75,7 +75,7 @@ for (let i = 0; i < 3; i++) {
 
 const says: Say[] = [];
 for (let i = 0; i < 3; i++) {
-  says.push(JSON.parse<Say>(`{"session":"a session name long enough for the heap ${i}","text":"a message for the cloud session, long enough to live on the heap ${i}","resume":"session_01ABCDEFGHIJKLMNOPQRSTUVWX"}`));
+  says.push(JSON.parse<Say>(`{"key":"a key long enough to live on the heap ${i}","text":"a message long enough to live on the heap, with some more words ${i}","resume":"id_01ABCDEFGHIJKLMNOPQRSTUVWXYZ"}`));
 }
 for (let i = 0; i < 3; i++) {
   const args = await sayArgs(says[i]);
@@ -83,7 +83,7 @@ for (let i = 0; i < 3; i++) {
 }
 churn(40);
 for (const c of says) {
-  console.log(c.text.length, c.text.slice(0, 9), c.session.length);
+  console.log(c.text.length, c.text.slice(0, 9), c.key.length);
 }
 
 const long = "z".repeat(40);
