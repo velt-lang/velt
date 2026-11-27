@@ -45,8 +45,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The whole gate (`cargo xtask check --full`, what scripts/check-all.sh runs) in four shards: in
+  # one job it outgrew 180 minutes (2026-11-21: 156; 2026-11-27: cancelled, the unit tests alone
+  # 104 of them). The tests in two (`VELT_TEST_SHARD`, every other test of each binary; shard 1
+  # also lints and takes the steps that aren't nextest tests, crates/xtask/src/check/shard.rs) and
+  # the goldens with the VIR identity in two (`VELT_GOLDEN_SHARD`, every other golden): together
+  # exactly what one unsharded run checks, each once. A failed shard leaves the others alone.
   gate-with-services:
     if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'gate')
+    name: gate-with-services (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: tests 1/2, part: "lint,test", test-shard: 1/2, golden-shard: "" }
+          - { name: tests 2/2, part: test, test-shard: 2/2, golden-shard: "" }
+          - { name: goldens 1/2, part: golden, test-shard: "", golden-shard: 1/2 }
+          # The difftest steps below run here, the shard that finishes first.
+          - { name: goldens 2/2, part: golden, test-shard: "", golden-shard: 2/2, difftest: true }
     runs-on: ubuntu-latest
     timeout-minutes: 180
     services:
@@ -94,26 +110,40 @@ jobs:
       - uses: ./.github/actions/zig
         with:
           working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
-      # Every golden's release object and the other tests', for the merge queue and pull requests
-      # (only a run on `main` saves what other branches can restore; pushes to it add what changed,
-      # ci.yml). From an empty cache, so entries no program uses any more go with it; the limit
-      # keeps them all (.cargo/config.toml has 500M for local builds).
-      - run: scripts/check-all.sh
+      # From an empty cache: every object this shard's programs use is new (`gate-cache` merges
+      # the shards' into one cache entry).
+      - name: note clang's objects
+        run: bash .github/actions/setup/clang-objects.sh list
+      - name: cargo xtask check --full --part ${{ matrix.part }}
         env:
+          VELT_TEST_SHARD: ${{ matrix.test-shard }}
+          VELT_GOLDEN_SHARD: ${{ matrix.golden-shard }}
           VELT_BUILD_CACHE_SIZE: 4G
+        run: |
+          # The golden test and the VIR identity read an empty VELT_GOLDEN_SHARD as a bad value.
+          [ -n "$VELT_GOLDEN_SHARD" ] || unset VELT_GOLDEN_SHARD
+          cargo xtask check --full --part "${{ matrix.part }}"
       - name: disk used by the gate
         if: ${{ !cancelled() }}
         run: df -h /
-      - uses: actions/cache/save@v4
+      # Every golden's release object and the other tests', for the merge queue and pull requests
+      # (only a run on `main` saves what other branches can restore; pushes to it add what changed,
+      # ci.yml): `gate-cache` saves the four shards' as one entry.
+      - name: pack clang's objects
+        if: success() && github.ref == 'refs/heads/main'
+        run: bash .github/actions/setup/clang-objects.sh pack clang-objects.tar
+      - uses: actions/upload-artifact@v4
         if: success() && github.ref == 'refs/heads/main'
         with:
-          path: target/velt-build-cache/v*/llvm
-          key: velt-clang-objects-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
+          name: clang-objects-gate-${{ strategy.job-index }}
+          path: clang-objects.tar
+          if-no-files-found: ignore
+          retention-days: 1
       # Node is the oracle: the hand-written corpus and short generated runs must agree with it.
       # All three run even when one finds a mismatch (each finds different bugs); the step fails
       # at the end if any did.
       - name: difftest (corpus, short fuzz)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.difftest }}
         timeout-minutes: 45
         run: |
           status=0
@@ -123,13 +153,37 @@ jobs:
           exit "$status"
       # The failing programs, shrunk, with what differed (tests/difftest/README.md).
       - name: difftest reproducers
-        if: failure()
+        if: failure() && matrix.difftest
         uses: actions/upload-artifact@v4
         with:
           name: difftest-out
           path: tests/difftest/out
           if-no-files-found: ignore
 
+  # The clang objects of the four gate shards as one cache entry, as the unsharded job saved them:
+  # only when every shard passed, so an entry never lacks a shard's share. The objects (`large/`)
+  # merge; the small entries in packs don't (clang-objects.sh), so a job compiles those again.
+  gate-cache:
+    needs: gate-with-services
+    if: success() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/actions/setup/clang-objects.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: clang-objects-gate-*
+          path: ${{ runner.temp }}/clang-objects
+      - name: clang's objects from the shards
+        run: bash .github/actions/setup/clang-objects.sh unpack "$RUNNER_TEMP/clang-objects"
+      - uses: actions/cache/save@v4
+        with:
+          path: target/velt-build-cache/v*/llvm
+          key: velt-clang-objects-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
   # A debug build (Cranelift) of long_main_16000 must stay under 2 GB of peak memory and print the
   # right result (#42, #189). The script prints the stage times and the peak; the summary shows them.
   compile-stress:
