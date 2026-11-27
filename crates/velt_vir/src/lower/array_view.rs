@@ -173,10 +173,7 @@ impl Cx<'_> {
 impl FnLower<'_, '_> {
     /// The type `ArrayView<e>`.
     fn view_class(&mut self, e: TyId) -> TyId {
-        let d = self
-            .cx
-            .prelude_def(VIEW_CLASS)
-            .unwrap_or_else(|| ice("no prelude `ArrayView`"));
+        let d = self.cx.std_hook(VIEW_CLASS);
         self.cx.intern(TyKind::Adt(d, vec![e]))
     }
 

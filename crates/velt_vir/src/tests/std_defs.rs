@@ -67,3 +67,52 @@ fn a_required_hook_missing_is_an_ice() {
     let p = std_src::check_src(src);
     lower_ok(&without(p, velt_common::std_hook!(int_push)));
 }
+
+/// `p` with every definition of std module `module` named as the loader named it under a second
+/// name (#3731: `std/../../…/std/…`, a path that reached std by another spelling).
+fn under_second_name(mut p: hir::Program, module: &str) -> hir::Program {
+    let (from, to) = (
+        format!("{module}::"),
+        format!("std/../../elsewhere/{module}::"),
+    );
+    let mut renamed = false;
+    for d in &mut p.defs {
+        let name = match d {
+            hir::Def::Fn(f) => &mut f.name,
+            hir::Def::Adt(a) => &mut a.name,
+            _ => continue,
+        };
+        if let Some(item) = name.strip_prefix(&from) {
+            *name = format!("{to}{item}");
+            renamed = true;
+        }
+    }
+    assert!(renamed, "no definition of `{module}` in the program");
+    p
+}
+
+/// The feature's module loaded only under a second name: its hook is there, but not by the name
+/// lowering asks for. An ICE naming both, not the feature switched off (#3745).
+#[test]
+#[should_panic(
+    expected = "ICE: std hook `std/lang/hooks/any_record::anyToRecord` missing, found as \
+                `std/../../elsewhere/std/lang/hooks/any_record::anyToRecord`: its module is \
+                loaded under a second name"
+)]
+fn a_feature_hook_under_a_second_module_name_is_an_ice() {
+    let p = std_src::check_src(TO_RECORD);
+    lower_ok(&under_second_name(p, "std/lang/hooks/any_record"));
+}
+
+/// A hook lowering cannot do without, its module loaded only under a second name: the ICE names
+/// the name it was found by.
+#[test]
+#[should_panic(
+    expected = "ICE: std hook `std/lang/hooks/number_text::intPush` missing, found as \
+                `std/../../elsewhere/std/lang/hooks/number_text::intPush`"
+)]
+fn a_required_hook_under_a_second_module_name_is_an_ice() {
+    let src = "function main() {\n  const n: i64 = 7;\n  console.log(`n=${n}`);\n}\n";
+    let p = std_src::check_src(src);
+    lower_ok(&under_second_name(p, "std/lang/hooks/number_text"));
+}
