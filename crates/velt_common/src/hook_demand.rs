@@ -161,7 +161,7 @@ impl Construct {
 }
 
 /// A set of [`Construct`]s, one bit each ([`Construct::bit`]).
-pub type ConstructSet = u16;
+pub type ConstructSet = u32;
 
 /// The words of a [`HookSet`]: one bit per entry of [`crate::std_hooks::HOOKS`].
 const WORDS: usize = crate::std_hooks::HOOKS.len().div_ceil(64);
