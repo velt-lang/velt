@@ -1,5 +1,5 @@
 //! An async program's WebAssembly module links none of velt_rt_wasm's own executor (`task/`),
-//! which no program runs there since the executor in Velt does (#3905), on WASI (a JS host's programs still run on it):
+//! which no program runs there since the executor in Velt does (#3905), on WASI and on a JS host (whose turns are std's):
 //! the runtime's start no longer runs its tasks after `main`, and the executor's start-up on one
 //! thread calls none of its functions. Read in the `--release` module's name section (LLVM drops
 //! the start-up's calls behind the constant; a debug build keeps them), when the runtime it links
@@ -15,7 +15,10 @@ use wasm_tools::{build_runtime, missing_tools, root};
 #[test]
 fn wasm_modules_link_no_runtime_executor() {
     let root = root();
-    for (target, runner) in [("wasm32-wasip1", "wasmtime")] {
+    for (target, runner) in [
+        ("wasm32-wasip1", "wasmtime"),
+        ("wasm32-unknown-unknown", "node"),
+    ] {
         if let Some(missing) = missing_tools(target, runner) {
             eprintln!("note: {missing} not available; skipping the check on {target}");
             continue;

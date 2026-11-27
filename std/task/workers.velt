@@ -1,6 +1,6 @@
 // velt/task (internal): the workers that run tasks: how many, and which one runs this task.
 
-import * as wi from "#task-workers";
+import * as wi from "./worker_index_sched";
 
 /**
  * How many workers run tasks: fixed for the process (`VELT_THREADS`, else the number of cores;

@@ -1,4 +1,4 @@
-// velt/lang/promise (internal): `#promise-race-step` under the executor in Velt
+// velt/lang/promise (internal): the race's step on the executor in Velt, every target's
 // (std/lang/hooks/sched_race.velt), whose race settles a microtask after the input that decides
 // it, as Node settles a combinator in the reaction it queues on that input.
 

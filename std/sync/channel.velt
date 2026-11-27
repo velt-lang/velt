@@ -36,8 +36,8 @@ import {
 } from "velt/sync/channel_block";
 import { newCell } from "velt/sync/channel_wait";
 import { publishOutput } from "#sync-output";
-import { wakeOwned } from "#sync-chan-word";
-import { dropAddress, pollAddress } from "#sync-chan-entry";
+import { wakeOwned } from "./channel_word";
+import { dropAddress, pollAddress } from "./channel_entry";
 import { inline, promiseAt, slotStore, slotTake, slotTransfer } from "velt/lang/intrinsics";
 
 /**
