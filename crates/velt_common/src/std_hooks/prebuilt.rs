@@ -68,6 +68,15 @@ const PRIVATE: &[(&str, &[&str])] = &[
             "std/lang/hooks/weak_trial",
         ],
     ),
+    // `console.log`'s line breaking (#3508): the custom inspect pieces of the value being printed,
+    // which lowering reports and the layout reads through the hooks alone.
+    (
+        "lang_hooks_inspect_layout_text",
+        &[
+            "std/lang/hooks/inspect_layout_text",
+            "std/lang/hooks/inspect_layout_atoms",
+        ],
+    ),
     // The blocks of module state and their table (#2196 9c): the executor's module lock
     // (sched_module.velt) and lowering reach them through the hooks alone.
     (

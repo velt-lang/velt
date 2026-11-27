@@ -7,7 +7,6 @@ use velt_sema::hir::{AdtKind, TyId, TyKind};
 
 use crate::lower::glue::literals::inspect_key;
 use crate::lower::hook_calls::{self as hooks, ty, HookTy};
-use crate::lower::rt::Rt;
 use crate::lower::{cint, FnLower};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Ty, STR_AGG};
 
@@ -222,11 +221,9 @@ impl FnLower<'_, '_> {
             return self.push_text(buf, &format!("{before}{n}: "));
         }
         self.push_text(buf, before);
-        let start = self.temp(Ty::U64);
-        self.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
+        let start = self.builder_len(buf);
         self.push_text(buf, n);
-        let start = Operand::Copy(Place::local(start));
-        self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+        self.inspect_atom(buf, start);
         self.push_text(buf, ": ");
     }
 
