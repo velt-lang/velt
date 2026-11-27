@@ -90,6 +90,12 @@ impl TlsCall {
     }
 }
 
+/// The state word of bounded drop nesting: std's `const STATE = new ThreadLocal<u32>(0)` in
+/// std/lang/hooks/drop_queue.velt, named as lowering names a `ThreadLocal`'s storage (its
+/// qualified name and VIR type, lower/thread_local.rs), so the bracket lowering puts around a drop
+/// that can nest (lower/glue/drop_depth.rs) and `STATE.get()` there are one value.
+pub const DROP_STATE_SLOT: &str = "std/lang/hooks/drop_queue::STATE:U32";
+
 /// A constant's id: the 64-bit FNV-1a hash of its qualified name (`module::name`), stable across
 /// versions of a program, unlike its `DefId`.
 pub fn stable_id(qualified_name: &str) -> u64 {

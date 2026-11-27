@@ -68,7 +68,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The call of the extern `call`, inline in every backend.
-    fn tls_call(&mut self, call: TlsCall, args: Vec<Operand>) -> Operand {
+    pub(super) fn tls_call(&mut self, call: TlsCall, args: Vec<Operand>) -> Operand {
         let (params, ret) = call.signature();
         let id = self.cx.extern_sym(&call.symbol(), params, ret, false);
         if ret == Ty::Unit {

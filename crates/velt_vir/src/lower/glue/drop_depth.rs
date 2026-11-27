@@ -1,9 +1,10 @@
 //! Drops that can nest without bound (#543). A drop that can lead back to itself is bracketed:
-//! it counts itself inline in the thread's drop state word (velt_rt `drop_state`, see
-//! `velt_rt/src/drop_depth.rs`), and past [`MAX_DEPTH`] nested drops it hands the value to
-//! velt_rt's queue instead; the outermost drop drains the queue when it ends, so a long chain
-//! never overflows the stack. The common case costs one call for the word's address and a few
-//! instructions.
+//! it counts itself inline in this thread's drop state word, std's `STATE` in
+//! std/lang/hooks/drop_queue.velt, which it reads and writes by name as a `ThreadLocal` lowers
+//! (`velt_vir::tls::DROP_STATE_SLOT`), and past [`MAX_DEPTH`] nested drops it hands the value to std's queue
+//! (`dropQueue`) instead; the outermost drop drains the queue (`dropDrain`) when it ends, so a
+//! long chain never overflows the stack. The common case costs a thread-local load and store
+//! before the drop and after it, and no call.
 //!
 //! - In the object drop of a class, each field that leads back to the class: through arrays,
 //!   `Map`s, options, structs or other classes, or through drop glue chosen at run time
@@ -31,18 +32,30 @@ use velt_sema::hir::{TyId, TyKind};
 use super::drop_chain::Chain;
 use super::Glue;
 use crate::lower::cint;
+use crate::lower::hook_calls::{self as hooks, ty, HookTy};
 use crate::lower::operand::proj;
-use crate::lower::rt::Rt;
 use crate::lower::{cfunc, unit, Cx, FnLower, Work};
+use crate::tls::TlsCall;
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
-/// Nested bracketed drops before the next one is queued (velt_rt's `MAX_DEPTH`; small in unit
-/// tests, so that the interpreter's short chains already queue).
+/// Nested bracketed drops before the next one is queued. A level is a few small frames of drop
+/// glue (plus whatever a `[Symbol.dispose]()` calls), so this stays far below the smallest stack
+/// a program runs on (1 MiB: the main thread on Windows; WebAssembly modules are linked with
+/// 8 MiB). Small in unit tests, so that the interpreter's short chains already queue.
 const MAX_DEPTH: i128 = if cfg!(test) { 4 } else { 128 };
-/// The state word's bit for "something was queued" (velt_rt's `QUEUED`).
+/// The state word's bit for "something was queued" (drop_queue.velt's `QUEUED`).
 const QUEUED: i128 = 1 << 30;
-/// The state word's depth bits (velt_rt's `DEPTH`).
+/// The state word's depth bits.
 const DEPTH: i128 = QUEUED - 1;
+/// The state word's `velt_tls_*` call: its value (`get`) or a new one (`set`).
+fn state_call(set: bool) -> TlsCall {
+    let id = crate::tls::stable_id(crate::tls::DROP_STATE_SLOT);
+    let (bits, init) = (32, 0);
+    match set {
+        true => TlsCall::Set { id, bits, init },
+        false => TlsCall::Get { id, bits, init },
+    }
+}
 
 impl Cx<'_> {
     /// Can dropping field `f` (of type `t`) of a class `ty` object nest another drop of a `ty`
@@ -128,14 +141,10 @@ impl Cx<'_> {
 
 impl FnLower<'_, '_> {
     /// A bracketed drop (module docs): `body` drops the value, unless the thread is
-    /// [`MAX_DEPTH`] drops deep, in which case `queue` hands it to the runtime instead. Either
+    /// [`MAX_DEPTH`] drops deep, in which case `queue` hands it to std's queue instead. Either
     /// way, code continues after it.
     fn bracket(&mut self, queue: impl FnOnce(&mut Self), body: impl FnOnce(&mut Self)) {
-        let state = Place::local(self.temp(Ty::Ptr));
-        self.call_rt(Rt::DropState, vec![], Some(state.clone()));
-        let sp = self.operand_place(Operand::Copy(state), Ty::Ptr);
-        let word = proj(&sp, Proj::Deref(Ty::U32));
-        let n = self.rvalue_temp(Ty::U32, Rvalue::Use(Operand::Copy(word.clone())));
+        let n = self.tls_call(state_call(false), vec![]);
         let depth = self.rvalue_temp(
             Ty::U32,
             Rvalue::Binary(BinOp::BitAnd, n.clone(), cint(DEPTH, Ty::U32)),
@@ -151,22 +160,27 @@ impl FnLower<'_, '_> {
         self.goto(join);
         self.switch_to(run);
         let up = self.rvalue_temp(Ty::U32, Rvalue::Binary(BinOp::Add, n, cint(1, Ty::U32)));
-        self.assign(word.clone(), Rvalue::Use(up));
+        self.tls_call(state_call(true), vec![up]);
         body(self);
         // Nested drops leave the depth as they found it, but may have set the queued bit.
-        let m = self.rvalue_temp(
-            Ty::U32,
-            Rvalue::Binary(BinOp::Sub, Operand::Copy(word.clone()), cint(1, Ty::U32)),
-        );
-        self.assign(word, Rvalue::Use(m.clone()));
+        let now = self.tls_call(state_call(false), vec![]);
+        let m = self.rvalue_temp(Ty::U32, Rvalue::Binary(BinOp::Sub, now, cint(1, Ty::U32)));
+        self.tls_call(state_call(true), vec![m.clone()]);
         let drain = self.rvalue_temp(
             Ty::Bool,
             Rvalue::Binary(BinOp::Eq, m, cint(QUEUED, Ty::U32)),
         );
         self.when(drain, join);
-        self.call_rt(Rt::DropDrain, vec![], None);
+        hooks::drop_drain(self).emit(self);
         self.goto(join);
         self.switch_to(join);
+    }
+
+    /// Hand the value `value` (a pointer: a heap box, or an object with its last reference) to
+    /// std's queue, which drops it with the drop function `glue` when the outermost drop ends.
+    fn queue_drop(&mut self, value: Operand, glue: Operand) {
+        let (value, glue) = (self.as_usize(value), self.as_usize(glue));
+        hooks::drop_queue(self, ty::USize::arg(value), ty::USize::arg(glue)).emit(self);
     }
 
     /// A bracketed drop of the heap object `obj` (a closure env with its last reference), which
@@ -177,7 +191,7 @@ impl FnLower<'_, '_> {
         glue: Operand,
         body: impl FnOnce(&mut Self),
     ) {
-        self.bracket(|lw| lw.call_rt(Rt::DropQueue, vec![obj, glue], None), body);
+        self.bracket(|lw| lw.queue_drop(obj, glue), body);
     }
 
     /// Drop field `fp` (of type `t`) of an object or struct value being dropped, bracketed: an
@@ -265,7 +279,7 @@ impl FnLower<'_, '_> {
         self.when(nn, done);
         let pp = self.operand_place(p.clone(), Ty::Ptr);
         let value = proj(&pp, Proj::Deref(payload));
-        // Run by the runtime inside this bracket, on this thread: in this function's mode.
+        // Run by std's queue inside this bracket, on this thread: in this function's mode.
         let glue = cfunc(
             self.cx
                 .func_direct(Work::Glue(Glue::QueuedDrop, ty), self.mode),
@@ -275,7 +289,7 @@ impl FnLower<'_, '_> {
         self.release_of(p, ty, weak, |lw| {
             let boxed = q.clone();
             lw.bracket(
-                |lw| lw.call_rt(Rt::DropQueue, vec![boxed, glue], None),
+                |lw| lw.queue_drop(boxed, glue),
                 |lw| {
                     lw.drop_inline(&value, ty);
                     lw.counted_free(q, payload);
@@ -289,14 +303,14 @@ impl FnLower<'_, '_> {
     /// Queue the `ty` value at `place`: a boxed value is its box pointer (its reference moves
     /// to the queue); any other value moves to a heap box of its own.
     fn queue_value(&mut self, place: Place, ty: TyId) {
-        // Run by the runtime inside this bracket, on this thread: in this function's mode.
+        // Run by std's queue inside this bracket, on this thread: in this function's mode.
         let glue = cfunc(
             self.cx
                 .func_direct(Work::Glue(Glue::QueuedDrop, ty), self.mode),
         );
         if self.cx.boxed(ty) {
             let b = Operand::Copy(place);
-            return self.call_rt(Rt::DropQueue, vec![b, glue], None);
+            return self.queue_drop(b, glue);
         }
         let vt = self.cx.ty(ty);
         let b = self.alloc(vt);
@@ -305,7 +319,7 @@ impl FnLower<'_, '_> {
             proj(&bp, Proj::Deref(vt)),
             Rvalue::Use(Operand::Copy(place)),
         );
-        self.call_rt(Rt::DropQueue, vec![b, glue], None);
+        self.queue_drop(b, glue);
     }
 
     /// `Glue::QueuedDrop`: drop the `ty` value in the heap box `b` and free the box; for a
@@ -316,10 +330,14 @@ impl FnLower<'_, '_> {
             self.terminate(Terminator::Return(unit()));
             return;
         }
+        // Moved out and the box freed first: a drop that panics (a `[Symbol.dispose]()` caught by
+        // `catchPanic`) leaves nothing of this frame's behind.
         let place = self.deref_param(b, ty);
-        self.drop_glue(place, ty);
         let vt = self.cx.ty(ty);
+        let v = Place::local(self.temp(vt));
+        self.assign(v.clone(), Rvalue::Use(Operand::Copy(place)));
         self.free(Operand::Copy(Place::local(b)), vt);
+        self.drop_glue(v, ty);
         self.terminate(Terminator::Return(unit()));
     }
 }

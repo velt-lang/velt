@@ -45,9 +45,6 @@ pub(super) enum Rt {
     CellGive,
     CellCopy,
     CellFree,
-    DropState,
-    DropQueue,
-    DropDrain,
     // M3: futures and tasks (rt_abi_async.md §1, §2, §8, §9)
     FutPeek,
     /// Another holder of a promise (shared promises, #212).
@@ -179,9 +176,6 @@ impl Rt {
             Rt::CellGive => ("velt_rt_cell_give", vec![Ptr], Unit, false),
             Rt::CellCopy => ("velt_rt_cell_copy", vec![Ptr, Ptr], Unit, false),
             Rt::CellFree => ("velt_rt_cell_free", vec![Ptr], Unit, false),
-            Rt::DropState => ("velt_rt_drop_state", vec![], Ptr, false),
-            Rt::DropQueue => ("velt_rt_drop_queue", vec![Ptr, Ptr], Unit, false),
-            Rt::DropDrain => ("velt_rt_drop_drain", vec![], Unit, false),
             _ => self.sig_m3(),
         }
     }
