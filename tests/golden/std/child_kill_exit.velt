@@ -51,10 +51,12 @@ async function parent(self: string) {
   c.close();
 
   // -1 is 255 on macOS and Linux, 4294967295 on Windows (where Node reports it unsigned too).
+  // `exitCode` reads it so as well: a crashed child (0xC0000005) does not read as still running.
   const n = spawn(self, ["negative"]);
   const ran = await exec(self, ["negative"]);
   const ranSync = execSync(self, ["negative"]);
-  console.log(`negative ${(await n.wait()) > 0} ${ran.code > 0} ${ranSync.code > 0}`);
+  const waited = await n.wait();
+  console.log(`negative ${waited > 0} ${ran.code > 0} ${ranSync.code > 0} ${n.exitCode === waited}`);
   n.close();
 
   const fwd = self.lastIndexOf("/");
