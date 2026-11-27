@@ -344,19 +344,14 @@ impl<A: Codec, B: Codec, C: Codec> Codec for (A, B, C) {
 
 /// Maps and sets are stored sorted by key, so that the same unit always encodes to the same
 /// bytes (a hash map's order changes from run to run): by the bytes each key encodes to, with its
-/// spans' files as their ids (keys need no `Ord`: spans have none).
-fn sorted_by_key<'v, K: Codec, V>(entries: impl Iterator<Item = (&'v K, V)>) -> Vec<(&'v K, V)> {
+/// spans' files as their modules' places in the unit (`Writer::for_keys`; keys need no `Ord`:
+/// spans have none). `under` is the writer the map is written to.
+fn sorted_by_key<'v, K: Codec, V>(
+    under: &Writer,
+    entries: impl Iterator<Item = (&'v K, V)>,
+) -> Vec<(&'v K, V)> {
     let mut entries: Vec<(&K, V)> = entries.collect();
-    let mut w = Writer {
-        out: vec![],
-        files: FxHashMap::default(),
-        file_list: vec![],
-        nodes: FxHashMap::default(),
-        frags: vec![],
-        frag_starts: vec![],
-        raw_files: true,
-        ast_bytes: 0,
-    };
+    let mut w = Writer::for_keys(under);
     let mut at = vec![0];
     for (k, _) in &entries {
         k.enc(&mut w);
@@ -376,7 +371,7 @@ fn sorted_by_key<'v, K: Codec, V>(entries: impl Iterator<Item = (&'v K, V)>) -> 
 
 impl<K: Codec + std::hash::Hash + Eq, V: Codec> Codec for FxHashMap<K, V> {
     fn enc(&self, w: &mut Writer) {
-        let v = sorted_by_key(self.iter());
+        let v = sorted_by_key(w, self.iter());
         w.uint(v.len() as u64);
         for (k, val) in v {
             k.enc(w);
@@ -402,7 +397,7 @@ impl<K: Codec + std::hash::Hash + Eq, V: Codec> Codec for FxHashMap<K, V> {
 
 impl<K: Codec + std::hash::Hash + Eq> Codec for FxHashSet<K> {
     fn enc(&self, w: &mut Writer) {
-        let v = sorted_by_key(self.iter().map(|k| (k, ())));
+        let v = sorted_by_key(w, self.iter().map(|k| (k, ())));
         w.uint(v.len() as u64);
         for (k, ()) in v {
             k.enc(w);
