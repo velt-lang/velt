@@ -2,6 +2,7 @@
 //! lowered, verified, and executed by a VIR interpreter with an emulated runtime (interp/), which
 //! checks outputs against the goldens and fails on leaks, double frees and backend traps.
 
+mod address_thunk;
 mod builder;
 mod builder_m2;
 mod builder_m3;

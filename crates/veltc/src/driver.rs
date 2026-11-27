@@ -403,9 +403,15 @@ fn load_modules(
     Ok(loaded)
 }
 
-/// Does the build's target run on the executor in Velt (any but a wasm target)?
+/// Does the build's target run on the executor in Velt? Native targets and WASI (on its one
+/// thread, #3905); a JS host keeps the runtime's executor, which its turns drive.
 pub(crate) fn native_executor(opts: &BuildOptions) -> bool {
-    !(opts.target.as_deref()).is_some_and(velt_codegen_llvm::is_wasm)
+    match opts.target.as_deref() {
+        Some(t) if velt_codegen_llvm::is_wasm(t) => {
+            matches!(t.trim(), "wasm32-wasip1" | "wasm32-wasi")
+        }
+        _ => true,
+    }
 }
 
 /// The prebuilt hook modules' objects a check of the program may call (`std_cache::prebuilt`):

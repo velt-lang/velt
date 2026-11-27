@@ -1,0 +1,63 @@
+// velt/lang/hooks (internal): the executor's reactor on WASI (#3905), where the executor in Velt
+// runs the program on its one thread. No sockets, as reactor_none.velt, whose API this is; the
+// idle wait differs: no other thread can wake the worker, so a wait with a timeout (the next
+// timer) sleeps that long through wasi-libc (WASI's `poll_oneoff` on the clock), and one without
+// returns at once, for the worker to look again (sched_end.velt ends the program when nothing can
+// happen any more).
+
+/** wasi-libc's `usleep`: `useconds_t` is 32 bits on wasm32. */
+declare c("c") function usleep$wasi(us: u32): i32;
+
+export {
+  SUPPORTED,
+  EAGAIN,
+  EINPROGRESS,
+  EINTR,
+  EPIPE,
+  MONOTONIC,
+  SEND_FLAGS,
+  SOCKET_FLAGS,
+  SC_NPROCESSORS_ONLN,
+  PTHREAD_CREATE_DETACHED,
+  errno,
+  open,
+  add,
+  del,
+  source,
+  bits,
+  wake,
+  accept,
+  prepare,
+  wordWait,
+  wordWake,
+  wordWaitFor,
+  threadClock,
+  threadCpu,
+  EXIT_FD_OWNED,
+  exitFd,
+  watchExit,
+  EXITED,
+  SPAWN_FLAGS,
+  pipeCloexec,
+  spawnInherit,
+  REARMS,
+  DEREGISTERS,
+  rearm,
+} from "./reactor_none";
+
+/** The longest sleep one `usleep` call takes, in milliseconds (its argument is 32 bits). */
+const CHUNK_MS: i64 = 1000000;
+
+/** Sleeps `timeoutMs` (the next timer), or returns at once without one; no events: 0. */
+export function wait(r: usize, timeoutMs: i64): usize {
+  let left = timeoutMs;
+  while (left > 0) {
+    const ms = left < CHUNK_MS ? left : CHUNK_MS;
+    // SAFETY: usleep takes a number and touches no memory.
+    unsafe {
+      usleep$wasi((ms * 1000) as u32);
+    }
+    left -= ms;
+  }
+  return 0;
+}

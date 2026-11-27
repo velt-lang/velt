@@ -1,0 +1,13 @@
+// velt/lang/hooks (internal): a `Mutex`'s slow path on a target with one thread (WASI; mutex.velt,
+// `#mutex-slow`). Nothing else can hold the lock, so a held lock is this thread's own: a `with`
+// callback that locks its own `Mutex` again, which would wait forever.
+
+/** A lock of a `Mutex` this thread already holds. */
+export function lockSlow(p: usize): void {
+  panic("deadlock: a `Mutex` locked again while its `with` callback runs, on the one thread");
+}
+
+/** An unlock that found threads parked on the lock, which can't happen on one thread. */
+export function unlockSlow(p: usize): void {
+  panic("a `Mutex` unlock found waiting threads on a target with one thread");
+}

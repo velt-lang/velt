@@ -57,13 +57,13 @@ declare function velt_rt_fs_exists_sync(path: string): bool;
 
 // The runtime's `VeltDirents`: sorted names and, at the same index, each one's kind (0 other,
 // 1 file, 2 directory, 3 symlink).
-struct DirentList {
+export struct DirentList {
   names: string[];
   kinds: u8[];
 }
 
 /** The entries of a runtime listing, each with its type. */
-function dirents(list: DirentList): Dirent[] {
+export function dirents(list: DirentList): Dirent[] {
   const out: Dirent[] = [];
   for (let i = 0; i < list.names.length; i++) {
     out.push({ name: list.names[i], kind: list.kinds[i] });

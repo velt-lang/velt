@@ -42,8 +42,9 @@ impl Cx<'_> {
         }
         if self.target.trim().starts_with("wasm") {
             // The executor in Velt's exports (std/lang/hooks/sched*.velt) are live whenever
-            // `VELT_SCHEDULER=std` is set, but a WebAssembly build keeps the runtime's executor
-            // (lower/sched.rs) and never takes their addresses: left out, not reported.
+            // `VELT_SCHEDULER=std` is set. A JS host keeps the runtime's executor (lower/sched.rs)
+            // and never takes their addresses; WASI runs the executor in Velt, whose code takes
+            // the address of each it uses (`exportedAddress` builds it). Not seeded, not reported.
             for e in self
                 .hir
                 .c_exports
@@ -96,7 +97,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
         };
         let mut lw = FnLower::bare(cx, vec![]);
         lw.loc = None;
-        let params: Vec<Ty> = e.params.iter().map(|t| c_call::c_vir(*t, false)).collect();
+        // On wasm32 `usize` crosses as C's 32-bit `size_t`, as in a call through an address
+        // (address_thunk.rs), and is widened for the call.
+        let wasm32 = c_call::wasm32(&lw.cx.target);
+        let params: Vec<Ty> = (e.params.iter())
+            .map(|t| c_call::c_vir(*t, wasm32))
+            .collect();
         // One HIR local per parameter, as the call's arguments read them: the value itself.
         // The parameters are the function's first locals.
         let locals: Vec<_> = params.iter().map(|&t| lw.new_local(t, None)).collect();
@@ -118,6 +124,18 @@ impl<'c, 'h> FnLower<'c, 'h> {
                     e.name
                 ));
             }
+            // A `usize`/`isize` C passed as a 32-bit word, widened for the call.
+            let local = match c_call::narrow(*ct, wasm32) {
+                true => {
+                    let wide = lw.cx.ty(p.ty);
+                    let v = Operand::Copy(crate::vir::Place::local(local));
+                    match lw.rvalue_temp(wide, Rvalue::Cast(v, wide)) {
+                        Operand::Copy(w) => w.local,
+                        _ => super::ice("a widened argument is not a temporary"),
+                    }
+                }
+                false => local,
+            };
             info.push(LInfo::new(Some(local), p.ty, false, false, LState::Init));
             args.push(read(p.ty));
         }
@@ -153,9 +171,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let v = lw.expr(&call);
         // A `@repr("transparent")` result returns its field.
         let v = lw.unwrap_transparent(v, f.ret).0;
-        let ret = c_call::c_vir(e.ret, false);
+        let ret = c_call::c_vir(e.ret, wasm32);
         let v = match ret {
             Ty::Unit => unit(),
+            _ if c_call::narrow(e.ret, wasm32) => lw.rvalue_temp(ret, Rvalue::Cast(v, ret)),
             _ => lw.rvalue_temp(ret, Rvalue::Use(v)),
         };
         if held {

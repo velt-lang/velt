@@ -1,0 +1,134 @@
+// velt/fs (internal): the functions velt/fs calls in a wasm32-wasip1 build (the `wasi` variant of
+// `#fs-rt`, std/imports.velt). The executor in Velt runs WASI programs (#3905), and it can't await
+// velt_rt_wasm's async leaves (their `cx` is the runtime's), so the async forms here run the
+// runtime's sync calls as jobs of the executor's blocking pool (std/lang/hooks/sched_blocking.velt):
+// on WASI's one thread the job runs at once, and its result comes at the task's next poll, as a
+// native build's file operations do. Everything else is std/fs/rt.velt's.
+//
+// A job must not throw, so it returns the runtime's `IoResult`/`IoStatus` and the caller's task
+// turns a failure into `IoError`; the path is checked before the job, as rt.velt does.
+
+import { IoResult, unwrapIo } from "velt/native/result";
+import { IoStatus, checkIo } from "velt/native/status";
+import { Dirent } from "velt/fs/dirent";
+import { Stats } from "velt/fs/stats";
+import { checkPathArg } from "velt/fs/path_arg";
+import { hookCall } from "velt/lang/intrinsics";
+import { DirentList, dirents } from "./rt";
+
+export {
+  velt_rt_fs_open_read,
+  velt_rt_fs_open_read_range,
+  velt_rt_fs_open_write,
+  velt_rt_fs_reader_close,
+  velt_rt_fs_reader_opened_stats,
+  velt_rt_fs_reader_read,
+  velt_rt_fs_writer_close,
+  velt_rt_fs_writer_flush,
+  velt_rt_fs_writer_free,
+  velt_rt_fs_writer_write,
+  velt_rt_fs_writer_write_bytes,
+  readTextSync,
+  readBytesSync,
+  writeSync,
+  statSync,
+  readDirSync,
+  readDirEntriesSync,
+  mkdirSync,
+  removeSync,
+  existsSync,
+  renameSync,
+  rename,
+  copyFileSync,
+  copyFile,
+  symlinkSync,
+  symlink,
+  readlinkSync,
+  readlink,
+  realpathSync,
+  realpath,
+} from "./rt";
+
+declare function velt_rt_fs_read_file_bytes_sync(path: string): IoResult<u8[]>;
+declare function velt_rt_fs_write_file_sync(path: string, data: string): IoStatus;
+declare function velt_rt_fs_append_file_sync(path: string, data: string): IoStatus;
+declare function velt_rt_fs_read_dir_sync(path: string): IoResult<string[]>;
+declare function velt_rt_fs_read_dir_typed_sync(path: string): IoResult<DirentList>;
+declare function velt_rt_fs_stat_sync(path: string): IoResult<Stats>;
+declare function velt_rt_fs_lstat_sync(path: string): IoResult<Stats>;
+declare function velt_rt_fs_mkdir_sync(path: string, recursive: bool): IoStatus;
+declare function velt_rt_fs_remove_sync(path: string, recursive: bool): IoStatus;
+declare function velt_rt_fs_exists_sync(path: string): bool;
+
+/** The file's bytes, read by a job of the blocking pool. */
+async function bytesJob(path: string): Promise<IoResult<u8[]>> {
+  return await hookCall<IoResult<u8[]>>(
+    "sched_blocking_run",
+    () => velt_rt_fs_read_file_bytes_sync(path),
+  );
+}
+
+export async function readText(path: string): Promise<string> {
+  checkPathArg(path);
+  return unwrapIo(await bytesJob(path)).utf8Slice();
+}
+
+export async function readBytes(path: string): Promise<u8[]> {
+  checkPathArg(path);
+  return unwrapIo(await bytesJob(path));
+}
+
+export async function write(path: string, data: string, append: bool): Promise<void> {
+  checkPathArg(path);
+  checkIo(
+    await hookCall<IoStatus>(
+      "sched_blocking_run",
+      () =>
+        append ? velt_rt_fs_append_file_sync(path, data) : velt_rt_fs_write_file_sync(path, data),
+    ),
+  );
+}
+
+export async function stat(path: string, follow: bool): Promise<Stats> {
+  checkPathArg(path);
+  return unwrapIo(
+    await hookCall<IoResult<Stats>>(
+      "sched_blocking_run",
+      () => follow ? velt_rt_fs_stat_sync(path) : velt_rt_fs_lstat_sync(path),
+    ),
+  );
+}
+
+export async function readDir(path: string): Promise<string[]> {
+  checkPathArg(path);
+  return unwrapIo(
+    await hookCall<IoResult<string[]>>("sched_blocking_run", () => velt_rt_fs_read_dir_sync(path)),
+  );
+}
+
+export async function readDirEntries(path: string): Promise<Dirent[]> {
+  checkPathArg(path);
+  const list = await hookCall<IoResult<DirentList>>(
+    "sched_blocking_run",
+    () => velt_rt_fs_read_dir_typed_sync(path),
+  );
+  return dirents(unwrapIo(list));
+}
+
+export async function mkdir(path: string, recursive: bool): Promise<void> {
+  checkPathArg(path);
+  checkIo(
+    await hookCall<IoStatus>("sched_blocking_run", () => velt_rt_fs_mkdir_sync(path, recursive)),
+  );
+}
+
+export async function remove(path: string, recursive: bool): Promise<void> {
+  checkPathArg(path);
+  checkIo(
+    await hookCall<IoStatus>("sched_blocking_run", () => velt_rt_fs_remove_sync(path, recursive)),
+  );
+}
+
+export async function exists(path: string): Promise<bool> {
+  return await hookCall<bool>("sched_blocking_run", () => velt_rt_fs_exists_sync(path));
+}
