@@ -133,7 +133,7 @@ fn env_flag_set() -> bool {
 
 /// Is the process exiting with its other threads already gone? On Windows, `ExitProcess`
 /// terminates every other thread wherever it is, then runs the thread-local destructors of the
-/// exiting thread (tokio's park state, ...), which free memory. A worker terminated while it held
+/// exiting thread (std's thread-locals, ...), which free memory. A worker terminated while it held
 /// the quarantine's lock (likely when freeing a large block: evicting it checks every byte under
 /// the lock) left that lock held forever, and the exit hung (#297). Elsewhere `exit` runs no
 /// destructors after ending other threads.

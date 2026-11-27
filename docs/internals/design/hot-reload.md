@@ -72,7 +72,7 @@ point directly.
   `cfg(velt_rt_host)` removing its `main`). It exports a generated symbol table (`ABI_SYMBOLS`),
   checked against the runtime ABI contracts by a test and registered with the JIT.
 - The host is a separate process rather than the supervisor itself because runtime panics and
-  `exit` end the process, the tokio runtime is a process-global with no shutdown, and there are
+  `exit` end the process, the executor in Velt is process-global with no shutdown, and there are
   process-wide statics (allocator, stdout buffers, panic hook). A crash ends only the host, and
   the supervisor starts a new one on the next save. A host that faults says where on stderr
   before it dies: on Unix one line for a `SIGSEGV` or a `SIGBUS` (macOS's signal for a write to

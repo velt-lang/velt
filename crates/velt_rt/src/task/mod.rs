@@ -51,23 +51,6 @@ pub struct VeltFut {
 
 const _: () = assert!(std::mem::size_of::<VeltFut>() == FUT_RESULT_OFFSET);
 
-/// A raw pointer owned by generated code that crosses threads with its task.
-///
-/// Generated states are `Send` by construction (values are owned; sharing uses atomic `shared()`),
-/// so moving their addresses between tokio workers is sound. `repr(transparent)`: it also serves
-/// as a pointer-typed result slot. Only the unit tests (tests/abi) hand such pointers around now.
-#[cfg(test)]
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct SendPtr<T>(pub *mut T);
-
-// SAFETY: see the type docs; the pointee is only ever accessed by the task that owns it.
-#[cfg(test)]
-unsafe impl<T> Send for SendPtr<T> {}
-// SAFETY: shared read-only use is the contract of the ABI.
-#[cfg(test)]
-unsafe impl<T> Sync for SendPtr<T> {}
-
 /// The await word of every poll the runtime makes: always 0, since no task of the executor in
 /// Velt is being polled there (an `await` goes straight on).
 #[cfg(test)]

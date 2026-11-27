@@ -13,7 +13,7 @@
 //! before `spawn(f())` prints before anything `f` prints, and a timer callback's last line before
 //! the program exits. Hand-offs through shared state (`shared`, a `Mutex`) and timers are not
 //! covered: such lines may still appear out of order. The shared buffer reaches the OS
-//! when it fills, on explicit flushes, and when a worker goes idle. On an interactive terminal every
+//! when it fills and on explicit flushes. On an interactive terminal every
 //! completed line is written through immediately (line buffering, like C stdio).
 
 use std::cell::{Cell, RefCell};
@@ -28,8 +28,6 @@ pub const CAP: usize = 64 * 1024;
 const MAX_PARTIAL_LINE: usize = 16 * CAP;
 
 static SHARED: Mutex<Vec<u8>> = Mutex::new(Vec::new());
-/// Set while the shared buffer holds unwritten bytes (cheap check for idle flushes).
-static DIRTY: AtomicBool = AtomicBool::new(false);
 /// 0 = unknown, 1 = block-buffered (pipe/file), 2 = line-buffered (terminal).
 static MODE: AtomicU8 = AtomicU8::new(0);
 
@@ -136,7 +134,6 @@ fn os_write(bytes: &[u8]) {
 fn write_shared(shared: &mut Vec<u8>) {
     os_write(shared);
     shared.clear();
-    DIRTY.store(false, Ordering::Relaxed);
 }
 
 /// Copy a thread buffer's bytes into the shared buffer (or straight to the OS when large).
@@ -148,8 +145,6 @@ fn publish(buf: &[u8]) {
         shared.extend_from_slice(buf);
         if shared.len() >= CAP {
             write_shared(&mut shared);
-        } else {
-            DIRTY.store(true, Ordering::Relaxed);
         }
     }
 }
@@ -261,16 +256,6 @@ pub fn write_through(bytes: &[u8]) {
     write_shared(&mut shared);
     // Written under the shared lock, so another thread's output can't slip in between.
     os_write(bytes);
-}
-
-/// Idle-worker hook: publish what this thread still holds (output from code that ran outside a
-/// task poll, such as a future dropped after it finished, has no end-of-poll publish), then write
-/// the shared buffer if it holds anything.
-pub fn flush_idle() {
-    publish_if_buffered();
-    if DIRTY.load(Ordering::Relaxed) {
-        write_shared(&mut lock_shared());
-    }
 }
 
 /// How long a panic or fatal error waits for another thread to finish writing out the shared
