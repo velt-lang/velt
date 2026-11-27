@@ -127,9 +127,31 @@ output or input stream, says so with `@modifies` (`decorators/modifies.rs`; sour
 no program's instance raises them; that alone removes the raise nearly every program made (the
 JSON writers' `w`). The list is a floor: an instance also runs the program's own code (a
 `toJSON` that changes its object), which can still raise another parameter, kept beside the
-declaration as above. Of the facts these cover, the vtable slot a program's override adds to a
-std class is the one std's unit still lacks (#3684). Other writes are still counted: #3543's
-other sites.
+declaration as above.
+
+A program's override of a std method that has no vtable slot (`Map.get`) adds one to std's
+class, which the app's calls through a std-typed receiver dispatch through
+(`collect/program_slots.rs`, #3684). It is kept beside the class like the facts above
+(`Ctx::vtable_of`, `vslot`) and written when the freeze lifts. Std's checked bodies keep their
+slot numbers, so the slot goes after the longest vtable of the class's std subtree, and every
+std class of the subtree gets it; the indices in between pad with an entry the class already
+has, which the passes pairing a class's slots with its base's skip (`Ctx::vtable_entries`).
+An override that gives a parameter another default adds the method's default-filling slots the
+same way, also to a method std gave a slot but no fill slots (std's overrides keep its default);
+when std has a fill slot taking fewer parameters, std's stays under another key for std's
+checked calls and the program's calls use the wider one.
+
+Std's own bodies were checked before that slot existed, so their calls of the method are direct
+(`new Map(entries)` calling `this.set`, `Error`'s `toString` reading `this.name`). Once the
+freeze lifts, such a call becomes a call through the slot (`units/std_calls.rs`) where the
+program's override can run: not a `super.m()` call, not a receiver just constructed, and not a
+receiver whose class no overriding program class extends. Without a slot the program added,
+nothing changes. **The lowering cache's key** (U8) and prebuilt std objects must therefore see
+this program fact: a std function whose calls are rewritten so takes the program's set of
+overriding methods for them into its lowering key, or is lowered per program when the program
+overrides one; overrides of std classes are rare, so only those functions miss a cache.
+
+Other writes are still counted: #3543's other sites.
 
 ### The std identity oracle
 

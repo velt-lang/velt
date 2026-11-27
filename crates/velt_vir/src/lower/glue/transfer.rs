@@ -325,6 +325,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
             return v;
         }
         let new = copy(self, v.clone());
+        // A frozen object's copy is frozen too (#2623).
+        if self.cx.freezable(ty) {
+            self.copy_frozen_mark(v.clone(), new.clone());
+        }
         let (now, done) = (self.new_block(), self.new_block());
         if defer {
             let deferred = self.defer_release(v.clone(), ty);
@@ -333,9 +337,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.goto(now);
         }
         self.switch_to(now);
-        if self.cx.weak_capable(ty) {
-            // A weakly held object's count word is not its count (weak-refs.md): release it
-            // with the full sequence, which frees it if this was its last reference.
+        if self.cx.weak_capable(ty) || self.cx.freezable(ty) {
+            // A weakly held object's count word is not its count (weak-refs.md), nor a frozen
+            // one's (a uniqueness test never sees it unique, frozen_mark.rs): release it with
+            // the full sequence, which frees it if this was its last reference.
             let p = self.operand_place(v, Ty::Ptr);
             self.drop_glue(p, ty);
         } else if self.cx.lock_counted(ty) {

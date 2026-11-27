@@ -17,10 +17,7 @@ dependencies: {
 },
 ```
 
-Nothing here runs native code, so using the package needs no toolchain beyond `velt`. The `native/`
-folder holds a Rust driver over `tokio-postgres`, with its ABI in `docs/native_abi.md`; nothing in
-`src/` uses it, and it serves as a performance reference
-([#2370](https://github.com/velt-lang/velt/issues/2370)).
+Nothing here runs native code, so using the package needs no toolchain beyond `velt`.
 The full guide: https://veltlang.com/docs/packages/postgres/.
 
 - `connect(url): Promise<Client>`. `url` is `postgres://user:password@host:port/db?options` or

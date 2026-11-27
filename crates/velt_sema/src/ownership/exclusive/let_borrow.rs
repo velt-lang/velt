@@ -256,7 +256,7 @@ fn method_name<'c>(cx: &'c crate::ctx::Ctx, callee: &Callee, args: &[Expr]) -> O
     match callee {
         Callee::Virtual { slot } => {
             let (class, _) = cx.class_of(args.first()?.ty)?;
-            let m = *cx.adt(class)?.vtable.get(*slot as usize)?;
+            let m = *cx.vtable_of(class)?.get(*slot as usize)?;
             Some(cx.try_fn(m)?.name.as_str())
         }
         Callee::Dyn { slot, .. } => match cx.ty.kind(args.first()?.ty) {

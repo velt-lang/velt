@@ -380,10 +380,14 @@ impl FnInfo<'_> {
         let Some(FnSource::Decl(d)) = self.source else {
             return false;
         };
-        self.kind == FnKind::Method
-            && matches!(&d.sig.ret, Some(ast::TypeExpr { kind: ast::TypeExprKind::Named { path, args }, .. })
-                if path.len() == 1 && path[0].name == "this" && args.is_empty())
+        self.kind == FnKind::Method && d.sig.ret.as_ref().is_some_and(is_this_type)
     }
+}
+
+/// Is `t` the polymorphic `this` type?
+pub(crate) fn is_this_type(t: &ast::TypeExpr) -> bool {
+    matches!(&t.kind, ast::TypeExprKind::Named { path, args }
+        if path.len() == 1 && path[0].name == "this" && args.is_empty())
 }
 
 #[derive(Clone, Copy, Debug)]

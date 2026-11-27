@@ -59,6 +59,36 @@ pub(crate) fn hands_back(cx: &Ctx, def: DefId) -> bool {
     true
 }
 
+/// Is interface `iface`'s method `name` declared with the result `this` (typed as the interface
+/// itself, `collect::sigs`), by `iface` or, when it doesn't declare `name`, by an interface it
+/// extends? A call through a type parameter bounded by it gives the receiver, as the
+/// parameter's type (`body::expr::hand_back`).
+pub(crate) fn iface_returns_this(cx: &Ctx, iface: DefId, name: &str) -> bool {
+    let mut todo = vec![iface];
+    let mut seen = vec![];
+    while let Some(i) = todo.pop() {
+        if seen.contains(&i) {
+            continue;
+        }
+        seen.push(i);
+        let Some(info) = cx.iface(i) else {
+            continue;
+        };
+        let own = info
+            .decl
+            .and_then(|d| d.methods.iter().find(|m| m.sig.name.name == name));
+        match own {
+            Some(m) => {
+                if m.sig.ret.as_ref().is_some_and(crate::defs::is_this_type) {
+                    return true;
+                }
+            }
+            None => todo.extend(info.parents.iter().map(|b| b.iface)),
+        }
+    }
+    false
+}
+
 /// The method a table calls for `def`'s result: `def` itself, or for a method that hands back
 /// its receiver, a method of its class (`C.<value m>`) that calls it with the same parameters
 /// and modes and returns `this`.

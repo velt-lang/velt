@@ -423,7 +423,7 @@ fn collect(cx: &mut Ctx) -> Vec<(DefId, Unit)> {
         let Some((c, _)) = cx.class_of(ty) else {
             continue;
         };
-        let names = cx.adt(c).map(|a| &a.vslots).into_iter().flatten();
+        let names = cx.vslots_of(c).into_iter().flatten();
         dispatched.extend(names.filter(|(_, s)| **s == slot).map(|(n, _)| n.clone()));
     }
     for (at, iface, slot, iargs, margs, span) in iface_calls {

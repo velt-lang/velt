@@ -16,8 +16,6 @@ pub mod build_profile;
 pub mod bytes;
 pub mod cell_owner;
 pub mod child;
-pub mod db_handles;
-pub mod db_params;
 pub mod db_rows;
 #[cfg(all(debug_assertions, not(velt_rt_host)))]
 pub mod debug_alloc;
@@ -38,7 +36,6 @@ pub mod io;
 pub mod math;
 pub mod mem;
 pub mod mutex;
-pub mod native;
 pub mod net;
 pub mod panic;
 pub mod process;

@@ -3,8 +3,8 @@
 //! rules (rc.rs), which leave the objects other readers read (the store) uncounted and
 //! unwritten, so readers on many threads share them without copies or atomics. An `RwLock<T>` whose `T` can
 //! reach what the compiler cannot follow there (a function or interface value, a class in a
-//! hierarchy, a weak-capable or proxiable type, a promise) is *exclusive*: `read` takes the lock
-//! exclusively, as `write` does.
+//! hierarchy, a weak-capable, proxiable or freezable type, a promise) is *exclusive*: `read`
+//! takes the lock exclusively, as `write` does.
 
 use rustc_hash::FxHashSet;
 
@@ -156,7 +156,9 @@ impl Cx<'_> {
                 }
                 _ => {
                     if self.counted_in(b, t) {
-                        if b.weak.contains(&t) {
+                        // A frozen mark (frozen_mark.rs) shares no count word with read mode.
+                        let frozen = matches!(self.raw_kind(t), TyKind::Adt(d, _) if self.hir.freezable.contains(d));
+                        if b.weak.contains(&t) || frozen {
                             return false;
                         }
                         boxes.insert(t);

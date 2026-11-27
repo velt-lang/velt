@@ -1,0 +1,28 @@
+// velt/text (internal): a `RegExp`'s match made from the slots a search filled (regexp.velt).
+
+import { arrayWithCapacity } from "velt/lang/intrinsics";
+import { textOf, unitOf } from "velt/text/regex/offsets";
+import { RegExpMatch } from "velt/text/regex/regexp_match";
+
+/** The match of `s` whose slots (byte offsets) start at `slots[at]`, its groups named `names`. */
+export function matchOf(names: string[], s: string, slots: i64[], at: usize): RegExpMatch {
+  const n = names.length;
+  const captures: (string | null)[] = arrayWithCapacity(n);
+  for (let g: usize = 1; g <= n; g++) {
+    if (slots[at + 2 * g] < 0) {
+      captures.push(null);
+    } else {
+      captures.push(textOf(s, slots[at + 2 * g] as usize, slots[at + 2 * g + 1] as usize));
+    }
+  }
+  const start = slots[at] as usize;
+  const end = slots[at + 1] as usize;
+  return new RegExpMatch(
+    unitOf(s, start) as number,
+    unitOf(s, end) as number,
+    textOf(s, start, end),
+    captures,
+    names.clone(),
+    s.clone(),
+  );
+}

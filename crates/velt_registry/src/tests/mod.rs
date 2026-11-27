@@ -127,24 +127,23 @@ fn uploads_are_checked() {
     server.stop();
 }
 
+/// A bundle of package `n`'s C library `n` for Linux, its files holding `content`.
 fn native_bundle(dir: &Path, content: &str) -> std::path::PathBuf {
     let target = "x86_64-unknown-linux-gnu";
     let b = dir.join(target);
     std::fs::create_dir_all(b.join("shared")).unwrap();
-    let exports = std::collections::BTreeMap::from([("velt_n__get".into(), "()->u64".into())]);
-    let library = vpm::native::exports::sample_library("n", &exports, content);
-    std::fs::write(b.join("shared/libvelt_native_n.so"), library).unwrap();
+    std::fs::create_dir_all(b.join("static")).unwrap();
+    let files = vpm::native::c_library_files("n", "n", target);
+    std::fs::write(b.join(&files.shared), content).unwrap();
+    let static_lib = files.static_lib.as_ref().unwrap();
+    std::fs::write(b.join(static_lib), content).unwrap();
     let meta = vpm::native::NativeMeta {
         package: "n".into(),
         version: "1.0.0".into(),
         target: target.into(),
-        abi: 1,
-        shared: Some("shared/libvelt_native_n.so".into()),
-        import_lib: None,
-        static_obj: None,
-        system_libs: None,
-        exports,
-        c: Default::default(),
+        abi: 0,
+        exports: Default::default(),
+        c: std::collections::BTreeMap::from([("n".into(), files)]),
     };
     std::fs::write(b.join("native.json"), meta.to_json()).unwrap();
     b
@@ -159,11 +158,12 @@ fn native_libraries_over_http() {
     let loc = client(&tmp.path().join("home"), &url);
 
     let lib = tmp.path().join("n");
-    let fields = format!("native: {{ targets: [\"{target}\"] }}");
+    let fields = format!(
+        "native: {{ targets: [\"{target}\"], c: {{ n: {{ sources: [\"native/n.c\"], unchecked: true }} }} }}"
+    );
     package(&lib, "n", "1.0.0", &fields);
     std::fs::create_dir_all(lib.join("native")).unwrap();
-    std::fs::write(lib.join("native/Cargo.toml"), "").unwrap();
-    std::fs::write(lib.join("native/Cargo.lock"), "").unwrap();
+    std::fs::write(lib.join("native/n.c"), "int n_get(void) { return 1; }\n").unwrap();
     let bundle = native_bundle(&tmp.path().join("out"), "v1");
     let bundles = std::collections::BTreeMap::from([(target.to_string(), bundle.clone())]);
     std::env::set_var(vpm::remote::TOKEN_VAR, &token);
@@ -184,12 +184,12 @@ fn native_libraries_over_http() {
         ..Default::default()
     };
     let installed = vpm::install(&app, &other, opts).unwrap();
-    let (_, native) = installed.graph.natives().next().unwrap();
-    let library = std::fs::read(native.shared_lib()).unwrap();
-    assert_eq!(
-        library,
-        vpm::native::exports::sample_library("n", &native.meta.exports, "v1")
-    );
+    let n = installed.graph.packages().iter().find(|p| p.name == "n");
+    let Some(vpm::graph::CBundle::Prebuilt(native)) = n.and_then(|p| p.c_bundle.as_ref()) else {
+        panic!("no prebuilt bundle of `n`");
+    };
+    let library = std::fs::read(native.dir.join(&native.meta.c["n"].shared)).unwrap();
+    assert_eq!(library, b"v1");
     assert_eq!(installed.lockfile.get("n").unwrap().native, entry.native);
 
     // Uploads are checked: checksum, and a published target is never replaced.

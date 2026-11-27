@@ -15,8 +15,8 @@ export function readRowsByColumn(req: InstanceRequest, out: Output): void {
     out.line(`return null;`);
     return;
   }
-  const from = new RowsFrom(false, req.params[0]);
-  beginRows(out, model, id, from, "");
+  const from = new RowsFrom(req.params[0]);
+  beginRows(out, model, id, from);
   out.line(`const out: ${out.typeName(id)}[] = [];`);
   out.line(`let row: i64 = 0;`);
   out.line(`while (${from.name}.next()) {`);
@@ -35,8 +35,8 @@ export function readRowByColumn(req: InstanceRequest, out: Output): void {
     out.line(`return null;`);
     return;
   }
-  const from = new RowsFrom(false, req.params[0]);
-  beginRows(out, model, id, from, "");
+  const from = new RowsFrom(req.params[0]);
+  beginRows(out, model, id, from);
   readRow(out, model, id, from, "-1", "x");
   out.line(`return x;`);
 }

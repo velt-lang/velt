@@ -296,15 +296,17 @@ fn vtable_groups(cx: &Ctx) -> Vec<Vec<DefId>> {
         let Some(a) = cx.adt(DefId(i as u32)) else {
             continue;
         };
-        let Some(bvt) = a
-            .base
-            .and_then(|b| cx.class_of(b))
-            .and_then(|(b, _)| cx.adt(b))
-            .map(|b| &b.vtable)
+        // Slots a vtable the program extended only pads are none (`Ctx::vtable_entries`).
+        let Some(bvt) = (a.base.and_then(|b| cx.class_of(b))).map(|(b, _)| cx.vtable_entries(b))
         else {
             continue;
         };
-        for (x, y) in a.vtable.iter().zip(bvt) {
+        let own = cx.vtable_entries(DefId(i as u32));
+        let pairs = own
+            .iter()
+            .zip(&bvt)
+            .filter_map(|(x, y)| x.as_ref().zip(y.as_ref()));
+        for (x, y) in pairs {
             let (rx, ry) = (find(&parent, *x), find(&parent, *y));
             if rx != ry {
                 parent.insert(rx, ry);

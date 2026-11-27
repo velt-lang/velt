@@ -44,23 +44,20 @@ impl Manifest {
             .filter(|(_, lib)| !lib.sources.is_empty())
     }
 
-    /// Whether the package publishes prebuilt libraries: it has a Rust crate or C `sources`.
+    /// Whether the package publishes prebuilt libraries: it has C `sources`.
     pub fn has_bundles(&self) -> bool {
-        self.native.is_some() || self.has_c_sources()
+        self.has_c_sources()
     }
 
     /// The targets `velt publish` publishes a prebuilt library for.
     pub fn bundle_targets(&self) -> &[String] {
-        match &self.native {
-            Some(native) => &native.targets,
-            None => &self.c_targets,
-        }
+        &self.c_targets
     }
 
-    /// Whether the package has native code: a Rust crate, or C declarations (`native.c`). Such a
-    /// package is installed only when the program allows it (`allowNative`).
+    /// Whether the package has native code: C declarations (`native.c`). Such a package is
+    /// installed only when the program allows it (`allowNative`).
     pub fn has_native_code(&self) -> bool {
-        self.native.is_some() || self.c_libraries.is_some()
+        self.c_libraries.is_some()
     }
 }
 

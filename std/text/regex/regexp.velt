@@ -21,54 +21,85 @@
 // methods call: where `isExactClass(this)` is false they take the steps of exec_calls.velt.
 
 import { Pattern } from "velt/text/regex/pattern";
-import { assemble } from "velt/text/regex/assemble";
-import { RegExpError } from "velt/text/regex/errors";
+import { compileRegExp } from "velt/text/regex/regexp_compile";
 import { foundByExec, replaceFound, splitting } from "velt/text/regex/exec_calls";
 import { find, findAll } from "velt/text/regex/find";
 import { CURSOR, MATCH, MATCH_ALL, REPLACE_CALLING, SEARCH, SPLIT } from "velt/text/regex/keys";
-import { positionOf, textOf, unitOf } from "velt/text/regex/offsets";
+import { past, positionOf, textOf } from "velt/text/regex/offsets";
+import { matchOf } from "velt/text/regex/match_of";
 import { Program } from "velt/text/regex/program";
 import { RegExpMatch } from "velt/text/regex/regexp_match";
+import { own } from "velt/lang/intrinsics/decorators";
+import { INSPECT } from "velt/lang/hooks/keys";
+import { flagsText, sourceText } from "velt/text/regex/source_text";
 import { escapePattern, replaceMatches, splitMatches } from "velt/text/regex/replace";
 import { lookExec, lookTest, YES } from "velt/text/regex/quick";
-import { Cursor, keepTables, memoryOf } from "velt/text/regex/cursor";
+import { Cursor, cursorCopy, keepTables, memoryOf } from "velt/text/regex/cursor";
 import { Search } from "velt/text/regex/search";
 // The string methods that take a regex (compiler hooks).
 import "velt/text/regex/string_methods";
 import { arrayWithCapacity, isExactClass, noInline, strByteLen } from "velt/lang/intrinsics";
 
-/** The program of `pattern` with `flags`, and the names of its groups in `names`. */
-function compile(pattern: string, flags: string, names: string[]): Program {
-  for (let i: i64 = 0; i < (flags.length as i64); i++) {
-    const f = flags[i];
-    if (!"dgimsuvy".includes(f) || flags.indexOf(f) != i || (f == "v" && flags.includes("u"))) {
-      throw new RegExpError(`Invalid flags supplied to RegExp constructor '${flags}'`);
-    }
-  }
-  return assemble(pattern, flags, names);
-}
-
 /** A compiled regular expression: `new RegExp("(\\d+)-(\\d+)", "g")`. */
 export class RegExp implements Pattern {
-  /** The pattern text as given. */
+  /**
+   * The pattern as a regex literal writes it, as in JavaScript: `new RegExp("a/b").source` is
+   * `a\/b`, and the empty pattern's is `(?:)` (velt/text/regex/source_text).
+   */
   readonly source: string;
-  /** The flags as given. */
+  /** The flags in JavaScript's order (`dgimsuvy`): `new RegExp("a", "ig").flags` is `gi`. */
   readonly flags: string;
   /** `g`: `replace` replaces every match. */
   readonly global: bool;
   /** `y`: `test`/`exec` only match starting exactly at the start position. */
   readonly sticky: bool;
-  #prog: Program;
-  #names: string[] = [];
-  #cursor: shared<Cursor> = shared(new Cursor());
+  // The program never changes once compiled: copies of the regex share it, from any thread
+  // (`shared`: an atomic count, read in place). The searches only read it, and the automatons
+  // they make are given it, not keeping it (dfa.velt), so reading it costs no copy (#3883).
+  #prog: shared<Program>;
+  #names: string[];
+  #cursor: shared<Cursor>;
+  /** The pattern as given, which `new RegExp(re, flags)` compiles again. */
+  #pattern: string;
 
-  /** Throws `RegExpError` for an invalid pattern or flags. */
-  constructor(pattern: string, flags: string = "") {
-    this.#prog = compile(pattern, flags, this.#names);
-    this.source = pattern.clone();
-    this.flags = flags.clone();
-    this.global = flags.includes("g");
-    this.sticky = flags.includes("y");
+  /**
+   * Throws `RegExpError` for an invalid pattern or flags. Given a regex, as in JavaScript: its
+   * pattern, with `flags` if given, else its own (then sharing its program, as copies do), and a
+   * `lastIndex` of 0. The group names are copied: a few strings, which a `shared` would cost
+   * more to make for every regex.
+   */
+  constructor(pattern: string | RegExp, flags?: string) {
+    if (typeof pattern === "string") {
+      const f = flags ?? "";
+      const names: string[] = [];
+      this.#prog = shared(compileRegExp(pattern, f, names));
+      this.#names = names;
+      this.#pattern = pattern.clone();
+      this.source = sourceText(pattern);
+      this.flags = flagsText(f);
+      this.#cursor = shared(new Cursor());
+    } else if (flags === undefined) {
+      // Read into a local first: a deep copy runs this on one regex from several threads at once
+      // (`clone`), and passing a field of `pattern` to a call would count `pattern` up and down,
+      // which is not atomic (std/shared_fn_regex_counted).
+      const cursor = pattern.#cursor;
+      this.#prog = pattern.#prog;
+      this.#names = pattern.#names.clone();
+      this.#pattern = pattern.#pattern;
+      this.source = pattern.source;
+      this.flags = pattern.flags;
+      this.#cursor = cursorCopy(cursor);
+    } else {
+      const names: string[] = [];
+      this.#prog = shared(compileRegExp(pattern.#pattern, flags, names));
+      this.#names = names;
+      this.#pattern = pattern.#pattern;
+      this.source = pattern.source;
+      this.flags = flagsText(flags);
+      this.#cursor = shared(new Cursor());
+    }
+    this.global = this.flags.includes("g");
+    this.sticky = this.flags.includes("y");
   }
 
   /**
@@ -128,7 +159,7 @@ export class RegExp implements Pattern {
     this.keep(m);
     const out: RegExpMatch[] = arrayWithCapacity(m.found.length / stride);
     for (let at: usize = 0; at < m.found.length; at += stride) {
-      out.push(this.matchOf(s, m.found, at));
+      out.push(matchOf(this.#names, s, m.found, at));
     }
     return out;
   }
@@ -248,7 +279,7 @@ export class RegExp implements Pattern {
         break;
       }
       if (m.end == m.index) {
-        this.#cursor.at.store(this.past(s, m.end));
+        this.#cursor.at.store(past(s, m.end, this.#prog.units));
       }
       out.push(m);
     }
@@ -276,19 +307,40 @@ export class RegExp implements Pattern {
   /**
    * Where `exec(s)` and `test(s)` of a `g` or `y` regex start, set past each match (0 after a
    * failed one); `s.replace`, `s.match` and `s.matchAll` read and set it as in JS. An `Atomic`,
-   * so the methods that update it don't need a mutable receiver.
+   * so the methods that update it don't need a mutable receiver. It is the regex's own data
+   * property, as in JavaScript: a subclass's `lastIndex` accessors are never reached.
    */
+  @own()
   get lastIndex(): number {
     return this.#cursor.at.load();
   }
 
-  set lastIndex(value: number) {
-    this.#cursor.at.store(value);
+  /**
+   * Any value may be written, as in JavaScript (through `any`: `a.lastIndex = "3"`). It is kept
+   * as a number (`Number(value)`), as `exec` reads it (JavaScript keeps the value as written,
+   * and converts it at each `exec`, #3883).
+   */
+  set lastIndex(value: unknown) {
+    this.#cursor.at.store(typeof value === "number" ? value : Number(value));
   }
 
   /** The cursor: its `lastIndex` is the regex's own, whatever a subclass declares. */
   [CURSOR](): shared<Cursor> {
     return this.#cursor;
+  }
+
+  /** The regex as a literal writes it: `/a\/b/gi`, as in JavaScript. */
+  toString(): string {
+    return `/${this.source}/${this.flags}`;
+  }
+
+  /** How `console.log` shows the regex, as Node does: `/a/g`, a subclass's as `Sub /a/g`. */
+  [INSPECT](): string {
+    if (isExactClass(this)) {
+      return this.toString();
+    }
+    const o: object = this;
+    return `${o.constructor.name} ${this.toString()}`;
   }
 
   /** Number of capture groups (not counting the whole match). */
@@ -302,18 +354,17 @@ export class RegExp implements Pattern {
   }
 
   /**
-   * An independent copy (compiles the pattern again). It cannot throw: the pattern compiled
-   * once already. So a deep copy for another task (`spawn`, a channel) can call it.
+   * An independent copy, as JavaScript's structured clone makes one (`new RegExp(re)`): the same
+   * program, with a `lastIndex` of its own, 0. Every deep copy of a regex runs it
+   * (`structuredClone`, a copy for another task or a `shared(...)` call, #3883), so no copy
+   * moves the original's `lastIndex`. It changes no count of the original's but atomic ones
+   * (its program's `shared`, strings).
    */
   clone(): RegExp {
-    // Read first: a deep copy runs this on one object from several threads at once, and passing a
-    // field to a call would update `this`'s count, when `RegExp` is a counted class.
-    const source = this.source;
-    const flags = this.flags;
     try {
-      return new RegExp(source, flags);
+      return new RegExp(this);
     } catch (e) {
-      panic(`ICE: RegExp.clone: the pattern no longer compiles: ${e.message}`);
+      panic(`ICE: RegExp.clone: a copy that shares the program threw: ${e.message}`);
     }
   }
 
@@ -344,12 +395,12 @@ export class RegExp implements Pattern {
     }
     const at = lookExec(prog, this.#cursor, s, positionOf(s, from, prog.units), sticky, slots);
     if (at < 0) {
-      return at == YES ? this.matchOf(s, slots, 0) : null;
+      return at == YES ? matchOf(this.#names, s, slots, 0) : null;
     }
     const m = this.memory(stride);
     const found = find(prog, m, s, at as usize, sticky);
     this.keep(m);
-    return found ? this.matchOf(s, m.slots, 0) : null;
+    return found ? matchOf(this.#names, s, m.slots, 0) : null;
   }
 
   // The built-in `exec` of an object of a subclass: as `exec`, and for the regex a `split` is
@@ -371,17 +422,7 @@ export class RegExp implements Pattern {
     const m = this.memory(2 * (prog.groups as usize) + 2);
     const found = find(prog, m, s, positionOf(s, from, prog.units), true);
     this.keep(m);
-    return found ? this.matchOf(s, m.slots, 0) : null;
-  }
-
-  // Where the search goes on after an empty match at `end`: JavaScript's AdvanceStringIndex,
-  // one code unit on, or past a whole pair for a pattern of code points.
-  private past(s: string, end: number): number {
-    const at = end as i64;
-    const high = s.charCodeAt(at);
-    const low = s.charCodeAt(at + 1);
-    const pair = high >= 0xd800 && high < 0xdc00 && low >= 0xdc00 && low < 0xe000;
-    return end + (pair && !this.#prog.units ? 2 : 1);
+    return found ? matchOf(this.#names, s, m.slots, 0) : null;
   }
 
   // The matches `replace` replaces, setting `lastIndex` as JS does.
@@ -407,7 +448,7 @@ export class RegExp implements Pattern {
       if (m == null) {
         break;
       }
-      at = (m.end == m.index ? this.past(s, m.end) : m.end) as usize;
+      at = (m.end == m.index ? past(s, m.end, this.#prog.units) : m.end) as usize;
       out.push(m);
     }
     return out;
@@ -419,28 +460,5 @@ export class RegExp implements Pattern {
       out.push(m.value.clone());
     }
     return out;
-  }
-
-  // Builds the match whose slots (byte offsets) start at `slots[at]`.
-  private matchOf(s: string, slots: i64[], at: usize): RegExpMatch {
-    const n = this.#names.length;
-    const captures: (string | null)[] = arrayWithCapacity(n);
-    for (let g: usize = 1; g <= n; g++) {
-      if (slots[at + 2 * g] < 0) {
-        captures.push(null);
-      } else {
-        captures.push(textOf(s, slots[at + 2 * g] as usize, slots[at + 2 * g + 1] as usize));
-      }
-    }
-    const start = slots[at] as usize;
-    const end = slots[at + 1] as usize;
-    return new RegExpMatch(
-      unitOf(s, start) as number,
-      unitOf(s, end) as number,
-      textOf(s, start, end),
-      captures,
-      this.#names.clone(),
-      s.clone(),
-    );
   }
 }

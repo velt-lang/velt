@@ -88,7 +88,7 @@ pub(super) fn impl_entry(
         .collect();
     let qual = cx.adt(d).map(|a| a.qual_name.clone()).unwrap_or_default();
     let mutates = (cx.fn_info(m).this.as_ref()).is_some_and(|t| t.mode == PassMode::BorrowMut);
-    let target = match cx.adt(d).and_then(|a| a.vslots.get(&im.name).copied()) {
+    let target = match cx.vslot(d, &im.name) {
         Some(slot) => Target::SlotFirst { slot, def: m, take },
         None => Target::First {
             def: m,

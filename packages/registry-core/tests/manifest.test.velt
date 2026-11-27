@@ -24,7 +24,6 @@ describe("readManifest", () => {
   dependencies: { json: "^1.2", util: { path: "../util" }, "@x/y": { path: "../y", version: "1" } },
   paths: { "@app/*": "src/*" },
   imports: { "#io": { js: "./src/io/js.velt", default: "./src/io/native.velt" } },
-  native: { targets: ["x86_64-unknown-linux-gnu"] },
   tsCompat: ["src/models"],
   build: { cpu: "x86-64-v3" },
 };\n`);
@@ -33,7 +32,7 @@ describe("readManifest", () => {
     expect(m.keywords).toEqual(["greeting", "demo"]);
     expect(m.dependencies.get("json")?.simple).toBe("^1.2");
     expect(m.dependencies.get("util")?.path).toBe("../util");
-    expect(m.native?.path).toBe("native");
+    expect(m.native).toBe(null);
     expect(m.entry).toBe("src/main.velt");
   });
 
@@ -79,6 +78,19 @@ describe("readManifest", () => {
     expect(refusal(`${HEAD}{ name: "a", version: "1.0.0", nme: "x" };`)).toContain(
       "unknown key `nme`",
     );
+  });
+
+  it("refuses a Rust crate's native library, as vpm does", () => {
+    for (const native of ["{}", '{ targets: ["x86_64-unknown-linux-gnu"] }']) {
+      expect(refusal(`${HEAD}{ name: "a", version: "1.0.0", native: ${native} };`)).toContain(
+        "`native` has no `c`",
+      );
+    }
+    for (const key of ['path: "rust"', "wasm: false"]) {
+      expect(refusal(`${HEAD}{ name: "a", version: "1.0.0", native: { ${key} } };`)).toContain(
+        "was a Rust crate's, and velt no longer builds Rust crates",
+      );
+    }
   });
 
   it("names the first earlier tsCompat folder a new one clashes with", () => {

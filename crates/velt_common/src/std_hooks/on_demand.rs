@@ -56,6 +56,8 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/weak",
     // The inline `Mutex` lock (#2196), demanded by a `Mutex`'s `with` (`Construct::Mutex`).
     "std/lang/hooks/mutex",
+    // The errors of a write to a frozen object (#2623), demanded by sema's test of the mark.
+    "std/lang/hooks/frozen",
     // The count of held `Mutex`es (#3467), demanded by a `with` in a `velt dev` build
     // (`Construct::MutexHeld`); the executor's module lock imports it too.
     "std/lang/hooks/mutex_held",

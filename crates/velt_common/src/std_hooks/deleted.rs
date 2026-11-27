@@ -145,8 +145,7 @@ pub const DELETED: &[&str] = &[
     "velt_rt_strbuf_push_json_f64",
     "velt_rt_write_f64",
     "velt_rt_bytes_put_f64",
-    // #3530: JSON string escaping, std's (std/encoding/json/writer.velt): velt/db's rows text is
-    // read with `velt_rt_rows_str` and escaped by std's writer.
+    // #3530: JSON string escaping, std's (std/encoding/json/writer.velt).
     "velt_rt_strbuf_push_json_str",
     // #2196: bounded drop nesting (std/lang/hooks/drop_queue.velt): its state word is a std
     // `ThreadLocal` that compiled code reads and writes inline, and the queue std's.

@@ -213,10 +213,10 @@ impl FnLower<'_, '_> {
         if !self.cx.counted(ty) {
             return;
         }
-        if self.cx.weak_capable(ty) || self.cx.lock_counted(ty) {
+        if self.cx.weak_capable(ty) || self.cx.lock_counted(ty) || self.cx.freezable(ty) {
             // A weakly held node is never unique by its count word (weak-refs.md), nor one an
-            // `RwLock`'s readers share (locks.rs): the release decides, and its last reference
-            // continues the loop.
+            // `RwLock`'s readers share (locks.rs), nor a frozen one (frozen_mark.rs): the release
+            // decides, and its last reference continues the loop.
             let own = self.new_block();
             let weak = self.cx.weak_capable(ty);
             self.release_of(p, ty, weak, |lw| lw.goto(own));

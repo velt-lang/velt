@@ -1,0 +1,67 @@
+interface Fluent {
+  step(n: number): this;
+  total(): number;
+}
+
+interface Totalled extends Fluent {
+  half(): number;
+}
+
+function twice<T extends Fluent>(t: T): T {
+  return t.step(1).step(1);
+}
+
+function literal(): Totalled {
+  let sum = 0;
+  return {
+    step(n: number) {
+      sum += n;
+      return this;
+    },
+    total() {
+      return sum;
+    },
+    half() {
+      return sum / 2;
+    },
+  };
+}
+
+// `step` returns the result of another `this` method called on `this`, and a nested function's
+// `return` is its own.
+function chained(): Totalled {
+  let sum = 0;
+  let calls = 0;
+  return {
+    step(n: number) {
+      calls += 1;
+      const add = (k: number) => {
+        return k + n;
+      };
+      sum = add(sum);
+      if (n > 5) {
+        return this.step(n - 5);
+      }
+      return (this);
+    },
+    total() {
+      return sum * 100 + calls;
+    },
+    half() {
+      return sum / 2;
+    },
+  };
+}
+
+function main() {
+  const lit = literal();
+  const r = lit.step(3);
+  console.log(r === lit, r.total(), r.half());
+  const f: Fluent = lit;
+  const r2 = f.step(1);
+  console.log(r2 === f, r2.total());
+  const t = twice(lit);
+  console.log(t === lit, t.total(), lit.step(2).step(2).half());
+  const c = chained();
+  console.log(c.step(7) === c, c.total(), twice(c).half());
+}

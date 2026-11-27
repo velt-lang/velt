@@ -62,9 +62,13 @@ export const HIT: u32 = 0x40000000;
 const SKIP_TRIES: usize = 4;
 const SKIP_GAIN: usize = 8;
 
-/** An automaton of one program, for one search. */
+/**
+ * An automaton of one program, for one search. It does not keep the program: the methods that
+ * work out states are given it, always the one it was made for. A regex's program is shared by
+ * its copies and read in place (frozen), which an automaton keeping it would copy at every
+ * search (#3883).
+ */
 export class Dfa {
-  readonly prog: Program;
   /** The automaton looks for the longest match from a fixed start (the backward one): a match
    * found does not end the threads the program likes less. */
   readonly longest: bool;
@@ -108,7 +112,6 @@ export class Dfa {
   learned: usize = 0;
 
   constructor(prog: Program, longest: bool) {
-    this.prog = prog;
     this.longest = longest;
     this.classes = prog.classStarts.length;
   }
@@ -146,11 +149,11 @@ export class Dfa {
   }
 
   /** The scratch lists (`ending`: those for `$`), made the first time. */
-  private lists(ending: bool): Lists {
+  private lists(prog: Program, ending: bool): Lists {
     const made = ending ? this.ending : this.scratch;
     const m = made ?? new Lists();
     if (made == null) {
-      pikeReset(this.prog, m, 0);
+      pikeReset(prog, m, 0);
       if (ending) {
         this.ending = m;
       } else {
@@ -162,9 +165,8 @@ export class Dfa {
 
   /** The state of the threads in the scratch list, made if it is new; -1 when the automaton
    * is full. */
-  private intern(noStart: bool): i64 {
-    const prog = this.prog;
-    const m = this.lists(false);
+  private intern(prog: Program, noStart: bool): i64 {
+    const m = this.lists(prog, false);
     const width = prog.length + (prog.marks as usize);
     if (this.bounds.length == 0) {
       // The first state's threads start at 0 (made here, not when the automaton is: one that
@@ -185,7 +187,7 @@ export class Dfa {
       // A thread waiting at `$`: a character ends it; where the subject ends it goes on.
       if (op == OP_ASSERT && (pc as usize) < prog.length) {
         this.threads.push(pc);
-        flags |= this.ends(pc as usize) ? ENDS : 0;
+        flags |= this.ends(prog, pc as usize) ? ENDS : 0;
       }
       // What the program likes less than a match is never run.
       if (op == OP_MATCH && !this.longest) {
@@ -219,9 +221,8 @@ export class Dfa {
   }
 
   /** Does the thread waiting at `$` at `pc` lead to a match where the subject ends? */
-  private ends(pc: usize): bool {
-    const prog = this.prog;
-    const m = this.lists(true);
+  private ends(prog: Program, pc: usize): bool {
+    const m = this.lists(prog, true);
     m.count[1] = 0;
     // A subject of no bytes, at its end: `$` holds.
     add(prog, m, "", 0, 1, pc + 1, 0);
@@ -237,18 +238,18 @@ export class Dfa {
 
   /** The state a search starts in (`fixed`: at one position only; `atEnd`: where the subject
    * ends, so that `$` holds); -1 when full. */
-  start(fixed: bool, atEnd: bool = false): i64 {
+  start(prog: Program, fixed: bool, atEnd: bool = false): i64 {
     const known = atEnd ? this.fixedAtEnd : fixed ? this.fixed : this.anywhere;
     if (known != 0) {
       return (known as i64) - 1;
     }
     this.own();
-    const m = this.lists(false);
+    const m = this.lists(prog, false);
     m.count[1] = 0;
     // The threads are followed as in a subject of one byte, at its start: `$` does not hold
     // (the thread waits there), unless the search starts where the subject ends.
-    add(this.prog, m, "", atEnd ? 0 : 1, 1, 0, 0);
-    const st = this.intern(fixed || atEnd);
+    add(prog, m, "", atEnd ? 0 : 1, 1, 0, 0);
+    const st = this.intern(prog, fixed || atEnd);
     this.learned++;
     if (atEnd) {
       this.fixedAtEnd = (st + 1) as u32;
@@ -261,12 +262,11 @@ export class Dfa {
   }
 
   /** The state that state `st` leads to by a character of class `c`; -1 when full. */
-  step(st: usize, c: usize): i64 {
+  step(prog: Program, st: usize, c: usize): i64 {
     this.own();
-    const prog = this.prog;
     const code = prog.code;
     const char = prog.classStarts[c];
-    const m = this.lists(false);
+    const m = this.lists(prog, false);
     m.count[1] = 0;
     for (let i = this.bounds[st]; i < this.bounds[st + 1]; i++) {
       const pc = this.threads[i] as usize;
@@ -283,7 +283,7 @@ export class Dfa {
     if (!done) {
       add(prog, m, "", 1, 1, 0, 0);
     }
-    const to = this.intern(done);
+    const to = this.intern(prog, done);
     if (to >= 0) {
       this.next[st * (this.classes + 1) + c] = this.entry(to as usize);
       this.learned++;
@@ -311,31 +311,22 @@ export class Dfa {
     }
   }
 
-  /** The class of the character `c`. */
-  classOf(c: u32): usize {
-    const starts = this.prog.classStarts;
-    let lo: usize = 0;
-    let hi = starts.length;
-    while (hi - lo > 1) {
-      const mid = (lo + hi) >> 1;
-      if (starts[mid] <= c) {
-        lo = mid;
-      } else {
-        hi = mid;
-      }
-    }
-    return lo;
-  }
-
   /** Where the leftmost match of the program in the `len` bytes of `s` at or after `from` (at
    * `from` when `fixed`) ends, as the program prefers it; with `any`, where some match is seen
    * to end first. -1 for none, `GAVE_UP` when the automaton is full. `m` is the search's, for
    * its scan (prefilter.velt). */
-  forward(m: Search, s: string, len: usize, from: usize, fixed: bool, any: bool): i64 {
+  forward(
+    prog: Program,
+    m: Search,
+    s: string,
+    len: usize,
+    from: usize,
+    fixed: bool,
+    any: bool,
+  ): i64 {
     const base = strDataAddress(s);
-    const prog = this.prog;
     const width = this.classes + 1;
-    let st = this.start(fixed);
+    let st = this.start(prog, fixed);
     if (st < 0) {
       return GAVE_UP;
     }
@@ -380,11 +371,11 @@ export class Dfa {
       let size: usize = 1;
       if (b >= 0x80) {
         const packed = charAt(base, pos, prog.units);
-        c = this.classOf(packed & 0xffffff);
+        c = prog.classOf(packed & 0xffffff);
         size = (packed >> 24) as usize;
       }
       const to = this.edge((st as usize) * width + c);
-      st = to != UNKNOWN ? ((to & ROW) as i64) / (width as i64) : this.step(st as usize, c);
+      st = to != UNKNOWN ? ((to & ROW) as i64) / (width as i64) : this.step(prog, st as usize, c);
       pos += size;
       if (st < 0 || (this.flagOf(st as usize) & (DEAD | SKIPS)) != 0) {
         continue;
@@ -392,8 +383,8 @@ export class Dfa {
       // Then through transitions that are known, to states where nothing has to be looked
       // at: the tables are read where they are, and nothing is called.
       const next = this.edges();
-      // SAFETY: the program never changes once compiled, and the automaton holds it; the
-      // address is only read through, by `kindAt` below.
+      // SAFETY: the program never changes once compiled, and the caller holds it; the address
+      // is only read through, by `kindAt` below.
       const kinds = unsafe { arrayReadAddress(prog.asciiClass) };
       let row = (st as usize) * width;
       end = (this.flagOf(st as usize) & MATCH) != 0 ? pos as i64 : end;
