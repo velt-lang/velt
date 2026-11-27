@@ -70,11 +70,13 @@ fn a_required_hook_missing_is_an_ice() {
 
 /// `p` with every definition of std module `module` named as the loader named it under a second
 /// name (#3731: `std/../../…/std/…`, a path that reached std by another spelling).
-fn under_second_name(mut p: hir::Program, module: &str) -> hir::Program {
-    let (from, to) = (
-        format!("{module}::"),
-        format!("std/../../elsewhere/{module}::"),
-    );
+fn under_second_name(p: hir::Program, module: &str) -> hir::Program {
+    renamed_module(p, module, &format!("std/../../elsewhere/{module}"))
+}
+
+/// `p` with every definition of std module `module` named as module `to`'s.
+fn renamed_module(mut p: hir::Program, module: &str, to: &str) -> hir::Program {
+    let (from, to) = (format!("{module}::"), format!("{to}::"));
     let mut renamed = false;
     for d in &mut p.defs {
         let name = match d {
@@ -115,4 +117,18 @@ fn a_required_hook_under_a_second_module_name_is_an_ice() {
     let src = "function main() {\n  const n: i64 = 7;\n  console.log(`n=${n}`);\n}\n";
     let p = std_src::check_src(src);
     lower_ok(&under_second_name(p, "std/lang/hooks/number_text"));
+}
+
+/// The program's own module under a `std` directory (`vendor/std/lang/hooks/any_record`, named
+/// from the program's root) with the hook's item, and std's module not loaded: not a second name
+/// of std's, so it lowers with the feature off, as any program without that module does.
+#[test]
+fn a_program_module_under_a_std_directory_is_not_a_second_name() {
+    let p = std_src::check_src(TO_RECORD);
+    let p = renamed_module(
+        p,
+        "std/lang/hooks/any_record",
+        "vendor/std/lang/hooks/any_record",
+    );
+    lower_ok(&p);
 }
