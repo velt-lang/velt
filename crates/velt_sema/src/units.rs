@@ -198,9 +198,15 @@ pub(crate) struct Order {
 }
 
 impl Order {
-    /// The order of `modules` (a load's, the root at `root`).
+    /// The order of `modules` (a load's, the root at `root`). std's modules are put in the order
+    /// of their paths, not the load's: the load meets them in the order the program's imports
+    /// (and what std's own code pulls in for them, `JSON.parse<T>`'s modules) lead to, and std's
+    /// unit numbers its definitions and types in its modules' order, so std's unit on disk
+    /// (`disk`) would depend on the program that saved it (#3907).
     pub(crate) fn of(modules: &[crate::SourceModule], root: usize) -> Order {
-        let (std, app) = (0..modules.len()).partition(|&m| modules[m].is_std);
+        let (mut std, app): (Vec<usize>, Vec<usize>) =
+            (0..modules.len()).partition(|&m| modules[m].is_std);
+        std.sort_by(|&a, &b| modules[a].path.cmp(&modules[b].path));
         Order { std, app, root }
     }
 
