@@ -7,6 +7,8 @@ import * as l from "./sched_order_list";
 import * as p from "./sched_order_pass";
 import * as m from "./sched_mem";
 import * as sl from "./sched_sleep";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
 
 /** How a step goes: a worker's look (lock tried), or the end of a poll (lock taken). */
 export const S_LOOK: u32 = 0;
@@ -55,6 +57,82 @@ export function move(b: usize, wb: usize, h: usize): usize {
     }
   }
   return grant(b, h);
+}
+
+/** Does a turn hold the loop of order `b` (locked): granted, or its callback's poll under way? */
+@inline("always")
+export function held(b: usize): bool {
+  return (m.ld(b + l.O_GRANTED) | m.ld(b + l.O_HOLDER)) !== 0;
+}
+
+/**
+ * How far a parking worker's sleeps fire while the loop is held (order `b` locked): those due by
+ * the time of the timer whose turn holds it and by that of the first timer still queued, as when
+ * their turns come (`uptoFor`, `move`); all that are due by `now` when no timer due before it
+ * holds the loop or waits. A sleep due later waits for those timers, as in Node's order, where it
+ * is a timer too (#3872).
+ */
+export function heldUpto(b: usize, now: u64): u64 {
+  let upto = now;
+  if (held(b)) {
+    const at = m.ld(b + l.O_HELD_AT) as u64;
+    if (at < upto) {
+      upto = at;
+    }
+  }
+  if (m.ld(b + l.O_QUEUED) !== 0) {
+    const first = (p.firstExpiry(b) * 1000000) as u64;
+    if (first !== 0 && first < upto) {
+      upto = first;
+    }
+  }
+  return upto;
+}
+
+/** `step`'s deadline for a park whose due sleep waits for the hold to end (`holdBack`). */
+export const BACK: u64 = 18446744073709551615;
+
+/**
+ * A parking worker `e` (worker block `wb`) whose sleeps fire only by `upto` (`heldUpto`) holds one
+ * due by `now` back (order `b` locked): true, and it is marked in `O_BACK`, so that the end of the
+ * hold wakes it (`takeBack`) and its park waits for nothing else for that sleep
+ * (sched_order_wait.velt `wait`). Marked when its first pending sleep is due, though it may fire
+ * by `upto`: a wake too many at most.
+ */
+export function holdBack(b: usize, e: usize, wb: usize, upto: u64, now: u64): bool {
+  if (upto >= now || !held(b) || wb === 0 || !sl.pending(wb) || sl.nextDeadline(wb) > now) {
+    return false;
+  }
+  m.st(b + l.O_BACK, m.ld(b + l.O_BACK) | backBit(e));
+  return true;
+}
+
+/** Worker `e`'s bit in `O_BACK`. */
+@inline("always")
+export function backBit(e: usize): usize {
+  return (1 as usize) << (m.ld(e + t.E_INDEX) & 63);
+}
+
+/**
+ * The hold of order `b`'s loop ended (locked): the workers that held a due sleep back for it,
+ * unmarked (a sequentially consistent swap: a parking worker reads its bit after it raised its
+ * park word, `wakeBack` its park word after this).
+ */
+@inline("always")
+export function takeBack(b: usize): usize {
+  return m.ld(b + l.O_BACK) !== 0 ? m.swap(b + l.O_BACK, 0) : 0;
+}
+
+/** The workers of `bits` (`takeBack`), other than `e`, wake to look again (the lock given back). */
+@noInline
+export function wakeBack(e: usize, bits: usize): void {
+  const n = m.load(t.main() + t.E_STARTED);
+  for (let i: usize = 0; i < n; i++) {
+    const w = t.worker(i);
+    if (w !== e && (bits & ((1 as usize) << (i & 63))) !== 0) {
+      wk.unpark(w);
+    }
+  }
 }
 
 /** Worker block `wb`'s sleeps (0: none) due by `upto` fire: the next one's deadline (0: none). */
@@ -115,6 +193,16 @@ export function choose(b: usize, now: u64, alone: bool): usize {
   return h;
 }
 
+/** Timer `h`'s turn's waker, taken (0: none; the order's lock held). */
+@inline("always")
+export function takeWaker(h: usize): usize {
+  const w = m.ld(h + l.H_WAKER);
+  if (w !== 0) {
+    m.st(h + l.H_WAKER, 0);
+  }
+  return w;
+}
+
 /** Timer `h`, chosen by the look, gets its turn (the lock held): its turn's waker (taken), or 0. */
 @inline("always")
 export function grant(b: usize, h: usize): usize {
@@ -124,6 +212,7 @@ export function grant(b: usize, h: usize): usize {
   l.take(b, h);
   m.st(h + l.H_STATE, l.GRANTED);
   m.st(b + l.O_GRANTED, h);
+  m.st(b + l.O_HELD_AT, m.ld(h + l.H_AT));
   const w = m.ld(h + l.H_WAKER);
   if (w !== 0) {
     m.st(h + l.H_WAKER, 0);

@@ -19,7 +19,7 @@
 //!   host: { target: "…", condition: "…", entry: "./src/entry.mjs" },
 //!                                       // a host package's platform (`crate::host`)
 //!   jsx: { importSource: "sigx" },      // JSX runtime of the package's modules
-//!   native: { targets: ["x86_64-unknown-linux-gnu"] },  // a Rust crate (`crate::native`)
+//!   native: { c: { z: { system: { default: "z" } } } },  // C libraries (`crate::native`)
 //!   tsCompat: ["src/models"],           // folders kept TypeScript-compatible
 //!   lint: { perf: "warn" },             // how loud the lint rules are (`lint`)
 //! };
@@ -99,17 +99,12 @@ pub struct Manifest {
     /// (see [`crate::host`]).
     #[serde(skip)]
     pub host: Option<crate::host::HostConfig>,
-    /// `native`: the package ships a native library built from a Cargo crate.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub native: Option<NativeConfig>,
     /// `native.c`: the C libraries the package's `declare c("<library>")` functions name, by
     /// that name (docs/internals/design/c-ffi.md); `Some` (perhaps empty) when the package
-    /// declares C functions at all. A `native` object with only `c` is no Rust crate (`native`
-    /// stays `None`).
+    /// declares C functions at all.
     #[serde(skip)]
     pub c_libraries: Option<BTreeMap<String, CLibraryConfig>>,
-    /// `native.targets` of a package whose libraries are C `sources`: what `velt publish` builds
-    /// (a package with a Rust crate has them in [`NativeConfig::targets`]).
+    /// `native.targets` of a package whose libraries are C `sources`: what `velt publish` builds.
     #[serde(skip)]
     pub c_targets: Vec<String>,
     /// `allowNative`: the packages with native code the program allows, and where from (the root
@@ -161,28 +156,6 @@ pub struct JsxConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub import_source: Option<String>,
-}
-
-/// The `native` object.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NativeConfig {
-    /// The Cargo crate's directory: one directory name inside the package root (default `native`).
-    #[serde(default = "default_native_path")]
-    pub path: String,
-    /// The targets `velt publish` must publish a prebuilt library for.
-    #[serde(default)]
-    pub targets: Vec<String>,
-    /// Whether a `wasm32-wasip1` library is published too (not supported yet: must be false).
-    #[serde(default)]
-    pub wasm: bool,
-}
-
-/// Default `native.path`.
-pub const DEFAULT_NATIVE_PATH: &str = "native";
-
-fn default_native_path() -> String {
-    DEFAULT_NATIVE_PATH.to_string()
 }
 
 /// The targets a native library can be published for (the targets `velt` itself builds for).
@@ -492,24 +465,6 @@ fn check_import_source(source: &str) -> Result<(), String> {
 }
 
 /// The message names the value, not the table: callers prefix it.
-fn check_native_path(path: &str) -> Result<(), String> {
-    let ok = !path.is_empty()
-        && !path.starts_with('.')
-        && path != SRC_DIR
-        && path != "target"
-        && path
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
-    if ok {
-        Ok(())
-    } else {
-        Err(format!(
-            "path `{path}` must be the name of a directory in the package root (not `src` or `target`)"
-        ))
-    }
-}
-
-/// The message names the value, not the table: callers prefix it.
 fn check_native_target(target: &str) -> Result<(), String> {
     if NATIVE_TARGETS.contains(&target) {
         Ok(())
@@ -518,15 +473,6 @@ fn check_native_target(target: &str) -> Result<(), String> {
             "target `{target}` is not supported (supported: {})",
             NATIVE_TARGETS.join(", ")
         ))
-    }
-}
-
-/// The message continues the caller's spelling of `wasm = true`, which differs per format.
-fn check_native_wasm(wasm: bool) -> Result<(), String> {
-    if wasm {
-        Err("is not supported yet: packages with native code cannot target WebAssembly".into())
-    } else {
-        Ok(())
     }
 }
 

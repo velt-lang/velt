@@ -22,6 +22,7 @@ pub(crate) mod codec;
 pub(crate) mod disk;
 pub(crate) mod modes;
 pub(crate) mod raised;
+pub(crate) mod std_calls;
 
 use crate::ctx::Ctx;
 
@@ -120,6 +121,10 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
         cx.freeze_defs();
         #[cfg(test)]
         codec::hook::std_unit(cx);
+        // The memos std's bodies built hold std's definitions alone (the dispatch groups, the
+        // subclasses): the app's check builds them again over its own too, as the app's stage
+        // of `VELT_UNITS=2` does after `finish_std` (#3887).
+        codec::unit::clear_memos(cx);
     }
     // The app's bodies see std's modes as declared, as in a whole-program check (`modes`).
     cx.unit_sums.declared_now = cx.units_stage == Stage::App;

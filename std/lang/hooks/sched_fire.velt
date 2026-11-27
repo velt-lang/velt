@@ -51,20 +51,26 @@ export function fireDue(e: usize, k: usize): void {
  * came due while the task ran is on no due list yet (the worker moves due sleeps there when it
  * looks: sched_sleep.velt `expire`).
  */
-export function fireYields(e: usize, k: usize): void {
+@inline("always")
+export function fireYields(e: usize, k: usize, rootTurn: usize): void {
   if (dueNow(e, k)) {
     fireDue(e, k);
   }
   let woken = m.load32(k + t.T_STATE) === t.YIELDED;
   let y = ls.take(k);
-  // The root's turn placed with no record (`tn.rootTurn`: its stamp + 1, 0: none) comes before the
+  // The root's turn placed with no record (`rootTurn`: its stamp + 1, 0: none) comes before the
   // yields made after it, and after a detached child's of its stamp (`ls.otherTurn`).
-  let rt = tn.rootTurn(k);
+  let rt = rootTurn;
   while (y !== 0) {
     if (rt !== 0 && ls.stampOf(y) >= rt) {
       rt = 0;
       tn.turnNext(k, y);
       woken = resume(e, k, k, true, false, woken, true);
+      // The records that went on in that poll of the root left the list (`tn.nextTurn`).
+      y = tn.after(k);
+      if (y === 0) {
+        break;
+      }
     }
     const nx = ls.next(y);
     let w = ls.fire(k, y);
@@ -80,14 +86,18 @@ export function fireYields(e: usize, k: usize): void {
       }
       return;
     }
-    if (w !== 0) {
-      if (w === k) {
-        // A held record of the root's whose turn is next may go on in this poll (`tn.nextTurn`).
-        tn.turnNext(k, nx);
+    if (w === k) {
+      // A held record of the root's whose turn is next may go on in this poll (`tn.nextTurn`),
+      // and leaves the list then.
+      tn.turnNext(k, nx);
+      woken = resume(e, k, k, lent, false, woken, true);
+      y = tn.after(k);
+    } else {
+      if (w !== 0) {
+        woken = resume(e, k, w, false, node.ownNode(k, w), woken, true);
       }
-      woken = resume(e, k, w, lent, w !== k && node.ownNode(k, w), woken, true);
+      y = nx;
     }
-    y = nx;
   }
   if (rt !== 0 && t.has(k, t.POLLED)) {
     // The root's turn, the last, after a turn that polled it: the poll would not poll it again.

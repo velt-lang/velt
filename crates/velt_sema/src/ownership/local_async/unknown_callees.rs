@@ -5,7 +5,6 @@
 //! make their types crossing for the whole program.
 
 use crate::ctx::Ctx;
-use crate::defs::DefInfo;
 use crate::hir::{Callee, DefId, Expr};
 
 use super::graph::{Graph, Node};
@@ -15,9 +14,9 @@ pub(super) fn mark(cx: &Ctx, g: &mut Graph) {
     // The methods a virtual, interface or bounded call may reach: those in a class's vtable
     // (only methods overridden somewhere have a slot) and an interface's implementations. Their
     // instantiations aren't all shown by their direct calls (`super::resolve_hits`).
-    for info in &cx.info {
-        if let DefInfo::Adt(a) = info {
-            g.dispatched.extend(a.vtable.iter().copied());
+    for i in 0..cx.info.len() as u32 {
+        if let Some(v) = cx.vtable_of(DefId(i)) {
+            g.dispatched.extend(v.iter().copied());
         }
     }
     for i in &cx.impls {
@@ -67,10 +66,7 @@ pub(super) fn dispatch_targets(cx: &Ctx, callee: &Callee, args: &[Expr]) -> Vec<
             let mut classes = vec![class];
             classes.extend(super::types::subclasses(cx, class));
             (classes.iter())
-                .filter_map(|c| match &cx.info[c.0 as usize] {
-                    DefInfo::Adt(a) => a.vtable.get(*slot as usize).copied(),
-                    _ => None,
-                })
+                .filter_map(|&c| cx.vtable_of(c)?.get(*slot as usize).copied())
                 .collect()
         }
         _ => vec![],

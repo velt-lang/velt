@@ -141,6 +141,7 @@ impl FnCx<'_, '_> {
                 name: prop.name.clone(),
                 span: prop.span,
                 dynamic: false,
+                checkable: false,
             });
         // Read for adapters (`iface_adapt`) and for values converted to `f.iface`
         // (`Ctx::writes_through_upcasts`).
@@ -159,6 +160,7 @@ impl FnCx<'_, '_> {
                 name: prop.name.clone(),
                 span: prop.span,
                 dynamic: false,
+                checkable: false,
             });
         self.cx.mark_part_written(f.iface, f.index, prop.span)
     }

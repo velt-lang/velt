@@ -480,9 +480,9 @@ fn propagate(
 /// the interface implementations (what `Dispatch::targets` draws from).
 fn dispatch_targets(cx: &Ctx) -> FxHashSet<DefId> {
     let mut out: FxHashSet<DefId> = FxHashSet::default();
-    for info in &cx.info {
-        if let crate::defs::DefInfo::Adt(a) = info {
-            out.extend(a.vtable.iter().copied());
+    for i in 0..cx.info.len() as u32 {
+        if let Some(v) = cx.vtable_of(DefId(i)) {
+            out.extend(v.iter().copied());
         }
     }
     for imp in &cx.impls {

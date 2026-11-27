@@ -1,8 +1,7 @@
-// velt/db (internal): the generators of `bindValues<P>` and `writeValues<P, S>` (generated.velt), run
-// at compile time (docs/internals/design/source-generators.md): a statement's parameters handed
-// value by value to a native driver's parameter sink (`velt_rt_param_*`, velt/db/rt) or to a
-// `ParamSink`, as their JSON text would bind: an array or tuple its values in order, an object each member's name and value, a
-// lone value itself (a `u8[]` member or element a blob). Only types whose JSON text binds plainly
+// velt/db (internal): the generator of `writeValues<P, S>` (generated.velt), run at compile time
+// (docs/internals/design/source-generators.md): a statement's parameters handed value by value to
+// a `ParamSink`, as their JSON text would bind: an array or tuple its values in order, an object
+// each member's name and value, a lone value itself (a `u8[]` member or element a blob). Only types whose JSON text binds plainly
 // are handed over (numbers, booleans, strings, `T | null` of those, `u8[]` inside an array or an
 // object, and objects of such fields); for any other the function returns false having done
 // nothing, and the driver binds the JSON text, so the result never differs.
@@ -78,21 +77,13 @@ function bindable(model: Model, t: Type): bool {
   return scalar(model, t);
 }
 
-/** Where the generated code hands the values: a native driver's sink, or a `ParamSink`. */
+/** Where the generated code hands the values: a `ParamSink`. */
 interface Target {
   /** The statement that hands over one value (`args`: its text, empty for none). */
   call(kind: string, args: string): string;
 }
 
-class NativeSink implements Target {
-  call(kind: string, args: string): string {
-    return args.length == 0
-      ? `velt_rt_param_${kind}(sink);`
-      : `velt_rt_param_${kind}(sink, ${args});`;
-  }
-}
-
-/** The `ParamSink` methods, named for what they take (the native functions by their types). */
+/** The `ParamSink` methods, named for what they take (`kind`: the value's type). */
 class VeltSink implements Target {
   call(kind: string, args: string): string {
     const method =
@@ -133,11 +124,6 @@ function bindValue(out: Output, model: Model, to: Target, t: Type, v: string): v
   } else {
     out.line(to.call("str", v));
   }
-}
-
-/** The generator of `bindValues<P>(sink: u64, params: P): bool`. */
-export function bindValues(req: InstanceRequest, out: Output): void {
-  generate(req, out, new NativeSink());
 }
 
 /** The generator of `writeValues<P, S>(sink: S, params: P): bool`. */

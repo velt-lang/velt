@@ -22,8 +22,9 @@ per-platform library resolution and `SetLastError`. Velt is stricter where it ca
 no run-time marshalling layer, declarations are checked against headers, and the consuming
 program opts in to each package's native code explicitly.
 
-How a package ships a Rust crate with a Velt-specific ABI is a separate mechanism, described in
-[native-packages.md](native-packages.md).
+`declare c` is the only way to call native code: the Velt-specific native ABI packages' Rust
+crates used (its runtime function table, export signatures and handle tables) was removed in
+#2563.
 
 ## Motivation
 
@@ -577,7 +578,7 @@ stated reasons.
 ### The trust boundary
 
 - **`allowNative`.** Installing or building with a package that has native code (C libraries in
-  `native.c`, or a Rust crate) is an error until the root's `package.velt` lists it. An entry
+  `native.c`) is an error until the root's `package.velt` lists it. An entry
   binds to a source: a bare name allows the registry and local paths, `{ name, git }` that
   repository at any commit, `{ name, url }` archives under an https prefix
   ([manifest.md](../contracts/manifest.md)). The check runs after resolution, on the source that
@@ -601,8 +602,7 @@ stated reasons.
   source cannot contain `unsafe` code.
 - **`velt check`** ends, when it passes, with each allowed package with native code: its C
   libraries (the system library each links on the target, or the sources it builds, and whether
-  its headers were checked), whether it has a Rust crate, and each piece of its unsafe code by
-  file and line. `--json` has the same under `native`.
+  its headers were checked) and each piece of its unsafe code by file and line. `--json` has the same under `native`.
 
 ### Where libraries come from
 
@@ -624,8 +624,8 @@ Every library is a logical name in `native.c`, with one source per target:
   (zig's version, flags, target, package, sources, defines and every file under `native/`) is
   unchanged. Libraries are built when a program links or loads them
   (`crates/veltc/src/native/c_sources.rs`), never at install. `velt publish` builds every
-  `targets` entry, and installs fetch and verify the bundles like a Rust crate's, so users never
-  run zig. Building from source instead needs `VELT_NATIVE_FROM_SOURCE=1`.
+  `targets` entry, and installs fetch and verify the bundles
+  ([native_abi.md](../contracts/native_abi.md)), so users never run zig. Building from source instead needs `VELT_NATIVE_FROM_SOURCE=1`.
 - **Linking**: debug builds link the shared library (with an rpath), release builds the static
   archive, and musl programs always the static one. Windows links the DLL in both modes: zig's
   Windows objects are MinGW's, and a DLL brings its own C runtime behind its import library.
@@ -800,8 +800,8 @@ must not depend on code elsewhere.
 - **Rust crates through `declare c`**: a `crate` library kind, built with cargo, exporting
   `extern "C"` functions checked against a header generated from the crate; `velt.h` exposing
   Velt's reactor (socket readiness, wakers, spawning, timers) so crates generic over the standard
-  async I/O traits run on Velt's scheduler without thread hops. The Rust-specific native ABI of
-  [native-packages.md](native-packages.md) is then retired.
+  async I/O traits run on Velt's scheduler without thread hops (the Rust-specific native ABI
+  this replaces is gone, #2563).
 - **C++ and Zig sources**, a system library a source needs, and macOS frameworks built from
   sources with a publisher-supplied SDK (`--macos-sdk`).
 - **Fetched sources**: `sources` read from a git repository or a URL pinned by hash.
