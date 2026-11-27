@@ -98,6 +98,7 @@ fn std_defines(target: &str) -> Vec<(String, String)> {
 /// #3022 lists, and are brought under the check file by file there. This list only grows: a file
 /// leaves it only when it no longer declares C functions.
 const CHECKED: &[&str] = &[
+    "dev/stop_win32.velt",
     "ffi/errno_darwin.velt",
     "ffi/errno_linux.velt",
     "ffi/errno_windows.velt",

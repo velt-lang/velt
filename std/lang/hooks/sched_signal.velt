@@ -1,6 +1,5 @@
 // velt/lang/hooks (internal): signals for the executor in Velt (#2649 step 4), through a
-// self-pipe on its reactor, in place of tokio's `signal` on the runtime's bridge (which only the
-// `velt dev` host uses today, dev/shutdown.rs; nothing in std yet).
+// self-pipe on its reactor: `velt dev`'s stop request (SIGTERM, std/dev/stop_posix.velt).
 //
 // `watch(sig)` installs a handler for `sig` with `sigaction` (through `declare c`, its layout per
 // OS from `#sched-signal`); the handler is an `@export`ed Velt function, whose address
@@ -15,7 +14,8 @@
 // layout is written per OS here, in raw memory); `errno` saved and restored around the handler's
 // `write` (the reactor files read it but have no way to set it); and whether the code an
 // `@export` compiles to is async-signal-safe is not checked by the compiler: this handler calls
-// only `write` and atomic loads.
+// only `write` and atomic loads. `wake()` writes a 0 the same way, so a `next()` ends without a
+// signal; `unwatch(sig)` gives `sig` its default action back.
 
 import { Ptr, export as cExport } from "velt/ffi";
 import { addressStore, exportedAddress, promiseAt } from "velt/lang/intrinsics";
@@ -108,17 +108,43 @@ export function watch(sig: i32): bool {
   return rc === 0;
 }
 
+/** Gives signal `sig` its default action again (a `watch` undone; false where none can be). */
+export function unwatch(sig: i32): bool {
+  if (!supported() || sig <= 0 || sig >= 64) {
+    return false;
+  }
+  // `SIG_DFL` (a null handler), an empty mask, no flags.
+  const act = m.zeroed(sg.ACTION_SIZE);
+  // SAFETY: a `struct sigaction` at `act`.
+  const rc = unsafe { sigaction(sig, m.ptr(act), null) };
+  m.release(act, sg.ACTION_SIZE);
+  return rc === 0;
+}
+
+/** Wakes a `next()` waiting now or next, which resolves with 0 (no signal has that number). */
+export function wake(): void {
+  put(0);
+}
+
 /** The handler: the signal's number, one byte, to the self-pipe. */
 @cExport("std_sched_signal")
 function onSignal(sig: i32): void {
-  const w = PIPE_W.load("acquire");
-  const bytes = BYTES.load("acquire") as usize;
-  if (w === 0 || bytes === 0 || sig <= 0 || sig >= 64) {
+  if (sig <= 0 || sig >= 64) {
     return;
   }
-  // SAFETY: byte `sig` of the 64 static bytes; the pipe's write end, open for good.
+  put(sig as usize);
+}
+
+/** Byte `i` (< 64) to the self-pipe, if there is one: nothing here allocates or locks. */
+function put(i: usize): void {
+  const w = PIPE_W.load("acquire");
+  const bytes = BYTES.load("acquire") as usize;
+  if (w === 0 || bytes === 0) {
+    return;
+  }
+  // SAFETY: byte `i` of the 64 static bytes; the pipe's write end, open for good.
   unsafe {
-    write$signal((w - 1) as i32, m.ptr(bytes + (sig as usize)), 1);
+    write$signal((w - 1) as i32, m.ptr(bytes + i), 1);
   }
 }
 

@@ -13,6 +13,14 @@ export function watch(sig: i32): bool {
   return false;
 }
 
+/** Gives signal `sig` its default action again: none was watched. */
+export function unwatch(sig: i32): bool {
+  return false;
+}
+
+/** Wakes a `next()`: none waits. */
+export function wake(): void {}
+
 /** The next signal a `watch` delivers: none can be (-1). */
 export async function next(): Promise<i32> {
   return -1;
