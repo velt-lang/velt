@@ -55,8 +55,10 @@ declare function velt_rt_fs_mkdir_sync(path: string, recursive: bool): IoStatus;
 declare function velt_rt_fs_remove_sync(path: string, recursive: bool): IoStatus;
 declare function velt_rt_fs_exists_sync(path: string): bool;
 
-// The runtime's `VeltDirents`: sorted names and, at the same index, each one's kind (0 other,
-// 1 file, 2 directory, 3 symlink).
+/**
+ * The runtime's `VeltDirents`: sorted names and, at the same index, each one's kind (0 other,
+ * 1 file, 2 directory, 3 symlink).
+ */
 export struct DirentList {
   names: string[];
   kinds: u8[];
