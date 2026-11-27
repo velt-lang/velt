@@ -249,10 +249,17 @@ const WASI_DIRS: &[&str] = &["m1", "m2", "m3", "m4", "lang"];
 /// Windows hosts, [`WASI_STD_NOT_ON_WINDOWS_HOSTS`]), and two ephemeron caches, whose trials call between std's weak core and the
 /// compiler's glue.
 const WASI_STD: &[&str] = &[
+    // The executor in Velt on WASI (#3905): `AbortSignal.timeout` on std's signals, and the
+    // program's end with their timers left.
+    "abort_signal_timeout_dropped",
+    "abort_signal_timeout_wait",
     "bytes_search",
     "clock_reads",
     "crypto",
     "crypto_random_int",
+    // Module blocks after the first: std calls their `init` through its address with the C
+    // signature of compiled code (#3905).
+    "events_dispatch",
     "fs_copy_mode",
     "fs_links_errors",
     "fs_mapped_copy_targets",

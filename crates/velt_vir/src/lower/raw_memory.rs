@@ -147,7 +147,11 @@ impl FnLower<'_, '_> {
             ice("fnAddress of something other than a function's name")
         };
         let targs: Vec<TyId> = targs.iter().map(|&t| self.sub(t)).collect();
-        let fid = self.cx.func_for_direct(*d, targs, super::LkMode::Plain);
+        let fid = self
+            .cx
+            .func_for_direct(*d, targs.clone(), super::LkMode::Plain);
+        // Machine words where it takes or returns `usize` on wasm32 (address_thunk.rs).
+        let fid = self.cx.address_target(*d, targs, fid);
         let t = self.vty(ty);
         let p = Operand::Const(crate::vir::Const::Func(fid), Ty::Ptr);
         self.rvalue_temp(t, Rvalue::Cast(p, t))
