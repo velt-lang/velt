@@ -2,7 +2,8 @@
 // variant, std/imports.velt): the WebAssembly runtime's, which reads WASI's environment (empty in
 // the browser). The working directory is `#cwd-sys`' (std/process/cwd_wasm.velt).
 
-import { ARGV_VAR, hiddenVar, SCRIPT_VAR, withoutHidden } from "./env_hidden";
+import { hookCall } from "velt/lang/intrinsics";
+import { ARGV_VAR, hiddenVar, ownVar, SCRIPT_VAR, withoutHidden } from "./env_hidden";
 
 declare function velt_rt_env_get(name: string, out: string): bool;
 declare function velt_rt_env_set(name: string, value: string);
@@ -28,12 +29,22 @@ export function getEnvRaw(name: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Sets the variable `name`, after the program's first read of its arguments, which takes velt's
+ * variables from the environment (std/lang/hooks/process_argv.velt `argsReady`); velt's two are
+ * the program's own from then on (env_hidden.velt).
+ */
 export function setEnv(name: string, value: string) {
+  hookCall("process_args_ready");
   velt_rt_env_set(name, value);
+  ownVar(name, false);
 }
 
+/** Removes the variable `name`, as `setEnv`. */
 export function removeEnv(name: string) {
+  hookCall("process_args_ready");
   velt_rt_env_remove(name);
+  ownVar(name, false);
 }
 
 /** Every variable as `[name, value, …]`. */

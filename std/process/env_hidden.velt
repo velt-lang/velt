@@ -3,7 +3,8 @@
 // source-generator host: std/process/args_read.velt reads them). The program's own reads of its
 // environment leave them out (`process.env.VELT_SCRIPT`, `in`, `Object.keys(process.env)`), and
 // so does the environment a child starts with, which is made from those reads: as when the
-// runtime removed them at start-up.
+// runtime removed them at start-up. Once the program sets or removes one itself (`ownVar`), that
+// one is the program's own variable and is read as any other, as it was then.
 
 /** `VELT_SCRIPT`: the source file `velt run` and `velt dev` run (Node's `process.argv[1]`). */
 export const SCRIPT_VAR = "VELT_SCRIPT";
@@ -18,9 +19,29 @@ export const ARGV_VAR = "VELT_ARGV";
 export const SCRIPT_C: u8[] = [86, 69, 76, 84, 95, 83, 67, 82, 73, 80, 84, 0];
 export const ARGV_C: u8[] = [86, 69, 76, 84, 95, 65, 82, 71, 86, 0];
 
-/** Whether `name` is one of them; `fold`: names compare without regard to ASCII case (Windows). */
+/** Which of them the program has set or removed itself (`ownVar`): bit 1 `VELT_SCRIPT`, 2 `VELT_ARGV`. */
+const OWN = new Atomic<u32>(0);
+
+/** `name`'s bit (`OWN`), 0 for any other name; `fold`: without regard to ASCII case (Windows). */
+function bitOf(name: string, fold: bool): u32 {
+  return same(name, SCRIPT_VAR, fold) ? 1 : same(name, ARGV_VAR, fold) ? 2 : 0;
+}
+
+/** Whether `name` is one of them, still velt's (not set or removed by the program, `ownVar`). */
 export function hiddenVar(name: string, fold: bool): bool {
-  return same(name, SCRIPT_VAR, fold) || same(name, ARGV_VAR, fold);
+  const bit = bitOf(name, fold);
+  return bit !== 0 && (OWN.load("acquire") & bit) === 0;
+}
+
+/**
+ * Before the program sets or removes `name`: when it is one of them, it is the program's own from
+ * then on, no longer hidden. The program's arguments were read first (`argsReady`).
+ */
+export function ownVar(name: string, fold: bool) {
+  const bit = bitOf(name, fold);
+  if (bit !== 0) {
+    OWN.or(bit, "acqrel");
+  }
 }
 
 /** `pairs` (`[name, value, …]`) without the hidden variables. */

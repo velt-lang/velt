@@ -5,8 +5,8 @@
 
 import { Ptr } from "velt/ffi/ptr";
 import { wideOf, wideText } from "velt/ffi/wide";
-import { ARGV_VAR, hiddenVar, SCRIPT_VAR, withoutHidden } from "./env_hidden";
-import { addressLoad, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+import { hiddenVar, ownVar, withoutHidden } from "./env_hidden";
+import { addressLoad, arraySetLen, arrayWithCapacity, hookCall } from "velt/lang/intrinsics";
 
 declare c("c") function GetEnvironmentVariableW(
   name: readonly u16[],
@@ -39,9 +39,18 @@ export function getEnv(name: string): string | undefined {
   return hiddenVar(name, true) ? undefined : getEnvRaw(name);
 }
 
-/** `VELT_ARGV` (`argv`) or `VELT_SCRIPT`, which velt passes (std/process/args_read.velt). */
+/** `VELT_SCRIPT` and `VELT_ARGV` as NUL-terminated UTF-16, for `passedVar`. */
+const SCRIPT_W: u16[] = [86, 69, 76, 84, 95, 83, 67, 82, 73, 80, 84, 0];
+const ARGV_W: u16[] = [86, 69, 76, 84, 95, 65, 82, 71, 86, 0];
+
+/**
+ * `VELT_ARGV` (`argv`) or `VELT_SCRIPT`, which velt passes (std/process/args_read.velt): by
+ * their names as constants, so that the arguments' readers (a prebuilt object's, which keeps no
+ * state of a program's) take no text through string methods, whose position cache is a
+ * thread-local value of the program's.
+ */
 export function passedVar(argv: bool): string | undefined {
-  return getEnvRaw(argv ? ARGV_VAR : SCRIPT_VAR);
+  return argv ? valueOf(ARGV_W) : valueOf(SCRIPT_W);
 }
 
 /** The variable `name` as it is, the hidden ones included. */
@@ -50,6 +59,11 @@ export function getEnvRaw(name: string): string | undefined {
   if (n === null || !validName(name)) {
     return undefined;
   }
+  return valueOf(n);
+}
+
+/** The value of the variable whose NUL-terminated name is `n`, or undefined when it isn't set. */
+function valueOf(n: readonly u16[]): string | undefined {
   let room: u32 = 256;
   while (true) {
     // Not zeroed: only Windows writes it, and only what it wrote (up to its NUL) is read.
@@ -74,6 +88,15 @@ export function getEnvRaw(name: string): string | undefined {
   }
 }
 
+/**
+ * Before the environment changes: the program's first read of its arguments, which takes velt's
+ * variables from it, done (std/lang/hooks/process_argv.velt `argsReady`), so that a change of
+ * `VELT_SCRIPT` or `VELT_ARGV` doesn't change the arguments.
+ */
+function argsReady() {
+  hookCall("process_args_ready");
+}
+
 /** Sets the variable `name` to `value` (a name or value Windows can't hold changes nothing). */
 export function setEnv(name: string, value: string) {
   const n = wideOf(name);
@@ -81,10 +104,12 @@ export function setEnv(name: string, value: string) {
   if (n === null || v === null || !validName(name)) {
     return;
   }
+  argsReady();
   // SAFETY: both NUL-terminated.
   unsafe {
     SetEnvironmentVariableW(n, v);
   }
+  ownVar(name, true);
 }
 
 /** Removes the variable `name`. */
@@ -93,10 +118,12 @@ export function removeEnv(name: string) {
   if (n === null || !validName(name)) {
     return;
   }
+  argsReady();
   // SAFETY: a NUL-terminated name; a NULL value removes the variable.
   unsafe {
     SetEnvironmentVariableW$remove(n, null);
   }
+  ownVar(name, true);
 }
 
 /**
