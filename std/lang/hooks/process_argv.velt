@@ -1,0 +1,11 @@
+// velt/lang/hooks (internal): `process.argv`'s list (`nodeArgv`), which std/lang/hooks/
+// process.velt's `processArgv` calls by role: a module that sema loads on demand (velt_common
+// `ON_DEMAND_MODULES`), so a program whose live code doesn't read `process.argv` loads none of
+// the arguments' readers (std/process/args.velt and the OS's under it).
+
+import * as args from "velt/process/args";
+
+/** Node's `process.argv`, `[runtime, script, ...args]` (std/process/args.velt `nodeArgv`). */
+export function nodeArgv(): string[] {
+  return args.nodeArgv();
+}

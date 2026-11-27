@@ -125,6 +125,7 @@ table! {
     lang_hooks_pow_int => "lang/hooks/pow_int",
     lang_hooks_prebuilt_probe => "lang/hooks/prebuilt_probe",
     lang_hooks_process => "lang/hooks/process",
+    lang_hooks_process_argv => "lang/hooks/process_argv",
     lang_hooks_process_statics => "lang/hooks/process_statics",
     lang_hooks_program_thread => "lang/hooks/program_thread",
     lang_hooks_cpu => "lang/hooks/cpu",

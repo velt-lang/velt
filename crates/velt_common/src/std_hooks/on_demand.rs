@@ -81,6 +81,8 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     // The count of held `Mutex`es (#3467), demanded by a `with` in a `velt dev` build
     // (`Construct::MutexHeld`); the executor's module lock imports it too.
     "std/lang/hooks/mutex_held",
+    // `process.argv` and the arguments' readers under it (#2196), demanded where it is read.
+    "std/lang/hooks/process_argv",
     // The string searches, which the prelude's methods call by role (`hookCall`, #2198).
     "std/lang/string/search",
     // The other string methods in Velt, called by role too (#2198).
