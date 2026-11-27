@@ -6,7 +6,8 @@ use super::*;
 crate::units::codec::structs! {
     Live {
         check, seeded, live, todo, types, adts, methods, all_methods, impl_methods,
-        impl_methods_of, methods_opened, text_types, texts_generic, impls, kinds, ifaces, gated, opened,
+        impl_methods_of, methods_opened, text_types, texts_generic, impls, kinds, ifaces, gated,
+        ref_atomic, opened,
         waiting, texts, dynamic_classes, finishing, present, assumed, late, demanded, int_text,
         prints_float, prints_containers, tasks, module_state, units, units_loaded,
     }
@@ -16,6 +17,7 @@ crate::units::codec::enums! {
         0 => Adt(f0),
         1 => Iface(f0),
         2 => Kind(f0),
+        3 => RefAtomic,
     }
 }
 
