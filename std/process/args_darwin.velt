@@ -4,7 +4,7 @@
 
 import { Ptr } from "velt/ffi/ptr";
 import { addressLoad, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
-import { cStrings, resolved } from "./args_posix";
+import { cStrings, resolvedC } from "./args_posix";
 
 /** `int *_NSGetArgc(void)` (<crt_externs.h>). */
 declare c("c") function _NSGetArgc(): Ptr<i32>;
@@ -30,12 +30,9 @@ export function executablePath(): string {
     const buf = arrayWithCapacity<u8>(room);
     arraySetLen(buf, room);
     // SAFETY: `buf` holds `size[0]` bytes; on -1 `size[0]` says how many are needed.
+    // On 0 the path in `buf` is NUL-terminated.
     if (unsafe { _NSGetExecutablePath(buf, size) } === 0) {
-      let n: usize = 0;
-      while (n < room && buf[n] !== 0) {
-        n++;
-      }
-      return resolved(buf.utf8Slice(0, n as i64));
+      return resolvedC(buf);
     }
   }
 }

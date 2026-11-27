@@ -1,0 +1,98 @@
+// velt/process (internal): where std/process/args.velt keeps the arguments once read, on the
+// targets with a C library (`#env-sys`' native and WASI variants re-export these; the browser's,
+// std/process/env_wasm.velt, keeps none). A list is one block of the C library's: the text's
+// length, the number of arguments, then each argument's UTF-8 ended by a NUL (no argument holds
+// one). Its address goes in a static atomic of a number, which costs a program less to compile
+// than an `Atomic<shared<string[]>>`, whose loads bring the epoch reclaimer in. A published block
+// lives as long as the process, outside the leak counters (as the weak core's memory,
+// std/lang/hooks/weak_mem.velt).
+
+import { Ptr } from "velt/ffi/ptr";
+import {
+  addressLoad,
+  addressStore,
+  arraySetLen,
+  arrayWithCapacity,
+  noInline,
+  strByteLen,
+  strDataAddress,
+} from "velt/lang/intrinsics";
+import { textOf } from "./args_text";
+
+declare c("c") function calloc$argv(n: usize, size: usize): Ptr<u8> | null;
+declare c("c") function free$argv(p: Ptr<u8> | null): void;
+declare c("c") function memcpy$argv(
+  dst: Ptr<u8> | null,
+  src: Ptr<u8> | null,
+  n: usize,
+): Ptr<u8> | null;
+declare c("c") function memcpy$argvTo(dst: u8[], src: Ptr<u8> | null, n: usize): Ptr<u8> | null;
+
+/** The bytes of a block before its text: the text's length, then the number of arguments. */
+const HEAD: usize = 16;
+
+/** `list` in a new block, its address; 0 when the C library has no memory for it. */
+export function keepArgs(list: string[]): usize {
+  let n: usize = 0;
+  for (let i: usize = 0; i < list.length; i++) {
+    n += strByteLen(list[i]) + 1;
+  }
+  // SAFETY: calloc has no precondition; the result is checked.
+  const p = unsafe { calloc$argv(1, HEAD + n) };
+  if (p === null) {
+    return 0;
+  }
+  const at = Ptr.addressOf(p);
+  // SAFETY: the block holds `HEAD + n` bytes, zeroed: each argument's bytes go before a 0.
+  unsafe {
+    addressStore<usize>(at, n);
+    addressStore<usize>(at + 8, list.length);
+  }
+  let to = at + HEAD;
+  for (let i: usize = 0; i < list.length; i++) {
+    const s = list[i];
+    const len = strByteLen(s);
+    if (len > 0) {
+      // SAFETY: `len` bytes at `s`'s data address (well-formed: decoded text), room for them.
+      unsafe {
+        memcpy$argv(Ptr.orNull<u8>(to), Ptr.orNull<u8>(strDataAddress(s)), len);
+      }
+    }
+    to += len + 1;
+  }
+  return at;
+}
+
+/** A fresh array of the arguments in the block at `at` (`keepArgs`). */
+@noInline
+export function unpackArgs(at: usize): string[] {
+  // SAFETY: a block of `keepArgs`', never freed once published.
+  const n = unsafe { addressLoad<usize>(at) };
+  // SAFETY: as above.
+  const count = unsafe { addressLoad<usize>(at + 8) };
+  const bytes = arrayWithCapacity<u8>(n);
+  arraySetLen(bytes, n);
+  if (n > 0) {
+    // SAFETY: `bytes` holds `n` bytes, the block's text as many.
+    unsafe {
+      memcpy$argvTo(bytes, Ptr.orNull<u8>(at + HEAD), n);
+    }
+  }
+  const out = arrayWithCapacity<string>(count);
+  let start: usize = 0;
+  for (let i: usize = 0; i < n; i++) {
+    if (bytes[i] === 0) {
+      out.push(textOf(bytes, start, i));
+      start = i + 1;
+    }
+  }
+  return out;
+}
+
+/** Gives back the block at `at`, which was never published. */
+export function releaseArgs(at: usize): void {
+  // SAFETY: a block of `keepArgs`' that nothing else holds.
+  unsafe {
+    free$argv(Ptr.orNull<u8>(at));
+  }
+}

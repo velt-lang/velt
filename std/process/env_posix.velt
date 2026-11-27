@@ -94,6 +94,17 @@ export function getEnv(name: string): string | undefined {
   return value;
 }
 
+/** The variable whose NUL-terminated name is `name`, or undefined when it isn't set. */
+export function getEnvC(name: readonly u8[]): string | undefined {
+  lock();
+  // SAFETY: a NUL-terminated name; the lock keeps the table from changing while it's read.
+  const at = unsafe { getenv(name) };
+  // SAFETY: getenv's value is a NUL-terminated string, in place while the lock is held.
+  const value = at === null ? undefined : unsafe { readCString(at) };
+  unlock();
+  return value;
+}
+
 /** Sets the variable `name` to `value` (a name or value C can't hold changes nothing). */
 export function setEnv(name: string, value: string) {
   if (!validName(name) || hasByte(value, 0)) {
