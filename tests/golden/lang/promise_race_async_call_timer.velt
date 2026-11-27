@@ -1,0 +1,18 @@
+// `Promise.race` of an async function's promise and a timer's: the async call settles first.
+// On wasm32-wasip1 the race trapped (indirect call type mismatch) under the runtime's executor
+// (#3919); the executor in Velt runs it there (#3905).
+async function double(n: number) {
+  return n * 2;
+}
+
+function later(ms: number, v: number) {
+  return new Promise<number>((r) => setTimeout(() => r(v), ms));
+}
+
+async function main() {
+  console.log(await Promise.race([double(1), later(50, 9)]));
+}
+
+main();
+
+// timing: the timer is there to lose the race to the async call
