@@ -245,10 +245,7 @@ fn baseline_isa(
     {
         return Ok(None);
     }
-    let optimize = isa.flags().opt_level() != cranelift_codegen::settings::OptLevel::None;
-    let jit = !isa.flags().is_pic();
-    let triple = isa.triple().to_string();
-    crate::isa::make_isa(&triple, Some("baseline"), optimize, jit).map(Some)
+    crate::isa::baseline_of(isa).map(Some)
 }
 
 /// A function translated and compiled by a worker, ready to define.
