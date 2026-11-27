@@ -1,6 +1,6 @@
-// velt/net/http (internal): a `CONNECT` tunnel through a proxy for an `https:` request
-// (proxy.velt): asked for on the connection to the proxy, before the TLS client's handshake runs
-// through it to the origin (conn.velt `dial`).
+// velt/net/http (internal): a `CONNECT` tunnel through a proxy to a request's origin
+// (proxy.velt): asked for on the connection to the proxy, before the request (`http:`) or the TLS
+// client's handshake (`https:`) runs through it (conn.velt `dial`).
 
 import { IoError } from "velt/io/error";
 import { utf8DecodeLossy } from "velt/encoding";

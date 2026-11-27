@@ -1,11 +1,13 @@
-// `fetch` through a proxy (#3693): an `https:` request through a `CONNECT` tunnel to a velt/http
-// server with the test certificate, an `http:` request sent to the proxy whole, a proxy that
-// refuses the tunnel, and the proxy the environment sets. The proxy is written here on velt/net.
-// (Which proxy a request takes, and `NO_PROXY`, are white-box tests:
-// std/net/http/fetch/client/proxy.test.velt.)
+// `fetch` through a proxy (#3693): `https:` and `http:` requests through a `CONNECT` tunnel to
+// velt/http servers (the `https:` one with the test certificate), a proxy that refuses the tunnel
+// or is not there, and the proxy the environment sets with `NODE_USE_ENV_PROXY=1`. The proxy is
+// written here on velt/net. (Which proxy a request takes, and `NO_PROXY`, are white-box tests:
+// std/net/http/fetch/client/proxy.test.velt; tests/golden/std/fetch_env_proxy.velt runs them
+// beside Node.)
 import { Channel, channel } from "velt/sync";
 import { HttpServer, serve } from "http-server";
 import { IoError } from "velt/io";
+import { utf8DecodeLossy } from "velt/encoding";
 import { connect, listen, TcpListener, TcpStream } from "velt/net";
 import { removeEnv, setEnv } from "velt/process";
 import { describe, expect, it } from "velt/test";
@@ -43,17 +45,15 @@ async function pipe(from: TcpStream, to: TcpStream) {
 
 /**
  * One proxied connection: its head goes to `heads` before anything is answered or forwarded.
- * `CONNECT` to localhost is tunneled; to any other host it is refused with a 407. A request in
- * absolute form is answered by the proxy, with the request line as the body.
+ * `CONNECT` to localhost is tunneled, and the first bytes sent through the tunnel go to `inner`;
+ * to any other host it is refused with a 407. Any other request is answered with a 400.
  */
-async function proxyOne(conn: TcpStream, heads: Channel<string>) {
+async function proxyOne(conn: TcpStream, heads: Channel<string>, inner: Channel<string>) {
   const head = await headOf(conn);
   await heads.send(head);
   const line = head.slice(0, head.indexOf("\r\n"));
   if (!line.startsWith("CONNECT ")) {
-    await conn.write(
-      `HTTP/1.1 200 OK\r\ncontent-length: ${line.length}\r\nconnection: close\r\n\r\n${line}`,
-    );
+    await conn.write("HTTP/1.1 400 Bad Request\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
     conn.close();
     return;
   }
@@ -65,12 +65,15 @@ async function proxyOne(conn: TcpStream, heads: Channel<string>) {
   }
   const origin = await connect(`127.0.0.1:${target.slice(10)}`);
   await conn.write("HTTP/1.1 200 Connection established\r\n\r\n");
+  const first = await conn.read();
+  await inner.send(utf8DecodeLossy(first));
+  await origin.writeBytes(first);
   spawn(pipe(origin, conn));
   await pipe(conn, origin);
 }
 
 /** Proxies each connection `listener` accepts until it is closed. */
-function proxyAll(listener: TcpListener, heads: Channel<string>) {
+function proxyAll(listener: TcpListener, heads: Channel<string>, inner: Channel<string>) {
   spawn(async () => {
     while (true) {
       let conn: TcpStream;
@@ -79,7 +82,7 @@ function proxyAll(listener: TcpListener, heads: Channel<string>) {
       } catch (e) {
         return;
       }
-      spawn(proxyOne(conn, heads));
+      spawn(proxyOne(conn, heads, inner));
     }
   });
 }
@@ -94,35 +97,43 @@ async function outcome(url: string, init: RequestInit): Promise<string> {
   }
 }
 
-/** An HTTPS origin with the test certificate, and a proxy (`proxyOne`) with credentials. */
+/** An HTTPS and an HTTP origin, and a proxy (`proxyOne`) with credentials. */
 class Setup {
   heads: Channel<string> = channel<string>(64);
+  inner: Channel<string> = channel<string>(64);
   origin: number = 0;
+  plain: number = 0;
   proxy: string = "";
   listener: TcpListener | null = null;
   server: HttpServer | null = null;
+  plainServer: HttpServer | null = null;
 
-  /** Ends both servers. */
+  /** Ends the servers. */
   close() {
     this.listener?.close();
     this.server?.close();
+    this.plainServer?.close();
   }
+}
+
+async function answer(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const auth = req.headers.get("authorization") ?? "-";
+  return new Response(`origin ${req.method} ${url.pathname}${url.search} ${auth} ${await req.text()}`);
 }
 
 async function setup(): Promise<Setup> {
   const s = new Setup();
-  const server = await serve({ port: 0, tls: { cert: TEST_CERT, key: TEST_KEY } }, async (
-    req: Request,
-  ): Promise<Response> => {
-    const url = new URL(req.url);
-    return new Response(`origin ${req.method} ${url.pathname} ${await req.text()}`);
-  });
+  const server = await serve({ port: 0, tls: { cert: TEST_CERT, key: TEST_KEY } }, answer);
   s.server = server;
   s.origin = server.port as number;
+  const plainServer = await serve({ port: 0 }, answer);
+  s.plainServer = plainServer;
+  s.plain = plainServer.port as number;
   const listener = await listen("127.0.0.1:0");
   s.listener = listener;
   s.proxy = `http://al%40ice:pw@127.0.0.1:${listener.port}`;
-  proxyAll(listener, s.heads);
+  proxyAll(listener, s.heads, s.inner);
   return s;
 }
 
@@ -130,7 +141,7 @@ describe("fetch through a proxy", () => {
   it("tunnels https: with CONNECT, TLS to the origin inside", async () => {
     const s = await setup();
     const url = `https://localhost:${s.origin}/hello`;
-    expect(await outcome(url, { ca: TEST_CA, proxy: s.proxy })).toBe("200 origin GET /hello ");
+    expect(await outcome(url, { ca: TEST_CA, proxy: s.proxy })).toBe("200 origin GET /hello - ");
     const head = s.heads.tryReceive() ?? "";
     expect(
       head.startsWith(`CONNECT localhost:${s.origin} HTTP/1.1\r\nhost: localhost:${s.origin}\r\n`),
@@ -138,19 +149,26 @@ describe("fetch through a proxy", () => {
     // base64("al@ice:pw")
     expect(head.includes("\r\nproxy-authorization: Basic YWxAaWNlOnB3\r\n")).toBe(true);
     const posted = await outcome(url, { method: "POST", body: "x", ca: TEST_CA, proxy: s.proxy });
-    expect(posted).toBe("200 origin POST /hello x");
+    expect(posted).toBe("200 origin POST /hello - x");
     s.close();
   });
 
-  it("sends http: to the proxy with the whole URL", async () => {
+  it("tunnels http: with CONNECT too, as Node, and the proxy never sees the URL's password", async () => {
     const s = await setup();
-    const url = "http://origin.invalid:8080/a/b?c=d";
+    const url = `http://bob:TARGETPW@localhost:${s.plain}/a/b?c=d`;
     const got = await outcome(url, { headers: { "x-a": "1" }, proxy: s.proxy });
-    expect(got).toBe("200 GET http://origin.invalid:8080/a/b?c=d HTTP/1.1");
+    // Nor does the origin, as without a proxy (Node refuses such a URL).
+    expect(got).toBe("200 origin GET /a/b?c=d - ");
     const head = s.heads.tryReceive() ?? "";
-    expect(head.includes("\r\nhost: origin.invalid:8080\r\n")).toBe(true);
+    expect(head.startsWith(`CONNECT localhost:${s.plain} HTTP/1.1\r\n`)).toBe(true);
     expect(head.includes("\r\nproxy-authorization: Basic YWxAaWNlOnB3\r\n")).toBe(true);
-    expect(head.includes("\r\nx-a: 1\r\n")).toBe(true);
+    expect(head.includes("TARGETPW") || head.includes("bob")).toBe(false);
+    // The request inside the tunnel names the path alone.
+    const request = s.inner.tryReceive() ?? "";
+    expect(request.startsWith("GET /a/b?c=d HTTP/1.1\r\n")).toBe(true);
+    expect(request.includes("TARGETPW")).toBe(false);
+    expect(request.includes("\r\nx-a: 1\r\n")).toBe(true);
+    expect(request.toLowerCase().includes("proxy-authorization")).toBe(false);
     s.close();
   });
 
@@ -159,6 +177,9 @@ describe("fetch through a proxy", () => {
     const at = s.proxy.slice(s.proxy.indexOf("@") + 1);
     expect(await outcome("https://refused.invalid/", { proxy: s.proxy })).toBe(
       `ECONNREFUSED fetch failed: proxy ${at} refused the tunnel to refused.invalid:443: HTTP/1.1 407 Proxy Authentication Required`,
+    );
+    expect(await outcome("http://refused.invalid/", { proxy: s.proxy })).toBe(
+      `ECONNREFUSED fetch failed: proxy ${at} refused the tunnel to refused.invalid:80: HTTP/1.1 407 Proxy Authentication Required`,
     );
     s.close();
     const gone = await outcome("https://refused.invalid/", { proxy: "http://127.0.0.1:1" });
@@ -171,23 +192,28 @@ describe("fetch through a proxy", () => {
     ).toBe(true);
   });
 
-  it("takes the environment's proxy, not for this machine", async () => {
+  // The first request of this program without a `proxy` option: `NODE_USE_ENV_PROXY` is read
+  // then, once, as Node reads it when it starts.
+  it("takes the environment's proxy with NODE_USE_ENV_PROXY=1, for this machine too", async () => {
     const s = await setup();
+    setEnv("NODE_USE_ENV_PROXY", "1");
     setEnv("http_proxy", s.proxy);
     setEnv("https_proxy", s.proxy);
     removeEnv("no_proxy");
     removeEnv("NO_PROXY");
-    const got = await outcome("http://origin.invalid/env", {});
-    const tunneled = await outcome("https://origin.invalid/env", {});
-    // Loopback is reached directly: the proxy would refuse a tunnel to 127.0.0.1.
+    const plain = await outcome("http://origin.invalid/env", {});
+    const tunneled = await outcome(`https://localhost:${s.origin}/env`, { ca: TEST_CA });
+    setEnv("NO_PROXY", "127.0.0.1");
+    // NO_PROXY's host is reached directly: the proxy would refuse a tunnel to 127.0.0.1.
     const direct = await outcome(`https://127.0.0.1:${s.origin}/direct`, { ca: TEST_CA });
     removeEnv("http_proxy");
     removeEnv("https_proxy");
-    expect(got).toBe("200 GET http://origin.invalid/env HTTP/1.1");
-    expect(tunneled.includes("refused the tunnel to origin.invalid:443")).toBe(true);
-    expect(direct).toBe("200 origin GET /direct ");
-    expect((s.heads.tryReceive() ?? "").startsWith("GET http://origin.invalid/env ")).toBe(true);
-    expect((s.heads.tryReceive() ?? "").startsWith("CONNECT origin.invalid:443 ")).toBe(true);
+    removeEnv("NO_PROXY");
+    expect(plain.includes("refused the tunnel to origin.invalid:80")).toBe(true);
+    expect(tunneled).toBe("200 origin GET /env - ");
+    expect(direct).toBe("200 origin GET /direct - ");
+    expect((s.heads.tryReceive() ?? "").startsWith("CONNECT origin.invalid:80 ")).toBe(true);
+    expect((s.heads.tryReceive() ?? "").startsWith(`CONNECT localhost:${s.origin} `)).toBe(true);
     expect(s.heads.tryReceive() ?? "none").toBe("none");
     s.close();
   });

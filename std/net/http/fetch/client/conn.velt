@@ -265,9 +265,10 @@ export async function dial(
 }
 
 /**
- * A new connection to `t` (at `addr`) through proxy `via`: for `https:` a `CONNECT` tunnel with
- * the TLS client's handshake through it, for `http:` the connection to the proxy itself (the
- * request names the whole URL, wire.velt).
+ * A new connection to `t` (at `addr`) through proxy `via`: a `CONNECT` tunnel to `addr`, for
+ * `http:` as for `https:` (as undici's), with the TLS client's handshake through it for `https:`.
+ * The request then names only the path, so nothing of the URL's user or password reaches the
+ * proxy.
  */
 async function viaProxy(
   t: Target,
@@ -291,16 +292,11 @@ async function viaProxy(
     }
     throw e;
   }
+  const s = TcpStream.ofHandle(fd);
+  await tunnel(s, via, addr, CONNECT_MS - ((Date.now() as i64) - start), signal);
   if (tls == null) {
-    return TcpStream.ofHandle(fd);
+    return s;
   }
-  await tunnel(
-    TcpStream.ofHandle(fd),
-    via,
-    addr,
-    CONNECT_MS - ((Date.now() as i64) - start),
-    signal,
-  );
   const left = CONNECT_MS - ((Date.now() as i64) - start);
   return TcpStream.ofHandle(await tls(fd, addr, bare(t.hostname), ca, alpn, left, signal));
 }
