@@ -21,7 +21,7 @@ import {
   WAIT,
   op,
 } from "velt/fs/line_buffer";
-import { velt_rt_fs_reader_read } from "velt/fs/rt";
+import { velt_rt_fs_reader_read } from "#fs-rt";
 
 /** Reader `h` was closed while it was read: the runtime's next read reports it (`EBADF`). */
 async function closedRead(h: u64): Promise<void> {

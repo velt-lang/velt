@@ -24,7 +24,6 @@ pub mod dev;
 pub mod drop_depth;
 pub mod entry;
 pub mod freed;
-pub mod fs;
 pub mod handle;
 pub mod hash;
 pub mod hazard;

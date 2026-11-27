@@ -1,0 +1,110 @@
+// velt/fs (internal): the files under `openRead` and `openWrite` on Windows (`#fs-stream-os`'s
+// win32 variant, std/imports.velt): Win32 handles, opened, read and written as whole files are
+// (std/fs/whole/win_calls.velt). The path is the one `#fs-stream-path` gives, resolved with the
+// `\\?\` prefix, opened as it is. Each call blocks: std/fs/stream_sched.velt runs them on the
+// executor's blocking pool. A directory refuses to open as a file ("access denied"): `EISDIR`.
+
+import { Ptr } from "velt/ffi/ptr";
+import { wideOf } from "velt/ffi/wide";
+import { IoError } from "velt/io/error";
+import { Done } from "velt/fs/whole/done";
+import { winError } from "velt/fs/whole/win_path";
+import { errnoOfWin32 } from "velt/os/win_error";
+import { OsFile } from "velt/fs/stream_os/os_file";
+import {
+  CREATE_ALWAYS,
+  EISDIR,
+  ERROR_ACCESS_DENIED,
+  FILE_APPEND_DATA,
+  FILE_ATTRIBUTE_NORMAL,
+  GENERIC_READ,
+  GENERIC_WRITE,
+  OPEN_ALWAYS,
+  OPEN_EXISTING,
+  SYNCHRONIZE,
+  close,
+  handleInfo,
+  isDirectory,
+  lastWin32,
+  open,
+  readSome,
+  seekTo,
+  statsOfInfo,
+  writeAllWin,
+} from "velt/fs/whole/win_calls";
+
+/** `path` as Win32 takes it (std/fs/stream.velt checked that it holds no 0). */
+function wide(path: string): u16[] {
+  return wideOf(path) ?? [0];
+}
+
+/** The handle at address `os`. */
+function handle(os: u64): Ptr<void> {
+  // SAFETY: `os` is the address of a handle this module opened and has not closed.
+  const h = unsafe { Ptr.orNull<void>(os as usize) };
+  if (h === null) {
+    panic("ICE: velt/fs: a file stream's handle is null");
+  }
+  return h;
+}
+
+/**
+ * Opens `path` for reading at byte `start` (at most `i64::MAX`, the caller's check), with the
+ * file's metadata as of the open.
+ */
+export function openReadOs(path: string, start: u64): Done<OsFile> {
+  const w = wide(path);
+  const h = open(w, GENERIC_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+  if (h === null) {
+    const code = lastWin32();
+    if (isDirectory(w)) {
+      return { value: null, error: winError(EISDIR, "open", path) };
+    }
+    return { value: null, error: winError(errnoOfWin32(code), "open", path) };
+  }
+  const info: u32[] = [];
+  let code = handleInfo(h, info);
+  if (code === 0 && start > 0) {
+    code = seekTo(h, start as i64);
+  }
+  if (code !== 0) {
+    close(h);
+    return { value: null, error: winError(errnoOfWin32(code), "open", path) };
+  }
+  return { value: { os: Ptr.addressOf(h) as u64, stats: statsOfInfo(info, false) }, error: null };
+}
+
+/** Creates `path` (truncated, or `append`ed to) for writing. */
+export function openWriteOs(path: string, append: bool): Done<u64> {
+  const w = wide(path);
+  const access = append ? FILE_APPEND_DATA | SYNCHRONIZE : GENERIC_WRITE;
+  const h = open(w, access, append ? OPEN_ALWAYS : CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL);
+  if (h === null) {
+    const code = lastWin32();
+    if (code === ERROR_ACCESS_DENIED && isDirectory(w)) {
+      return { value: null, error: winError(EISDIR, "open", path) };
+    }
+    return { value: null, error: winError(errnoOfWin32(code), "open", path) };
+  }
+  return { value: Ptr.addressOf(h) as u64, error: null };
+}
+
+/** Reads up to `end - start` bytes into `bytes[start..end]`: the count (0 at the end). */
+export function readOs(os: u64, bytes: u8[], start: usize, end: usize): Done<usize> {
+  const failed: u32[] = [0];
+  const n = readSome(handle(os), bytes, start, end, failed);
+  if (n < 0) {
+    return { value: null, error: winError(errnoOfWin32(failed[0]), "read") };
+  }
+  return { value: n as usize, error: null };
+}
+
+/** Writes all of `bytes[start..end]`: null, or the error. */
+export function writeOs(os: u64, bytes: readonly u8[], start: usize, end: usize): IoError | null {
+  return writeAllWin(handle(os), bytes, start, end);
+}
+
+/** Closes the file. */
+export function closeOs(os: u64): void {
+  close(handle(os));
+}

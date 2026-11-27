@@ -1,0 +1,10 @@
+// velt/fs (internal): a file `openRead` opened (`#fs-stream-os`): the operating system's handle
+// (a file descriptor plus one, or a Win32 handle's address: never 0) and the file's metadata as of the open.
+
+import { Stats } from "velt/fs/stats";
+
+/** An open file and its metadata when it was opened. */
+export struct OsFile {
+  os: u64;
+  stats: Stats;
+}
