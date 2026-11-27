@@ -19,6 +19,7 @@ mod cache_key_tests;
 mod changes;
 mod check;
 mod comments;
+mod ct_counts;
 mod doctests;
 mod file_size;
 mod golden_archive;
@@ -489,6 +490,7 @@ fn github_output_text(plan: &Plan) -> String {
         text.push_str(&format!("{output}={value}\n"));
     }
     text.push_str(&format!("c_headers={}\n", flag(plan.c_headers)));
+    text.push_str(&format!("ct_counts={}\n", flag(plan.ct_counts)));
     text.push_str(&format!(
         "zig_tests={}\nzig_goldens={}\n",
         flag(zig::tests(plan)),
@@ -740,6 +742,14 @@ name = \"a\"
         assert!(github_output_text(&plan).contains("\nc_headers=true\n"));
         plan.c_headers = false;
         assert!(github_output_text(&plan).contains("\nc_headers=false\n"));
+    }
+
+    #[test]
+    fn ci_learns_whether_the_constant_time_check_runs() {
+        let mut plan = Plan::everything("test");
+        assert!(github_output_text(&plan).contains("\nct_counts=true\n"));
+        plan.ct_counts = false;
+        assert!(github_output_text(&plan).contains("\nct_counts=false\n"));
     }
 
     #[test]

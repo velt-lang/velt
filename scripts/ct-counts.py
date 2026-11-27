@@ -189,11 +189,19 @@ def build(source, kind, out):
         subprocess.run([velt(), "build", "--release", path, "-o", exe], check=True,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return exe, {}
-    # A test file: the harness's executable, which runs the file's tests.
-    made = subprocess.run([velt(), "test", path, "--release", "--no-run", "--json"], check=True,
+    # A test file: the harness's executable, which runs the file's tests. It is built at one path
+    # in the repository's target/velt/test for every build of the file, and another build there
+    # (the memcheck test of crates/veltc/tests/ct_counts.rs runs beside the count's, and may see
+    # another state of the build cache) would replace it between two secrets: what is counted is
+    # a copy of this run's own.
+    made = subprocess.run([velt(), "test", path, "--release", "--no-run", "--json"],
                           capture_output=True, text=True, cwd=ROOT)
-    harness = json.loads(made.stdout)["harnesses"][0]
-    return harness["executable"], harness.get("env", {})
+    harnesses = json.loads(made.stdout).get("harnesses", []) if made.stdout else []
+    if made.returncode != 0 or not harnesses:
+        sys.exit(f"velt test {source} --no-run failed:\n{made.stdout}{made.stderr}")
+    exe = os.path.join(out, "probe")
+    shutil.copy2(harnesses[0]["executable"], exe)
+    return exe, harnesses[0].get("env", {})
 
 
 # One runtime thread and no rescue thread, as bench/nightly.sh sets for its cachegrind rows: a
@@ -202,21 +210,33 @@ def build(source, kind, out):
 ONE_THREAD = {"VELT_THREADS": "1", "VELT_RESCUE": "0"}
 
 
+# What scripts/ct-shim.c prints when the probe's other threads were still running after two
+# seconds: the count may then include their work, which says nothing about the secret.
+UNSETTLED = "ct-shim: the other threads never settled before the count started"
+
+
 def count(exe, env, secret_file, shim=None):
     """The instructions the probe executes for the secret in `secret_file`. With the shim, only
     from its read of the secret to its read of the stop file (or to the end): the code under
-    test, without the process's start and end."""
+    test, without the process's start and end. A run whose other threads never settled is run
+    once more; a second one fails the check as that, not as a count that depends on the
+    secret."""
     region = ["--instr-at-start=no"] if shim else []
     extra = {"LD_PRELOAD": shim, "VELT_CT_STOP": stop_file(secret_file)} if shim else {}
-    run = subprocess.run(
-        ["valgrind", "--tool=cachegrind", "--cache-sim=no", "--cachegrind-out-file=/dev/null",
-         *region, exe, secret_file],
-        capture_output=True, text=True,
-        env={**os.environ, **env, **ONE_THREAD, "VELT_CT_SECRET": secret_file, **extra})
-    found = re.search(r"I\s+refs:\s+([\d,]+)", run.stderr)
-    if run.returncode != 0 or not found:
-        sys.exit(f"the probe failed under valgrind:\n{run.stdout}{run.stderr}")
-    return int(found.group(1).replace(",", ""))
+    for attempt in range(2):
+        run = subprocess.run(
+            ["valgrind", "--tool=cachegrind", "--cache-sim=no", "--cachegrind-out-file=/dev/null",
+             *region, exe, secret_file],
+            capture_output=True, text=True,
+            env={**os.environ, **env, **ONE_THREAD, "VELT_CT_SECRET": secret_file, **extra})
+        found = re.search(r"I\s+refs:\s+([\d,]+)", run.stderr)
+        if run.returncode != 0 or not found:
+            sys.exit(f"the probe failed under valgrind:\n{run.stdout}{run.stderr}")
+        if UNSETTLED not in run.stderr:
+            return int(found.group(1).replace(",", ""))
+    sys.exit(f"threads never settled: twice the probe's other threads were still running two "
+             f"seconds after it read its secret, so its count is not the code under test's "
+             f"(scripts/ct-shim.c); is the machine overloaded?\n{run.stderr[-2000:]}")
 
 
 def stop_file(secret_file):

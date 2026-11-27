@@ -8,6 +8,7 @@
 use std::collections::BTreeSet;
 
 use crate::c_headers;
+use crate::ct_counts;
 use crate::graph::Graph;
 use crate::os;
 use crate::package_users;
@@ -98,6 +99,9 @@ pub struct Plan {
     /// Windows declarations, landed by a merge train's `--full` run). A local run turns the zig
     /// tests on only with `VELT_ZIG_TESTS=1`, whatever this says.
     pub c_headers: bool,
+    /// std/crypto's constant-time check under valgrind: the `ct-counts` job in ci.yml
+    /// (crates/xtask/src/ct_counts.rs). `--full` runs it, as it does `c_headers`.
+    pub ct_counts: bool,
 }
 
 impl Plan {
@@ -130,6 +134,7 @@ impl Plan {
             wasm: true,
             wasm_host: None,
             c_headers: true,
+            ct_counts: true,
         }
     }
 
@@ -167,6 +172,7 @@ impl Plan {
             wasm: false,
             wasm_host: None,
             c_headers: false,
+            ct_counts: false,
         }
     }
 
@@ -195,6 +201,9 @@ impl Plan {
         plan.c_headers = paths
             .iter()
             .any(|p| !comment_only.contains(p) && c_headers::depends_on(p));
+        plan.ct_counts = paths
+            .iter()
+            .any(|p| !comment_only.contains(p) && ct_counts::depends_on(p));
         let mut changed_crates = BTreeSet::new();
         let mut comment_crates = BTreeSet::new();
         let code: Vec<String> = paths
@@ -219,6 +228,7 @@ impl Plan {
                         wasm: plan.wasm || paths.iter().any(|p| changes_toolchain(p)),
                         wasm_host: os::wasm_host_reason(&code),
                         c_headers: plan.c_headers,
+                        ct_counts: plan.ct_counts,
                         ..everything
                     };
                 }
@@ -555,6 +565,10 @@ impl Plan {
         out.push_str(&format!(
             "  C headers through zig: {}\n",
             yes(self.c_headers)
+        ));
+        out.push_str(&format!(
+            "  constant time under valgrind: {}\n",
+            yes(self.ct_counts)
         ));
         out.push_str(&format!(
             "  parser robustness sweep: {}\n",
