@@ -119,3 +119,89 @@ for (const x of cl.values()) {
   cl.clear();
 }
 console.log(cs.join(","), cl.size);
+
+// A `for...of` over the set itself, in the same shapes: a field, a label, `break`, a call
+// returning the set, and a `let` reassigned in the body (the loop keeps walking the first set).
+class Box {
+  items = new Set<number>([5, 6, 7, 8]);
+}
+const bx = new Box();
+const bs: number[] = [];
+round: for (const x of bx.items) {
+  bs.push(x);
+  if (x == 6) {
+    bx.items.add(10);
+    continue;
+  }
+  for (const y of bx.items) {
+    if (y == 7) {
+      bx.items.delete(8);
+      continue round;
+    }
+  }
+}
+const bf: number[] = [];
+for (const x of bx.items) {
+  bf.push(x);
+  bx.items.add(x + 100);
+  if (bf.length == 2) {
+    break;
+  }
+}
+console.log(bs.join(","), bf.join(","), bx.items.size);
+
+function pick(): Set<number> {
+  return bx.items;
+}
+let total = 0;
+for (const x of pick()) {
+  total += x;
+  if (x == 5) {
+    bx.items.delete(6);
+  }
+}
+let cur = new Set<string>(["p", "q"]);
+const cv: string[] = [];
+for (const x of cur) {
+  cv.push(x);
+  cur = new Set<string>(["z"]);
+}
+console.log(total, cv.join(","), [...cur].join(","));
+
+// Over a parameter: one the body doesn't assign is walked live; one the body or a closure
+// assigns goes on with the set the loop started with.
+function liveParam(s: Set<number>): string {
+  const out: number[] = [];
+  for (const x of s) {
+    out.push(x);
+    if (x == 1) {
+      s.delete(2);
+      s.add(4);
+    }
+  }
+  return out.join(",");
+}
+function swapParam(s: Set<number>): string {
+  const out: number[] = [];
+  for (const x of s) {
+    out.push(x);
+    s = new Set<number>([50]);
+  }
+  return out.join(",") + "/" + [...s].join(",");
+}
+function closureParam(s: Set<number>): string {
+  const out: number[] = [];
+  const swap = () => {
+    s = new Set<number>([60]);
+  };
+  for (const x of s) {
+    out.push(x);
+    swap();
+  }
+  return out.join(",") + "/" + [...s].join(",");
+}
+console.log(
+  liveParam(new Set<number>([1, 2, 3])),
+  swapParam(new Set<number>([7, 8])),
+  closureParam(new Set<number>([5, 6])),
+);

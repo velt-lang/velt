@@ -112,3 +112,88 @@ for (const x of cl.values()) {
   cl.clear();
 }
 console.log(cs.join(","), cl.size);
+// A `for...of` over the set itself, in the same shapes: a field, a label, `break`, a call
+// returning the set, and a `let` reassigned in the body (the loop keeps walking the first set).
+class Box {
+  items = new Set([5, 6, 7, 8]);
+}
+const bx = new Box();
+const bs = [];
+round: for (const x of bx.items) {
+  bs.push(x);
+  if (x == 6) {
+    bx.items.add(10);
+    continue;
+  }
+  for (const y of bx.items) {
+    if (y == 7) {
+      bx.items.delete(8);
+      continue round;
+    }
+  }
+}
+const bf = [];
+for (const x of bx.items) {
+  bf.push(x);
+  bx.items.add(x + 100);
+  if (bf.length == 2) {
+    break;
+  }
+}
+console.log(bs.join(","), bf.join(","), bx.items.size);
+
+function pick() {
+  return bx.items;
+}
+let total = 0;
+for (const x of pick()) {
+  total += x;
+  if (x == 5) {
+    bx.items.delete(6);
+  }
+}
+let cur = new Set(["p", "q"]);
+const cv = [];
+for (const x of cur) {
+  cv.push(x);
+  cur = new Set(["z"]);
+}
+console.log(total, cv.join(","), [...cur].join(","));
+
+// Over a parameter: one the body doesn't assign is walked live; one the body or a closure
+// assigns goes on with the set the loop started with.
+function liveParam(s) {
+  const out = [];
+  for (const x of s) {
+    out.push(x);
+    if (x == 1) {
+      s.delete(2);
+      s.add(4);
+    }
+  }
+  return out.join(",");
+}
+function swapParam(s) {
+  const out = [];
+  for (const x of s) {
+    out.push(x);
+    s = new Set([50]);
+  }
+  return out.join(",") + "/" + [...s].join(",");
+}
+function closureParam(s) {
+  const out = [];
+  const swap = () => {
+    s = new Set([60]);
+  };
+  for (const x of s) {
+    out.push(x);
+    swap();
+  }
+  return out.join(",") + "/" + [...s].join(",");
+}
+console.log(
+  liveParam(new Set([1, 2, 3])),
+  swapParam(new Set([7, 8])),
+  closureParam(new Set([5, 6])),
+);

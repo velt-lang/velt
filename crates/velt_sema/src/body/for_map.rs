@@ -1,8 +1,8 @@
 //! `for...of` over a `Map` (or its `keys()`, `values()`, `entries()`) held in a place iterates
 //! live, as in JS: entries added by the body are visited, deleted ones are not (#624). So does one
-//! over a `Set`'s `values()`, `keys()` or `entries()` (velt/collections), whose class declares the
-//! same cursor methods over its map (a `for...of` over the set itself goes through its iterator,
-//! which walks the same cursor). The array those methods return is a snapshot (#3842). The loop
+//! over a `Set` (velt/collections) or its `values()`, `keys()` or `entries()`, whose class declares
+//! the same cursor methods over its map (the set itself as its `values()`: its iterator walks the
+//! same cursor, but allocates). The array those methods return is a snapshot (#3842). The loop
 //! is desugared into a cursor walk over the map's entries (std/prelude/map.velt; "Live
 //! iteration" in std/lang/map/layout.velt):
 //!
@@ -44,7 +44,7 @@ impl FnCx<'_, '_> {
         p: ForOfParts<'_>,
         out: &mut Vec<hir::Stmt>,
     ) -> bool {
-        let Some((recv, read, fixed)) = self.live_map_source(iter, it) else {
+        let Some((recv, read, fixed)) = self.live_map_source(iter, it, p.body) else {
             return false;
         };
         let mut names = CursorLoop::new(p.span, recv, iter.span);
@@ -92,13 +92,23 @@ impl FnCx<'_, '_> {
     }
 
     /// Does the map source `src` (checked: the map itself, or the receiver of a `keys()`,
-    /// `values()` or `entries()` call) always name the same map: a `const` variable or `this`?
-    fn fixed_source(&self, src: &hir::Expr) -> bool {
-        match &src.kind {
-            H::Local(id, _) => matches!(
-                self.local_kind(*id),
-                super::LocalKind::Const | super::LocalKind::Using | super::LocalKind::This
-            ),
+    /// `values()` or `entries()` call) always name the same map while the loop `body` runs: a
+    /// `const` variable, `this`, or (`set`: a loop over a set itself) a parameter that neither
+    /// `body` nor a closure assigns, so the loop borrows it as a call of `[Symbol.iterator]` did?
+    fn fixed_source(&self, src: &hir::Expr, body: &ast::Block, set: bool) -> bool {
+        let H::Local(id, _) = &src.kind else {
+            return false;
+        };
+        match self.local_kind(*id) {
+            super::LocalKind::Const | super::LocalKind::Using | super::LocalKind::This => true,
+            super::LocalKind::Param if set => {
+                let name = &self.f.locals[id.0 as usize].name;
+                let mut names = super::assigned::Assigned::default();
+                for st in &body.stmts {
+                    super::assigned::assigned_in_stmt(st, &mut names);
+                }
+                !names.contains_key(name.as_str()) && self.closure_assignment(*id).is_none()
+            }
             _ => false,
         }
     }
@@ -110,10 +120,19 @@ impl FnCx<'_, '_> {
         &mut self,
         iter: &'e ast::Expr,
         it: &hir::Expr,
+        body: &ast::Block,
     ) -> Option<(&'e ast::Expr, &'static str, bool)> {
         if self.is_prelude_map(it.ty) {
-            let fixed = self.fixed_source(it);
+            let fixed = self.fixed_source(it, body, false);
             return liftable(iter).then_some((iter, velt_common::std_key!(map_entry_at), fixed));
+        }
+        // A `Set` itself walks as its `values()` do: the same live walk as its iterator, without
+        // the iterator, its cursor and its results. A subclass is another type (its own
+        // `[Symbol.iterator]` runs), and while one in the program overrides `[Symbol.iterator]`
+        // a `Set` value may be one of its instances: the loop calls the method then.
+        if self.is_std_set(it.ty) && !self.set_iterator_overridden(it.ty) {
+            let fixed = self.fixed_source(it, body, true);
+            return liftable(iter).then_some((iter, velt_common::std_key!(map_key_at), fixed));
         }
         let ast::ExprKind::Call { callee, args, .. } = &iter.kind else {
             return None;
@@ -140,8 +159,20 @@ impl FnCx<'_, '_> {
             _ => return None,
         };
         let live = args.is_empty() && liftable(object) && (set || self.is_prelude_map(recv.ty));
-        let fixed = self.fixed_source(recv);
+        let fixed = self.fixed_source(recv, body, false);
         live.then_some((&**object, read, fixed))
+    }
+
+    /// Does a class extending the class of `t` declare its own `[Symbol.iterator]`?
+    fn set_iterator_overridden(&self, t: hir::TyId) -> bool {
+        self.class_subclasses(t).is_some_and(|subs| {
+            subs.iter().any(|&s| {
+                self.cx
+                    .adt(s)
+                    .and_then(|a| a.methods.get(ast::SYMBOL_ITERATOR))
+                    .is_some_and(|m| !m.is_static)
+            })
+        })
     }
 }
 
