@@ -89,6 +89,8 @@ fn every_built_in_method_of_an_any_is_a_row() {
     ] {
         let mut names: Vec<&str> = methods(r).map(|(n, _)| n).collect();
         assert!(!names.is_empty(), "{r:?}");
+        // What `is_any_method` tests first.
+        assert!(r.prefix().starts_with("any") && r.prefix().ends_with('_'));
         let n = names.len();
         names.sort();
         names.dedup();

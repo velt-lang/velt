@@ -97,7 +97,11 @@ pub fn methods(r: Receiver) -> impl Iterator<Item = (&'static str, &'static Hook
 /// Is `item` (a definition's last name segment) a built-in method of a value held as `any`, a row
 /// of this table?
 pub fn is_any_method(item: &str) -> bool {
-    HOOKS.iter().any(|h| h.method.is_some() && h.item == item)
+    // Every prefix is `any`, a capital and `_`: lazy std asks this of every std function, most of
+    // which the first test rules out without a walk of the table.
+    item.starts_with("any")
+        && item.contains('_')
+        && HOOKS.iter().any(|h| h.method.is_some() && h.item == item)
 }
 
 /// The member name of std's symbol `record<Name>` (std/lang/hooks/keys.velt: `RECORD_SYM_GET` for

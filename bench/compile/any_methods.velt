@@ -1,0 +1,36 @@
+// The build cost of the built-in methods called through `any` (#2197: lowering finds them by
+// their rows of the hook table): strings, arrays, numbers, booleans, a map, a set and a record's
+// `Reflect`, so every receiver's slot is generated. A row of bench/compile/hooks_ab.sh.
+function main() {
+  const words: any = " Alpha,beta,Gamma ";
+  const parts: any = words.trim().split(",");
+  let total = 0;
+  for (let i = 0; i < 200; i++) {
+    const s: any = `${words.toUpperCase()}${i}`;
+    total += s.indexOf("A") + s.lastIndexOf("a") + (s.includes("BETA") ? 1 : 0);
+    total += s.padStart(30, "-").length + s.slice(2, 5).length + s.charCodeAt(1);
+    total += s.replaceAll("A", "a").length + (s.startsWith(" ") ? 1 : 0);
+  }
+  const xs: any = [3, 1, 2];
+  xs.push(5);
+  xs.unshift(0);
+  const mapped: any = xs.map((v: any) => v * 2).filter((v: any) => v > 2);
+  console.log(
+    mapped.join("|"),
+    xs.indexOf(2),
+    xs.includes(5),
+    xs.reduce((a: any, b: any) => a + b, 0),
+  );
+  const n: any = 3.14159;
+  console.log(n.toFixed(2), n.toPrecision(3), n.toString(), (true as any).toString());
+  const m: any = new Map<string, number>([
+    ["a", 1],
+    ["b", 2],
+  ]);
+  m.forEach((v: any, k: any) => console.log(k, v));
+  const st: any = new Set<number>([1, 2]);
+  st.forEach((v: any) => console.log(v));
+  const rec: Record<string, number> = { x: 1, y: 2 };
+  const r: any = rec;
+  console.log(Reflect.ownKeys(r), parts.length, total);
+}
