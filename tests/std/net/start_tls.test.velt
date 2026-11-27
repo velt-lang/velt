@@ -278,9 +278,15 @@ describe("TlsStream.takeIn", () => {
       expect(tcp.tryRead(one, 1, 2)).toBe(0);
       await tls.write("go");
       // Now the server's record is on its way: one byte of it is read from the socket, as a look
-      // at an idle connection does, and given to the stream.
-      await tcp.readable();
-      expect(tcp.tryRead(one, 1, 2)).toBe(1);
+      // at an idle connection does, and given to the stream. `readable()` may wake before the
+      // record has arrived, and `tryRead` then finds nothing (0): wait again, a bounded number of
+      // times (#3908). `null`, the end of the stream, stops the loop and fails below.
+      let got: number | null = 0;
+      for (let waits = 0; got === 0 && waits < 1000; waits++) {
+        await tcp.readable();
+        got = tcp.tryRead(one, 1, 2);
+      }
+      expect(got).toBe(1);
       tls.takeIn(one, 1, 2);
       let text = "";
       while (true) {
