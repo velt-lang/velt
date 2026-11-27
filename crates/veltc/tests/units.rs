@@ -888,7 +888,7 @@ fn std_s_unit_on_disk_serves_another_program() {
     // The unit saved again is the one this check made (of `bad`), whose bytes may differ from
     // the first one's in more places than the damaged byte: what it is, is a unit that loads.
     let again = std::fs::read(&saved[0]).unwrap();
-    assert_ne!(again, bytes, "the damaged unit was not saved again");
+    assert!(again != bytes, "the damaged unit was not saved again");
     let fourth = check_on_disk(&disk, bad);
     let said = String::from_utf8_lossy(&fourth.stderr).to_string();
     assert!(said.contains("std's unit loaded from disk"), "{said}");
