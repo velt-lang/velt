@@ -1,0 +1,172 @@
+// velt/net (internal): the `wasi` variant of `#net-tcp` (std/imports.velt). A wasm32-wasip1
+// program runs on the executor in Velt (#3905), which can't await velt_rt_wasm's async leaves
+// (their `cx` is the runtime's), and WASI has no sockets anyway: so nothing here calls the
+// runtime. Connecting and listening fail with `ENOTSUP`, and as no stream or listener ever
+// exists, an operation on one finds none (`EBADF`, as for a closed handle), as the runtime's
+// WebAssembly functions answer (velt_rt_wasm net.rs). The names and signatures are
+// std/net/rt.velt's.
+
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+
+const UNSUPPORTED: i32 = 12;
+const BAD_HANDLE: i32 = 16;
+
+function noNetwork<T>(value: T): IoResult<T> {
+  return {
+    code: UNSUPPORTED,
+    message: "fetch failed: WebAssembly programs have no network access",
+    value: value,
+  };
+}
+
+function noStream<T>(value: T): IoResult<T> {
+  return { code: BAD_HANDLE, message: "handle is closed", value: value };
+}
+
+function noStreamStatus(): IoStatus {
+  return { code: BAD_HANDLE, message: "handle is closed" };
+}
+
+/** No supervisor hands a socket over here: fails with `ENOTSUP`. */
+export async function velt_rt_tcp_listen(addr: string): Promise<IoResult<u64>> {
+  return noNetwork<u64>(0);
+}
+
+/** No listener exists in this build. */
+export function velt_rt_tcp_listener_port(l: u64): u32 {
+  return 0;
+}
+
+/** Nothing to close: no listener in this build. */
+export function velt_rt_tcp_listener_close(l: u64) {}
+
+/** Fails with `ENOTSUP`: no listener in this build. */
+export async function velt_rt_tcp_accept(l: u64): Promise<IoResult<u64>> {
+  return { code: UNSUPPORTED, message: "accept: no sockets on this OS", value: 0 };
+}
+
+export async function velt_rt_tcp_connect(addr: string): Promise<IoResult<u64>> {
+  return noNetwork<u64>(0);
+}
+
+export async function velt_rt_tcp_read(s: u64, max: u64): Promise<IoResult<u8[]>> {
+  return noStream<u8[]>([]);
+}
+
+export async function velt_rt_tcp_read_string(s: u64, max: u64): Promise<IoResult<string>> {
+  return noStream<string>("");
+}
+
+export async function velt_rt_tcp_write(s: u64, data: string): Promise<IoStatus> {
+  return noStreamStatus();
+}
+
+export async function velt_rt_tcp_write_bytes(s: u64, data: u8[]): Promise<IoStatus> {
+  return noStreamStatus();
+}
+
+/** Writes nothing (the next `write` reports the error). */
+export function velt_rt_tcp_try_write(s: u64, data: u8[]): u64 {
+  return 0;
+}
+
+export function velt_rt_tcp_try_read_into(s: u64, data: u8[], start: u64, end: u64): IoResult<i64> {
+  return noStream<i64>(0);
+}
+
+export async function velt_rt_tcp_readable(s: u64): Promise<IoStatus> {
+  return noStreamStatus();
+}
+
+export function velt_rt_tcp_write_later(s: u64, data: string): IoResult<u64> {
+  return noStream<u64>(0);
+}
+
+export function velt_rt_tcp_write_later_range(
+  s: u64,
+  data: u8[],
+  start: u64,
+  end: u64,
+): IoResult<u64> {
+  return noStream<u64>(0);
+}
+
+export async function velt_rt_tcp_drained(s: u64, max: u64): Promise<IoStatus> {
+  return noStreamStatus();
+}
+
+export async function velt_rt_tcp_readable_within(
+  s: u64,
+  ms: i64,
+  signal: u64,
+): Promise<IoResult<u8>> {
+  return noStream<u8>(0);
+}
+
+export async function velt_rt_tcp_write_range(
+  s: u64,
+  data: u8[],
+  start: u64,
+  end: u64,
+): Promise<IoStatus> {
+  return noStreamStatus();
+}
+
+/** Writes nothing (the next `write` reports the error). */
+export function velt_rt_tcp_try_write_range(s: u64, data: u8[], start: u64, end: u64): u64 {
+  return 0;
+}
+
+export function velt_rt_tcp_shutdown(s: u64): IoStatus {
+  return noStreamStatus();
+}
+
+export function velt_rt_tcp_peer_addr(s: u64): string {
+  return "";
+}
+
+export function velt_rt_tcp_abort(s: u64) {}
+
+export function velt_rt_tcp_close(s: u64) {}
+
+export function velt_rt_tcp_park(s: u64, key: string) {}
+
+export function velt_rt_tcp_unpark(key: string, settled: u32): u64 {
+  return 0;
+}
+
+/** Fails as the listener does: no sockets, so no TLS either. */
+export async function velt_rt_tcp_listen_tls(
+  addr: string,
+  cert: string,
+  key: string,
+  alpn: string,
+): Promise<IoResult<u64>> {
+  return noNetwork<u64>(0);
+}
+
+/** The protocol ALPN chose: none, as no stream of this build is TLS. */
+export async function velt_rt_tcp_alpn(s: u64): Promise<IoResult<string>> {
+  return { code: 0, message: "", value: "" };
+}
+
+/** Fails as the connection does: no sockets, so no TLS either. */
+export async function velt_rt_tcp_connect_tls(
+  addr: string,
+  serverName: string,
+  ca: string,
+  alpn: string,
+): Promise<IoResult<u64>> {
+  return noNetwork<u64>(0);
+}
+
+/** One worker serves a listener's connections: WASI runs on one thread. */
+export function listenerWorkers(l: u64): u64 {
+  return 1;
+}
+
+/** May a server spread its connections over the workers? There is one. */
+export function connectionsSpread(): bool {
+  return false;
+}
