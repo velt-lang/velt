@@ -12,6 +12,8 @@ mkdir -p "$work"
 # No proxy variables: the rows measure a program that does not use a proxy.
 unset NODE_USE_ENV_PROXY http_proxy HTTP_PROXY https_proxy HTTPS_PROXY no_proxy NO_PROXY
 export VELT_THREADS=1
+# Every build compiles: the build cache would make a side count only a lookup.
+export VELT_BUILD_CACHE=off
 
 instr() { # <program> <args...>: instructions of that process alone
   valgrind --tool=cachegrind --cache-sim=no --cachegrind-out-file=/dev/null "$@" 2>&1 >/dev/null |
@@ -28,6 +30,7 @@ for side in base head; do
   [ $side = head ] && velt=$head_velt std=$head_std
   export VELT_STD=$std
   eval "${side}_check=\$(instr \"\$velt\" check \"\$hello\")"
+  rm -f "$work/hello_$side" "$work/loopback_$side"
   eval "${side}_build=\$(instr \"\$velt\" build -o \"\$work/hello_$side\" \"\$hello\")"
   (cd bench/fetch && "$velt" build --release -o "$work/loopback_$side" loopback.velt >/dev/null)
 done
