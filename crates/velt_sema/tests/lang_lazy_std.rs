@@ -690,7 +690,7 @@ fn printing_shapes_are_checked_once_live_code_may_print_an_object() {
     let sub = "class B {\n  x: number = 1;\n}\nclass S extends B {\n  b: B | null = null;\n}\n\
                function main() {\n  const b: B = new S();\n  console.log(b);\n}\n";
     // Types that hold themselves through a shared value, which `console.log` refuses: a class of
-    // the program's, and the epoch's chunks any live `Atomic` brings (std/sync/epoch).
+    // the program's, and the epoch's chunks an `Atomic` of a reference brings (std/sync/epoch).
     let shared = "class N {\n  next: Atomic<shared<N> | null> = new Atomic<shared<N> | null>(null);\n}\n\
                   function main() {\n  const n = new N();\n  console.log({ a: n.next.load() === null });\n}\n";
     let atomic = "function main() {\n  const a = new Atomic<u64>(1);\n  a.store(2);\n  console.log({ a: a.load() });\n}\n";
@@ -866,4 +866,61 @@ fn line_breaking_is_checked_once_a_container_may_be_printed_at_the_top_level() {
     // a program that parses and prints a number loads none of the layout.
     let src = "type Q = { x: number };\nfunction main() {\n  const q = JSON.parse<Q>(\"{\\\"x\\\": 1}\");\n  console.log(q.x);\n}\n";
     assert!(!checked(&ok_src(src)), "{src}");
+}
+
+/// `velt/sync/epoch` is checked only for a program with an `Atomic` whose word holds a reference
+/// (`shared<T>`, `shared<T> | null`, `string`): lowering calls its `pin`, `unpin` and `retire`
+/// only for those (velt_vir `atomic_ref.rs`, `atomic_str.rs`). An `Atomic` of a number or a
+/// `bool` loads none of it, nor the number printing the reclaimer's code reaches.
+#[test]
+fn the_epoch_reclaimer_is_checked_only_for_an_atomic_that_holds_a_reference() {
+    let epoch = [
+        "std/sync/epoch/reclaim::pin",
+        "std/sync/epoch/reclaim::unpin",
+        "std/sync/epoch/reclaim::retire",
+    ];
+    let numbers = [
+        "std/lang/hooks/number_text::intPush",
+        "std/lang/number/integer::pushI64",
+    ];
+    let checked = |p: &Program, f: &str| {
+        p.defs
+            .iter()
+            .any(|d| matches!(d, Def::Fn(x) if x.name == f))
+            && !unchecked(p).contains(&f.to_string())
+    };
+    let scalars = [
+        "function main() {\n  const a = new Atomic<u64>(1);\n  a.store(2);\n  console.log(\"hi\");\n}\n",
+        "function main() {\n  const a = new Atomic<bool>(false);\n  a.store(true);\n  if (a.load()) {\n    console.log(\"hi\");\n  }\n}\n",
+        "function main() {\n  const a = new Atomic<f64>(0.5);\n  a.store(1.5);\n  console.log(\"hi\");\n}\n",
+    ];
+    for src in scalars {
+        let p = ok_src(src);
+        for f in epoch.iter().chain(&numbers) {
+            assert!(!checked(&p, f), "{f} is checked: {src}");
+        }
+    }
+    // A static atomic, as std/lang/hooks/clock.velt's `ORIGIN`. (Module state prints numbers
+    // of its own, so only the epoch is asked about.)
+    let p = ok_src("const A = new Atomic<u64>(0);\nfunction main() {\n  A.add(1);\n  console.log(\"hi\");\n}\n");
+    for f in epoch {
+        assert!(!checked(&p, f), "{f} is checked for a static atomic");
+    }
+    // A member of an `any` read makes every method of a live class live, `Atomic`'s among them:
+    // their `Atomic<T>` is no `Atomic` of the program's.
+    let p = ok_src("function f(x: any) {\n  console.log(x.a);\n}\nfunction main() {\n  f(1);\n}\n");
+    for f in epoch {
+        assert!(!checked(&p, f), "{f} is checked for a member of an `any`");
+    }
+    let references = [
+        "interface B {\n  n: u64;\n}\nfunction main() {\n  const a = new Atomic<shared<B>>(shared({ n: 1 }));\n  a.store(shared({ n: 2 }));\n  console.log(\"hi\");\n}\n",
+        "class N {\n  next: Atomic<shared<N> | null> = new Atomic<shared<N> | null>(null);\n}\nfunction main() {\n  const n = new N();\n  if (n.next.load() === null) {\n    console.log(\"hi\");\n  }\n}\n",
+        "function main() {\n  const a = new Atomic<string>(\"a\");\n  a.store(\"b\");\n  console.log(a.load());\n}\n",
+    ];
+    for src in references {
+        let p = ok_src(src);
+        for f in epoch {
+            assert!(checked(&p, f), "{f} is not checked: {src}");
+        }
+    }
 }

@@ -116,6 +116,14 @@ fn the_server_demands_std_modules_through_the_cli_loader() {
         let hook = "std/lang/hooks/number_text";
         let cases = [
             ("none.velt", "function main() {}\n", false, 0),
+            // An `Atomic` of a number needs no `velt/sync/epoch`, nor the number printing its
+            // code reaches.
+            (
+                "atomic.velt",
+                "function main() {\n  const a = new Atomic<u64>(1);\n  a.store(2);\n}\n",
+                false,
+                0,
+            ),
             (
                 "text.velt",
                 "function main() {\n  const n: i64 = 7;\n  console.log(`n=${n}`);\n}\n",

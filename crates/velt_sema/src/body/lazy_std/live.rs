@@ -82,8 +82,10 @@ pub(crate) struct Live {
     /// The functions lowering looks up by name that take a value only live code can give
     /// ([`gate`]), with what they take: live once live code has one.
     gated: Vec<(DefId, Vec<Gate>)>,
-    /// The live classes, interfaces and kinds when [`open`] last ran.
-    opened: Option<(usize, usize, u32)>,
+    /// Live code has an `Atomic` whose word may hold a reference ([`Gate::RefAtomic`]).
+    ref_atomic: bool,
+    /// The live classes, interfaces and kinds, and `ref_atomic`, when [`open`] last ran.
+    opened: Option<(usize, usize, u32, bool)>,
     /// The hooks that wait for what the program does ([`super::RECORD_HOOKS`], the float hooks):
     /// live, but checked only when [`super::reach`] finds they are needed. Lowering does without
     /// them until then.
@@ -148,6 +150,10 @@ enum Gate {
     Adt(DefId),
     Iface(DefId),
     Kind(u32),
+    /// An `Atomic` whose word may hold a reference (`shared<T>`, `shared<T> | null`, `string`, or
+    /// a type parameter): lowering calls `velt/sync/epoch` only for those
+    /// ([`roots::ref_atomic`]). An `Atomic` of a number or a `bool` needs none of it.
+    RefAtomic,
 }
 
 /// What walking live code found.
@@ -342,6 +348,7 @@ fn walk_set(cx: &mut Ctx) {
                 pending.push(d);
                 continue;
             }
+            roots::forget_own_atomic(cx, d, &mut w.types, start.0);
             super::hook_stubs::demand_hook_calls(cx, d);
             if program_code(cx, d) {
                 constructs::note_program_code(cx, &w, start);
@@ -449,7 +456,12 @@ fn open(cx: &mut Ctx) {
     }
     class_methods::open_methods(cx);
     let live = &cx.lazy.live;
-    let now = (live.adts.len(), live.ifaces.len(), live.kinds);
+    let now = (
+        live.adts.len(),
+        live.ifaces.len(),
+        live.kinds,
+        live.ref_atomic,
+    );
     if live.opened == Some(now) {
         return;
     }
@@ -487,6 +499,7 @@ fn open_gates(cx: &mut Ctx) {
         Gate::Adt(d) => live.adts.contains(&d),
         Gate::Iface(d) => live.ifaces.contains(&d),
         Gate::Kind(bit) => live.kinds & bit != 0,
+        Gate::RefAtomic => live.ref_atomic,
     };
     let (now, still): (Vec<_>, Vec<_>) = gated
         .into_iter()
@@ -540,7 +553,10 @@ fn live_types_of(cx: &mut Ctx, mut todo: Vec<TyId>, mut adts: Vec<DefId>) {
             };
             cx.lazy.live.present |= bit;
             todo.extend(crate::types::contents(&kind));
-            if let TyKind::Adt(d, _) = kind {
+            if let TyKind::Adt(d, args) = kind {
+                if !cx.lazy.live.ref_atomic && roots::ref_atomic(cx, d, &args) {
+                    cx.lazy.live.ref_atomic = true;
+                }
                 adts.push(d);
             }
             continue;

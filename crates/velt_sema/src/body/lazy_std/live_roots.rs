@@ -183,7 +183,8 @@ fn seed_named(cx: &mut Ctx, d: DefId, hooks: &FxHashSet<DefId>) {
 /// `sort()`, `uncaughtHeader` for an `Error` thrown, `anyArr_push` for an `any`, `classObject` to
 /// print a class object (its result mentions `ClassMarker`). Empty when it has only numbers,
 /// strings and the like, or type parameters: always live. The functions of `velt/sync/epoch` take
-/// nothing: lowering calls them for a reference held by an `Atomic`.
+/// nothing: lowering calls them for a reference held by an `Atomic` ([`Gate::RefAtomic`]), so
+/// an `Atomic` of a number or a `bool` loads none of the reclaimer.
 fn gate(cx: &Ctx, f: &crate::defs::FnInfo<'_>) -> Vec<Gate> {
     let sig = (f.this.iter().map(|t| t.ty))
         .chain(f.params.iter().map(|p| p.ty))
@@ -206,7 +207,7 @@ fn gate(cx: &Ctx, f: &crate::defs::FnInfo<'_>) -> Vec<Gate> {
     }
     let module = &cx.modules[f.module].path;
     if module.starts_with(velt_common::std_module!(sync_epoch)) {
-        heads.extend(cx.prelude_adt("Atomic").map(Gate::Adt));
+        heads.push(Gate::RefAtomic);
     }
     match heads.is_empty() {
         // Lowering calls what mentions an `any` for an `any`, whatever else it takes.
@@ -216,6 +217,49 @@ fn gate(cx: &Ctx, f: &crate::defs::FnInfo<'_>) -> Vec<Gate> {
         true => kinds,
         false => heads,
     }
+}
+
+/// Is `Adt(d, args)` an `Atomic` whose word may hold a reference, for which lowering calls
+/// `velt/sync/epoch` (velt_vir `atomic_ref.rs`, `atomic_str.rs`)? Anything but a number or a
+/// `bool` counts: a `shared<T>`, `shared<T> | null` or `string`, and a type parameter, which
+/// generic code may make one of those.
+pub(super) fn ref_atomic(cx: &Ctx, d: DefId, args: &[TyId]) -> bool {
+    let [t] = args else {
+        return false;
+    };
+    let scalar = matches!(
+        cx.ty.kind(*t),
+        TyKind::Int(_)
+            | TyKind::Float(_)
+            | TyKind::Bool
+            | TyKind::Literal(
+                hir::LitValue::Int(..) | hir::LitValue::Float(..) | hir::LitValue::Bool(_)
+            )
+    );
+    !scalar && cx.prelude_adt("Atomic") == Some(d)
+}
+
+/// Drops, of the types `types[from..]` that walking `d` found, its own `Atomic<T>` when `d` is a
+/// method of `Atomic` (live with the class, or every method once a member of an `any` is read):
+/// its `T` is the `Atomic`'s parameter, which says nothing of what the `Atomic`s of live code
+/// hold. Each of those has its type where it is made or passed. The class is live already.
+pub(super) fn forget_own_atomic(cx: &Ctx, d: DefId, types: &mut Vec<TyId>, from: usize) {
+    let DefInfo::Fn(f) = &cx.info[d.0 as usize] else {
+        return;
+    };
+    let atomic = cx.prelude_adt("Atomic");
+    if f.owner.is_none() || f.owner != atomic || types.len() <= from {
+        return;
+    }
+    let own = |t: &TyId| match cx.ty.kind(*t) {
+        TyKind::Adt(a, args) => {
+            Some(*a) == atomic
+                && matches!(args.as_slice(), [p] if matches!(cx.ty.kind(*p), TyKind::Param(_)))
+        }
+        _ => false,
+    };
+    let found = types.split_off(from);
+    types.extend(found.into_iter().filter(|t| !own(t)));
 }
 
 /// The bit of a kind of type an implementation may be for, other than a class or struct (0 for
