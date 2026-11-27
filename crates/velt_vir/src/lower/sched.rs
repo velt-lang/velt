@@ -42,7 +42,7 @@ impl FnLower<'_, '_> {
     fn std_cells(&self) -> bool {
         self.std_sched()
             && (self.cx)
-                .prelude_def(velt_common::std_hook!(sched_cell_new))
+                .std_hook_if_loaded(velt_common::std_hook!(sched_cell_new))
                 .is_some()
     }
 
@@ -85,7 +85,7 @@ impl FnLower<'_, '_> {
     }
 
     fn sched_hook_live(&self, name: &str) -> bool {
-        (self.cx.prelude_def(name)).is_some_and(|d| !self.cx.hir.unchecked.contains(&d))
+        self.cx.std_hook_live(name).is_some()
     }
 
     /// Does module state go to module_blocks.velt's hooks: a native program that sema found with

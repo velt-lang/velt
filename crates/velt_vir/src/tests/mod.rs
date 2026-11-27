@@ -52,6 +52,7 @@ mod shape_dicts;
 mod shape_guard;
 mod srclocs;
 mod start_up_allocs;
+mod std_defs;
 mod std_src;
 mod verifier;
 mod vir_ext;
