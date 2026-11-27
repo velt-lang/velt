@@ -1,0 +1,66 @@
+// The set algebra takes any `ReadonlySetLike` of the set's element type, as ES2025's methods take
+// any value with `size`, `has` and `keys` (#3820): a `Map` (its keys) or an object with the three
+// members, of which it reads `size` once and first, then `has` or `keys` as Node does. (Velt's
+// `keys()` returns an array, where the twin's returns an iterator.)
+
+const a = new Set<number>([1, 2, 3]);
+const m = new Map<number, string>([
+  [2, "two"],
+  [7, "seven"],
+]);
+console.log([...a.union(m)].join(","), [...a.intersection(m)].join(","), a.isSubsetOf(m), a.isDisjointFrom(m));
+
+let log: string[] = [];
+
+/** A set-like value that logs what the algebra reads of it. */
+class Like implements ReadonlySetLike<number> {
+  xs: number[];
+  constructor(xs: number[]) {
+    this.xs = xs;
+  }
+  get size(): usize {
+    log.push("size");
+    return this.xs.length as usize;
+  }
+  has(value: number): boolean {
+    log.push(`has(${value})`);
+    return this.xs.includes(value);
+  }
+  keys(): number[] {
+    log.push("keys");
+    return this.xs;
+  }
+}
+
+function show(name: string, r: string) {
+  console.log(`${name}: ${r} | ${log.join(" ")}`);
+  log = [];
+}
+
+function elems(s: Set<number>): string {
+  return [...s].join(",");
+}
+
+for (const xs of [[3, 8], [1, 2, 3, 4, 5], [1, 9]]) {
+  console.log(`-- other ${xs.join(",")}`);
+  log = [];
+  show("union", elems(a.union(new Like(xs))));
+  show("intersection", elems(a.intersection(new Like(xs))));
+  show("difference", elems(a.difference(new Like(xs))));
+  show("symmetricDifference", elems(a.symmetricDifference(new Like(xs))));
+  show("isSubsetOf", `${a.isSubsetOf(new Like(xs))}`);
+  show("isSupersetOf", `${a.isSupersetOf(new Like(xs))}`);
+  show("isDisjointFrom", `${a.isDisjointFrom(new Like(xs))}`);
+}
+
+// An object literal with the three members.
+const lit = {
+  size: 2 as usize,
+  has(x: number): boolean {
+    return x == 3 || x == 8;
+  },
+  keys(): number[] {
+    return [3, 8];
+  },
+};
+console.log([...a.union(lit)].join(","), [...a.difference(lit)].join(","), a.isSupersetOf(lit));

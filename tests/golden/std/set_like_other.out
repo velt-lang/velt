@@ -1,0 +1,26 @@
+1,2,3,7 2 false false
+-- other 3,8
+union: 1,2,3,8 | size keys
+intersection: 3 | size keys
+difference: 1,2 | size keys
+symmetricDifference: 1,2,8 | size keys
+isSubsetOf: false | size
+isSupersetOf: false | size keys
+isDisjointFrom: false | size keys
+-- other 1,2,3,4,5
+union: 1,2,3,4,5 | size keys
+intersection: 1,2,3 | size has(1) has(2) has(3)
+difference:  | size has(1) has(2) has(3)
+symmetricDifference: 4,5 | size keys
+isSubsetOf: true | size has(1) has(2) has(3)
+isSupersetOf: false | size
+isDisjointFrom: false | size has(1)
+-- other 1,9
+union: 1,2,3,9 | size keys
+intersection: 1 | size keys
+difference: 2,3 | size keys
+symmetricDifference: 2,3,9 | size keys
+isSubsetOf: false | size
+isSupersetOf: false | size keys
+isDisjointFrom: false | size keys
+1,2,3,8 1,2 false

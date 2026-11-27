@@ -81,6 +81,7 @@ pub(super) const TS_GLOBALS: &[&str] = &[
     "ReadonlyArray",
     "ReadonlyMap",
     "ReadonlySet",
+    "ReadonlySetLike",
     "Record",
     "ReferenceError",
     "Reflect",
