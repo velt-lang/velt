@@ -1,0 +1,194 @@
+// `fetch` through a proxy (#3693): an `https:` request through a `CONNECT` tunnel to a velt/http
+// server with the test certificate, an `http:` request sent to the proxy whole, a proxy that
+// refuses the tunnel, and the proxy the environment sets. The proxy is written here on velt/net.
+// (Which proxy a request takes, and `NO_PROXY`, are white-box tests:
+// std/net/http/fetch/client/proxy.test.velt.)
+import { Channel, channel } from "velt/sync";
+import { HttpServer, serve } from "http-server";
+import { IoError } from "velt/io";
+import { connect, listen, TcpListener, TcpStream } from "velt/net";
+import { removeEnv, setEnv } from "velt/process";
+import { describe, expect, it } from "velt/test";
+import "velt/test/http";
+import { TEST_CA, TEST_CERT, TEST_KEY } from "../../golden/std/_tls";
+
+/** The request head that arrives first on `conn` (and whatever came after it). */
+async function headOf(conn: TcpStream): Promise<string> {
+  let input = "";
+  while (input.indexOf("\r\n\r\n") < 0) {
+    const more = await conn.readString();
+    if (more == "") {
+      break;
+    }
+    input += more;
+  }
+  return input;
+}
+
+/** Copies `from` to `to` until `from` ends, then ends `to`'s writing side. */
+async function pipe(from: TcpStream, to: TcpStream) {
+  try {
+    while (true) {
+      const bytes = await from.read();
+      if (bytes.length == 0) {
+        break;
+      }
+      await to.writeBytes(bytes);
+    }
+    to.shutdown();
+  } catch (e) {
+    to.close();
+  }
+}
+
+/**
+ * One proxied connection: its head goes to `heads` before anything is answered or forwarded.
+ * `CONNECT` to localhost is tunneled; to any other host it is refused with a 407. A request in
+ * absolute form is answered by the proxy, with the request line as the body.
+ */
+async function proxyOne(conn: TcpStream, heads: Channel<string>) {
+  const head = await headOf(conn);
+  await heads.send(head);
+  const line = head.slice(0, head.indexOf("\r\n"));
+  if (!line.startsWith("CONNECT ")) {
+    await conn.write(
+      `HTTP/1.1 200 OK\r\ncontent-length: ${line.length}\r\nconnection: close\r\n\r\n${line}`,
+    );
+    conn.close();
+    return;
+  }
+  const target = line.split(" ")[1];
+  if (!target.startsWith("localhost:")) {
+    await conn.write("HTTP/1.1 407 Proxy Authentication Required\r\ncontent-length: 0\r\n\r\n");
+    conn.close();
+    return;
+  }
+  const origin = await connect(`127.0.0.1:${target.slice(10)}`);
+  await conn.write("HTTP/1.1 200 Connection established\r\n\r\n");
+  spawn(pipe(origin, conn));
+  await pipe(conn, origin);
+}
+
+/** Proxies each connection `listener` accepts until it is closed. */
+function proxyAll(listener: TcpListener, heads: Channel<string>) {
+  spawn(async () => {
+    while (true) {
+      let conn: TcpStream;
+      try {
+        conn = await listener.accept();
+      } catch (e) {
+        return;
+      }
+      spawn(proxyOne(conn, heads));
+    }
+  });
+}
+
+/** What `fetch(url, init)` gives: `status body`, or `code message`. */
+async function outcome(url: string, init: RequestInit): Promise<string> {
+  try {
+    const res = await fetch(url, init);
+    return `${res.status} ${await res.text()}`;
+  } catch (e) {
+    return e instanceof IoError ? `${e.code} ${e.message}` : e.message;
+  }
+}
+
+/** An HTTPS origin with the test certificate, and a proxy (`proxyOne`) with credentials. */
+class Setup {
+  heads: Channel<string> = channel<string>(64);
+  origin: number = 0;
+  proxy: string = "";
+  listener: TcpListener | null = null;
+  server: HttpServer | null = null;
+
+  /** Ends both servers. */
+  close() {
+    this.listener?.close();
+    this.server?.close();
+  }
+}
+
+async function setup(): Promise<Setup> {
+  const s = new Setup();
+  const server = await serve({ port: 0, tls: { cert: TEST_CERT, key: TEST_KEY } }, async (
+    req: Request,
+  ): Promise<Response> => {
+    const url = new URL(req.url);
+    return new Response(`origin ${req.method} ${url.pathname} ${await req.text()}`);
+  });
+  s.server = server;
+  s.origin = server.port as number;
+  const listener = await listen("127.0.0.1:0");
+  s.listener = listener;
+  s.proxy = `http://al%40ice:pw@127.0.0.1:${listener.port}`;
+  proxyAll(listener, s.heads);
+  return s;
+}
+
+describe("fetch through a proxy", () => {
+  it("tunnels https: with CONNECT, TLS to the origin inside", async () => {
+    const s = await setup();
+    const url = `https://localhost:${s.origin}/hello`;
+    expect(await outcome(url, { ca: TEST_CA, proxy: s.proxy })).toBe("200 origin GET /hello ");
+    const head = s.heads.tryReceive() ?? "";
+    expect(
+      head.startsWith(`CONNECT localhost:${s.origin} HTTP/1.1\r\nhost: localhost:${s.origin}\r\n`),
+    ).toBe(true);
+    // base64("al@ice:pw")
+    expect(head.includes("\r\nproxy-authorization: Basic YWxAaWNlOnB3\r\n")).toBe(true);
+    const posted = await outcome(url, { method: "POST", body: "x", ca: TEST_CA, proxy: s.proxy });
+    expect(posted).toBe("200 origin POST /hello x");
+    s.close();
+  });
+
+  it("sends http: to the proxy with the whole URL", async () => {
+    const s = await setup();
+    const url = "http://origin.invalid:8080/a/b?c=d";
+    const got = await outcome(url, { headers: { "x-a": "1" }, proxy: s.proxy });
+    expect(got).toBe("200 GET http://origin.invalid:8080/a/b?c=d HTTP/1.1");
+    const head = s.heads.tryReceive() ?? "";
+    expect(head.includes("\r\nhost: origin.invalid:8080\r\n")).toBe(true);
+    expect(head.includes("\r\nproxy-authorization: Basic YWxAaWNlOnB3\r\n")).toBe(true);
+    expect(head.includes("\r\nx-a: 1\r\n")).toBe(true);
+    s.close();
+  });
+
+  it("fails when the proxy refuses the tunnel or is not there", async () => {
+    const s = await setup();
+    const at = s.proxy.slice(s.proxy.indexOf("@") + 1);
+    expect(await outcome("https://refused.invalid/", { proxy: s.proxy })).toBe(
+      `ECONNREFUSED fetch failed: proxy ${at} refused the tunnel to refused.invalid:443: HTTP/1.1 407 Proxy Authentication Required`,
+    );
+    s.close();
+    const gone = await outcome("https://refused.invalid/", { proxy: "http://127.0.0.1:1" });
+    expect(gone.startsWith("ECONNREFUSED fetch failed: ")).toBe(true);
+    expect(gone.endsWith("(connecting to proxy 127.0.0.1:1)")).toBe(true);
+    expect(
+      (await outcome("https://x.invalid/", { proxy: "socks5://127.0.0.1:1" })).startsWith(
+        "EINVAL fetch failed: invalid proxy in the proxy option: `socks5://` proxies are not supported",
+      ),
+    ).toBe(true);
+  });
+
+  it("takes the environment's proxy, not for this machine", async () => {
+    const s = await setup();
+    setEnv("http_proxy", s.proxy);
+    setEnv("https_proxy", s.proxy);
+    removeEnv("no_proxy");
+    removeEnv("NO_PROXY");
+    const got = await outcome("http://origin.invalid/env", {});
+    const tunneled = await outcome("https://origin.invalid/env", {});
+    // Loopback is reached directly: the proxy would refuse a tunnel to 127.0.0.1.
+    const direct = await outcome(`https://127.0.0.1:${s.origin}/direct`, { ca: TEST_CA });
+    removeEnv("http_proxy");
+    removeEnv("https_proxy");
+    expect(got).toBe("200 GET http://origin.invalid/env HTTP/1.1");
+    expect(tunneled.includes("refused the tunnel to origin.invalid:443")).toBe(true);
+    expect(direct).toBe("200 origin GET /direct ");
+    expect((s.heads.tryReceive() ?? "").startsWith("GET http://origin.invalid/env ")).toBe(true);
+    expect((s.heads.tryReceive() ?? "").startsWith("CONNECT origin.invalid:443 ")).toBe(true);
+    expect(s.heads.tryReceive() ?? "none").toBe("none");
+    s.close();
+  });
+});

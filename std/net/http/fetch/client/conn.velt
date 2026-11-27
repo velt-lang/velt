@@ -16,7 +16,9 @@ import { AbortController, AbortError, AbortSignal } from "velt/task";
 import { Target, TlsOn } from "velt/net/http/fetch/client/target";
 import { setBytes } from "velt/lang/bytes/copy";
 import { stdUsed } from "velt/lang/intrinsics";
-import { dialPlain, dialTls, reactorUp } from "#fetch-dial";
+import { tunnel } from "velt/net/http/fetch/client/tunnel";
+import { Via } from "velt/net/http/fetch/client/proxy";
+import { dialFd, dialPlain, dialTls, reactorUp } from "#fetch-dial";
 import { velt_rt_tcp_connect } from "#net-tcp";
 
 /** How long connecting may take (milliseconds) before `ETIMEDOUT`, as undici's default. */
@@ -196,9 +198,13 @@ export class Conn {
   }
 }
 
-/** The pool key of `t`'s connections: its origin, and the extra CA a TLS connection trusts. */
+/**
+ * The pool key of `t`'s connections: its origin, the proxy they go through, and the extra CA a
+ * TLS connection trusts.
+ */
 export function keyOf(t: Target, ca: string): string {
-  const origin = t.origin;
+  const via = t.proxy;
+  const origin = via == null ? t.origin : `${t.origin} via ${via.addr} ${via.authorization}`;
   return t.https && ca.length > 0 ? `${origin} ${ca}` : origin;
 }
 
@@ -223,7 +229,7 @@ export async function open(
 
 /**
  * A new connection to `t` (TLS for `https:`, offering the protocols in `alpn`), within
- * `CONNECT_MS` and before an abort.
+ * `CONNECT_MS` and before an abort; through its proxy when it has one (`viaProxy`).
  */
 export async function dial(
   t: Target,
@@ -234,6 +240,10 @@ export async function dial(
   const addr = `${t.hostname}:${t.port}`;
   // `https:` needs the request's TLS client, checked before a socket is made.
   const tls = t.https ? tlsOf(t, addr) : null;
+  const via = t.proxy;
+  if (via != null) {
+    return await viaProxy(t, via, addr, ca, alpn, tls, signal);
+  }
   // Where the executor in Velt's pool keeps streams of its reactor (std/net/tcp_sched.velt notes
   // it): a socket on the reactor, with the TLS client in Velt over it for `https:`
   // (dial_sched.velt). Otherwise `#net-tcp`'s connect below: on a native build without a reactor
@@ -244,11 +254,69 @@ export async function dial(
       ? await dialTls(addr, bare(t.hostname), ca, alpn, tls, signal)
       : await dialPlain(addr, signal);
   }
-  const stop = new AbortController();
   const start = Date.now() as i64;
+  // For `https:` the TLS client in Velt runs over the socket (`tlsOn`).
+  const fd = await rtSocket(addr, signal);
+  if (tls == null) {
+    return TcpStream.ofHandle(fd);
+  }
+  const left = CONNECT_MS - ((Date.now() as i64) - start);
+  return TcpStream.ofHandle(await tls(fd, addr, bare(t.hostname), ca, alpn, left, signal));
+}
+
+/**
+ * A new connection to `t` (at `addr`) through proxy `via`: for `https:` a `CONNECT` tunnel with
+ * the TLS client's handshake through it, for `http:` the connection to the proxy itself (the
+ * request names the whole URL, wire.velt).
+ */
+async function viaProxy(
+  t: Target,
+  via: Via,
+  addr: string,
+  ca: string,
+  alpn: string,
+  tls: TlsOn | null,
+  signal: AbortSignal | null,
+): Promise<TcpStream, IoError | AbortError> {
+  const start = Date.now() as i64;
+  let fd: u64 = 0;
+  try {
+    fd =
+      stdUsed("fetch-pool-reactor") && reactorUp()
+        ? await dialFd(via.addr, signal)
+        : await rtSocket(via.addr, signal);
+  } catch (e) {
+    if (e instanceof IoError) {
+      throw new IoError(e.code, `${e.message} (connecting to proxy ${via.addr})`);
+    }
+    throw e;
+  }
+  if (tls == null) {
+    return TcpStream.ofHandle(fd);
+  }
+  await tunnel(
+    TcpStream.ofHandle(fd),
+    via,
+    addr,
+    CONNECT_MS - ((Date.now() as i64) - start),
+    signal,
+  );
+  const left = CONNECT_MS - ((Date.now() as i64) - start);
+  return TcpStream.ofHandle(await tls(fd, addr, bare(t.hostname), ca, alpn, left, signal));
+}
+
+/**
+ * A socket connected to `addr` by `#net-tcp`'s connect (on a native build without a reactor
+ * std's, which fails with `ENOTSUP`; on WebAssembly the runtime's), within `CONNECT_MS` and
+ * before an abort.
+ */
+async function rtSocket(
+  addr: string,
+  signal: AbortSignal | null,
+): Promise<u64, IoError | AbortError> {
+  const stop = new AbortController();
   // The connect itself races the limits: when it loses, it is dropped, which stops connecting
-  // (a function around it would go on and make a connection nobody closes). For `https:` the TLS
-  // client in Velt then runs over the socket (`tlsOn`).
+  // (a function around it would go on and make a connection nobody closes).
   const connecting = velt_rt_tcp_connect(addr);
   const racers: Promise<IoResult<u64>>[] = [connecting, expire(stop.signal)];
   if (signal != null) {
@@ -262,17 +330,11 @@ export async function dial(
     }
     throw new IoError("ETIMEDOUT", `fetch failed: connect timeout to ${addr}`);
   }
-  let fd: u64 = 0;
   try {
-    fd = unwrapIo(r);
+    return unwrapIo(r);
   } catch (e) {
     throw failed(e);
   }
-  if (tls == null) {
-    return TcpStream.ofHandle(fd);
-  }
-  const left = CONNECT_MS - ((Date.now() as i64) - start);
-  return TcpStream.ofHandle(await tls(fd, addr, bare(t.hostname), ca, alpn, left, signal));
 }
 
 /**

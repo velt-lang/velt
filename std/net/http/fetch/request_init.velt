@@ -22,6 +22,14 @@ export type RequestInit = {
   signal?: AbortSignal;
   /** Velt: extra trusted CA certificates (PEM) for `https://`, e.g. a private or test CA. */
   ca?: string;
+  /**
+   * Velt (as Bun's): the proxy for this request and its redirects,
+   * `http://[user:password@]host[:port]`, or `""` to connect directly. Without it, `fetch` uses
+   * the environment's: `HTTPS_PROXY` / `https_proxy` for `https:`, `http_proxy` for `http:`,
+   * else `ALL_PROXY`, except for the hosts `NO_PROXY` lists and this machine. Only `fetch` reads
+   * it, not `new Request`.
+   */
+  proxy?: string;
 };
 
 /** The method as the Fetch standard normalizes it (std only: `fetch` uses it too). */

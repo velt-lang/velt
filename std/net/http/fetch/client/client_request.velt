@@ -25,6 +25,8 @@ export class ClientRequest {
   ca: string;
   /** The TLS client for `https:` (`TlsOn`), or null: `fetchPlain` takes only `http:` URLs. */
   tls: TlsOn | null;
+  /** The `proxy` option: a proxy URL, "" for none, null for the environment's (proxy.velt). */
+  proxy: string | null = null;
 
   constructor(
     method: string,

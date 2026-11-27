@@ -146,8 +146,15 @@ export function encode(
   const w = new Writer(256 + (length > 0 && length <= INLINE_BODY ? length : 0));
   w.put(method);
   w.put(" ");
-  w.put(t.path);
+  // Through a proxy, an `http:` request names the whole URL (`https:` goes through a tunnel).
+  const via = t.https ? null : t.proxy;
+  w.put(via != null ? t.href : t.path);
   w.put(" HTTP/1.1\r\n");
+  if (via != null && via.authorization.length > 0) {
+    w.put("proxy-authorization: ");
+    w.put(via.authorization);
+    w.put("\r\n");
+  }
   let has: i64 = 0;
   const n = headers.length as i64;
   for (let i: i64 = 0; i + 1 < n; i += 2) {

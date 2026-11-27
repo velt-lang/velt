@@ -1,0 +1,110 @@
+// velt/net/http (internal): a `CONNECT` tunnel through a proxy for an `https:` request
+// (proxy.velt): asked for on the connection to the proxy, before the TLS client's handshake runs
+// through it to the origin (conn.velt `dial`).
+
+import { IoError } from "velt/io/error";
+import { utf8DecodeLossy } from "velt/encoding";
+import { TcpStream } from "velt/net";
+import { AbortError, AbortSignal } from "velt/task";
+import { Via } from "velt/net/http/fetch/client/proxy";
+import { headEnd } from "velt/net/http/fetch/client/head";
+
+/** The longest answer to `CONNECT` read. */
+const MAX_HEAD: i64 = 16384;
+
+/**
+ * Asks proxy `via` on `s` for a tunnel to `authority` (`host:port`), within `left` milliseconds
+ * and before an abort; resolves once the proxy answered 2xx. On a failure `s` is closed.
+ */
+export async function tunnel(
+  s: TcpStream,
+  via: Via,
+  authority: string,
+  left: i64,
+  signal: AbortSignal | null,
+): Promise<void, IoError | AbortError> {
+  try {
+    await ask(s, via, authority, left, signal);
+  } catch (e) {
+    s.close();
+    throw e;
+  }
+}
+
+async function ask(
+  s: TcpStream,
+  via: Via,
+  authority: string,
+  left: i64,
+  signal: AbortSignal | null,
+): Promise<void, IoError | AbortError> {
+  const deadline = (Date.now() as i64) + left;
+  let head = `CONNECT ${authority} HTTP/1.1\r\nhost: ${authority}\r\n`;
+  if (via.authorization.length > 0) {
+    head = `${head}proxy-authorization: ${via.authorization}\r\n`;
+  }
+  await s.write(`${head}\r\n`);
+  const buf: u8[] = Buffer.alloc(MAX_HEAD as usize);
+  let end: i64 = 0;
+  while (true) {
+    let n: number | null = 0;
+    try {
+      n = s.tryRead(buf, end as number);
+    } catch (e) {
+      // A `RangeError` is a bug of this function's.
+      throw e instanceof IoError ? e : new IoError("EINVAL", e.message);
+    }
+    if (n == null) {
+      throw new IoError(
+        "ECONNRESET",
+        `fetch failed: proxy ${via.addr} closed the connection on CONNECT ${authority}`,
+      );
+    }
+    if (n > 0) {
+      end += n as i64;
+      const at = headEnd(buf, 0, end);
+      if (at >= 0) {
+        answered(buf, at, end, via, authority);
+        return;
+      }
+      if (end >= MAX_HEAD) {
+        throw refused(via, authority, "an answer too long");
+      }
+      continue;
+    }
+    const wait = deadline - (Date.now() as i64);
+    if (wait <= 0 || !(await s.readableWithin(wait as number, signal))) {
+      if (signal != null) {
+        signal.throwIfAborted();
+      }
+      if ((Date.now() as i64) >= deadline) {
+        throw new IoError("ETIMEDOUT", `fetch failed: connect timeout to ${authority}`);
+      }
+    }
+  }
+}
+
+/** Checks the proxy's answer `buf[0..at]` (and that nothing came after it: the origin waits). */
+function answered(buf: u8[], at: i64, end: i64, via: Via, authority: string) throws IoError {
+  const lf = buf.indexOf(10);
+  const line = utf8DecodeLossy(buf.slice(0, lf as i64)).trim();
+  // `HTTP/1.1 200 …`
+  const ok =
+    line.startsWith("HTTP/1.") &&
+    line.length >= 12 &&
+    line.charCodeAt(9) == 50 &&
+    line.charCodeAt(8) == 32;
+  if (!ok) {
+    throw refused(via, authority, line.length > 200 ? line.slice(0, 200) : line);
+  }
+  if (end > at) {
+    throw refused(via, authority, "data after its answer");
+  }
+}
+
+function refused(via: Via, authority: string, what: string): IoError {
+  return new IoError(
+    "ECONNREFUSED",
+    `fetch failed: proxy ${via.addr} refused the tunnel to ${authority}: ${what}`,
+  );
+}

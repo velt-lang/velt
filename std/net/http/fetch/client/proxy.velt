@@ -1,0 +1,337 @@
+// velt/net/http (internal): the proxy a `fetch` goes through (#3693), as curl and
+// crates/velt_http/src/proxy.rs read the environment: `https_proxy` / `HTTPS_PROXY` for `https:`,
+// `http_proxy` for `http:` (never the uppercase `HTTP_PROXY`, which a CGI program's request can
+// set through a `Proxy:` header, "httpoxy"), else `all_proxy` / `ALL_PROXY`; lowercase first, an
+// empty value as unset. `no_proxy` / `NO_PROXY` lists the hosts reached directly (`noProxy`), and
+// this machine (`localhost`, a loopback address) always is. The request's `proxy` option, when it
+// has one, replaces all of that: a proxy URL, or "" for none.
+//
+// A proxy is `http://[user:password@]host[:port]` (the scheme may be left out; port 80 by
+// default); its user and password become `proxy-authorization: Basic …`. An `https:` request is
+// tunneled through it (`CONNECT`, tunnel.velt), with TLS to the origin inside the tunnel as
+// without a proxy; an `http:` request is sent to it with the whole URL as its target (wire.velt).
+// The variables are read for each request (a loopback one reads none), so `setEnv` before a
+// `fetch` takes effect.
+
+import { IoError } from "velt/io/error";
+import { base64Encode, utf8Encode } from "velt/encoding";
+import { URL } from "velt/net/url";
+import { decodeLenient } from "velt/net/url/encode";
+import { getEnv } from "#env-sys";
+
+/** A proxy to send requests through. */
+export class Via {
+  /** `host:port` to connect to (IPv6 in brackets). */
+  addr: string;
+  /** The `proxy-authorization` header's value; "" for none. */
+  authorization: string;
+
+  constructor(addr: string, authorization: string) {
+    this.addr = addr;
+    this.authorization = authorization;
+  }
+}
+
+/**
+ * The proxy of a request to `hostname` (as the URL parser serializes it: IPv6 in brackets) on
+ * `port`: the request's `given` one ("" for none), or the environment's when it is null.
+ * Throws `EINVAL` for a proxy URL that is not `http:`, naming where it came from, never its
+ * value (which may hold a password).
+ */
+export function proxyFor(
+  https: bool,
+  hostname: string,
+  port: i64,
+  given: string | null,
+): Via | null throws IoError {
+  if (given != null) {
+    return given.length == 0 ? null : parseProxy(given, "the proxy option");
+  }
+  if (loopback(hostname)) {
+    return null;
+  }
+  let name = https ? "https_proxy" : "http_proxy";
+  let value = env(name);
+  if (value.length == 0 && https) {
+    name = "HTTPS_PROXY";
+    value = env(name);
+  }
+  if (value.length == 0) {
+    name = "all_proxy";
+    value = env(name);
+  }
+  if (value.length == 0) {
+    name = "ALL_PROXY";
+    value = env(name);
+  }
+  if (value.length == 0) {
+    return null;
+  }
+  let list = env("no_proxy");
+  if (list.length == 0) {
+    list = env("NO_PROXY");
+  }
+  if (noProxy(list, hostname, port)) {
+    return null;
+  }
+  return parseProxy(value, `$${name}`);
+}
+
+/** The variable `name`, trimmed; "" when unset. */
+function env(name: string): string {
+  const v = getEnv(name);
+  return v == null ? "" : v.trim();
+}
+
+/** The proxy `value` names; `what` says where it came from in an error. */
+export function parseProxy(value: string, what: string): Via throws IoError {
+  let text = value.trim();
+  const sep = text.indexOf("://");
+  if (sep < 0) {
+    text = `http://${text}`;
+  } else {
+    const scheme = text.slice(0, sep).toLowerCase();
+    if (scheme != "http") {
+      throw invalid(what, `\`${scheme}://\` proxies are not supported (only \`http://\`)`);
+    }
+  }
+  const u = URL.parse(text);
+  if (u == null || u.hostname.length == 0) {
+    throw invalid(what, "not a URL with a host");
+  }
+  const port = u.port.length > 0 ? u.port : "80";
+  let authorization = "";
+  if (u.username.length > 0 || u.password.length > 0) {
+    const plain = `${decodeLenient(u.username, false)}:${decodeLenient(u.password, false)}`;
+    for (let i: i64 = 0; i < (plain.length as i64); i++) {
+      const c = plain.charCodeAt(i);
+      if (c < 32 || c == 127) {
+        throw invalid(what, "a control character in the user or password");
+      }
+    }
+    authorization = `Basic ${base64Encode(utf8Encode(plain))}`;
+  }
+  return new Via(`${u.hostname}:${port}`, authorization);
+}
+
+function invalid(what: string, why: string): IoError {
+  return new IoError("EINVAL", `fetch failed: invalid proxy in ${what}: ${why}`);
+}
+
+/** Whether `hostname` is this machine: `localhost` or a loopback address. */
+function loopback(hostname: string): bool {
+  if (hostname == "localhost") {
+    return true;
+  }
+  // The URL parser writes an IPv4 address in dotted decimal, and takes a host whose last label
+  // is a number for one: `127.` and only digits and dots is 127.0.0.0/8, checked without
+  // allocating (a request's hot path, bench/fetch/loopback.velt).
+  if (hostname.startsWith("127.")) {
+    for (let i: i64 = 4; i < (hostname.length as i64); i++) {
+      const c = hostname.charCodeAt(i);
+      if (c != 46 && (c < 48 || c > 57)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (!hostname.startsWith("[")) {
+    return false;
+  }
+  const ip = addressOf(hostname);
+  if (ip == null || ip.length != 16) {
+    return false;
+  }
+  for (let i: i64 = 0; i < 15; i++) {
+    if (ip[i] != 0) {
+      return false;
+    }
+  }
+  return ip[15] == 1;
+}
+
+/**
+ * Whether `list` (comma-separated: `*`; a domain, also written with a leading `.` or `*.`, which
+ * takes its subdomains too; an IP address or a CIDR range; each optionally with `:port`) names
+ * `hostname` on `port`.
+ */
+export function noProxy(list: string, hostname: string, port: i64): bool {
+  if (list.length == 0) {
+    return false;
+  }
+  let host = hostname.toLowerCase();
+  if (host.endsWith(".")) {
+    host = host.slice(0, (host.length as i64) - 1);
+  }
+  const ip = addressOf(host);
+  for (const raw of list.split(",")) {
+    let entry = raw.trim().toLowerCase();
+    if (entry == "*") {
+      return true;
+    }
+    // `host:port` and `[v6]:port` only cover that port; a bare IPv6 address has several colons.
+    const close = entry.startsWith("[") ? entry.indexOf("]") : -1;
+    const colon = entry.lastIndexOf(":");
+    const hasPort =
+      entry.startsWith("[")
+        ? colon == close + 1 && close > 0
+        : colon > 0 && entry.indexOf(":") == colon && entry.indexOf("/") < 0;
+    if (hasPort) {
+      if (digits(entry.slice(colon + 1)) != port) {
+        continue;
+      }
+      entry = entry.slice(0, colon);
+    }
+    if (entry.startsWith("[") && entry.endsWith("]")) {
+      entry = entry.slice(1, (entry.length as i64) - 1);
+    }
+    if (entry.length == 0) {
+      continue;
+    }
+    const slash = entry.indexOf("/");
+    if (slash >= 0) {
+      const net = addressOf(entry.slice(0, slash));
+      if (ip != null && net != null && inRange(ip, net, digits(entry.slice(slash + 1)))) {
+        return true;
+      }
+      continue;
+    }
+    const addr = addressOf(entry);
+    if (addr != null) {
+      if (ip != null && inRange(ip, addr, (addr.length as i64) * 8)) {
+        return true;
+      }
+      continue;
+    }
+    let domain =
+      entry.startsWith("*.") ? entry.slice(2) : entry.startsWith(".") ? entry.slice(1) : entry;
+    if (domain.endsWith(".")) {
+      domain = domain.slice(0, (domain.length as i64) - 1);
+    }
+    if (domain.length > 0 && (host == domain || host.endsWith(`.${domain}`))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Whether the first `bits` bits of `ip` and `net` (both IPv4 or both IPv6) are the same. */
+function inRange(ip: i64[], net: i64[], bits: i64): bool {
+  if (ip.length != net.length || bits < 0 || bits > (ip.length as i64) * 8) {
+    return false;
+  }
+  for (let i: i64 = 0; i * 8 < bits; i++) {
+    const take = bits - i * 8 >= 8 ? 8 : bits - i * 8;
+    const mask = (0xff << (8 - take)) & 0xff;
+    if ((ip[i] & mask) != (net[i] & mask)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** The decimal number `s`, or -1. */
+function digits(s: string): i64 {
+  if (s.length == 0 || s.length > 9) {
+    return -1;
+  }
+  let n: i64 = 0;
+  for (let i: i64 = 0; i < (s.length as i64); i++) {
+    const c = s.charCodeAt(i) - 48;
+    if (c < 0 || c > 9) {
+      return -1;
+    }
+    n = n * 10 + c;
+  }
+  return n;
+}
+
+/** The bytes of a dotted-decimal IPv4 or an IPv6 address (in brackets or not), else null. */
+function addressOf(text: string): i64[] | null {
+  let s = text;
+  if (s.startsWith("[") && s.endsWith("]")) {
+    s = s.slice(1, (s.length as i64) - 1);
+  }
+  if (s.indexOf(":") < 0) {
+    return ipv4(s);
+  }
+  const halves = s.split("::");
+  if (halves.length > 2) {
+    return null;
+  }
+  const head = groups(halves[0]);
+  const tail = halves.length == 2 ? groups(halves[1]) : [];
+  if (head == null || tail == null) {
+    return null;
+  }
+  const n = (head.length + tail.length) as i64;
+  // Without `::` all eight groups are there; with it, at least one is left out.
+  if (halves.length == 1 ? n != 16 : n > 14) {
+    return null;
+  }
+  const out: i64[] = head;
+  while ((out.length as i64) + (tail.length as i64) < 16) {
+    out.push(0);
+  }
+  for (const b of tail) {
+    out.push(b);
+  }
+  return out;
+}
+
+/** The bytes of colon-separated IPv6 groups (the last may be an IPv4 address), else null. */
+function groups(s: string): i64[] | null {
+  const out: i64[] = [];
+  if (s.length == 0) {
+    return out;
+  }
+  const parts = s.split(":");
+  for (let i: i64 = 0; i < (parts.length as i64); i++) {
+    const p = parts[i];
+    if (i == (parts.length as i64) - 1 && p.indexOf(".") >= 0) {
+      const v4 = ipv4(p);
+      if (v4 == null) {
+        return null;
+      }
+      for (const b of v4) {
+        out.push(b);
+      }
+      continue;
+    }
+    if (p.length == 0 || p.length > 4) {
+      return null;
+    }
+    let g: i64 = 0;
+    for (let j: i64 = 0; j < (p.length as i64); j++) {
+      const c = p.charCodeAt(j);
+      const d =
+        c >= 48 && c <= 57
+          ? c - 48
+          : c >= 97 && c <= 102 ? c - 87 : c >= 65 && c <= 70 ? c - 55 : -1;
+      if (d < 0) {
+        return null;
+      }
+      g = g * 16 + d;
+    }
+    out.push(g >> 8);
+    out.push(g & 0xff);
+  }
+  return out;
+}
+
+/** The four bytes of a dotted-decimal IPv4 address, else null. */
+function ipv4(s: string): i64[] | null {
+  const parts = s.split(".");
+  if (parts.length != 4) {
+    return null;
+  }
+  const out: i64[] = [];
+  for (const p of parts) {
+    const n = p.length <= 3 ? digits(p) : -1;
+    if (n < 0 || n > 255) {
+      return null;
+    }
+    out.push(n);
+  }
+  return out;
+}
