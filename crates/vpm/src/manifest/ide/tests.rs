@@ -70,10 +70,7 @@ fn a_key_completion_inserts_a_value_placeholder() {
 #[test]
 fn nested_objects_complete_their_own_fields() {
     assert_eq!(labels("{ jsx: { | } }"), ["importSource"]);
-    assert_eq!(
-        labels("{ native: { targets: [], | } }"),
-        ["path", "wasm", "c"]
-    );
+    assert_eq!(labels("{ native: { targets: [], | } }"), ["c"]);
     assert_eq!(
         labels("{ dependencies: { util: { path: \"../u\", | } } }"),
         ["version", "git", "branch", "tag", "rev", "url", "sha256", "strip"]
@@ -91,8 +88,6 @@ fn nested_objects_complete_their_own_fields() {
 
 #[test]
 fn values_from_fixed_sets() {
-    assert_eq!(labels("{ native: { wasm: | } }"), ["false", "true"]);
-    assert_eq!(labels("{ native: { wasm: f| } }"), ["false", "true"]);
     let targets = labels("{ native: { targets: [\"x86_64-apple-darwin\", |] } }");
     assert!(targets.contains(&"aarch64-apple-darwin".to_string()));
     assert!(

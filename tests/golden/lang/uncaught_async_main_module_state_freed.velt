@@ -1,0 +1,18 @@
+// check: no leaks
+// An `async main` that rejects: module state written before, across `await`s, is dropped at the
+// exit with the debug counters on (#3878; the executor's end dropped it only at exit code 0).
+const seen: string[] = [];
+
+async function f(n: number): Promise<number> {
+  seen.push(`a key long enough for the heap ${n}`);
+  await Promise.resolve();
+  if (n > 2) {
+    throw new RangeError("deep");
+  }
+  return f(n + 1);
+}
+
+async function main() {
+  console.log("start");
+  console.log(await f(0));
+}

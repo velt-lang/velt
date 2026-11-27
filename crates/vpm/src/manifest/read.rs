@@ -13,7 +13,7 @@
 //!   hostModules: { kv: "./src/kv.mjs" },
 //!   host: { target: "wasm32-unknown-unknown", condition: "edge", entry: "./src/entry.mjs" },
 //!   jsx: { importSource: "sigx" },
-//!   native: { targets: ["x86_64-unknown-linux-gnu"] },
+//!   native: { c: { c: { headers: ["<string.h>"] } } },
 //!   tsCompat: ["src/models"],
 //!   lint: { perf: "warn" },
 //!   build: { cpu: "x86-64-v3" },
@@ -328,7 +328,6 @@ impl Reader<'_> {
             imports: BTreeMap::new(),
             host_modules: BTreeMap::new(),
             host: None,
-            native: None,
             c_libraries: Default::default(),
             allow_native: Vec::new(),
             jsx: None,
@@ -389,9 +388,7 @@ impl Reader<'_> {
                 "host" => manifest.host = self.host(v),
                 "jsx" => manifest.jsx = self.jsx(v),
                 "define" => manifest.define = self.define(v),
-                "native" => {
-                    (manifest.native, manifest.c_libraries, manifest.c_targets) = self.native(v)
-                }
+                "native" => (manifest.c_libraries, manifest.c_targets) = self.native(v),
                 "allowNative" => manifest.allow_native = self.allow_native(v),
                 "tsCompat" => manifest.ts_compat = self.ts_compat(v),
                 "lint" => manifest.lint = self.lint(v),

@@ -107,8 +107,8 @@ export const B_TAKEN: usize = 32;
 /** Records kept for reuse (`recAlloc`, `recFree`): the first, linked by `Y_NEXT`, and how many. */
 export const B_FREE: usize = 40;
 export const B_NFREE: usize = 48;
-/** The stamp + 1 of the root's turn this poll has with no record (`rootTurn`; 0: none). */
-export const B_RTURN: usize = 56;
+/** After a turn polled the root: the yield whose turn comes next (sched_yield_turn.velt `turnOver`). */
+export const B_AFTER: usize = 56;
 export const B_SIZE: usize = 64;
 /** At most this many records are kept for reuse. */
 const POOL: usize = 8;
@@ -176,7 +176,7 @@ function makeBlock(k: usize): usize {
   m.st(b + B_TAKEN, 0);
   m.st(b + B_FREE, 0);
   m.st(b + B_NFREE, 0);
-  m.st(b + B_RTURN, 0);
+  m.st(b + B_AFTER, 0);
   m.st(k + t.T_YIELDS, b);
   if (m.load32(k + t.T_STATE) === t.YIELDED) {
     // Its root yielded in this poll, before any yield was made: its turn comes first (stamp 0).
@@ -211,8 +211,15 @@ export function record(w: usize, stamp: usize): usize {
  * Its turn wakes `w` (a waker's clone) and leaves it `FIRED`, not freed, as a stored yield's
  * does; it is task `k`'s, stamped `stamp`.
  */
+@inline("always")
 export function held(w: usize, k: usize, stamp: usize): usize {
-  const r = recAlloc(blockOf(k));
+  return heldIn(blockOf(k), w, k, stamp);
+}
+
+/** `held` for a task whose yield block is `b`. */
+@inline("always")
+export function heldIn(b: usize, w: usize, k: usize, stamp: usize): usize {
+  const r = recAlloc(b);
   m.st(r, HELD);
   m.st(r + 8, 0);
   m.st(r + Y_WAKER, w);
@@ -244,6 +251,24 @@ export function join(k: usize, y: usize): void {
   }
   insert(b, y);
   // Its next poll fires them (sched_run.velt `runWoken`), and this one's end queues it again.
+  t.flags(k, t.YIELDS | t.LOCALS, 0);
+}
+
+/**
+ * `join` of record `y` of task `k` (block `b`) that wakes its root, stamped now (`nextStamp`): no
+ * record for the root's turn, and it goes at the end, as every listed yield was made before it.
+ */
+@inline("always")
+export function joinRoot(k: usize, b: usize, y: usize): void {
+  m.st(y + Y_STATE, QUEUED);
+  const last = m.ld(b + B_LAST);
+  if (last === 0) {
+    m.st(y + Y_NEXT, y);
+  } else {
+    m.st(y + Y_NEXT, m.ld(last + Y_NEXT));
+    m.st(last + Y_NEXT, y);
+  }
+  m.st(b + B_LAST, y);
   t.flags(k, t.YIELDS | t.LOCALS, 0);
 }
 
@@ -396,6 +421,26 @@ export function letGo(w: usize): void {
  * waker is swapped in, then a turn that came meanwhile is seen. `cur`: the task polled on this
  * thread (0: none).
  */
+@inline("always")
+export function heldReady(f: usize, w: usize, cur: usize): u32 {
+  // In line: the root's own record on its task's thread, its turn over or the next one (the
+  // children of an inline `Promise.all` the root awaits).
+  const k = m.ld(f + Y_TASK);
+  if (k === cur && w === k) {
+    if (m.load(f + Y_STATE) === FIRED) {
+      recFree(blockOf(k), f);
+      tn.taken(k);
+      return 1;
+    }
+    if (tn.nextTurn(k, f)) {
+      recFree(blockOf(k), f);
+      return 1;
+    }
+  }
+  return heldPoll(f, w, cur);
+}
+
+/** `heldReady` out of line: any record, waker and thread. */
 @noInline
 export function heldPoll(f: usize, w: usize, cur: usize): u32 {
   const k = m.ld(f + Y_TASK);
@@ -409,6 +454,7 @@ export function heldPoll(f: usize, w: usize, cur: usize): u32 {
     return 1;
   }
   if (k === cur && w === k && tn.nextTurn(k, f)) {
+    recFree(blockOf(k), f);
     return 1;
   }
   if (k === cur && m.ld(w) === t.main() + t.E_NODE_VT) {

@@ -1,6 +1,6 @@
 //! `allowNative` (docs/internals/design/c-ffi.md "The trust boundary"): native code runs with no
-//! safety net, so a package with native code (C declarations, `native.c`, or a Rust crate) is
-//! installed only when the root package lists it. A new dependency with native code, or one that
+//! safety net, so a package with native code (C declarations, `native.c`) is installed only when
+//! the root package lists it. A new dependency with native code, or one that
 //! gains it in a patch release, is then a change to the root manifest, not a line nobody reads.
 //!
 //! An entry binds to a source (#2367, `crate::manifest::allow_native`), checked after resolution

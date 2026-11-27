@@ -60,6 +60,11 @@ export function schedYield(cx: usize): usize {
   if (cx === w + t.T_CX) {
     return rootYield(w, 0);
   }
+  if (m.ld(w) === t.main() + t.E_VT) {
+    // A task's waker in another cx (a child of an inline `Promise.all` the root awaits): in line,
+    // one per child's yield.
+    return sharedRootYield(w);
+  }
   return otherYield(w);
 }
 
@@ -71,9 +76,6 @@ export function schedYield(cx: usize): usize {
 @noInline
 function otherYield(w: usize): usize {
   const vt = m.ld(w);
-  if (vt === t.main() + t.E_VT) {
-    return sharedRootYield(w);
-  }
   const k = current();
   if (k === 0) {
     m.wakeByRef(w);
@@ -132,7 +134,8 @@ function rootYieldBlock(k: usize, b: usize): usize {
  * The root's awaited yield with a task's waker in another cx: a child of an inline `Promise.all`
  * the root awaits, polled with a copy of the root's cx (velt_vir `await_all_inline`, rt_abi_async.md
  * `velt_rt_yield_now`), so its siblings' yields in this poll may come before or after it. In line
- * in `otherYield`'s task branch: one call per child's yield.
+ * where it is awaited (`schedYield`); a second one's record is out of line (`rootYieldAgain`), or a
+ * root that only yields with its own cx would pay for its frame.
  */
 @inline("always")
 function sharedRootYield(k: usize): usize {
@@ -175,10 +178,11 @@ function rootRecordFirst(k: usize, b: usize): usize {
 }
 
 /** An awaited root yield's record on task `k`'s list (block `b`), behind the yields before it. */
+@inline("always")
 function rootRecord(k: usize, b: usize): usize {
-  const r = ls.held(ls.ROOT, k, ls.nextStamp(b));
-  // A first yield of this poll with no record yet (`ROOT_ALONE`) gets one first.
-  ls.join(k, r);
+  const r = ls.heldIn(b, ls.ROOT, k, ls.nextStamp(b));
+  // The root's turn placed with no record (`ROOT_ALONE`) needs none for it (`ls.join`).
+  ls.joinRoot(k, b, r);
   return r;
 }
 
@@ -228,12 +232,21 @@ function storedRootYield(k: usize, y: usize, b: usize): void {
 export function schedYieldReady(cx: usize, record: usize): u32 {
   const w = m.ld(cx + 8);
   if (record !== 0) {
-    return ls.heldPoll(record, w, current());
+    return ls.heldReady(record, w, current());
   }
   if (cx === w + t.T_CX) {
     // The task's own cx, the common one: `YIELDED` lasts exactly the poll it yielded in, and no
     // table is loaded.
     return m.load32(w + t.T_STATE) === t.YIELDED ? 0 : 1;
+  }
+  if (m.ld(w) === t.main() + t.E_VT) {
+    // A task's waker in another cx (a child of an inline `Promise.all`): its state, as with its
+    // own cx. Going on, it is a waiter of the turn polling the root, if one is (`tn.nextTurn`).
+    if (m.load32(w + t.T_STATE) === t.YIELDED) {
+      return 0;
+    }
+    tn.takenBy(w, current());
+    return 1;
   }
   return otherReady(w);
 }
@@ -242,17 +255,6 @@ export function schedYieldReady(cx: usize, record: usize): u32 {
 @noInline
 function otherReady(w: usize): u32 {
   const vt = m.ld(w);
-  if (vt === t.main() + t.E_VT) {
-    // A task's waker in another cx: its state, as with its own cx. Going on, it is a waiter of
-    // the turn polling the root, if one is (`tn.nextTurn`).
-    if (m.load32(w + t.T_STATE) === t.YIELDED) {
-      return 0;
-    }
-    if (w === current()) {
-      tn.taken(w);
-    }
-    return 1;
-  }
   const isNode = vt === t.main() + t.E_NODE_VT;
   if (isNode && (m.load32(w + node.N_FLAGS) & (node.QUEUED | node.YIELDING)) !== 0) {
     // Its started promise runs again (queued), or its turn is on the list.

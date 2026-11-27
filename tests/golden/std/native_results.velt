@@ -1,5 +1,5 @@
-// velt/native: the helpers a native package's Velt side turns a failed result into an error with.
-// The codes are the runtime's (`velt_native::code`): 1 ENOENT, 6 ETIMEDOUT, 7 ECONNREFUSED, 999 none of them.
+// velt/native: the helpers std turns a runtime function's failed result into an error with.
+// The codes are the runtime's (`velt_rt` `result.rs` `code`): 1 ENOENT, 6 ETIMEDOUT, 7 ECONNREFUSED, 999 none of them.
 import { checkIo, errorCodeName, ioError, IoResult, IoStatus, unwrapIo } from "velt/native";
 import { IoError } from "velt/io";
 

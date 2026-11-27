@@ -1,0 +1,30 @@
+// A frozen object passed to another task (`spawn`) stays frozen: the transfer's copy of a shared
+// object keeps its frozen mark, and a moved one is the same object (#2623).
+interface Job {
+  id: number;
+  label: string;
+}
+
+async function relabel(j: Job): Promise<string> {
+  try {
+    j.label = "changed";
+    return `${j.id} written`;
+  } catch (e) {
+    return `${j.id} ${(e as Error).message}`;
+  }
+}
+
+async function main() {
+  const shared: Job = { id: 1, label: "a" };
+  shared.label = "b";
+  Object.freeze(shared);
+  const kept = shared;
+  console.log(await spawn(relabel(shared)), Object.isFrozen(kept), kept.label);
+  const own: Job = { id: 2, label: "c" };
+  Object.freeze(own);
+  console.log(await spawn(relabel(own)));
+  const open: Job = { id: 3, label: "d" };
+  console.log(await spawn(relabel(open)));
+}
+
+main();
