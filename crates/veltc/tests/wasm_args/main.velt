@@ -1,0 +1,6 @@
+import { args, argv } from "velt/process";
+
+function main() {
+  const node = process.argv;
+  console.log(JSON.stringify([node.length, node[0] == node[1], argv().length, args().length]));
+}

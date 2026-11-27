@@ -719,12 +719,14 @@ The command-line arguments (`argv()`, `args()`, Node's `process.argv`) are std c
 `args_get`; none in the browser). A program velt runs in its own process (`velt dev`, the
 generator host) gets them in `VELT_ARGV` (each argument as its length in UTF-8 bytes, `:` and
 its text); `velt run`, `velt test` and `velt dev` pass Node's `process.argv[1]` in
-`VELT_SCRIPT`. std's reads of the environment leave both out, and so do the environments of the
-program's child processes. The lists are read once per process, on first use, and kept in a block
-of the C library's (std/process/args_keep.velt) by a prebuilt hook module loaded on demand
-(std/lang/hooks/process_argv.velt: `process_arg_count`, `process_arg_at`), which programs reach
-by role, one argument at a time, holding the environment's lock (std/lang/hooks/process.velt
-`argList`).
+`VELT_SCRIPT`. std's reads of the environment leave both out until the program sets or removes
+one itself, and so do the environments of the program's child processes. The lists are read once
+per process, on first use, and kept in a block of the C library's (std/process/args_keep.velt) by
+a prebuilt hook module loaded on demand (std/lang/hooks/process_argv.velt: `process_arg_count`,
+`process_arg_at`), which programs reach by role, one argument at a time (std/lang/hooks/
+process.velt `argList`). That first read takes velt's two variables without the environment's
+lock; std's `setEnv` and `removeEnv` finish it first (`process_args_ready`), so no change of the
+environment overlaps it.
 
 `process.memoryUsage()` is std code on native targets (`#memory-sys`: std/process/
 memory_linux.velt reads `/proc/self/statm`, its resident pages and, for `heapUsed`, those no file

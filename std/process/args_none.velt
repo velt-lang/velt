@@ -13,16 +13,16 @@ export function executablePath(): string {
 
 /**
  * Where std/lang/hooks/process_argv.velt keeps a list: nowhere (the JS host has no C library),
- * and none is needed, as each is the same two empty strings (`["", ""]`, from `osArgs` and
- * `executablePath`). A token that is not 0 stands for it.
+ * and none is needed, as each is all empty strings (`argv()`'s none, `process.argv`'s two, from
+ * `osArgs` and `executablePath`). A token stands for it: its length, plus 1 so it is not 0.
  */
 export function keepArgs(list: string[]): usize {
-  return 1;
+  return list.length + 1;
 }
 
-/** The two of the list (`keepArgs`). */
+/** The number of arguments of the list the token `at` stands for (`keepArgs`). */
 export function keptCount(at: usize): u64 {
-  return 2;
+  return (at - 1) as u64;
 }
 
 /** Each is empty (`keepArgs`). */
