@@ -193,8 +193,9 @@ fn an_installed_toolchain_s_hook_objects_are_linked() {
     for _ in 0..2 {
         let (from, err) = run(&off);
         assert_eq!(from, "shipped", "{err}");
-        // number_digits for toPrecision, and number_shortest, which std's number printing uses.
-        assert!(err.contains("prebuilt hooks: 2 objects linked"), "{err}");
+        // number_digits for toPrecision, number_shortest, which std's number printing uses, and
+        // std's writer of stdout (out_native).
+        assert!(err.contains("prebuilt hooks: 3 objects linked"), "{err}");
     }
     // The cache on (the default, under the home directory): the toolchain's once, then the
     // cache's own copy.

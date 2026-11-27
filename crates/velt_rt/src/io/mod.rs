@@ -7,7 +7,6 @@
 
 #[cfg(test)]
 mod exit_tests;
-pub mod stats;
 mod stdout;
 
 use crate::bytes::VeltBytes;

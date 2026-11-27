@@ -68,6 +68,7 @@ import { Ptr, StrBytes } from "velt/ffi";
 import { fnAddress } from "velt/lang/intrinsics";
 import { catchUnwindAt } from "velt/lang/intrinsics/unwind";
 import { caughtPanic, enterCatch, leaveCatch, takePanic } from "velt/lang/hooks/unwind";
+import { flushOutput } from "velt/lang/hooks/stdout";
 
 export { catchVeltPanic } from "velt/task/unwind";
 
@@ -134,10 +135,9 @@ declare c("c") function malloc(n: usize): Ptr<u8> | null;
 declare c("c") function memset(p: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
 declare c("c") function memcpy(dst: Ptr<u8>, src: StrBytes, n: usize): Ptr<u8>;
 declare c("c") function _Unwind_RaiseException(e: Ptr<u8>): i32;
-declare function velt_rt_flush(): void;
 
 export function raiseForeign(): void {
-  velt_rt_flush();
+  flushOutput();
   // SAFETY: a zeroed header of 32 bytes with a class, which the unwinder only reads, then a
   // NUL-terminated text inside the allocation.
   unsafe {
@@ -158,10 +158,9 @@ export function raiseForeign(): void {
 #[cfg(windows)]
 const RAISE_FOREIGN: &str = r#"
 declare c("c") function RaiseException(code: u32, flags: u32, count: u32, args: usize): void;
-declare function velt_rt_flush(): void;
 
 export function raiseForeign(): void {
-  velt_rt_flush();
+  flushOutput();
   // SAFETY: no parameters; the code is no one's that this program catches.
   unsafe {
     RaiseException(0xe0000001, 1, 0, 0);

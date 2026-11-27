@@ -2,7 +2,8 @@
 // `console.log` / `console.error` write through `writeStr`, `writeBool` and `writeByte` (velt_vir
 // `console.rs`), and every exit Velt code reaches calls `flushForExit` first. std's own writers
 // (`process.stdout.write`, `Stdout.write`, the number writers, panics' reports) call them too.
-// The writer is `#stdout-sys`': the runtime's on every target for now (out_rt.velt).
+// The writer is `#stdout-sys`': std's on native targets (out_native.velt, a prebuilt hook module
+// out_hooked.velt calls by role), the WebAssembly runtime's elsewhere (out_rt.velt).
 
 import * as sys from "#stdout-sys";
 import { inline, noInline } from "velt/lang/intrinsics";

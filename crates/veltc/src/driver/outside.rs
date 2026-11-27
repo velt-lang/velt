@@ -203,7 +203,7 @@ pub(crate) fn reaches(program: &Program) -> String {
     let files = harness_files(program);
     if files == 0 {
         return describe(program, &|symbol| {
-            is_test_runner(symbol) || is_cpu_start(symbol)
+            is_test_runner(symbol) || is_cpu_start(symbol) || is_output_writer(symbol)
         });
     }
     let each: Vec<String> = (0..files)
@@ -218,6 +218,7 @@ pub(crate) fn reaches(program: &Program) -> String {
                 true => describe(program, &|symbol: &str| {
                     is_test_runner(symbol)
                         || is_cpu_start(symbol)
+                        || is_output_writer(symbol)
                         || harness_file(symbol).is_some_and(|j| j != i)
                 }),
             }
@@ -306,6 +307,7 @@ pub(crate) fn generator_reaches(program: &Program) -> String {
             || symbol.starts_with("_V3stdP8generateP")
             || symbol.starts_with("std_sched_")
             || is_cpu_start(symbol)
+            || is_output_writer(symbol)
     })
 }
 
@@ -320,6 +322,37 @@ fn is_test_runner(symbol: &str) -> bool {
 /// depends on, so it doesn't count.
 fn is_cpu_start(symbol: &str) -> bool {
     symbol.starts_with("_V3stdP4langP5hooksP3cpuN8cpuStart")
+}
+
+/// std's writer of standard output and standard error (std/lang/hooks/stdout.velt and the
+/// files behind `#stdout-sys`, #2196): printing is not input, as the runtime's writer was not
+/// (`write` in [`PURE_RUNTIME`]). What it calls besides `write` doesn't change what the program
+/// computes either: whether stdout is a terminal (line flushing), `VELT_STDOUT_STATS`, the clock
+/// a terminal's flush reads, waiting on a full pipe, `sched_yield` at its lock, and ending the
+/// process on a closed pipe as `SIGPIPE` would.
+fn is_output_writer(symbol: &str) -> bool {
+    const FILES: [&str; 7] = [
+        "stdout",
+        "out_native",
+        "out_hooked",
+        "out_posix",
+        "out_win32",
+        "stdout_buffer",
+        "stdout_block",
+    ];
+    if symbol == "std_stdout_flush_at_exit" {
+        return true;
+    }
+    let Some(rest) = symbol.strip_prefix("_V3stdP4langP5hooksP") else {
+        return false;
+    };
+    // The mangling doubles an underscore, and the length counts it doubled.
+    FILES.iter().any(|f| {
+        let name = f.replace('_', "__");
+        let item = rest.strip_prefix(&name.len().to_string());
+        item.and_then(|r| r.strip_prefix(name.as_str()))
+            .is_some_and(|r| r.starts_with('N'))
+    })
 }
 
 /// The C functions std reads the clocks through (`Date.now()`, `performance.now()`:

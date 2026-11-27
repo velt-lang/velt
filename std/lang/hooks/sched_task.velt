@@ -130,8 +130,8 @@ export const E_W_INPUT: usize = 520;
 export const E_W_ALL: usize = 528;
 export const E_W_NOTED: usize = 536;
 export const E_W_SLEPT: usize = 544;
-/** A latch of the runtime's, open, whose opening publishes this thread's output (`publish`). */
-export const E_LATCH: usize = 552;
+/** Unused (it held a latch of the runtime's whose opening published this thread's output). */
+export const E_FREE_552: usize = 552;
 /**
  * Worker 0's (sched_monitor.velt): the monitor's clock (ticks), whether it sleeps while every
  * worker does, the word its naps wait on (a hurry), whether it checks watches often, whether

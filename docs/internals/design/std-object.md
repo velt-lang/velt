@@ -223,6 +223,16 @@ it reaches, into one object (`std_cache/prebuilt.rs`, `prebuilt_object.rs`):
   object exports them before its optimizer runs, with no facts about their pointers from the
   program's calls (`prebuilt.rs` `export_calls_out`), and one linking an object without them
   is an internal compiler error. The program's own calls may still inline them.
+- **The writer itself.** Behind those hooks, std's writer on a native target is a prebuilt
+  module of its own (std/lang/hooks/out_native.velt, its entries `out_write_str` and the rest in
+  velt_common `std_hooks/stdout_hooks.rs`): its buffers, lock and counts are its private
+  modules' (stdout_buffer.velt, stdout_block.velt, `#stdout-os`'), and stdout.velt's hooks reach
+  it through out_hooked.velt's `hookCall`s alone. Every program has stdout.velt's few lines; a
+  build that links the writer's object neither loads nor compiles the writer, which otherwise
+  every program would, and the program defines the object's thread-local values as for any
+  object. The writer reads no state of std's outside them: `errno` in place, not velt/os/rt's
+  slot; whether stdout is a terminal from the OS, kept in its own atomic, not velt/process/tty's
+  cache; and no clock (the exit flush's wait for its lock is counted in pauses).
 - **Pinned.** Once sema has called the entry points the build must link the object, so a build
   hard-links (or copies) the object it finds into a temporary directory it holds until it is done;
   another build's garbage collection or `velt clean --cache` cannot fail it. An object that

@@ -6,6 +6,7 @@
 import { export as cExport } from "velt/ffi";
 import { inline, noInline } from "velt/lang/intrinsics";
 import { clearStdoutWritten, stdoutWrittenSince } from "./process";
+import { flushIdle, publishOutput } from "./stdout";
 import * as io from "./sched_io";
 import * as lk from "./sched_lock";
 import * as m from "./sched_mem";
@@ -15,9 +16,6 @@ import * as tk from "./sched_task";
 import * as wa from "./sched_wake_away";
 import * as wp from "./sched_wake_pause";
 import * as yl from "./sched_yield_list";
-
-declare function velt_rt_flush(): void;
-declare c("c") function velt_rt_latch_open$rt(l: u64): void;
 
 @cExport("std_sched_waker_clone")
 export function wakerClone(w: usize): usize {
@@ -375,16 +373,12 @@ export function toInbox(h: usize, t: usize): void {
 }
 
 /**
- * Publishes what this thread printed into the runtime's shared buffer, ahead of what any other
- * thread prints from now on (the runtime's `publish_before_handoff`, reached through the opening
- * of a latch that is open already); worker `w` is this thread's.
+ * Publishes what this thread printed into stdout's shared buffer, ahead of what any other thread
+ * prints from now on (std/lang/hooks/stdout_buffer.velt); worker `w` is this thread's.
  */
 @inline("always")
 export function publish(w: usize): void {
-  // SAFETY: the worker's latch handle, open, never freed.
-  unsafe {
-    velt_rt_latch_open$rt(m.ld(w + tk.E_LATCH) as u64);
-  }
+  publishOutput();
 }
 
 /**
@@ -429,10 +423,10 @@ function publishMarked(w: usize): void {
   publish(w);
 }
 
-/** Writes out what this thread printed (stdout is buffered per thread by the runtime). */
+/** Writes out what this thread and the shared buffer hold: the worker is about to wait. */
 @noInline
 export function handOffOutput(): void {
-  velt_rt_flush();
+  flushIdle();
 }
 
 /**

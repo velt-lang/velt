@@ -1,0 +1,241 @@
+// velt/lang/hooks (internal): standard output and standard error on native targets: std's writer,
+// a prebuilt hook module (velt_common `std_hooks/stdout_hooks.rs`) that out_hooked.velt
+// (`#stdout-sys`' native variant) calls by role, whose state is in its private modules (this one,
+// stdout_buffer.velt, stdout_block.velt and `#stdout-os`'): a build that links its object neither
+// loads nor compiles it. stdout is buffered (stdout_buffer.velt: per thread, then shared, then the
+// OS); stderr is not: each write goes out at once, after everything stdout holds, so the two
+// interleave as the program wrote them.
+//
+// Every exit that Velt code reaches flushes first: the end of `main`, `process.exit`, an uncaught
+// error, a panic (lowering calls `flushForExit` before them; std's own exits call it). An exit the
+// runtime takes by itself (a fatal error inside its Rust, `velt dev`'s stop of a server) goes
+// through the C library's `exit`, which runs `flushAtExit` (registered at the start); its stderr
+// message comes before the flushed stdout there. Not in the dev JIT, whose reload replaces this
+// code: there such an exit loses what was printed since a worker last went idle, which is when the
+// executor writes the shared buffer out.
+
+import * as buf from "./stdout_buffer";
+import { export as cExport } from "velt/ffi";
+import { osWrite, registerAtExit } from "#stdout-os";
+import { envAddress } from "velt/lang/cpu/check";
+import {
+  addressLoad,
+  exportedAddress,
+  inline,
+  noInline,
+  strByteLen,
+  strDataAddress,
+  strAsciiWords,
+  strLen,
+} from "velt/lang/intrinsics";
+
+declare function velt_rt_str_is_well_formed(s: string): bool;
+
+/** Writes `s` to stdout (`stream` 1) or stderr (2): one U+FFFD per lone surrogate. */
+@inline("always")
+export function writeStr(stream: u32, s: string): void {
+  // Borrowed (the hook's table entry): its bytes as they are unless it holds a lone surrogate.
+  if (strLen(s) == strByteLen(s) || velt_rt_str_is_well_formed(s)) {
+    writeBytes(stream, strDataAddress(s), strByteLen(s));
+  } else {
+    writeReplacing(stream, strDataAddress(s), strByteLen(s));
+  }
+}
+
+@inline("always")
+function writeBytes(stream: u32, p: usize, n: usize): void {
+  if (stream === 2) {
+    writeErr(p, n);
+  } else {
+    buf.append(p, n);
+  }
+}
+
+/** The UTF-8 bytes of U+FFFD, the low three of a word. */
+const REPLACEMENT: u64 = 0xbdbfef;
+
+/**
+ * Writes the `n` bytes of text at `p` with U+FFFD for each lone surrogate, without a copy of the
+ * text: a string's bytes are WTF-8, where a lone surrogate is the three bytes `ED A0..BF 80..BF`
+ * (UTF-8 has only `80..9F` after `ED`), as many as U+FFFD's.
+ */
+@noInline
+function writeReplacing(stream: u32, p: usize, n: usize): void {
+  const fffd = strAsciiWords(REPLACEMENT, 0, 0, 3);
+  let from: usize = 0;
+  let i: usize = 0;
+  while (i + 2 < n) {
+    // SAFETY: `i + 1 < n`: within the text's bytes.
+    const lead = unsafe { addressLoad<u8>(p + i) };
+    // SAFETY: as `lead`.
+    const next = unsafe { addressLoad<u8>(p + i + 1) };
+    if (lead === 0xed && next >= 0xa0) {
+      writeSpan(stream, p + from, i - from);
+      writeSpan(stream, strDataAddress(fffd), 3);
+      i += 3;
+      from = i;
+    } else {
+      i += 1;
+    }
+  }
+  writeSpan(stream, p + from, n - from);
+}
+
+/** `writeBytes` out of line: `writeReplacing`'s loop stays small. */
+@noInline
+function writeSpan(stream: u32, p: usize, n: usize): void {
+  writeBytes(stream, p, n);
+}
+
+/** Writes the byte `c` (the space or newline after a `console.log` argument). */
+@inline("always")
+export function writeByte(stream: u32, c: u8): void {
+  if (stream === 2) {
+    writeErrByte(c);
+  } else {
+    buf.appendByte(c);
+  }
+}
+
+/** Writes the `n` bytes at `p` to stderr, after what stdout holds. */
+@noInline
+function writeErr(p: usize, n: usize): void {
+  buf.flush();
+  osWrite(2, p, n);
+}
+
+@noInline
+function writeErrByte(c: u8): void {
+  // The byte as a string's inline form (no allocation, no array): the space or newline after a
+  // `console.error` argument, or a number's end; any byte but ASCII's is not one of them.
+  if (c < 0x80) {
+    const one = strAsciiWords(c as u64, 0, 0, 1);
+    writeErr(strDataAddress(one), 1);
+  }
+}
+
+/**
+ * Writes the `n` bytes at `p` to stdout (`Stdout.write`'s array's), in order with `console.log`:
+ * 64 KiB or more go straight to the OS from the caller's array, without a copy.
+ */
+export function writeBytesAt(p: usize, n: usize): void {
+  if (n >= buf.CAP) {
+    buf.writeThrough(p, n);
+  } else {
+    buf.append(p, n);
+  }
+}
+
+/** Writes everything stdout holds to the OS (`readLineSync` before it waits, a panic's report). */
+export function flushOutput(): void {
+  buf.flush();
+}
+
+/** Makes this thread's output visible to other threads: the end of a poll, a hand-off. */
+@inline("always")
+export function publishOutput(): void {
+  buf.publishIfBuffered();
+}
+
+/** A thread that ends (a blocking pool's): its output published, its buffer given back. */
+export function threadEnd(): void {
+  buf.releaseLocal();
+}
+
+/** A worker about to wait for work: what it and the shared buffer hold goes to the OS. */
+export function flushIdle(): void {
+  buf.flushIdle();
+}
+
+/** Asks once whether stdout is a terminal (line buffering), before any task writes. */
+export function initOutput(): void {
+  buf.initMode();
+}
+
+/**
+ * Registers `flushAtExit` with the C library's `exit` (`#stdout-os`): an executable's start, not
+ * the dev JIT's, whose reload replaces this code.
+ */
+export function registerExitFlush(): void {
+  // SAFETY: `flushAtExit` is `@cExport`ed as `void f(void *)`, what `exit` calls.
+  registerAtExit(unsafe { exportedAddress(flushAtExit) });
+}
+
+/**
+ * The flush the C library's `exit` runs: for an exit the runtime takes by itself (a fatal error
+ * in its Rust, as misusing a `RwLock` or an allocation it refuses; `velt dev`'s stop of a server),
+ * which compiled code doesn't flush before. Every other exit flushed already, and this finds
+ * nothing left; it never reports `VELT_STDOUT_STATS` (`flushForExit` did).
+ */
+@cExport("std_stdout_flush_at_exit")
+function flushAtExit(arg: usize): void {
+  buf.flushForExit();
+}
+
+/**
+ * The flush before the process ends; never waits forever for another thread's write. With
+ * `VELT_STDOUT_STATS=1` it reports how many writes stdout took (`stdout stats: writes=<n>`, on
+ * stderr), a count tests use to see that piped output goes out in large blocks.
+ */
+@noInline
+export function flushForExit(): void {
+  buf.flushForExit();
+  if (statsAsked()) {
+    reportStats();
+  }
+}
+
+/**
+ * `stdout stats: writes=<n>` on stderr: the count's digits and the newline in a string's inline
+ * form (21 bytes at most), no string built by concatenation.
+ */
+@noInline
+function reportStats(): void {
+  const head = "stdout stats: writes=";
+  osWrite(2, strDataAddress(head), strByteLen(head));
+  const n = buf.WRITES.load("relaxed");
+  let digits: u64 = 1;
+  let t = n;
+  while (t >= 10) {
+    t = t / 10;
+    digits += 1;
+  }
+  // Byte `k` of the text is in word `k / 8`, at bit `(k % 8) * 8`; the newline after the digits.
+  let w0: u64 = 0;
+  let w1: u64 = 0;
+  let w2: u64 = 10 << ((digits % 8) * 8);
+  if (digits < 8) {
+    w0 = w2;
+    w2 = 0;
+  } else if (digits < 16) {
+    w1 = w2;
+    w2 = 0;
+  }
+  let k = digits;
+  let rest = n;
+  while (k > 0) {
+    k -= 1;
+    const b = (rest % 10 + 48) << ((k % 8) * 8);
+    if (k < 8) {
+      w0 = w0 | b;
+    } else if (k < 16) {
+      w1 = w1 | b;
+    } else {
+      w2 = w2 | b;
+    }
+    rest = rest / 10;
+  }
+  const line = strAsciiWords(w0, w1, w2, (digits + 1) as usize);
+  osWrite(2, strDataAddress(line), strByteLen(line));
+}
+
+/**
+ * Whether `VELT_STDOUT_STATS` is `1`, read in place: a copy of the value would be a block the
+ * debug runtime counts, in every program's report (the goldens' `heap blocks at most` checks).
+ */
+function statsAsked(): bool {
+  const v = envAddress("VELT_STDOUT_STATS\0");
+  // SAFETY: a NUL-terminated C string of the environment's when not 0; its second byte is read
+  // only after a first that is no NUL.
+  return v !== 0 && unsafe { addressLoad<u8>(v) } === 49 && unsafe { addressLoad<u8>(v + 1) } === 0;
+}

@@ -1,0 +1,444 @@
+// velt/lang/hooks (internal): standard output's buffers (std/lang/hooks/stdout.velt writes
+// through them), which scale to many worker threads while keeping output causally ordered.
+//
+// Each thread appends to its own buffer: no lock per write, and a `console.log` line built from
+// several writes is never interleaved with another thread's. A thread's buffer is published into
+// one shared buffer (one lock) when it fills, when stdout is flushed, at the end of every task poll
+// and before the task hands work to another (`publishLocal`: the executor's sched_wake.velt and
+// velt/sync's hand-offs, std/sync/output.velt), so `log a; await; log b` prints `a` before `b` on
+// any worker, and a line logged before `spawn(f())` before anything `f` prints. The shared buffer
+// reaches the OS when it fills, on flushes and when a worker goes idle; on a terminal every
+// completed line is written at once (line buffering, like C's stdio).
+
+import { Ptr } from "velt/ffi/ptr";
+import { mutexLock, mutexUnlock } from "#thread-lock";
+import { osWrite, pauseMs, stdoutIsTerminal, yieldThread } from "#stdout-os";
+import { HEADER, freeBlock, grow, lenOf, newBlock, put, setLen, sizeOf } from "./stdout_block";
+import {
+  addressAtomicCas,
+  addressLoad,
+  addressStore,
+  strAsciiWords,
+  strDataAddress,
+  atomicAddress,
+  inline,
+  noInline,
+} from "velt/lang/intrinsics";
+
+declare c("c") function realloc$out(p: Ptr<u8> | null, n: usize): Ptr<u8> | null;
+declare c("c") function memcpy$out(
+  dst: Ptr<u8> | null,
+  src: Ptr<u8> | null,
+  n: usize,
+): Ptr<u8> | null;
+declare c("c") function memmove$out(
+  dst: Ptr<u8> | null,
+  src: Ptr<u8> | null,
+  n: usize,
+): Ptr<u8> | null;
+declare c("c") function memchr$out(p: Ptr<u8> | null, c: i32, n: usize): Ptr<u8> | null;
+
+/** The size at which bytes move on: a thread's buffer to the shared one, that one to the OS. */
+export const CAP: usize = 65536;
+/**
+ * A thread's buffer holding a partial line is published anyway at this size: memory stays
+ * bounded, at the price that such an enormous line may interleave with other threads' output.
+ */
+const MAX_PARTIAL_LINE: usize = 1048576;
+const NEWLINE: i32 = 10;
+
+/** This thread's buffer (a block's address), 0 before its first write. */
+const LOCAL = new ThreadLocal<u64>(0);
+/** Whether this thread's buffer may hold bytes: the hand-offs' cheap check. */
+const BUFFERED = new ThreadLocal<bool>(false);
+/** Whether this thread holds the shared buffer's lock: an exit under it must not wait for it. */
+const HOLDS_SHARED = new ThreadLocal<bool>(false);
+
+/** The shared buffer (a block's address), 0 before the first publish. Changed under `LOCK`. */
+const SHARED = new Atomic<u64>(0);
+/** The shared buffer's lock word (velt/lang/hooks/mutex: parks a waiting thread). */
+const LOCK = new Atomic<u64>(0);
+/** Set while the shared buffer holds bytes not yet written (the idle flush's cheap check). */
+const DIRTY = new Atomic<bool>(false);
+/** 0: not asked yet; 1: block buffering (a pipe or a file); 2: line buffering (a terminal). */
+const MODE = new Atomic<u32>(0);
+/** Set by a flush on the way out (`flushForExit`): the process ends now. */
+const EXITING = new Atomic<bool>(false);
+/** The OS writes of stdout so far (`VELT_STDOUT_STATS`, stdout.velt). */
+export const WRITES = new Atomic<u64>(0);
+
+/** Whether stdout is a terminal: asked once (on Windows asking may take tens of milliseconds). */
+function lineBuffered(): bool {
+  const m = MODE.load("relaxed");
+  if (m !== 0) {
+    return m === 2;
+  }
+  return askMode();
+}
+
+@noInline
+function askMode(): bool {
+  const tty = isTerminalOut();
+  MODE.store(tty ? 2 : 1, "relaxed");
+  return tty;
+}
+
+/** Asks for the mode now (the program's start), so that no task's first write waits for it. */
+export function initMode(): void {
+  lineBuffered();
+}
+
+/** Writes the `n` bytes at `p` to the OS's stdout, counted. */
+function osOut(p: usize, n: usize): void {
+  if (n > 0) {
+    WRITES.add(1, "relaxed");
+    osWrite(1, p, n);
+  }
+}
+
+function lockShared(): void {
+  mutexLock(atomicAddress(LOCK));
+  HOLDS_SHARED.set(true);
+}
+
+function unlockShared(): void {
+  HOLDS_SHARED.set(false);
+  mutexUnlock(atomicAddress(LOCK));
+}
+
+/** Writes the shared buffer to the OS and empties it (the lock held). */
+function writeShared(): void {
+  const s = SHARED.load("relaxed") as usize;
+  if (s !== 0) {
+    osOut(s + HEADER, lenOf(s));
+    setLen(s, 0);
+  }
+  DIRTY.store(false, "relaxed");
+}
+
+/** Moves the `n` bytes at `p` into the shared buffer, or straight to the OS when they are many. */
+function publish(p: usize, n: usize): void {
+  lockShared();
+  let s = SHARED.load("relaxed") as usize;
+  if (s === 0) {
+    s = newBlock(CAP + 64);
+    SHARED.store(s as u64, "relaxed");
+  }
+  if (s === 0 || (lenOf(s) === 0 && n >= CAP)) {
+    osOut(p, n);
+  } else {
+    const moved = put(s, p, n);
+    if (moved === 0) {
+      writeShared();
+      osOut(p, n);
+    } else {
+      SHARED.store(moved as u64, "relaxed");
+      if (lenOf(moved) >= CAP) {
+        writeShared();
+      } else {
+        DIRTY.store(true, "relaxed");
+      }
+    }
+  }
+  unlockShared();
+}
+
+/** This thread's buffer, made at its first write; 0 when the allocator has no room. */
+@inline("always")
+function local(): usize {
+  const b = LOCAL.get() as usize;
+  return b !== 0 ? b : newLocal();
+}
+
+@noInline
+function newLocal(): usize {
+  const b = newBlock(CAP + 64);
+  LOCAL.set(b as u64);
+  return b;
+}
+
+/**
+ * Appends the `n` bytes at `p` to this thread's buffer (the hot path of every write of stdout):
+ * inline only where the buffer is there, block buffered and stays below `CAP`, which takes no
+ * publish and no look for a newline; the rest out of line (`appendSlow`).
+ */
+@inline("always")
+export function append(p: usize, n: usize): void {
+  const b = LOCAL.get() as usize;
+  if (b !== 0 && MODE.load("relaxed") === 1) {
+    const start = lenOf(b);
+    if (start + n < CAP) {
+      // SAFETY: the buffer holds `CAP` bytes at least; `p` holds `n`.
+      unsafe {
+        memcpy$out(Ptr.orNull<u8>(b + HEADER + start), Ptr.orNull<u8>(p), n);
+      }
+      setLen(b, start + n);
+      BUFFERED.set(true);
+      return;
+    }
+  }
+  appendSlow(p, n);
+}
+
+/** `append` with the size and line-buffering rules. */
+@noInline
+function appendSlow(p: usize, n: usize): void {
+  const b = local();
+  if (b === 0) {
+    publish(p, n);
+    return;
+  }
+  const start = lenOf(b);
+  let to = b;
+  if (start + n <= sizeOf(b)) {
+    // SAFETY: the buffer has room for `start + n` bytes; `p` holds `n`.
+    unsafe {
+      memcpy$out(Ptr.orNull<u8>(b + HEADER + start), Ptr.orNull<u8>(p), n);
+    }
+    setLen(b, start + n);
+  } else {
+    to = put(b, p, n);
+    if (to === 0) {
+      publishAll(b);
+      publish(p, n);
+      return;
+    }
+    LOCAL.set(to as u64);
+  }
+  BUFFERED.set(true);
+  if (start + n >= CAP) {
+    publishCompleteLines(to, start);
+  } else if (lineBuffered() && hasNewline(p, n)) {
+    publishAll(to);
+    lockShared();
+    writeShared();
+    unlockShared();
+  }
+}
+
+/**
+ * Appends the byte `c` (a space or the newline after a `console.log` argument): inline where the
+ * buffer is there with room below `CAP` and `c` ends no line of a terminal's.
+ */
+@inline("always")
+export function appendByte(c: u8): void {
+  const b = LOCAL.get() as usize;
+  if (b !== 0 && (c !== 10 || MODE.load("relaxed") === 1)) {
+    const len = lenOf(b);
+    if (len + 1 < CAP) {
+      // SAFETY: the buffer holds `CAP` bytes at least.
+      unsafe {
+        addressStore<u8>(b + HEADER + len, c);
+      }
+      setLen(b, len + 1);
+      BUFFERED.set(true);
+      return;
+    }
+  }
+  appendByteRules(c);
+}
+
+/** `appendByte` with the size and line-buffering rules. */
+@noInline
+function appendByteRules(c: u8): void {
+  const b = local();
+  const len = b === 0 ? 0 : lenOf(b);
+  if (b === 0 || len >= sizeOf(b)) {
+    appendByteSlow(c);
+    return;
+  }
+  // SAFETY: the buffer has room for one more byte.
+  unsafe {
+    addressStore<u8>(b + HEADER + len, c);
+  }
+  setLen(b, len + 1);
+  BUFFERED.set(true);
+  if (len + 1 >= CAP) {
+    publishCompleteLines(b, len);
+  } else if (c === 10 && lineBuffered()) {
+    publishAll(b);
+    lockShared();
+    writeShared();
+    unlockShared();
+  }
+}
+
+/** `appendByte` through `append`, when the buffer is full or missing. */
+@noInline
+function appendByteSlow(c: u8): void {
+  // The byte in a string's inline form, whose one byte alone `append` reads: no array, whose
+  // constructor's panic would make every caller of the writer take its caller's location.
+  const one = strAsciiWords(c as u64, 0, 0, 1);
+  append(strDataAddress(one), 1);
+}
+
+/** Whether the `n` bytes at `p` hold a newline. */
+function hasNewline(p: usize, n: usize): bool {
+  // SAFETY: `p` holds `n` bytes.
+  return unsafe { memchr$out(Ptr.orNull<u8>(p), NEWLINE, n) } !== null;
+}
+
+/** Publishes and empties the thread buffer at `b`; gives back what a huge write grew it to. */
+function publishAll(b: usize): void {
+  publish(b + HEADER, lenOf(b));
+  setLen(b, 0);
+  if (sizeOf(b) > 4 * CAP) {
+    // SAFETY: this module's block, shrunk to the usual size (its bytes are written).
+    const p = unsafe { realloc$out(Ptr.orNull<u8>(b), HEADER + CAP + 64) };
+    if (p !== null) {
+      const moved = Ptr.addressOf(p);
+      // SAFETY: the block's header.
+      unsafe {
+        addressStore<u64>(moved + 8, (CAP + 64) as u64);
+      }
+      LOCAL.set(moved as u64);
+    }
+  }
+}
+
+/**
+ * The thread buffer filled up: it is published through its last newline, keeping a trailing
+ * partial line, the start of a `console.log` built from several writes, which no other thread's
+ * output may split. `start`: its length before the last write.
+ */
+function publishCompleteLines(b: usize, start: usize): void {
+  const len = lenOf(b);
+  // A buffer already at `CAP` before the write held no newline (it was published), so only the
+  // new bytes need a look then.
+  const from = start < CAP ? 0 : start;
+  let i = len;
+  // SAFETY: the bytes `from..len` of the buffer.
+  while (i > from && unsafe { addressLoad<u8>(b + HEADER + i - 1) } !== 10) {
+    i--;
+  }
+  if (i === len) {
+    publishAll(b);
+  } else if (i > from) {
+    publish(b + HEADER, i);
+    // SAFETY: the buffer's bytes `i..len` moved to its start.
+    unsafe {
+      memmove$out(Ptr.orNull<u8>(b + HEADER), Ptr.orNull<u8>(b + HEADER + i), len - i);
+    }
+    setLen(b, len - i);
+  } else if (len >= MAX_PARTIAL_LINE) {
+    publishAll(b);
+  }
+}
+
+/** Publishes this thread's buffer into the shared one (the end of a task's poll, a hand-off). */
+export function publishLocal(): void {
+  const b = LOCAL.get() as usize;
+  if (b !== 0 && lenOf(b) > 0) {
+    publishAll(LOCAL.get() as usize);
+  }
+  BUFFERED.set(false);
+}
+
+/** A thread that ends (a blocking pool's): its output published, its buffer given back. */
+export function releaseLocal(): void {
+  publishLocal();
+  const b = LOCAL.get() as usize;
+  if (b !== 0) {
+    LOCAL.set(0);
+    freeBlock(b);
+  }
+}
+
+/** `publishLocal` when this thread may hold output: one load otherwise. */
+@inline("always")
+export function publishIfBuffered(): void {
+  if (BUFFERED.get()) {
+    publishLocal();
+  }
+}
+
+/** Writes this thread's buffer and the shared one to the OS. */
+export function flush(): void {
+  publishLocal();
+  lockShared();
+  writeShared();
+  unlockShared();
+}
+
+/**
+ * Writes the `n` bytes at `p` straight to the OS after everything buffered so far, under the
+ * shared lock, so no other thread's output slips in between: a large byte array, uncopied.
+ */
+export function writeThrough(p: usize, n: usize): void {
+  publishLocal();
+  lockShared();
+  writeShared();
+  osOut(p, n);
+  unlockShared();
+}
+
+/**
+ * A worker about to wait for work: what this thread still holds (output of code that ran outside
+ * a poll), then the shared buffer if it holds anything.
+ */
+export function flushIdle(): void {
+  publishIfBuffered();
+  if (DIRTY.load("relaxed")) {
+    lockShared();
+    writeShared();
+    unlockShared();
+  }
+}
+
+/**
+ * The flush before the process ends (an exit, a panic, an uncaught error): everything published,
+ * then this thread's buffer. It never waits for the shared lock forever: a thread that holds it
+ * is usually writing and lets go soon, but this thread may hold it itself (a panic under it), or
+ * the holder may be stuck; after about two seconds (or at once under its own lock) this thread's
+ * output is written alone.
+ */
+export function flushForExit(): void {
+  EXITING.store(true, "relaxed");
+  const locked = !HOLDS_SHARED.get() && tryLockFor(2000);
+  if (locked) {
+    writeShared();
+  }
+  const b = LOCAL.get() as usize;
+  if (b !== 0) {
+    osOut(b + HEADER, lenOf(b));
+    setLen(b, 0);
+  }
+  BUFFERED.set(false);
+  if (locked) {
+    unlockShared();
+  }
+}
+
+/**
+ * Takes the shared lock if it comes free within about `ms` milliseconds: a hundred tries that give
+ * the core away between them, then one a millisecond. Counted, not clocked: a clock's per-thread
+ * buffer would be state the writer's prebuilt object shares with the program.
+ */
+function tryLockFor(ms: u32): bool {
+  const a = atomicAddress(LOCK);
+  let tries: u32 = 0;
+  while (true) {
+    // SAFETY: the lock's word, changed only atomically (velt/lang/hooks/mutex).
+    if (unsafe { addressAtomicCas<u32>(a, 0, 1, "acquire", "relaxed") } === 0) {
+      HOLDS_SHARED.set(true);
+      return true;
+    }
+    if (tries < 100) {
+      yieldThread();
+    } else if (tries - 100 < ms) {
+      pauseMs();
+    } else {
+      return false;
+    }
+    tries += 1;
+  }
+}
+
+/** Whether a flush on the way out ran: the process is ending. */
+export function exiting(): bool {
+  return EXITING.load("relaxed");
+}
+
+function isTerminalOut(): bool {
+  return stdoutIsTerminal();
+}

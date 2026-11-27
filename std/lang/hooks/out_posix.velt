@@ -1,0 +1,117 @@
+// velt/lang/hooks (internal): standard output's and standard error's writes to the OS on macOS and
+// Linux (`#stdout-os`): `write` until every byte is out, again after `EINTR`; a non-blocking pipe
+// that is full (`EAGAIN`) is waited for, as Node's synchronous writes to a pipe wait; a closed
+// pipe (`EPIPE`) ends the program as the signal would have (velt ignores `SIGPIPE` so that a
+// socket's peer going away is an error); any other error (a full disk) drops the bytes, as
+// `console.log` does in Node. The declarations are the same on both (`useconds_t` is 32 bits on
+// each), so the file is too.
+
+import { Ptr } from "velt/ffi/ptr";
+import { errno } from "velt/ffi/errno";
+import { noInline } from "velt/lang/intrinsics";
+
+declare c("c") function write$out(fd: i32, buf: Ptr<u8> | null, n: usize): isize;
+declare c("c") function signal$out(sig: i32, handler: usize): usize;
+declare c("c") function raise$out(sig: i32): i32;
+declare c("c") function _exit$out(code: i32): void;
+declare c("c") function sched_yield$out(): i32;
+declare c("c") function usleep$out(us: u32): i32;
+declare c("c") function isatty$out(fd: i32): i32;
+declare c("c") function __cxa_atexit(
+  f: Ptr<u8> | null,
+  arg: Ptr<u8> | null,
+  dso: Ptr<u8> | null,
+): i32;
+
+const EINTR: i32 = 4;
+const EPIPE: i32 = 32;
+const SIGPIPE: i32 = 13;
+/** `EAGAIN` on Linux and on macOS (each is `EDEADLK` on the other, which `write` never gives). */
+const EAGAIN_LINUX: i32 = 11;
+const EAGAIN_MAC: i32 = 35;
+
+/** Gives the core to another thread that is ready to run, if any (a spin at the writer's lock). */
+export function yieldThread(): void {
+  // SAFETY: no precondition.
+  unsafe {
+    sched_yield$out();
+  }
+}
+
+/**
+ * Whether standard output is a terminal: asked once by the writer, which keeps the answer (not
+ * velt/process/tty's cache, state the writer's prebuilt object would share with the program).
+ */
+export function stdoutIsTerminal(): bool {
+  // SAFETY: isatty only inspects the descriptor.
+  return unsafe { isatty$out(1) } === 1;
+}
+
+/** Waits about a millisecond (the exit flush's wait for the writer's lock). */
+export function pauseMs(): void {
+  // SAFETY: no precondition.
+  unsafe {
+    usleep$out(1000);
+  }
+}
+
+/**
+ * Has the C library's `exit` call the C function at `f`, of C type `void f(void *)`: glibc's
+ * `atexit` is in its static part, which the dev JIT's loaded C library lacks; `__cxa_atexit` is
+ * exported by it and by macOS's.
+ * Out of line: the call stays the writer's, which the build stamp's record of what a program
+ * reaches outside itself leaves out (veltc `outside.rs`), however its callers are inlined.
+ */
+@noInline
+export function registerAtExit(f: usize): void {
+  // SAFETY: `f` is a C function taking a `void *` (null here); no shared object owns it.
+  unsafe {
+    __cxa_atexit(Ptr.orNull<u8>(f), null, null);
+  }
+}
+
+/** Writes the `n` bytes at `p` to file descriptor `fd` (1 or 2). */
+export function osWrite(fd: i32, p: usize, n: usize): void {
+  let done: usize = 0;
+  while (done < n) {
+    // SAFETY: the caller's `n` bytes at `p`; `done` of them are written.
+    const got = unsafe { write$out(fd, Ptr.orNull<u8>(p + done), n - done) };
+    if (got > 0) {
+      done += got as usize;
+      continue;
+    }
+    if (got === 0) {
+      return;
+    }
+    // SAFETY: only reads this thread's `errno`, which the failed `write` just left (read in
+    // place: velt/os/rt's slot would be state shared with the program, which the writer's
+    // prebuilt object may not hold).
+    const e = unsafe { errno() };
+    if (e === EINTR) {
+      continue;
+    }
+    if (e === EAGAIN_LINUX || e === EAGAIN_MAC) {
+      // Room comes as the reader reads: a millisecond's wait between tries.
+      // SAFETY: no precondition.
+      unsafe {
+        usleep$out(1000);
+      }
+      continue;
+    }
+    if (e === EPIPE) {
+      dieOfBrokenPipe();
+    }
+    return;
+  }
+}
+
+/** Ends the program by `SIGPIPE`, its default action (141 if that doesn't end it). */
+function dieOfBrokenPipe(): never {
+  // SAFETY: the default action (`SIG_DFL` is 0) back, then the signal: the process ends.
+  unsafe {
+    signal$out(SIGPIPE, 0);
+    raise$out(SIGPIPE);
+    _exit$out(141);
+  }
+  while (true) {}
+}
