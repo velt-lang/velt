@@ -12,8 +12,8 @@
 //! HTTP server, a ref'd timer) is held, or a task runs or waits for a timer or I/O (quiet.rs,
 //! which also ends an `async main` that can never finish). The host has one worker thread
 //! ([`worker_count`], `VELT_THREADS` or the cores, is the executor's count that the old ABI
-//! reports); it flushes buffered stdout whenever it goes idle, so output written from the glue
-//! shows promptly.
+//! reports). Standard output is std's (std/lang/hooks/stdout.velt), which the runtime neither
+//! buffers nor flushes.
 
 mod handle;
 mod host;
@@ -39,12 +39,7 @@ pub fn keep_alive_acquire() {
 }
 
 /// Release a keep-alive reference taken with [`keep_alive_acquire`].
-///
-/// A hand-off point: releasing the last reference lets the program's exit path continue on the
-/// main thread, which flushes stdout and ends the process; what this thread printed (a timer
-/// callback's last line) must be published before that.
 pub fn keep_alive_release() {
-    crate::io::publish_before_handoff();
     if KEEP_ALIVE.fetch_sub(1, Ordering::SeqCst) == 1 {
         // Released outside a worker (which signals when it goes idle): the end may be here.
         if !super::quiet::on_worker() {
@@ -83,7 +78,6 @@ pub fn wait_for_the_end() {
     if KEEP_ALIVE.load(Ordering::SeqCst) == 0 && alive_tasks() == 0 {
         return;
     }
-    crate::io::flush_stdout();
     static NEVER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     super::quiet::wait(&QUIET, &NEVER);
 }
@@ -112,14 +106,9 @@ fn queued_tasks() -> usize {
     host::queued_tasks()
 }
 
-/// The park hook of every worker: publish its output, then count it idle (quiet.rs).
+/// The park hook of every worker: count it idle (quiet.rs); the last one checks whether the
+/// process is done.
 pub(super) fn parked() {
-    crate::io::flush_idle();
-    quiet_parked();
-}
-
-/// A worker goes idle (quiet.rs): the last one checks whether the process is done.
-fn quiet_parked() {
     super::quiet::parked(&QUIET);
 }
 
@@ -202,28 +191,4 @@ pub fn block_on<F: Future>(f: F) -> F::Output {
 /// How many tasks are alive (spawned and not finished); 0 if the host never started.
 pub(crate) fn alive_tasks() -> usize {
     host::alive_tasks()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn releasing_a_keep_alive_publishes_this_threads_output_first() {
-        use crate::io::handoff_probe::{buffer_output, published};
-        keep_alive_acquire();
-        buffer_output();
-        keep_alive_release();
-        assert!(published());
-    }
-
-    #[test]
-    fn an_idle_worker_publishes_this_threads_output() {
-        // Output printed outside a task poll (a future dropped after it finished) has no
-        // end-of-poll publish: the idle hook must publish it, not only write the shared buffer.
-        use crate::io::handoff_probe::{buffer_output, published};
-        buffer_output();
-        crate::io::flush_idle();
-        assert!(published());
-    }
 }

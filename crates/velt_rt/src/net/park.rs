@@ -127,7 +127,7 @@ pub unsafe extern "C" fn velt_rt_tcp_unpark(key: *const VeltStr, settled: u32) -
                 }
             }
         };
-        // Closed with the lock let go: closing publishes this thread's output (a hand-off).
+        // Closed with the lock let go.
         for s in stale {
             velt_rt_tcp_close(s);
         }

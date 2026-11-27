@@ -324,12 +324,15 @@ fn mismatches(defs: &BTreeMap<String, Vec<(Sig, PathBuf)>>, required: bool) -> V
 /// std/process/tty_wasm.velt, env_wasm.velt, cwd_wasm.velt and memory_wasm.velt (`#tty`'s,
 /// `#env-sys`', `#cwd-sys`' and `#memory-sys`'s default variants: native builds ask the OS
 /// from std), std/task/catch_rt.velt (`#task-catch`'s default variant: native builds catch
-/// panics on the executor in Velt, catch_sched.velt), and std/task/signal_rt.velt
-/// (`#task-signal`'s default variant: native builds keep abort signals in std) (#2196).
+/// panics on the executor in Velt, catch_sched.velt), std/task/signal_rt.velt
+/// (`#task-signal`'s default variant: native builds keep abort signals in std) and
+/// std/lang/hooks/out_rt.velt (`#stdout-sys`' default variant: native builds write stdout and
+/// stderr from std, out_native.velt) (#2196).
 const WASM_ONLY_BINDINGS: &[&str] = &[
     "std/fs/rt.velt",
     "std/task/catch_rt.velt",
     "std/task/signal_rt.velt",
+    "std/lang/hooks/out_rt.velt",
     "std/process/tty_wasm.velt",
     "std/process/env_wasm.velt",
     "std/process/cwd_wasm.velt",

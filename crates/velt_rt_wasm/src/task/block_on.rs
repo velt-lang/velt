@@ -148,7 +148,9 @@ pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
     while !run_until_idle(&mut root) && wait_for_timers() {}
     if !root.done {
         // Nothing can settle the top-level `await` the root waits at, as Node ends.
-        crate::panic::velt_rt_exit(crate::top_level_await::unfinished_exit_code());
+        crate::panic::velt_rt_exit(crate::top_level_await::unfinished_exit_code(|w| {
+            crate::io::write_bytes(2, w)
+        }));
     }
     RETURNED.set(Some(root));
 }

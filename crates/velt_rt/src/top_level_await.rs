@@ -47,9 +47,10 @@ fn waiting_at() -> Option<&'static [u8]> {
 }
 
 /// The program ends with `main` unfinished: if it waits at a top-level `await`, Node's warning
-/// (written to stderr in one write) and exit code 13; else 0, as Node exits with an `async
-/// main`'s promise pending.
-pub fn unfinished_exit_code() -> i32 {
+/// (given to `warn`, which writes it to stderr in one write after what stdout holds) and exit
+/// code 13; else 0, as Node exits with an `async main`'s promise pending. Only velt_rt_wasm's
+/// executor gets here; a native program's top-level `await` is std's (sched.velt).
+pub fn unfinished_exit_code(warn: impl FnOnce(&[u8])) -> i32 {
     let Some(site) = waiting_at() else {
         return 0;
     };
@@ -59,9 +60,8 @@ pub fn unfinished_exit_code() -> i32 {
         Some((head, col)) if col.bytes().all(|b| b.is_ascii_digit()) => head,
         _ => &site,
     };
-    crate::io::flush_stdout();
     let line = format!("Warning: Detected unsettled top-level await at {at}\n");
-    crate::io::write_bytes(2, line.as_bytes());
+    warn(line.as_bytes());
     13
 }
 

@@ -6,7 +6,7 @@
 //!
 //! - [`StreamObj::write_later`] appends to the stream's [`Later`] buffer and puts the stream on
 //!   this thread's list of streams to send ([`DUE`]) once per poll.
-//! - [`flush_due`] runs after every poll of a task (next to `publish_thread_output`): it writes
+//! - [`flush_due`] runs after every poll of a task: it writes
 //!   each stream's bytes at once when the socket takes them, and leaves what it cannot take to a
 //!   background task that holds the socket's turn while it writes.
 //! - While deferred bytes are waiting or being written, a `write` joins the same queue
@@ -74,6 +74,10 @@ impl Later {
 }
 
 /// Sends the bytes deferred during the poll that just ended on this thread.
+// Nothing calls it since the runtime's executor went: its last caller, the runtime's end of a
+// poll (`publish_thread_output`, deleted with the runtime's stdout, #2196), was dead already.
+// Programs defer their writes in std (std/net/tcp_sched.velt); this file's own test still runs it.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn flush_due() {
     let due = DUE.with(|d| std::mem::take(&mut *d.borrow_mut()));
     for obj in due {

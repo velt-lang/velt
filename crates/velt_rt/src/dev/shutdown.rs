@@ -2,7 +2,8 @@
 //! version (SIGTERM on Unix; on Windows, which has no SIGTERM, `stop` on the stop channel opened
 //! over the dev channel). HTTP servers stop accepting (the supervisor keeps the listening socket,
 //! so new connections queue for the next version), finish their in-flight requests for up to
-//! [`DRAIN`], and then the process flushes stdout and exits with status 0.
+//! [`DRAIN`], and then the process exits with status 0 (what stdout buffered since a worker last
+//! went idle is lost: std/lang/hooks/out_native.velt).
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Once, OnceLock};
@@ -45,7 +46,6 @@ async fn watch_stop() {
         }
     };
     let _ = tokio::time::timeout(DRAIN + Duration::from_millis(200), all_drained).await;
-    crate::io::flush_stdout();
     std::process::exit(0);
 }
 

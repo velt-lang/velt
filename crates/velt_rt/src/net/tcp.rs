@@ -56,8 +56,6 @@ pub unsafe extern "C" fn velt_rt_tcp_listen(addr: *const VeltStr) -> *mut VeltFu
 /// `connect("host:port")` → `IoResult<StreamHandle>` (TCP_NODELAY enabled).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_connect(addr: *const VeltStr) -> *mut VeltFut {
-    // A hand-off: the server (often in this program) may accept on another worker at once.
-    crate::io::publish_before_handoff();
     let addr = text_arg(addr);
     new_leaf(async move { stream_result(TcpStream::connect(addr.as_str()).await) })
 }
@@ -138,9 +136,6 @@ pub unsafe extern "C" fn velt_rt_tcp_write_bytes(
 }
 
 pub(super) fn write_copy(s: StreamHandle, data: &[u8]) -> *mut VeltFut {
-    // A hand-off: the peer (often a task of this program) may read these bytes on another
-    // worker before this task's poll ends, so what it printed before the write goes first.
-    crate::io::publish_before_handoff();
     STREAMS.op::<()>(s, |obj| {
         // Bytes deferred with `writeLater` go first: these join their queue.
         if obj.later.active() {
@@ -191,7 +186,6 @@ pub unsafe extern "C" fn velt_rt_tcp_try_write(s: StreamHandle, data: *const Vel
 
 /// What `velt_rt_tcp_try_write` writes of `data`.
 pub(super) fn try_write_now(s: StreamHandle, data: &[u8]) -> u64 {
-    crate::io::publish_before_handoff();
     let Some(obj) = STREAMS.get(s) else { return 0 };
     if obj.later.active() {
         return 0;
@@ -214,8 +208,6 @@ pub(super) fn try_write_now(s: StreamHandle, data: &[u8]) -> u64 {
 /// Shut down the write half (the peer reads end of stream). `out` receives the status.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_shutdown(s: StreamHandle, out: *mut VeltErr) {
-    // The peer reads the end of the stream: a hand-off like a write.
-    crate::io::publish_before_handoff();
     let Some(obj) = STREAMS.get(s) else {
         return out.write(closed_error());
     };
@@ -230,7 +222,6 @@ pub unsafe extern "C" fn velt_rt_tcp_shutdown(s: StreamHandle, out: *mut VeltErr
 /// is shut down in both directions). The handle stays open until `velt_rt_tcp_close`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_abort(s: StreamHandle) {
-    crate::io::publish_before_handoff();
     if let Some(obj) = STREAMS.get(s) {
         obj.abort();
     }
@@ -252,7 +243,6 @@ pub unsafe extern "C" fn velt_rt_tcp_peer_addr(s: StreamHandle, out: *mut VeltSt
 /// through any copy, is a no-op.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_tcp_close(s: StreamHandle) {
-    crate::io::publish_before_handoff();
     if let Some(obj) = STREAMS.remove(s) {
         // An operation still in flight holds the stream too: its waits for input end now.
         if std::sync::Arc::strong_count(&obj) > 1 {

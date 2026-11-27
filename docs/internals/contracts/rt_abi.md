@@ -203,8 +203,9 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
   Release runtimes compile the counters out; to count optimized code, link a release-built
   program against the debug runtime (`VELT_RT_LIB` naming `<target>/debug/libvelt_rt.a`, or
   `velt_rt.lib` on Windows).
-- `VELT_STDOUT_STATS=1` with a **debug** runtime prints `stdout stats: writes=<n>` to stderr at
-  exit: how many times buffered stdout was written to the OS. Tests check buffering with it
+- `VELT_STDOUT_STATS=1` prints `stdout stats: writes=<n>` to stderr at exit, in any build of a
+  native program: how many times buffered stdout was written to the OS. std's writer prints it in
+  `flushForExit` (std/lang/hooks/out_native.velt), not the runtime. Tests check buffering with it
   (piped output goes out in blocks: far fewer writes than lines) instead of timing a program.
 
 | Symbol | Signature | Notes |
@@ -1160,15 +1161,22 @@ process, behind its own lock, which never yields the core (a source generator ma
 given back as the table empties). Its entries take `Ptr<u8>`, pointer-sized on every target.
 
 ## Output
-`stream`: 1 = stdout (buffered, flushed at exit / before any stderr write / on `velt_rt_flush`),
-2 = stderr.
+Standard output and standard error are std's (std/lang/hooks/stdout.velt, #2196): lowering calls
+its hooks `writeStr(stream, s)`, `writeBool(stream, v)` and `writeByte(stream, b)` (`stream`: 1 =
+stdout, buffered; 2 = stderr, written after what stdout holds), `initOutput()` first thing in
+`velt_main`, and `flushForExit()` before every exit Velt code reaches: each return of
+`velt_main`, `velt_rt_exit` (`process.exit`, an uncaught error's exit) and `velt_rt_panic`. On a
+native target the writer is std's own (out_native.velt) and velt_rt has no output functions; an
+exit the runtime takes by itself (a fatal runtime error) does not flush. On WebAssembly the hooks
+call velt_rt_wasm's writer (out_rt.velt):
 
 | Symbol | Signature |
 |---|---|
-| `velt_rt_write_str` | `(uint32_t stream, const VeltStr* s)` |
-| `velt_rt_write_bool` | `(uint32_t stream, uint8_t v)` |
-| `velt_rt_write_byte` | `(uint32_t stream, uint8_t b)` — used for `' '` and `'\n'` |
-| `velt_rt_flush` | `(void)` |
+| `velt_rt_write_str` | `(uint32_t stream, const VeltStr* s)` — WebAssembly only |
+| `velt_rt_write_bool` | `(uint32_t stream, uint8_t v)` — WebAssembly only |
+| `velt_rt_write_byte` | `(uint32_t stream, uint8_t b)` — `' '` and `'\n'`; WebAssembly only |
+| `velt_rt_flush` | `(void)` — WebAssembly only |
+| `velt_rt_stdout_write_bytes` | `(const VeltBytes* b)` — `stdout.write(bytes)`; WebAssembly only |
 
 `console.log(a, b)` lowers to
 `write_<a>(1, a); write_byte(1, ' '); write_<b>(1, b); write_byte(1, '\n')`, except that a number
@@ -1193,7 +1201,7 @@ functions into a call of std's hook for it (std/lang/hooks/heap.velt: `heapAlloc
 `mi_realloc`, `mi_realloc_aligned`, `mi_free`, in the runtime's archive) with the same contract: a
 size of 0 gives `align` back and its free does nothing, an alignment of 8 or less takes the plain
 function, and growth past the array length limit or a request mimalloc refuses stops the program
-with the runtime's message and exit code (through `velt_rt_write_str` and `velt_rt_exit`, not a
+with the runtime's message and exit code (through `flushForExit`, `writeStr` and `velt_rt_exit`, not a
 panic a `catchVeltPanic` could catch or that could unwind through a `nounwind` call). Array growth
 calls `velt_rt_realloc` for an empty buffer too (an old size of 0 allocates). The runtime's Rust
 uses mimalloc too (its global allocator), so blocks move both ways.
@@ -1302,5 +1310,6 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
   `velt_rt_math_umulh(a: u64, b: u64): u64` (high 64 bits of the product),
   `velt_rt_math_f64_bits(x: f64): u64` and `velt_rt_math_bits_f64(b: u64): f64` (IEEE 754 bit
   casts, `x.toBits()` / `f64.fromBits(b)`; both backends emit them inline).
-- Binary stdio: `velt_rt_stdout_write_bytes(bytes: u8[])` (synchronous, ordered with
-  `console.log`). Standard input is std code (rt_abi_async.md §14.4).
+- Binary stdio: std's `stdoutWriteBytes(bytes: u8[])` (std/lang/hooks/stdout.velt; synchronous,
+  ordered with `console.log`; velt_rt_wasm's `velt_rt_stdout_write_bytes` on WebAssembly).
+  Standard input is std code (rt_abi_async.md §14.4).

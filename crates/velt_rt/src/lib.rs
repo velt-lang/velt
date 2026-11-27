@@ -1,4 +1,4 @@
-//! Velt runtime: process entry, allocation, strings, printing, panics, and the tokio-based async
+//! Velt runtime: process entry, allocation, strings, panics, and the tokio-based async
 //! host for fs, TCP and HTTP, plus the string-method and string-builder support used by
 //! generated code. Exposes a C ABI documented in docs/internals/contracts/rt_abi.md
 //! (sync core) and docs/internals/contracts/rt_abi_async.md (async, std/fs, std/net, std/http, process).
@@ -30,7 +30,6 @@ pub mod host;
 pub mod inspect;
 mod inspect_cycles;
 mod inspect_layout;
-pub mod io;
 pub mod math;
 pub mod mem;
 pub mod mutex;

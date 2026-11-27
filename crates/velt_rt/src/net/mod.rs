@@ -2,8 +2,6 @@
 //! UTF-8 decoding for `readString` (`utf8.rs`). UDP sockets and DNS lookups are std's
 //! (std/net/udp/udp_sched.velt, std/net/dns/lookup_sched.velt).
 
-#[cfg(test)]
-mod handoff_tests;
 pub(crate) mod later;
 pub mod park;
 pub mod stream;

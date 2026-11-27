@@ -41,7 +41,6 @@ impl Signal {
     }
 
     fn abort(&self, reason: &Reason) {
-        crate::io::publish_before_handoff();
         {
             let mut r = lock(&self.reason);
             if self.aborted.load(Ordering::Acquire) {
