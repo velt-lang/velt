@@ -37,6 +37,7 @@ import {
   STRIDE,
   tableLen,
 } from "velt/lang/string/crumbs";
+import { unitAt } from "velt/lang/string/code_units";
 
 declare function velt_simd_u8x16_splat(x: u8): u8x16;
 declare function velt_simd_u8x16_and(a: u8x16, b: u8x16): u8x16;
@@ -267,4 +268,14 @@ function byteToUnitWide(s: string, n: usize, units: usize, b: usize): usize {
   }
   remember(s, unit, (b as u64) << 1);
   return unit;
+}
+
+/** `s.charCodeAt(i)` past lowering's inline read of an ASCII string (velt_vir `lower/strings.rs`,
+ * the `string_char_code_at` hook, #2816): the UTF-16 code unit at `i` (the high or the low half
+ * of a pair), or -1 out of range (JS: NaN). */
+export function charCodeAtWide(s: string, i: i64): i64 {
+  if (i < 0 || (i as u64) >= (strLen(s) as u64)) {
+    return -1;
+  }
+  return unitAt(s, unitToByte(s, i as usize)) as i64;
 }

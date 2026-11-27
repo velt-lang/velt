@@ -246,7 +246,7 @@ fn check_one(rng: &mut Rng, alphabets: &[Alphabet]) -> Result<(), String> {
             }
             2 => {
                 let i = gen_pos(rng, s.len());
-                let got = velt_rt_str_char_code_at(rs, i);
+                let got = crate::str_ops::slice::char_code_at(rs, i);
                 diff(
                     format!("{}.charCodeAt({i})", show(&s)),
                     got,

@@ -381,16 +381,11 @@ impl FnLower<'_, '_> {
     /// `undefined`, as Node reads a brand from a primitive. Continues in the block for another
     /// key.
     pub(super) fn program_symbol_undefined(&mut self, key: vir::Local, out: &Place) {
-        let k = Operand::Copy(Place::local(key));
-        let unit = Place::local(self.temp(Ty::I64));
-        self.call_rt(
-            Rt::StrCharCodeAt,
-            vec![k, cint(0, Ty::I64)],
-            Some(unit.clone()),
-        );
+        // U+FFFF is `EF BF BF`.
+        let lead = self.str_lead_bytes(&Operand::Copy(Place::local(key)), 3);
         let m = self.rvalue_temp(
             Ty::Bool,
-            Rvalue::Binary(BinOp::Eq, Operand::Copy(unit), cint(0xffff, Ty::I64)),
+            Rvalue::Binary(BinOp::Eq, lead, cint(0xef_bf_bf, Ty::I64)),
         );
         let (yes, no) = (self.new_block(), self.new_block());
         self.branch(m, yes, no);

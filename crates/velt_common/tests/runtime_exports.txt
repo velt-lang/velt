@@ -89,7 +89,6 @@ velt_rt velt_rt_stdout_write_bytes
 velt_rt velt_rt_str_append
 velt_rt velt_rt_str_array_drop
 velt_rt velt_rt_str_byte_slice
-velt_rt velt_rt_str_char_code_at
 velt_rt velt_rt_str_clone
 velt_rt velt_rt_str_cmp
 velt_rt velt_rt_str_concat

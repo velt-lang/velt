@@ -326,13 +326,8 @@ impl FnLower<'_, '_> {
     /// digit). Continues in the block for another key.
     pub(super) fn has_index_key(&mut self, key: vir::Local, len: Operand, yes: i128, no: i128) {
         let k = Operand::Copy(Place::local(key));
-        let c = Place::local(self.temp(Ty::I64));
-        self.call_rt(
-            Rt::StrCharCodeAt,
-            vec![k.clone(), cint(0, Ty::I64)],
-            Some(c.clone()),
-        );
-        let off = Rvalue::Binary(BinOp::Sub, Operand::Copy(c), cint(b'0' as i128, Ty::I64));
+        let c = self.str_lead_bytes(&k, 1);
+        let off = Rvalue::Binary(BinOp::Sub, c, cint(b'0' as i128, Ty::I64));
         let off = self.rvalue_temp(Ty::I64, off);
         let off = self.rvalue_temp(Ty::U64, Rvalue::Cast(off, Ty::U64));
         let digit = Rvalue::Binary(BinOp::Lt, off, cint(10, Ty::U64));

@@ -94,6 +94,9 @@ pub(crate) struct Env<'p> {
     externs: &'p [ExternFn],
     /// Per function: is it (an instance of) the prelude's `floatIndex`?
     float_index: Vec<bool>,
+    /// Per function: is it (an instance of) std's `charCodeAtWide`, `s.charCodeAt(i)` past the
+    /// inline ASCII path (`velt_vir` `lower/strings.rs`)?
+    char_code_at: Vec<bool>,
     /// The arrays' aggregate: its field 1 is a length, below 2^53.
     array: Option<AggId>,
     /// Per aggregate, its field types: the type of a value read from a field.
@@ -124,6 +127,7 @@ impl<'p> Env<'p> {
         params: params::ParamFacts,
     ) -> Env<'p> {
         let float_index = instances_of(funcs, &[FLOAT_INDEX]);
+        let char_code_at = instances_of(funcs, &[flow::CHAR_CODE_AT]);
         let array = aggs
             .iter()
             .position(|a| a.name == velt_vir::ARRAY_AGG_NAME)
@@ -135,6 +139,7 @@ impl<'p> Env<'p> {
         Env {
             externs,
             float_index,
+            char_code_at,
             array,
             field_tys,
             params,
@@ -146,6 +151,10 @@ impl<'p> Env<'p> {
         self.externs
             .get(id.0 as usize)
             .map_or("", |e| e.symbol.as_str())
+    }
+
+    fn is_char_code_at(&self, callee: &Callee) -> bool {
+        matches!(callee, Callee::Func(f) if self.char_code_at.get(f.0 as usize) == Some(&true))
     }
 
     fn is_float_index(&self, callee: &Callee) -> bool {

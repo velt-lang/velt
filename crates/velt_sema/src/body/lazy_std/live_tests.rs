@@ -206,7 +206,8 @@ fn a_program_with_every_construct_keeps_them_all() {
                m.set(k, 1); const t = Date.now(); const q = performance.now(); const p = 2.5 ** q; const n: i64 = 7 ** 1; \
                const u: u32 = 7; const xs = [\"a\"]; const a: any = \"s\"; \
                const mu = new Mutex<i64>(1); const g = mu.with((v) => v + 1); \
-               console.log(`n=${n}`, String(u), xs[n - 7], m.has(k), p, t, a == \"t\", g); }";
+               const c = \"é\".charCodeAt(0); \
+               console.log(`n=${n}`, String(u), xs[n - 7], m.has(k), p, t, a == \"t\", g, c); }";
     let (present, _) = live(src);
     for c in [
         TextInt,
@@ -219,6 +220,7 @@ fn a_program_with_every_construct_keeps_them_all() {
         Construct::Clock,
         Construct::Weak,
         Construct::Mutex,
+        Construct::CharCode,
     ] {
         assert!(
             present & c.bit() != 0,

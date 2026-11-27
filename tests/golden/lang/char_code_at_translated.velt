@@ -1,0 +1,74 @@
+// `charCodeAt` and `codePointAt` of text that is not ASCII, translated by std's
+// `charCodeAtWide` (std/lang/string/positions.velt, #2816): long heap strings (with breadcrumbs),
+// a long literal (none), slices, BMP, astral and lone surrogates, read forward, backward and out
+// of order, and across strings freed while a loop runs; and the `any` glue's test of a key's first
+// character for a digit, on non-ASCII keys. Expected output from node 22; the twin (.mjs) maps
+// Velt's -1 back to NaN's.
+
+const BRAND = Symbol("brand");
+
+/** Has `v` no member keyed by `BRAND` (a symbol the program made)? */
+function noBrand(v: any): boolean {
+  return v[BRAND] === undefined;
+}
+
+/** A checksum of the code units `s.charCodeAt(i)` gives at each `i` of `order`. */
+function sum(s: string, order: number[]): number {
+  let h = 7;
+  for (const i of order) {
+    h = (h * 31 + s.charCodeAt(i) + 2) % 1000000007;
+  }
+  return h;
+}
+
+function forward(n: number): number[] {
+  const out: number[] = [];
+  for (let i = -2; i < n + 2; i++) {
+    out.push(i);
+  }
+  return out;
+}
+
+function main() {
+  const hi = String.fromCharCode(0xd83d);
+  const lo = String.fromCharCode(0xde00);
+  const pieces = ["é", "日本", "😀", "a", hi + "x", "y" + lo, lo + hi, "𝄞z"];
+  let heap = "";
+  for (let i = 0; i < 400; i++) {
+    heap += pieces[i % pieces.length];
+  }
+  const literal = "naïve café — 日本語のテキスト 😀🎉 𝄞 and some ASCII past the stride of breadcrumbs, again: naïve café — 日本語のテキスト 😀🎉 𝄞";
+  for (const s of [heap, literal, heap.slice(3), heap.slice(5, 300), literal.slice(1)]) {
+    const n = s.length;
+    const fwd = forward(n);
+    const back = fwd.slice().reverse();
+    const jumps: number[] = [];
+    for (let k = 0; k < n; k++) {
+      jumps.push((k * 97) % n);
+    }
+    console.log(n, sum(s, fwd), sum(s, back), sum(s, jumps));
+    console.log(s.codePointAt(0), s.codePointAt(n - 1), s.codePointAt(Math.floor(n / 2)));
+  }
+  // Strings made and freed while another is read: the translation of each stays right.
+  let total = 0;
+  for (let round = 0; round < 20; round++) {
+    let t = "";
+    for (let i = 0; i < 100 + round; i++) {
+      t += pieces[(i + round) % pieces.length];
+    }
+    for (let i = 0; i < t.length; i += 3) {
+      total = (total * 7 + t.charCodeAt(i)) % 1000003;
+    }
+    total = (total + heap.charCodeAt(round * 13)) % 1000003;
+  }
+  console.log(total);
+  // Keys through `any`: a digit first is an index; a non-ASCII first character is not.
+  const arr: any = [5, 6];
+  const keys = ["0", "1", "é", "日", "😀", hi, "", "1é"];
+  console.log(keys.map((k) => k in arr).join(","));
+  const o: any = { "1": "one", "é": "e", "😀": "smile" };
+  console.log(keys.map((k) => k in o).join(","));
+  // A symbol's key on values without fields: the glue tests its first character.
+  const tup: [number, string] = [1, "é"];
+  console.log(noBrand(tup), noBrand((x: number) => x + 1), noBrand(true), noBrand(3.5));
+}

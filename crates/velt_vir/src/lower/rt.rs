@@ -15,7 +15,6 @@ pub(super) enum Rt {
     StrDrop,
     StrCmp,
     /// `charCodeAt` on a non-ASCII string (ASCII is read inline).
-    StrCharCodeAt,
     WriteStr,
     TlaAt,
     WriteBool,
@@ -149,7 +148,6 @@ impl Rt {
             Rt::StrClone => ("velt_rt_str_clone", vec![Ptr, Ptr], Unit, false),
             Rt::StrDrop => ("velt_rt_str_drop", vec![Ptr], Unit, false),
             Rt::StrCmp => ("velt_rt_str_cmp", vec![Ptr, Ptr], I32, false),
-            Rt::StrCharCodeAt => ("velt_rt_str_char_code_at", vec![Ptr, I64], I64, false),
             Rt::WriteStr => ("velt_rt_write_str", vec![U32, Ptr], Unit, false),
             Rt::TlaAt => ("velt_rt_tla_at", vec![Ptr], Unit, false),
             Rt::WriteBool => ("velt_rt_write_bool", vec![U32, Bool], Unit, false),

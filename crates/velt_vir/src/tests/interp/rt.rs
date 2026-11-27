@@ -151,11 +151,6 @@ impl Interp<'_> {
                 let (x, y) = (self.str_text(a[0]), self.str_text(a[1]));
                 return Ok(x.encode_utf16().cmp(y.encode_utf16()) as i32 as u32 as u64);
             }
-            "velt_rt_str_char_code_at" => {
-                let units: Vec<u16> = self.str_text(a[0]).encode_utf16().collect();
-                let unit = usize::try_from(a[1] as i64).ok().and_then(|i| units.get(i));
-                return Ok(unit.map_or(-1, |&u| u as i64) as u64);
-            }
             "velt_rt_write_str" => {
                 let s = self.str_text(a[1]);
                 self.out(a[0], &s);
