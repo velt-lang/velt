@@ -110,3 +110,93 @@ fn no_branch_or_address_depends_on_a_secret() {
         run(&["--memcheck"]);
     }
 }
+
+/// `program` compiled with `cc` and `args` into `out`, or the compiler's output.
+fn cc(program: &Path, out: &Path, args: &[&str]) -> Result<(), String> {
+    let made = Command::new("cc")
+        .args(args)
+        .arg("-o")
+        .arg(out)
+        .arg(program)
+        .output()
+        .map_err(|e| e.to_string())?;
+    match made.status.success() {
+        true => Ok(()),
+        false => Err(String::from_utf8_lossy(&made.stderr).into_owned()),
+    }
+}
+
+/// What scripts/ct-shim.c counts of tests/ct_counts/thread.c, with its second thread or without.
+fn thread_probe_count(dir: &Path, shim: &Path, thread: bool) -> u64 {
+    let secret = dir.join("secret.bin");
+    let stop = dir.join("secret.bin.stop");
+    let mut cmd = Command::new("valgrind");
+    // With fair scheduling valgrind hands its one running thread's turn to the waiting thread
+    // when the turn ends, so a thread still running when the count starts always gets turns
+    // inside it; with valgrind's default it only sometimes does, as on a busy machine.
+    cmd.args([
+        "--tool=cachegrind",
+        "--fair-sched=yes",
+        "--cache-sim=no",
+        "--cachegrind-out-file=/dev/null",
+        "--instr-at-start=no",
+    ])
+    .arg(dir.join("thread"))
+    .args([&secret, &stop])
+    .env("LD_PRELOAD", shim)
+    .env("VELT_CT_SECRET", &secret)
+    .env("VELT_CT_STOP", &stop)
+    .env_remove("CT_THREAD");
+    if thread {
+        cmd.env("CT_THREAD", "1");
+    }
+    let out = cmd.output().expect("valgrind runs");
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "the thread probe failed:\n{text}");
+    let refs = text
+        .lines()
+        .find_map(|l| l.split("I refs:").nth(1))
+        .unwrap_or_else(|| panic!("no count in:\n{text}"));
+    refs.trim().replace(',', "").parse().expect("a count")
+}
+
+/// What is counted is the code under test, not the work of a thread that started just before
+/// it: velt_rt's host thread starts there in a test probe, and where valgrind ran some of its
+/// start inside the region, one secret's count changed from run to run on a busy machine, which
+/// ct-counts.py reported as a count that depends on the secret (#3942). The shim waits for the
+/// other threads to stop running first. The probe's second thread works about 10M instructions,
+/// then waits; with it, the count may differ by what the C library does in a process with
+/// threads (its system call wrappers), a few hundred instructions, never by that work.
+#[test]
+fn a_thread_started_before_the_secret_is_not_counted() {
+    if !can_run() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let shim = dir.path().join("ct-shim.so");
+    let made = cc(
+        &root.join("../../scripts/ct-shim.c"),
+        &shim,
+        &["-shared", "-fPIC", "-O1", "-ldl"],
+    );
+    if let Err(e) = made {
+        skip(&format!(
+            "scripts/ct-shim.c doesn't build (valgrind's headers?): {e}"
+        ));
+        return;
+    }
+    let probe = root.join("tests/ct_counts/thread.c");
+    cc(&probe, &dir.path().join("thread"), &["-O1", "-pthread"]).expect("thread.c builds");
+    std::fs::write(dir.path().join("secret.bin"), [7u8; 32]).expect("the secret is written");
+    std::fs::write(dir.path().join("secret.bin.stop"), b"").expect("the stop file is written");
+    let alone = thread_probe_count(dir.path(), &shim, false);
+    for _ in 0..3 {
+        let with = thread_probe_count(dir.path(), &shim, true);
+        assert!(
+            with.abs_diff(alone) < 1_000,
+            "the count with a second thread is {with}, without it {alone}: the thread's work \
+             was counted"
+        );
+    }
+}

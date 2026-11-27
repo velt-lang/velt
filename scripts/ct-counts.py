@@ -189,11 +189,19 @@ def build(source, kind, out):
         subprocess.run([velt(), "build", "--release", path, "-o", exe], check=True,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return exe, {}
-    # A test file: the harness's executable, which runs the file's tests.
-    made = subprocess.run([velt(), "test", path, "--release", "--no-run", "--json"], check=True,
+    # A test file: the harness's executable, which runs the file's tests. It is built at one path
+    # in the repository's target/velt/test for every build of the file, and another build there
+    # (the memcheck test of crates/veltc/tests/ct_counts.rs runs beside the count's, and may see
+    # another state of the build cache) would replace it between two secrets: what is counted is
+    # a copy of this run's own.
+    made = subprocess.run([velt(), "test", path, "--release", "--no-run", "--json"],
                           capture_output=True, text=True, cwd=ROOT)
-    harness = json.loads(made.stdout)["harnesses"][0]
-    return harness["executable"], harness.get("env", {})
+    harnesses = json.loads(made.stdout).get("harnesses", []) if made.stdout else []
+    if made.returncode != 0 or not harnesses:
+        sys.exit(f"velt test {source} --no-run failed:\n{made.stdout}{made.stderr}")
+    exe = os.path.join(out, "probe")
+    shutil.copy2(harnesses[0]["executable"], exe)
+    return exe, harnesses[0].get("env", {})
 
 
 # One runtime thread and no rescue thread, as bench/nightly.sh sets for its cachegrind rows: a

@@ -14,6 +14,7 @@ const PATHS: &[&str] = &[
     "scripts/ct-counts.py",
     "scripts/ct-shim.c",
     "crates/veltc/tests/ct_counts.rs",
+    "crates/veltc/tests/ct_counts/",
     // `@noInline`, which keeps a mask out of its callers (#3368), and the release build's
     // objects of the functions it marks (std_cache/no_inline.rs).
     "std/lang/intrinsics/decorators.velt",
