@@ -12,8 +12,9 @@
 # (`cache-prune`). At 05:07 UTC, when the macOS runners are less busy, a second run
 # has only the timing-sensitive tests, run many times on Windows and macOS (`flake`). A manual run
 # can pick one job: `gh workflow run nightly -f only=stress` (`all` includes `flake`). `c-headers`
-# checks `declare c` against C headers through the pinned zig whatever changed; pull requests and
-# the queue run it only when a change touches what it checks.
+# checks `declare c` against C headers through the pinned zig whatever changed, and `ct-counts`
+# std/crypto's constant time under valgrind; pull requests and the queue run each only when a
+# change touches what it checks.
 name: nightly
 
 on:
@@ -26,7 +27,7 @@ on:
       only:
         description: Run only one job (all = every job, flake included).
         type: choice
-        options: [all, gate, stress, oracle, workerd, bench, yardstick, wasm, flake, cache, headers, units]
+        options: [all, gate, stress, oracle, workerd, bench, yardstick, wasm, flake, cache, headers, units, ct]
         default: all
       bench_baseline:
         description: >-
@@ -235,6 +236,27 @@ jobs:
       # The pin itself: the release still downloads and matches its SHA-256.
       - name: the pinned zig downloads
         run: env -u VELT_ZIG cargo test -p velt_toolchain zig -- --ignored
+
+  # std/crypto's constant-time check under valgrind (ci.yml's `ct-counts`), whatever changed: a
+  # change to the optimizer or the code generator can turn a mask into a branch too (#3368), and
+  # pull requests and the queue run it only for a change to std/crypto or the check.
+  ct-counts:
+    if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'ct')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          tools: false
+      - name: valgrind
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends valgrind libc6-dbg
+      - name: the runtime
+        run: cargo build -p velt_rt
+      - name: secrets change neither the instructions executed nor a branch or an address
+        env:
+          VELT_CT_TESTS: "1"
+        run: cargo test --workspace --test ct_counts -- --nocapture --test-threads 1
 
   # Every golden by units (`VELT_UNITS=2`, #2943): std checked as a unit of its own and frozen,
   # the program checked against it, and the program built from that check (which lowers and

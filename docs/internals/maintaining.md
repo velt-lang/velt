@@ -154,7 +154,9 @@ not a reason for another round.
   test cutting every golden at every character, `VELT_ROBUSTNESS=full`, and the WebAssembly
   goldens, which pull requests and the queue run only for WebAssembly changes, on Linux), the differential
   tests against Node (`tests/difftest`), `declare c` checked against C headers (`c-headers`,
-  through the pinned zig), the Cranelift memory
+  through the pinned zig), std/crypto's constant time under valgrind (`ct-counts`,
+  `crates/veltc/tests/ct_counts.rs`; pull requests and the queue run it for a change to
+  std/crypto or the check), the Cranelift memory
   stress run (`bench/compile/stress.sh`, `stress.ps1`: long_main_16000 under 2 GB) on Linux and
   Windows, the WebAssembly goldens on Windows and macOS (built once per OS, then run in shards,
   as in the queue), every golden by units (`golden-units`: `VELT_UNITS=2`, #2943, in eight shards,

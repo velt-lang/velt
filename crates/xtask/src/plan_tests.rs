@@ -120,6 +120,34 @@ fn the_header_check_runs_only_when_a_change_touches_what_it_checks() {
 }
 
 #[test]
+fn the_constant_time_check_runs_only_when_a_change_touches_what_it_checks() {
+    for path in [
+        "std/crypto/ed25519_sign.velt",
+        "std/crypto/x25519_base.velt",
+        "bench/crypto/ct/ed25519.probe",
+        "scripts/ct-counts.py",
+        "scripts/ct-shim.c",
+        "crates/veltc/tests/ct_counts.rs",
+        "std/lang/intrinsics/decorators.velt",
+    ] {
+        assert!(plan(&[path]).ct_counts, "{path}");
+    }
+    // The optimizer and the code generator are the nightly's: too many changes touch them.
+    for path in [
+        "crates/velt_opt/src/lib.rs",
+        "crates/velt_codegen_llvm/src/lib.rs",
+        "std/fs/index.velt",
+        "Cargo.lock",
+        ".github/workflows/ci.yml",
+    ] {
+        assert!(!plan(&[path]).ct_counts, "{path}");
+    }
+    assert!(Plan::everything("--full").ct_counts);
+    assert!(plan(&["Cargo.lock", "std/crypto/sha512.velt"]).ct_counts);
+    assert!(plan(&["std/crypto/sha512.velt", "Cargo.lock"]).ct_counts);
+}
+
+#[test]
 fn prose_and_editor_files_select_nothing() {
     let p = plan(&[
         "CONTRIBUTING.md",

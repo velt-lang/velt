@@ -7,10 +7,26 @@
 //! test notices (#2392).
 //!
 //! Runs where valgrind, python3 and a C compiler are installed, on x86-64 Linux; elsewhere it
-//! says so and passes.
+//! says so and passes. With `VELT_CT_TESTS` set (the `ct-counts` job of ci.yml and nightly.yml,
+//! which installs valgrind: crates/xtask/src/ct_counts.rs) a missing tool fails the test instead,
+//! so a job that loses valgrind goes red rather than passing with nothing measured (#3942).
 
+use std::ffi::OsStr;
 use std::path::Path;
 use std::process::Command;
+
+/// Whether `VELT_CT_TESTS` asks for the checks: set to anything but empty or `0`.
+fn required(value: Option<&OsStr>) -> bool {
+    value.is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+/// Skips the check with `note`, or fails it where `VELT_CT_TESTS` requires it.
+fn skip(note: &str) {
+    if required(std::env::var_os("VELT_CT_TESTS").as_deref()) {
+        panic!("VELT_CT_TESTS is set, but {note}");
+    }
+    eprintln!("note: {note}; skipping");
+}
 
 fn has(tool: &str) -> bool {
     Command::new(tool)
@@ -40,7 +56,7 @@ fn can_run() -> bool {
     if here && has("valgrind") && has("python3") && has("cc") {
         return true;
     }
-    eprintln!("note: needs valgrind, python3 and cc on x86-64 Linux; skipping");
+    skip("the check needs valgrind, python3 and cc on x86-64 Linux");
     false
 }
 
@@ -72,11 +88,20 @@ fn memcheck_starts() -> bool {
         .output()
         .is_ok_and(|o| o.status.success());
     if !starts || !header {
-        eprintln!(
-            "note: valgrind's memcheck cannot start a program here, or its header is missing; skipping"
+        skip(
+            "valgrind's memcheck cannot start a program here (libc6-dbg), or its header is missing",
         );
     }
     starts && header
+}
+
+#[test]
+fn ct_tests_is_on_for_anything_but_empty_or_zero() {
+    assert!(required(Some(OsStr::new("1"))));
+    assert!(required(Some(OsStr::new("yes"))));
+    assert!(!required(Some(OsStr::new("0"))));
+    assert!(!required(Some(OsStr::new(""))));
+    assert!(!required(None));
 }
 
 #[test]
