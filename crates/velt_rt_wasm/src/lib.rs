@@ -15,14 +15,15 @@
 //! - **own**: `platform` (host services per target), `host` (what host functions and `HostRef`
 //!   need of the JS glue), `host_turn` (the exit code of a program that hands no root to the
 //!   turns a JS host drives, std's), `entry`, `io`,
-//!   `memory_usage`, `panic`, `process`, `shared`, `net` and the current-thread executor in
-//!   `task` (no tokio, no threads). Every
-//!   function has exactly the signature `std/*.velt` declares (WebAssembly links only exact
-//!   matches; crates/velt_rt/tests/std_externs.rs checks both runtimes).
+//!   `memory_usage`, `panic`, `process` and `shared`. Every function has exactly the signature
+//!   `std/*.velt` declares (WebAssembly links only exact matches;
+//!   crates/velt_rt/tests/std_externs.rs checks both runtimes).
 //!
-//! Not provided: TCP, the HTTP server and child processes (programs using them fail to link,
-//! with a note). The TCP operations the `fetch` client (Velt code) reaches link and fail with
-//! `ENOTSUP` (`net.rs`), so programs that only build `Response`s run.
+//! No executor here: programs run their tasks on std's (std/lang/hooks/sched.velt, #3905), on
+//! WASI's one thread or in the turns a JS host drives. Not provided: TCP, the HTTP server and
+//! child processes (programs using them fail to link, with a note). velt/net's operations, which
+//! the `fetch` client (Velt code) reaches, fail with `ENOTSUP` in std (std/net/rt_none.velt), so
+//! programs that only build `Response`s run.
 #![allow(clippy::missing_safety_doc)]
 
 #[path = "../../velt_rt/src/bytes.rs"]
@@ -53,7 +54,6 @@ pub mod math;
 #[path = "../../velt_rt/src/mem.rs"]
 pub mod mem;
 pub mod memory_usage;
-pub mod net;
 pub mod panic;
 pub mod platform;
 pub mod process;
@@ -70,7 +70,6 @@ pub mod str_array;
 pub mod str_ops;
 #[path = "../../velt_rt/src/strbuf.rs"]
 pub mod strbuf;
-pub mod task;
 #[path = "../../velt_rt/src/top_level_await.rs"]
 pub mod top_level_await;
 #[path = "../../velt_rt/src/view.rs"]

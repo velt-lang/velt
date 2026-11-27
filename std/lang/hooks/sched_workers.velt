@@ -24,7 +24,6 @@ import * as t from "./sched_task";
 import * as tb from "./sched_io_table";
 import * as wk from "./sched_wake";
 
-declare function velt_rt_set_scheduler(kind: u32): void;
 declare c("c") function velt_rt_latch_new$rt(): u64;
 declare c("c") function velt_rt_latch_open$rt(l: u64): void;
 
@@ -137,10 +136,8 @@ function startOn(e: usize): void {
   }
   t.install(e);
   // The runtime's leaves that need its timers and I/O find them from this thread (none on
-  // WebAssembly's one thread, which awaits no runtime leaf).
-  if (th.SUPPORTED) {
-    velt_rt_set_scheduler(2);
-  }
+  // WebAssembly's one thread, which awaits no runtime leaf: `#sched-thread`'s none).
+  th.enterRuntime();
   startWorkers(e);
 }
 
@@ -304,7 +301,7 @@ function workerMain(arg: Ptr<u8> | null): Ptr<u8> | null {
   t.installWorker(w);
   io.installHere(m.ld(w + t.E_IO));
   // The runtime's leaves polled here find its timers and I/O.
-  velt_rt_set_scheduler(2);
+  th.enterRuntime();
   // Awake: its first turn may take work no wake brought (an offer it steals, input it borrows).
   wk.awake(w);
   if ((m.ld32(w + t.E_MODE) & t.M_MONITOR) !== 0) {
