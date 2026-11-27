@@ -71,10 +71,7 @@ impl FnLower<'_, '_> {
     }
 
     pub(super) fn epoch_fn(&mut self, name: &str) -> crate::vir::FuncId {
-        let d = self
-            .cx
-            .prelude_def(name)
-            .unwrap_or_else(|| super::ice(format_args!("no `{name}`")));
+        let d = self.cx.std_hook(name);
         self.cx.func_for_direct(d, vec![], self.mode)
     }
 }

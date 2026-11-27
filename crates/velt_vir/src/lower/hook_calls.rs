@@ -298,8 +298,8 @@ impl Target {
 }
 
 impl<R> Call<R> {
-    /// The call of hook `name` (a fallback hook): `None` when std lacks it or sema left it
-    /// unchecked.
+    /// The call of hook `name` (a fallback hook): `None` when the program doesn't load its module
+    /// or sema left it unchecked; its module loaded without it is an ICE (std_defs.rs).
     #[inline]
     fn find<const N: usize>(
         lw: &mut FnLower<'_, '_>,
@@ -307,7 +307,7 @@ impl<R> Call<R> {
         targs: Vec<TyId>,
         args: [Passed; N],
     ) -> Option<Self> {
-        let def = (lw.cx.prelude_def(name)).filter(|d| !lw.cx.hir.unchecked.contains(d))?;
+        let def = lw.cx.std_hook_live(name)?;
         Some(Self::with(lw, def, targs, args))
     }
 
@@ -331,7 +331,7 @@ impl<R> Call<R> {
                      nothing on it (no live async code or executor extern, velt_sema `lazy_std` \
                      `sched_hooks`)"
                 )),
-                None => ice(format_args!("std without the hook `{name}`")),
+                None => ice(format_args!("std hook `{name}` missing")),
             }
         };
         lw.cx.sched_used |= task.is_some();

@@ -31,6 +31,7 @@ use crate::ctx::Ctx;
 use crate::defs::{BodyState, DefInfo};
 use crate::hir::{self, DefId, ExprKind as E, TyId, TyKind};
 
+mod demanded;
 mod hook_stubs;
 mod live;
 mod number_text;
@@ -413,10 +414,8 @@ pub(crate) fn reach(cx: &mut Ctx) {
             cx.lazy.live.late.record_conversion = true;
         } else if !cx.lazy.record_hooks && record_hooks_needed(cx) {
             cx.demand_std(velt_common::std_module!(lang_hooks_any_record));
-            let hooks: Vec<DefId> = RECORD_HOOKS
-                .iter()
-                .filter_map(|h| cx.prelude_fn(h))
-                .collect();
+            let mut hooks: Vec<DefId> = vec![];
+            demanded::hooks(cx, RECORD_HOOKS, &mut hooks);
             if !hooks.is_empty() {
                 cx.lazy.record_hooks = true;
                 found.extend(hooks);
@@ -538,10 +537,10 @@ fn sched_hooks(cx: &mut Ctx, found: &mut Vec<DefId>) {
     cx.demand_std(velt_common::std_module!(lang_hooks_sched));
     cx.demand_std(velt_common::std_module!(lang_hooks_program_thread));
     cx.demand_std(velt_common::std_module!(lang_hooks_sched_spawn));
-    found.extend(SCHED_HOOKS.iter().filter_map(|h| cx.prelude_fn(h)));
+    demanded::hooks(cx, SCHED_HOOKS, found);
     if cfg!(debug_assertions) {
         cx.demand_std(velt_common::std_module!(lang_hooks_sched_cells));
-        found.extend(SCHED_CELL_HOOKS.iter().filter_map(|h| cx.prelude_fn(h)));
+        demanded::hooks(cx, SCHED_CELL_HOOKS, found);
     }
 }
 
@@ -581,7 +580,7 @@ fn module_hooks(cx: &mut Ctx, found: &mut Vec<DefId>) {
         return;
     }
     cx.demand_std(velt_common::std_module!(lang_hooks_module_blocks));
-    found.extend(MODULE_HOOKS.iter().filter_map(|h| cx.prelude_fn(h)));
+    demanded::hooks(cx, MODULE_HOOKS, found);
 }
 
 /// Adds std's `cpuStart` (std/lang/hooks/cpu.velt) to `found` the first time: `velt_main` calls
@@ -593,7 +592,7 @@ fn cpu_hook(cx: &mut Ctx, found: &mut Vec<DefId>) {
     }
     cx.lazy.cpu_hook = true;
     cx.demand_std(velt_common::std_module!(lang_hooks_cpu));
-    found.extend(cx.prelude_fn(velt_common::std_hook!(cpu_start)));
+    found.extend(demanded::hook(cx, velt_common::std_hook!(cpu_start)));
 }
 
 /// Check the definition `d` if it is deferred and unchecked: whether it did.
