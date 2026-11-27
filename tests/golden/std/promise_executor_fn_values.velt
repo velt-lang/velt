@@ -1,0 +1,141 @@
+// A `new Promise` executor's `resolve` and `reject` (and `Promise.withResolvers`' functions) are
+// the prelude's: a call of one throws nothing, also when the program stores a throwing closure
+// into a user function type of the same shape and a `then`, `finally` or `catch` callback calls
+// it (#3949). Beside them: an async callback, a generic callback, a resolver stored into a
+// variable and called later or into a `const`, `Promise.withResolvers`' functions called in an
+// executor, an executor settling from a nested callback, and the function value reassigned
+// between the calls. The output is Node 22's.
+
+class Negative extends Error {}
+class Refused extends Error {}
+
+let open: (n: number) => void = (n: number) => {};
+
+function later(n: number): Promise<number> {
+  return new Promise((r, reject) => {
+    if (n < 0) {
+      reject(new Negative("negative"));
+      return;
+    }
+    r(n);
+  });
+}
+
+function laterGeneric<T>(v: T, bad: boolean): Promise<T> {
+  return new Promise((r, reject) => {
+    if (bad) {
+      reject(new Negative("negative"));
+      return;
+    }
+    r(v);
+  });
+}
+
+let saved: (n: number) => void = (n: number) => {};
+
+function stored(): Promise<number> {
+  return new Promise((r, reject) => {
+    saved = r;
+    if (saved === open) {
+      reject(new Negative("never"));
+    }
+  });
+}
+
+function nested(n: number): Promise<number> {
+  return new Promise((r, reject) => {
+    queueMicrotask(() => {
+      if (n < 0) {
+        reject(new Negative("negative"));
+        return;
+      }
+      r(n);
+    });
+  });
+}
+
+function resolvers(n: number): Promise<number> {
+  const w = Promise.withResolvers<number, Negative>();
+  if (n < 0) {
+    w.reject(new Negative("negative"));
+  } else {
+    w.resolve(n);
+  }
+  return w.promise;
+}
+
+async function relay(n: number): Promise<number> {
+  const w = Promise.withResolvers<number>();
+  const v = await new Promise<number>((r, reject) => {
+    if (n < 0) {
+      reject(new Negative("negative"));
+      return;
+    }
+    const k = r;
+    w.resolve(n * 10);
+    k(n);
+  });
+  return v + (await w.promise);
+}
+
+function apply<T>(f: (x: T) => void, x: T): void {
+  f(x);
+}
+
+async function main(): Promise<void> {
+  open = (n: number) => {
+    throw new Refused("refused");
+  };
+  console.log(await later(1));
+  console.log(await laterGeneric<number>(2, false));
+  console.log(await nested(3));
+  console.log(await resolvers(4));
+  console.log(await relay(5));
+  try {
+    await later(-1);
+  } catch (e) {
+    console.log("negative", e instanceof Negative);
+  }
+  try {
+    await Promise.resolve().then(() => open(1));
+  } catch (e) {
+    console.log("then", e instanceof Refused);
+  }
+  try {
+    await Promise.resolve().finally(() => open(1));
+  } catch (e) {
+    console.log("finally", e instanceof Refused);
+  }
+  try {
+    await Promise.reject(new Error("x")).catch(() => open(1));
+  } catch (e) {
+    console.log("catch", e instanceof Refused);
+  }
+  try {
+    await Promise.resolve().then(async () => open(1));
+  } catch (e) {
+    console.log("async", e instanceof Refused);
+  }
+  try {
+    await Promise.resolve(5).then((x) => apply(open, x));
+  } catch (e) {
+    console.log("generic", e instanceof Refused);
+  }
+  const p = stored();
+  saved(6);
+  console.log(await p);
+  open = (n: number) => {
+    console.log("open", n);
+  };
+  await Promise.resolve().then(() => open(7));
+  open = (n: number) => {
+    throw new Refused("again");
+  };
+  try {
+    await Promise.resolve().then(() => open(8));
+  } catch (e) {
+    console.log("reassigned", e instanceof Refused);
+  }
+}
+
+main();

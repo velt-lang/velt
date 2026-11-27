@@ -559,7 +559,7 @@ impl FnCx<'_, '_> {
         });
         if let Some(c) = sync {
             self.throw_src(crate::defs::ThrowSrc::Call(c, vec![], span));
-        } else if !self.cx.scopes[self.module].is_std {
+        } else if !self.cx.scopes[self.module].is_std && !self.std_fn_value(&f) {
             let site = self.site_of_value(&f);
             self.throw_src(crate::defs::ThrowSrc::Indirect(f.ty, site, span));
         }
