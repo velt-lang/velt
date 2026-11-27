@@ -25,8 +25,8 @@
 //! `fallback` hook's builder returns `None` when the program doesn't load its module or sema left
 //! it unchecked (its module loaded without it is an ICE: std_defs.rs), and the caller writes the
 //! value another way (another hook, or lowering's own glue), never with a runtime extern the hook
-//! replaces (velt_common `hook_replaces.rs`). The builder of a hook whose entry lists `constructs(…)` takes the
-//! [`Construct`] the call site lowers, and asserts (in release compilers too: one bit test) that
+//! replaces (velt_common `hook_replaces.rs`). The builder of a hook whose entry lists
+//! `constructs(…)` takes the [`Construct`] the call site lowers, and asserts (in release compilers too: one bit test) that
 //! sema demanded the hook (`hir::Program::hooks_demanded`, velt_common `hook_demand.rs`): a
 //! construct missing from the table is an ICE naming it. A `prebuilt` hook whose module the
 //! program doesn't load is a call of the function sema declared for it in the module's object
