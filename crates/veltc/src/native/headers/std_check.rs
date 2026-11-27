@@ -124,6 +124,7 @@ const CHECKED: &[&str] = &[
     "lang/hooks/os_posix.velt",
     "lang/hooks/pid_posix.velt",
     "lang/hooks/pid_win32.velt",
+    "lang/hooks/quiet_rt.velt",
     "lang/hooks/reactor_epoll.velt",
     "lang/hooks/reactor_kqueue.velt",
     "lang/hooks/sched_cells.velt",
