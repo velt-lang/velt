@@ -401,6 +401,11 @@ pub enum Effects {
     Any,
     /// Reads memory, writes none (string comparison, hashing).
     ReadOnly,
+    /// Reads memory and writes only state of its own that compiled code never reads: the
+    /// per-thread cache of the last position translations and a string's breadcrumb table, built
+    /// on first use (`charCodeAt` on non-ASCII text in the object of positions.velt, #2816:
+    /// [`CHAR_CODE_AT_ENTRY`]).
+    ReadCaching,
     /// Touches no memory: every [`MathOp`].
     None,
     /// Does nothing; a call marks the way it is on as rare (`velt_rt_array_view_cold`).
@@ -411,9 +416,18 @@ impl Effects {
     /// Whether the function writes no memory compiled code reads (so values loaded before a
     /// call are still valid after it, and it frees nothing).
     pub fn writes_nothing_visible(self) -> bool {
-        matches!(self, Effects::None | Effects::ReadOnly)
+        matches!(
+            self,
+            Effects::None | Effects::ReadOnly | Effects::ReadCaching
+        )
     }
 }
+
+/// The entry point of `charCodeAt`'s translation in the object of std/lang/string/positions.velt
+/// (velt_common `prebuilt::symbol` of the `string_char_code_at` hook), which a program that links
+/// the object calls in place of std's `charCodeAtWide`: [`Effects::ReadCaching`], as that
+/// function's code is.
+pub const CHAR_CODE_AT_ENTRY: &str = "velt_hook_string_char_code_at";
 
 /// The runtime functions besides the [`MathOp`]s whose effects are not [`Effects::Any`].
 const EFFECTS: [(&str, Effects); 4] = [
@@ -427,6 +441,9 @@ const EFFECTS: [(&str, Effects); 4] = [
 pub fn effects(symbol: &str) -> Effects {
     if MathOp::of_symbol(symbol).is_some() {
         return Effects::None;
+    }
+    if symbol == CHAR_CODE_AT_ENTRY {
+        return Effects::ReadCaching;
     }
     // The SIMD operations (`velt_simd_*`, std/simd), which backends expand inline: lane
     // arithmetic, comparisons, conversions and loads read at most memory; the stores write, and
@@ -569,5 +586,14 @@ mod tests {
         assert_eq!(effects("velt_rt_write_str"), Effects::Any);
         assert!(!Effects::Cold.writes_nothing_visible());
         assert!(Effects::ReadOnly.writes_nothing_visible());
+        assert!(Effects::ReadCaching.writes_nothing_visible());
+        assert_eq!(effects(CHAR_CODE_AT_ENTRY), Effects::ReadCaching);
+        let hook = (velt_common::std_hooks::HOOKS.iter())
+            .find(|h| h.name == "string_char_code_at")
+            .expect("the hook");
+        assert_eq!(
+            velt_common::std_hooks::prebuilt::symbol(hook),
+            CHAR_CODE_AT_ENTRY
+        );
     }
 }

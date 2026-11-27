@@ -74,6 +74,37 @@ pub(crate) struct Runtime {
     read_only: FxHashSet<ExternId>,
     /// Velt functions that write nothing their callers can see (`read_only.rs`).
     read_only_fns: FxHashSet<FuncId>,
+    /// The position translation's functions (std/lang/string/positions.velt, [`translates`]),
+    /// `charCodeAt` of non-ASCII text among them (#2816).
+    code_units: FxHashSet<FuncId>,
+}
+
+/// Is `symbol` (an instance of) a function of std/lang/string/positions.velt that returns a
+/// position, a code unit or nothing: the translation `charCodeAt` of non-ASCII text calls in
+/// place of the runtime's read (#2816)? They write only the translation's per-thread cache and
+/// the string's breadcrumbs, which compiled code never reads, as that runtime function did
+/// (`Effects::ReadCaching`), and return no address. Not `key1`, which returns a data word.
+fn translates(symbol: &str) -> bool {
+    let entry = velt_vir::mangle::mangle(velt_common::std_hook!(string_char_code_at));
+    let item = velt_common::std_hook_name!(string_char_code_at);
+    let Some(module) = entry.strip_suffix(&format!("N{}{item}", item.len())) else {
+        return false;
+    };
+    let Some(rest) = symbol
+        .strip_prefix(module)
+        .and_then(|r| r.strip_prefix('N'))
+    else {
+        return false;
+    };
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    let Ok(n) = rest[..digits].parse::<usize>() else {
+        return false;
+    };
+    let Some(name) = rest.get(digits..digits + n) else {
+        return false;
+    };
+    let tail = &rest[digits + n..];
+    name != "key1" && (tail.is_empty() || tail.starts_with("_L"))
 }
 
 impl Runtime {
@@ -90,13 +121,19 @@ impl Runtime {
             .filter(|(_, e)| effects(&e.symbol).writes_nothing_visible())
             .map(|(i, _)| ExternId(i as u32))
             .collect();
+        let code_units: FxHashSet<FuncId> = (program.funcs.iter().enumerate())
+            .filter(|(_, f)| translates(&f.symbol))
+            .map(|(i, _)| FuncId(i as u32))
+            .collect();
+        let read_only_fns = read_only::read_only_functions(program, &read_only, &code_units);
         Runtime {
             clone: ext(STR_CLONE),
             drop: ext(STR_DROP),
             alloc: ext(ALLOC),
             slice: ext(STR_SLICE),
-            read_only_fns: read_only::read_only_functions(program, &read_only),
+            read_only_fns,
             read_only,
+            code_units,
         }
     }
 
@@ -108,6 +145,17 @@ impl Runtime {
         match callee {
             Callee::Extern(e) => self.read_only.contains(e),
             Callee::Func(f) => self.read_only_fns.contains(f),
+            Callee::Ptr { .. } => false,
+        }
+    }
+
+    /// Does a call of `callee` return no address of its arguments as an integer: a runtime
+    /// function's result (counts, positions, code units, hashes), or a position or code unit of
+    /// the translation (`code_units`)?
+    fn returns_no_address(&self, callee: &Callee) -> bool {
+        match callee {
+            Callee::Extern(_) => true,
+            Callee::Func(f) => self.code_units.contains(f),
             Callee::Ptr { .. } => false,
         }
     }

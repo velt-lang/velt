@@ -52,7 +52,7 @@ impl Cx<'_> {
     pub(super) fn call_result(&self, f: &mut Family, callee: &Callee, d: &Place) {
         let ty = crate::locals::place_ty(self.aggs, self.func, d);
         let wide = matches!(ty, Some(Ty::U64 | Ty::I64));
-        if wide && matches!(callee, Callee::Extern(_)) {
+        if wide && self.rt.returns_no_address(callee) {
             return;
         }
         let register = d.proj.is_empty() && self.usage.is_register(d.local);

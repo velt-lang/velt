@@ -697,3 +697,25 @@ fn calls_of_velt_functions_that_may_write_or_leak_keep_the_clone() {
     assert_kept(Between::VeltCallFillingThroughArgument);
     assert_kept(Between::VeltCallOfIndirect);
 }
+
+/// The position translation's functions (and their instances) count as `charCodeAt`'s read did,
+/// except `key1`, whose result is a data word; no other module's function does.
+#[test]
+fn the_translation_of_positions_is_known() {
+    use super::translates;
+    assert!(translates(
+        "_V3stdP4langP6stringP9positionsN14charCodeAtWide"
+    ));
+    assert!(translates(
+        "_V3stdP4langP6stringP9positionsN14unitToByteWide"
+    ));
+    assert!(translates(
+        "_V3stdP4langP6stringP9positionsN10byteToUnit_L2x1"
+    ));
+    assert!(!translates("_V3stdP4langP6stringP9positionsN4key1"));
+    assert!(!translates("_V3stdP4langP6stringP6searchN7indexOf"));
+    assert!(!translates(
+        "_V3stdP4langP6stringP9positionsN14charCodeAtWideX"
+    ));
+    assert!(!translates("_V4scan"));
+}

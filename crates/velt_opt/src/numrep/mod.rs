@@ -153,8 +153,14 @@ impl<'p> Env<'p> {
             .map_or("", |e| e.symbol.as_str())
     }
 
+    /// Is `callee` `charCodeAtWide`, or its entry point in the object of positions.velt (a
+    /// program that links it calls that instead: `velt_vir::math::CHAR_CODE_AT_ENTRY`)?
     fn is_char_code_at(&self, callee: &Callee) -> bool {
-        matches!(callee, Callee::Func(f) if self.char_code_at.get(f.0 as usize) == Some(&true))
+        match callee {
+            Callee::Func(f) => self.char_code_at.get(f.0 as usize) == Some(&true),
+            Callee::Extern(e) => self.symbol(*e) == velt_vir::math::CHAR_CODE_AT_ENTRY,
+            Callee::Ptr { .. } => false,
+        }
     }
 
     fn is_float_index(&self, callee: &Callee) -> bool {

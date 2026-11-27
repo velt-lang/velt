@@ -25,17 +25,21 @@ use velt_vir::vir::{
 };
 
 /// The functions of `program` that qualify, given the runtime functions that write nothing
-/// visible (`read_only`).
+/// visible (`read_only`) and the functions known to (`known`: std's code-unit read, whose
+/// writes compiled code never reads, `Runtime::code_units`), which stay in the set.
 pub(crate) fn read_only_functions(
     program: &Program,
     read_only: &FxHashSet<ExternId>,
+    known: &FxHashSet<FuncId>,
 ) -> FxHashSet<FuncId> {
     let mut set: FxHashSet<FuncId> = (program.funcs.iter().enumerate())
         .filter(|(_, f)| has_body(f))
         .map(|(i, _)| FuncId(i as u32))
+        .chain(known.iter().copied())
         .collect();
     loop {
         let leaving: Vec<FuncId> = (set.iter().copied())
+            .filter(|f| !known.contains(f))
             .filter(|&f| !qualifies(program, &program.funcs[f.0 as usize], read_only, &set))
             .collect();
         if leaving.is_empty() {

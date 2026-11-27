@@ -395,7 +395,9 @@ fn plain_declaration(program: &vir::Program, e: &vir::ExternFn) -> CodegenResult
         (false, Effects::None) => PURE_ATTRS,
         (false, Effects::ReadOnly) => READONLY_ATTRS,
         (false, Effects::Cold) => COLD_ATTRS,
-        (false, Effects::Any) => EXTERN_ATTRS,
+        // The cache of `charCodeAt`'s object is thread-local values the program defines, which
+        // its own code may use too (velt_common `prebuilt::thread_shared`): no memory claim.
+        (false, Effects::Any | Effects::ReadCaching) => EXTERN_ATTRS,
     };
     Ok(format!(
         "declare {} {}({params}) {attrs}{}\n",
