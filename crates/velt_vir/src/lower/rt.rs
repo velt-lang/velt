@@ -74,14 +74,6 @@ pub(super) enum Rt {
     XferShareBegin,
     XferKeeps,
     XferKeepShared,
-    /// Properties of function values (fn_props.rs in velt_rt).
-    FnPropGet,
-    FnPropSet,
-    FnPropDelete,
-    FnPropLen,
-    FnPropKey,
-    FnPropIdentity,
-    FnPropIdentityOf,
     /// Hands the runtime the table of the process statics (#2779): the function releasing the
     /// static atomics' references at exit, and std's process statics.
     Statics,
@@ -233,13 +225,6 @@ impl Rt {
             Rt::XferShareBegin => f("velt_rt_xfer_share_begin", vec![], Unit),
             Rt::XferKeeps => f("velt_rt_xfer_keeps", vec![], U8),
             Rt::XferKeepShared => f("velt_rt_xfer_keep_shared", vec![U8], Unit),
-            Rt::FnPropGet => f("velt_rt_fnprop_get", vec![Ptr, Ptr], Ptr),
-            Rt::FnPropSet => f("velt_rt_fnprop_set", vec![Ptr, Ptr, Ptr], Unit),
-            Rt::FnPropDelete => f("velt_rt_fnprop_delete", vec![Ptr, Ptr], U8),
-            Rt::FnPropLen => f("velt_rt_fnprop_len", vec![Ptr], U64),
-            Rt::FnPropKey => f("velt_rt_fnprop_key", vec![Ptr, U64, Ptr], Unit),
-            Rt::FnPropIdentity => f("velt_rt_fnprop_identity", vec![Ptr], Ptr),
-            Rt::FnPropIdentityOf => f("velt_rt_fnprop_identity_of", vec![Ptr], Ptr),
             Rt::Statics => f("velt_rt_statics", vec![Ptr], Unit),
             Rt::ViewGet => f("velt_rt_view_get", vec![Ptr], Ptr),
             Rt::ViewPut => f("velt_rt_view_put", vec![Ptr, Ptr], Unit),

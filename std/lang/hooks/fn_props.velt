@@ -1,0 +1,145 @@
+// velt/lang/hooks (internal): properties of function values (#924, #2196; rt_abi.md "Function
+// properties"). JavaScript functions are objects, and a program may add properties to one it
+// holds as `any` (`factory.__setup = setup`). A function's identity is its closure environment
+// (every function value that may get properties has a counted one), so the properties live in a
+// table keyed by the environment's address (fn_props_core.velt), in insertion order, each value
+// an `any`. The lowering of a function type's `any` slots (velt_vir `any_fn_props.rs`) calls
+// these hooks; an environment without properties is never in the table, and its lookups end
+// before the lock. A declared function's value has no environment: it gets the identity
+// environment kept for its code (fn_props_env.velt) when it is first converted to `any`.
+
+import { share } from "velt/lang/intrinsics";
+import {
+  findItem,
+  idsField,
+  itemAt,
+  itemCount,
+  itemName,
+  itemValue,
+  lock,
+  newItem,
+  propsField,
+  pushItem,
+  releaseItem,
+  removeItem,
+  swapValue,
+  unlock,
+} from "./fn_props_core";
+import { adopt, identityEnv, mayHaveProps, releaseAtExit } from "./fn_props_env";
+import { mapGet, mapSet } from "./fn_props_map";
+
+/**
+ * The identity environment of the function value with code `code` and no environment, made on
+ * first use; 0 for code 0 (a generic closure's value has no code of its own to name it by).
+ */
+export function fnPropIdentity(code: u64): u64 {
+  if (code === 0) {
+    return 0;
+  }
+  lock();
+  let env = mapGet(idsField(), code as usize);
+  if (env === 0) {
+    env = identityEnv();
+    mapSet(idsField(), code as usize, env);
+  }
+  unlock();
+  return env as u64;
+}
+
+/** The identity environment of the code `code` if a value of it was converted to `any`, or 0. */
+export function fnPropIdentityOf(code: u64): u64 {
+  lock();
+  const env = mapGet(idsField(), code as usize);
+  unlock();
+  return env as u64;
+}
+
+/** The entry of environment `env` (the lock held), or 0 when it has no properties. */
+function entryOf(env: usize): usize {
+  return mapGet(propsField(), env);
+}
+
+/** The index of property `key` of the function whose environment is `env`, or -1. */
+export function fnPropIndex(env: u64, key: string): i64 {
+  if (!mayHaveProps(env as usize)) {
+    return -1;
+  }
+  lock();
+  const e = entryOf(env as usize);
+  const i = e === 0 ? -1 : findItem(e, key);
+  unlock();
+  return i;
+}
+
+/** A share of property `i` (`fnPropIndex`) of the function whose environment is `env`. */
+export function fnPropAt(env: u64, i: i64): any {
+  lock();
+  const v = itemValue(itemAt(entryOf(env as usize), i as usize));
+  unlock();
+  return v;
+}
+
+/**
+ * Sets property `key` of the function whose environment (a counted one, or an identity) is
+ * `env` to `value`; the value it replaces is dropped once the lock is given back.
+ */
+export function fnPropSet(env: u64, key: string, value: any): void {
+  lock();
+  let e = entryOf(env as usize);
+  if (e === 0) {
+    e = adopt(env as usize);
+    mapSet(propsField(), env as usize, e);
+  }
+  const i = findItem(e, key);
+  if (i < 0) {
+    pushItem(e, newItem(share(key), value));
+    unlock();
+    return;
+  }
+  const _old = swapValue(itemAt(e, i as usize), value);
+  unlock();
+  // The value replaced is dropped here, without the lock.
+}
+
+/** Removes property `key` of the function whose environment is `env`: whether it had one. */
+export function fnPropDelete(env: u64, key: string): bool {
+  if (!mayHaveProps(env as usize)) {
+    return false;
+  }
+  lock();
+  const e = entryOf(env as usize);
+  const i = e === 0 ? -1 : findItem(e, key);
+  if (i < 0) {
+    unlock();
+    return false;
+  }
+  const item = removeItem(e, i as usize);
+  unlock();
+  releaseItem(item);
+  return true;
+}
+
+/** How many properties the function whose environment is `env` has. */
+export function fnPropLen(env: u64): u64 {
+  if (!mayHaveProps(env as usize)) {
+    return 0;
+  }
+  lock();
+  const e = entryOf(env as usize);
+  const n = e === 0 ? 0 : itemCount(e);
+  unlock();
+  return n as u64;
+}
+
+/** The name of property `i` (in insertion order; `i` < `fnPropLen`) of the function at `env`. */
+export function fnPropKey(env: u64, i: u64): string {
+  lock();
+  const name = itemName(itemAt(entryOf(env as usize), i as usize));
+  unlock();
+  return name;
+}
+
+/** The program's normal end (velt_vir `entry.rs`): fn_props_env.velt `releaseAtExit`. */
+export function fnPropsExit(): void {
+  releaseAtExit();
+}

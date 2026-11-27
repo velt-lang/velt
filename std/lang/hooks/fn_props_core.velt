@@ -1,0 +1,287 @@
+// velt/lang/hooks (internal): the table of function properties (fn_props.velt; rt_abi.md
+// "Function properties"): for the process, its lock and two address maps (fn_props_map.velt), an
+// environment's entry by the environment's address and a declared function's identity
+// environment by its code's address, each a static atomic's word (program data on every target).
+//
+// An entry holds the environment's own drop and transfer entries, which fn_props_env.velt's
+// replace while it has properties, and its properties in insertion order: a vector of items, each
+// a block of the name (a `string`) and the value (an `any`), moved in and out with `slotStore` and
+// `slotTake` as they are (no transfer: one thread uses a function at a time, and the value stays
+// the object the program stored, for `===`). The lock is held only inside these hooks, never
+// while a value is dropped, shared into a new table or transferred, since that may reach another
+// function's properties. The blocks are fn_props_mem.velt's; the names and values are counted as
+// any value is.
+
+import {
+  addressAtomicCas,
+  addressAtomicLoad,
+  addressAtomicStore,
+  addressCall,
+  atomicAddress,
+  atomicSpinHint,
+  inline,
+  noInline,
+  share,
+  slotSize,
+  slotStore,
+  slotTake,
+} from "velt/lang/intrinsics";
+import { alloc, copy, free } from "./fn_props_mem";
+import { ld, ld64, st } from "./weak_mem";
+
+/** The table's lock: 0 free, 1 held. */
+const LOCK = new Atomic<u32>(0);
+/** The map of entries by environment (0: empty). */
+const PROPS = new Atomic<u64>(0);
+/** The map of identity environments by code (0: empty). */
+const IDS = new Atomic<u64>(0);
+
+/** The field holding the map of entries by environment, changed with the lock held. */
+@inline("always")
+export function propsField(): usize {
+  return atomicAddress(PROPS);
+}
+
+/** The field holding the map of identities by code, changed with the lock held. */
+@inline("always")
+export function idsField(): usize {
+  return atomicAddress(IDS);
+}
+
+/** An entry: the environment's own drop and transfer entries (words), then its item vector. */
+export const E_DROP: usize = 0;
+export const E_TRANSFER: usize = 8;
+const E_LEN: usize = 16;
+const E_CAP: usize = 24;
+const E_ITEMS: usize = 32;
+const ENTRY: usize = 40;
+
+/**
+ * Takes the table's lock. It is held for a lookup or a change of one entry, so a thread that
+ * finds it held spins until it is free. No `sched_yield` as the weak core's lock (weak_mem.velt):
+ * a source generator, which may write through `any`, can reach no C function but memory's.
+ */
+@inline("always")
+export function lock(): void {
+  const a = atomicAddress(LOCK);
+  // SAFETY: the lock's word, changed only atomically.
+  if (unsafe { addressAtomicCas<u32>(a, 0, 1, "acquire", "relaxed") } !== 0) {
+    lockSlow(a);
+  }
+}
+
+@noInline
+function lockSlow(a: usize): void {
+  while (true) {
+    // SAFETY: as `lock`; a read first, so waiters don't take the line from the holder.
+    if (unsafe { addressAtomicLoad<u32>(a, "relaxed") } === 0) {
+      // SAFETY: as `lock`.
+      if (unsafe { addressAtomicCas<u32>(a, 0, 1, "acquire", "relaxed") } === 0) {
+        return;
+      }
+    }
+    atomicSpinHint();
+  }
+}
+
+/** Gives back the table's lock. */
+@inline("always")
+export function unlock(): void {
+  // SAFETY: as `lock`.
+  unsafe {
+    addressAtomicStore<u32>(atomicAddress(LOCK), 0, "release");
+  }
+}
+
+/** A new entry without properties, keeping the environment's entries `drop` and `transfer`. */
+export function newEntry(drop: u64, transfer: u64): usize {
+  const e = alloc(ENTRY);
+  st(e + E_DROP, drop as usize);
+  st(e + E_TRANSFER, transfer as usize);
+  return e;
+}
+
+/** The environment's own drop entry kept in entry `e`. */
+@inline("always")
+export function entryDrop(e: usize): u64 {
+  return ld64(e + E_DROP);
+}
+
+/** The environment's own transfer entry kept in entry `e`. */
+@inline("always")
+export function entryTransfer(e: usize): u64 {
+  return ld64(e + E_TRANSFER);
+}
+
+/** The properties of entry `e`. */
+@inline("always")
+export function itemCount(e: usize): usize {
+  return ld(e + E_LEN);
+}
+
+/** Item `i` of entry `e` (`i` < its count). */
+@inline("always")
+export function itemAt(e: usize, i: usize): usize {
+  return ld(ld(e + E_ITEMS) + i * 8);
+}
+
+/** Appends item `item` to entry `e`. */
+export function pushItem(e: usize, item: usize): void {
+  const n = ld(e + E_LEN);
+  if (n === ld(e + E_CAP)) {
+    const cap = n === 0 ? 4 : n * 2;
+    const items = alloc(cap * 8);
+    const old = ld(e + E_ITEMS);
+    if (old !== 0) {
+      copy(items, old, n * 8);
+      free(old);
+    }
+    st(e + E_ITEMS, items);
+    st(e + E_CAP, cap);
+  }
+  st(ld(e + E_ITEMS) + n * 8, item);
+  st(e + E_LEN, n + 1);
+}
+
+/** Removes item `i` of entry `e`, keeping the others in order: the item. */
+export function removeItem(e: usize, i: usize): usize {
+  const items = ld(e + E_ITEMS);
+  const item = ld(items + i * 8);
+  const n = ld(e + E_LEN) - 1;
+  for (let k = i; k < n; k++) {
+    st(items + k * 8, ld(items + (k + 1) * 8));
+  }
+  st(e + E_LEN, n);
+  return item;
+}
+
+/** Entry `e` freed; its items are the caller's (`releaseItem`). */
+export function freeEntry(e: usize): void {
+  const items = ld(e + E_ITEMS);
+  if (items !== 0) {
+    free(items);
+  }
+  free(e);
+}
+
+/** The offset of an item's value: after its name, aligned to 8. */
+@inline("always")
+function valueAt(): usize {
+  return (slotSize<string>() + 7) & ~(7 as usize);
+}
+
+/** A new item holding `name` and `value`. */
+export function newItem(name: string, value: any): usize {
+  const item = alloc(valueAt() + slotSize<any>());
+  // SAFETY: a fresh block with room for both, holding no value.
+  unsafe {
+    slotStore<string>(item, name);
+    slotStore<any>(item + valueAt(), value);
+  }
+  return item;
+}
+
+/** Whether item `item`'s name is `key`. */
+export function itemIs(item: usize, key: string): bool {
+  // SAFETY: an item holds its name; it is put back before anything else runs.
+  const name = unsafe { slotTake<string>(item) };
+  const same = name === key;
+  // SAFETY: as above.
+  unsafe {
+    slotStore<string>(item, name);
+  }
+  return same;
+}
+
+/** The index of the item of entry `e` named `key`, or -1. */
+export function findItem(e: usize, key: string): i64 {
+  const n = itemCount(e);
+  for (let i: usize = 0; i < n; i++) {
+    if (itemIs(itemAt(e, i), key)) {
+      return i as i64;
+    }
+  }
+  return -1;
+}
+
+/** Another reference to item `item`'s name. */
+export function itemName(item: usize): string {
+  // SAFETY: an item holds its name; it is put back before anything else runs.
+  const name = unsafe { slotTake<string>(item) };
+  const out = share(name);
+  // SAFETY: as above.
+  unsafe {
+    slotStore<string>(item, name);
+  }
+  return out;
+}
+
+/** Another reference to item `item`'s value. */
+export function itemValue(item: usize): any {
+  // SAFETY: an item holds its value; it is put back before anything else runs.
+  const v = unsafe { slotTake<any>(item + valueAt()) };
+  const out = share(v);
+  // SAFETY: as above.
+  unsafe {
+    slotStore<any>(item + valueAt(), v);
+  }
+  return out;
+}
+
+/** Item `item`'s value replaced by `value`: the value it held, the caller's to drop. */
+export function swapValue(item: usize, value: any): any {
+  // SAFETY: an item holds its value, and holds `value` after.
+  const old = unsafe { slotTake<any>(item + valueAt()) };
+  // SAFETY: as above: the value was taken out.
+  unsafe {
+    slotStore<any>(item + valueAt(), value);
+  }
+  return old;
+}
+
+/**
+ * The byte offset of the transfer entry in an `any` value's table, `(data) -> data` safe on
+ * another thread (`SLOT_TRANSFER`, of the nine hidden slots in front of slot 0: velt_vir
+ * `glue/vtable.rs` `HIDDEN`).
+ */
+const TABLE_TRANSFER: usize = 24;
+
+/**
+ * Item `item`'s value made safe for another thread, in place: its data through its table's
+ * transfer entry (an `any` is the data word, then the table's, 8 bytes each on every target). Not
+ * the `transfer` intrinsic: a property crosses with its function, which the program's checks see
+ * at the function (velt_vir `glue/transfer_env.rs`), and the intrinsic would make every `any` of
+ * a program with function properties one that may cross to another task.
+ */
+export function transferValue(item: usize): void {
+  const at = item + valueAt();
+  const table = ld(at + 8);
+  if (table === 0) {
+    return;
+  }
+  const f = ld(table + TABLE_TRANSFER);
+  if (f !== 0) {
+    // SAFETY: the value's own transfer entry, given its data word, which it replaces.
+    st(at, unsafe { addressCall(f, ld(at)) });
+  }
+}
+
+/** A new item with a share of item `item`'s name and a transferred share of its value. */
+export function transferredCopy(item: usize): usize {
+  const copy = newItem(itemName(item), itemValue(item));
+  transferValue(copy);
+  return copy;
+}
+
+/**
+ * Item `item` released: its name and value dropped, its block freed. Without the lock: dropping
+ * the value may drop another function with properties.
+ */
+export function releaseItem(item: usize): void {
+  // SAFETY: the item holds both, each taken once; its block is freed after.
+  const _value = unsafe { slotTake<any>(item + valueAt()) };
+  // SAFETY: as above.
+  const _name = unsafe { slotTake<string>(item) };
+  free(item);
+  // Both are dropped here, at the end of the scope.
+}

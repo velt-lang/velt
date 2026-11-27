@@ -1,0 +1,7 @@
+0:t0 long enough to be a string on the heap:0:n,inner
+1:t1 long enough to be a string on the heap:10:n,inner
+2:t2 long enough to be a string on the heap:20:n,inner
+3:t3 long enough to be a string on the heap:30:n,inner
+4:t4 long enough to be a string on the heap:40:n,inner
+5:t5 long enough to be a string on the heap:50:n,inner
+9:t9 long enough to be a string on the heap:90:n,inner 9:t9 long enough to be a string on the heap:90:n,inner 9

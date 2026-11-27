@@ -1,0 +1,140 @@
+// velt/lang/hooks (internal): the address maps of function properties (fn_props.velt): a table
+// of `(key, value)` word pairs keyed by an address (never 0), open addressing with linear
+// probing. A removal shifts the pairs after it back, so no slot is ever marked removed and a
+// lookup stops at the first empty slot. A map is a block `[used, cap, pairs…]` held in a field
+// (0: empty, freed when it empties); its blocks are fn_props_mem.velt's. The caller holds the lock.
+
+import { inline } from "velt/lang/intrinsics";
+import { alloc, free } from "./fn_props_mem";
+import { ld, slotOf, st } from "./weak_mem";
+
+const M_USED: usize = 0;
+const M_CAP: usize = 8;
+const M_PAIRS: usize = 16;
+const PAIR: usize = 16;
+const FIRST_CAP: usize = 16;
+
+/** The pair at slot `i` of map `m`. */
+@inline("always")
+function pairAt(m: usize, i: usize): usize {
+  return m + M_PAIRS + i * PAIR;
+}
+
+/** The slot holding `key` in map `m`, or the empty slot where it would go. */
+function probe(m: usize, key: usize): usize {
+  const cap = ld(m + M_CAP);
+  let i = slotOf(key, cap);
+  while (true) {
+    const k = ld(pairAt(m, i));
+    if (k === key || k === 0) {
+      return i;
+    }
+    i = (i + 1) & (cap - 1);
+  }
+}
+
+/** The value of `key` in the map held at `field`, or 0. */
+export function mapGet(field: usize, key: usize): usize {
+  const m = ld(field);
+  if (m === 0) {
+    return 0;
+  }
+  const at = pairAt(m, probe(m, key));
+  return ld(at) === key ? ld(at + 8) : 0;
+}
+
+/** `key` set to `value` (not 0) in the map held at `field`. */
+export function mapSet(field: usize, key: usize, value: usize): void {
+  let m = ld(field);
+  // At most three quarters full, so a probe always ends at an empty slot.
+  if (m === 0 || (ld(m + M_USED) + 1) * 4 > ld(m + M_CAP) * 3) {
+    m = grow(field);
+  }
+  const at = pairAt(m, probe(m, key));
+  if (ld(at) === 0) {
+    st(at, key);
+    st(m + M_USED, ld(m + M_USED) + 1);
+  }
+  st(at + 8, value);
+}
+
+/** The map held at `field` with twice the slots (or its first ones), its pairs moved over. */
+function grow(field: usize): usize {
+  const old = ld(field);
+  const cap = old === 0 ? FIRST_CAP : ld(old + M_CAP) * 2;
+  const m = alloc(M_PAIRS + cap * PAIR);
+  st(m + M_CAP, cap);
+  if (old !== 0) {
+    const n = ld(old + M_CAP);
+    for (let i: usize = 0; i < n; i++) {
+      const k = ld(pairAt(old, i));
+      if (k !== 0) {
+        const at = pairAt(m, probe(m, k));
+        st(at, k);
+        st(at + 8, ld(pairAt(old, i) + 8));
+      }
+    }
+    st(m + M_USED, ld(old + M_USED));
+    free(old);
+  }
+  st(field, m);
+  return m;
+}
+
+/** Removes `key` from the map held at `field`: its value, or 0 when it had none. */
+export function mapRemove(field: usize, key: usize): usize {
+  const m = ld(field);
+  if (m === 0) {
+    return 0;
+  }
+  let hole = probe(m, key);
+  if (ld(pairAt(m, hole)) !== key) {
+    return 0;
+  }
+  const value = ld(pairAt(m, hole) + 8);
+  const mask = ld(m + M_CAP) - 1;
+  // Each pair after the hole, up to an empty slot, moves into it unless its home slot lies
+  // after the hole (cyclically) and up to where it is: a lookup from its home would not pass the
+  // hole then.
+  let j = hole;
+  while (true) {
+    j = (j + 1) & mask;
+    const k = ld(pairAt(m, j));
+    if (k === 0) {
+      break;
+    }
+    const home = slotOf(k, mask + 1);
+    const stays = hole <= j ? home > hole && home <= j : home > hole || home <= j;
+    if (!stays) {
+      st(pairAt(m, hole), k);
+      st(pairAt(m, hole) + 8, ld(pairAt(m, j) + 8));
+      hole = j;
+    }
+  }
+  st(pairAt(m, hole), 0);
+  st(pairAt(m, hole) + 8, 0);
+  const used = ld(m + M_USED) - 1;
+  if (used === 0) {
+    free(m);
+    st(field, 0);
+  } else {
+    st(m + M_USED, used);
+  }
+  return value;
+}
+
+/** A key of the map held at `field`, or 0 when it is empty. */
+export function mapAnyKey(field: usize): usize {
+  const m = ld(field);
+  if (m === 0) {
+    return 0;
+  }
+  const n = ld(m + M_CAP);
+  for (let i: usize = 0; i < n; i++) {
+    const k = ld(pairAt(m, i));
+    if (k !== 0) {
+      return k;
+    }
+  }
+  return 0;
+}

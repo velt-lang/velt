@@ -26,13 +26,6 @@ velt_rt velt_rt_drop_queue
 velt_rt velt_rt_drop_state
 velt_rt velt_rt_exit
 velt_rt velt_rt_flush
-velt_rt velt_rt_fnprop_delete
-velt_rt velt_rt_fnprop_get
-velt_rt velt_rt_fnprop_identity
-velt_rt velt_rt_fnprop_identity_of
-velt_rt velt_rt_fnprop_key
-velt_rt velt_rt_fnprop_len
-velt_rt velt_rt_fnprop_set
 velt_rt velt_rt_free
 velt_rt velt_rt_free_after_reads
 velt_rt velt_rt_fs_open_read
