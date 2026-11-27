@@ -1128,7 +1128,8 @@ hooks (`sched_exit`, `program_thread`) in a program that runs nothing on the exe
 without such a hook also where the program doesn't load the hook's module; a module the program
 loads without the hook is an ICE naming both (`crates/velt_vir/src/lower/std_defs.rs`), never a
 feature quietly switched off, and so is a hook found only under a second name of its module (a
-loaded module whose path ends in `/` and the hook's module, as `std/../../…/std/…` in #3731).
+module the loader named as std's by a path that leaves std's root, `std/../…`, ending in `/` and
+the hook's module, as in #3731).
 
 A hook whose `velt_common` `std_hooks.rs` entry lists `constructs(…)` (the integer text hooks
 `intText`, `uintText`, `intPush`, `uintPush`, `intWrite`, `uintWrite`, the `inspect…` and

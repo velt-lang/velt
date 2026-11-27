@@ -14,8 +14,9 @@
 //! A module loaded under a second name (#3731: `std/../../…/std/lang/hooks/sched_all`, a path
 //! that reached std by another spelling) has its definitions under that name, so its canonical
 //! module is not loaded. A hook missing under its canonical name whose item is there under such a
-//! name (a loaded module whose path ends in `/` and the canonical module) is an internal error
-//! naming both, in each of the three, and not a feature switched off (#3745).
+//! name (a module the loader named as std's, `std/../…`, whose path ends in `/` and the canonical
+//! module) is an internal error naming both, in each of the three, and not a feature switched
+//! off (#3745). A program's own module under a `std` directory is not such a name.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use velt_sema::hir::{self, DefId};
@@ -34,9 +35,14 @@ pub(super) struct StdDefs<'h> {
     second_names: FxHashMap<&'h str, &'h str>,
 }
 
-/// The canonical std module whose second name `module` may be: what follows its last `/std/`
-/// (`std/../x/std/lang/a` → `std/lang/a`).
+/// The canonical std module whose second name `module` is: what follows its last `/std/`, for a
+/// module the loader named as std's (`std/…`) by a path that leaves std's root
+/// (`std/../../x/std/lang/a` → `std/lang/a`, #3731). A program's own module under a `std`
+/// directory (`vendor/std/lang/a`) is not std's: the loader names it from the program's root.
 fn canonical_std_module(module: &str) -> Option<&str> {
+    if !module.starts_with("std/../") {
+        return None;
+    }
     let at = module.rfind("/std/")?;
     Some(&module[at + 1..])
 }
