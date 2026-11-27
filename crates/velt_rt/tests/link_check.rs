@@ -83,8 +83,8 @@ int32_t velt_main(void) {
 }
 "#;
 
-/// A worker of the executor in Velt starts with `velt_rt_set_scheduler(2)`, which starts the
-/// runtime's host (tokio) and enters it on this thread.
+/// A worker of the executor in Velt starts with `velt_rt_set_scheduler(2)`, which links and does
+/// nothing: the runtime has no host of its own any more.
 const HOST: &str = r#"
 void velt_rt_set_scheduler(uint32_t);
 int32_t velt_main(void) {
@@ -273,7 +273,7 @@ fn staticlib_links_and_runs() {
     assert_eq!(text(&out.stdout), expected);
     assert_eq!(out.status.code(), Some(7));
 
-    // The async runtime's host (tokio) links with the same native libs.
+    // A worker's first call links and changes nothing.
     let exe = build("host", HOST).unwrap();
     let out = run(&exe);
     assert_eq!(text(&out.stdout), "1\n");

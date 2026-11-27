@@ -2,9 +2,9 @@
 
 Compiler written in Rust: `.velt` → AST → HIR (typed, ownership-checked) → VIR (MIR-like) →
 Cranelift (debug, JIT) or LLVM (release) → object → system linker + `velt_rt` (Rust staticlib
-runtime; tokio-based async). Architecture: `docs/internals/README.md`. Language and std docs for
-users: https://veltlang.com/docs/ (the website repository, `velt-lang/velt-lang.github.io`).
-Interfaces between crates: `docs/internals/contracts/README.md`.
+runtime; async runs on the executor in Velt, std/lang/hooks/sched.velt). Architecture:
+`docs/internals/README.md`. Language and std docs for users: https://veltlang.com/docs/ (the
+website repository, `velt-lang/velt-lang.github.io`). Interfaces between crates: `docs/internals/contracts/README.md`.
 
 Build, test tiers, coding standards and the language-change process are in `CONTRIBUTING.md`;
 follow it. The essentials for agents:

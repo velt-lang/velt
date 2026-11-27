@@ -372,15 +372,11 @@ the runtime's Rust glue (child processes on Windows, file streams).
 | `velt_rt_spawn_target` | `(i64 worker)` | WebAssembly only (velt_rt_wasm); native programs run on the executor in Velt (#2196). `spawn(p, { worker })` (#211): the next spawn on this thread pins its task to `worker`. Called right after the task's arguments are evaluated, immediately before `velt_rt_spawn` / `_transfer` / `_detached` / `_fut`. Out of range (`worker < 0` or `≥ velt_rt_worker_count()`): panic `spawn: worker <w> is out of range (the runtime has <n> workers)`. In range, velt_rt spawns the task as usual (its host has one worker). |
 | `velt_rt_worker_count` | `() -> u64` | the configured workers, `VELT_THREADS` (a positive integer) or one per core, fixed for the process (1 on WebAssembly): `workerCount()` on WebAssembly (std/task/worker_index.velt; on native targets the executor in Velt answers), and std/net's listener worker count (std/net/rt.velt). |
 | `velt_rt_current_worker` | `() -> u64` | an index for this thread, always below `velt_rt_worker_count()`: `currentWorker()` on WebAssembly. |
-| `velt_rt_set_scheduler` | `(u32 kind)` | `1`: what `velt_main` calls first when the program pins a task (`spawn(p, { worker })`); a no-op. `2`: each thread of the executor in Velt calls it before it polls its first task (std/lang/hooks/sched_workers.velt, spare workers too): the thread enters the host's tokio context for the rest of the process, so the leaves it polls find the host's timers and I/O, and the runtime takes the process's tasks for the executor's (they have no runtime task). |
+| `velt_rt_set_scheduler` | `(u32 kind)` | A no-op, kept for programs compiled before the executor in Velt and for `velt_vir`'s `Rt::SetScheduler`. `1`: what `velt_main` calls first when the program pins a task (`spawn(p, { worker })`). `2`: each thread of the executor in Velt calls it before it polls its first task (std/lang/hooks/sched_workers.velt, spare workers too). |
 
-velt_rt's host (`task/runtime/host.rs`) is one tokio multi-thread runtime with one worker
-thread (`velt-host`, an 8 MiB stack) and tokio's blocking pool, started on first use. Child
-processes on Windows, file streams, signals, the `velt dev` host, the native-package ABI and
-velt_rt's own definitions of the symbols above run there. Everything in the runtime goes
-through `task/runtime/` (`spawn`, `spawn_blocking`, `enter`, `block_on`, its `JoinHandle` /
-`AbortHandle`); nothing else names tokio's. Neither the compiler nor the runtime reads
-`VELT_SCHEDULER`.
+velt_rt has no async runtime of its own: it starts no threads and runs no tasks. Its remaining
+leaves (`velt_rt_tcp_listen`, velt dev's listener handover) are polled by the executor in Velt
+like any other future. Neither the compiler nor the runtime reads `VELT_SCHEDULER`.
 Programs run on the executor in Velt (std/lang/hooks/sched*.velt), with `VELT_THREADS` workers
 (a positive integer) or one per core. With more than one worker it rescues a stalled one
 (std/lang/hooks/sched_monitor.velt); with one, only when `VELT_RESCUE=1`: no monitor thread, and a
