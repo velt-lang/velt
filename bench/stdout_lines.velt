@@ -1,0 +1,7 @@
+// 100,000 lines of `console.log`, a string and a number each (bench/stdout_writer_ab.sh, #2196):
+// the writer's per-line path, to a file or a pipe.
+function main() {
+  for (let i = 0; i < 100000; i++) {
+    console.log("line", i);
+  }
+}

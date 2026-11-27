@@ -868,13 +868,18 @@ thread-local lookup or a call.
 
 ## 10. Output with many tasks
 
-`console.log` from tasks uses per-thread stdout buffers; the runtime publishes a thread's buffer
-into the shared stdout buffer after every task poll, so output order follows causality (`log a;
-await x; log b` prints a before b even if the task moved threads) and lines from different tasks
-never interleave mid-line (a full thread buffer is published only through its last newline; only a
-single line longer than 1 MiB may be split). Buffered output reaches the OS when buffers fill, when
-a worker goes idle (so servers logging to a pipe show output promptly), before stderr writes, on
-`velt_rt_flush`, and at exit.
+`console.log` from tasks uses per-thread stdout buffers, std's on a native target
+(std/lang/hooks/stdout_buffer.velt, #2196; the runtime has none): the executor in Velt publishes a
+thread's buffer into the shared stdout buffer at the end of a poll and at every hand-off
+(`publishOutput`), so output order follows causality (`log a; await x; log b` prints a before b
+even if the task moved threads) and lines from different tasks never interleave mid-line (a full
+thread buffer is published only through its last newline; only a single line longer than 1 MiB
+may be split). Buffered output reaches the OS when buffers fill, when a worker goes idle (so
+servers logging to a pipe show output promptly, `flushIdle`), before stderr writes, on
+`flushOutput`, and at every exit Velt code reaches (`flushForExit`, which lowering calls). An exit
+the runtime takes by itself (a fatal error inside the runtime's Rust, `velt dev`'s server stopping
+on a signal) does not flush: it loses what was printed since a worker last went idle. On
+WebAssembly velt_rt_wasm's single-threaded writer does this (`velt_rt_flush`).
 
 ## 11. Worked example (what lowering emits)
 

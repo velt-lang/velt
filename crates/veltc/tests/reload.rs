@@ -371,6 +371,30 @@ fn sigterm_stops_the_program() {
     assert!(get(port, "/").is_err(), "the program outlived velt dev");
 }
 
+/// A server's log line reaches stdout while the server waits for the next request (a worker going
+/// idle writes stdout out), before an interrupt stops the program: the program's exit on `velt
+/// dev`'s stop request is the runtime's and writes nothing out (#2196), so this is what keeps a
+/// server's log complete.
+#[cfg(unix)]
+#[test]
+fn a_servers_log_is_out_before_an_interrupt() {
+    let dir = TestDir::new();
+    apply(&root().join("tests/reload/logging_server/1"), dir.path());
+    let mut dev = Dev::start(dir.path(), &[]);
+    let started = dev.wait_stderr(Mark::default(), "velt dev: started");
+    started.unwrap_or_else(|e| panic!("{e}"));
+    let port = dev.port().unwrap_or_else(|e| panic!("{e}"));
+    let mark = dev.mark();
+    assert_eq!(get(port, "/").as_deref(), Ok("v1"));
+    dev.wait_stdout(mark, "got a request")
+        .unwrap_or_else(|e| panic!("{e}"));
+    dev.signal(libc::SIGINT);
+    assert_eq!(
+        dev.wait_exit(Duration::from_secs(30)),
+        Some(128 + libc::SIGINT)
+    );
+}
+
 /// After a restart, the next reload starts a spare host beside the running one (Linux): a
 /// failed build's diagnostics appear once, and the spare is killed when the running host fails
 /// the build or swaps the change in.

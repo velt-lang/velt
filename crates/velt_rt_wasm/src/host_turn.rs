@@ -123,7 +123,7 @@ pub unsafe extern "C" fn velt_turn() {
         if !program.root.done() {
             // Nothing can settle the top-level `await` the root waits at, as Node ends.
             std::alloc::dealloc(program.root.state(), program.layout);
-            break crate::top_level_await::unfinished_exit_code();
+            break crate::top_level_await::unfinished_exit_code(|w| crate::io::write_bytes(2, w));
         }
         if program.root.after_main() {
             break 0;

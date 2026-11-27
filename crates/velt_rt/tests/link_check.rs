@@ -15,10 +15,29 @@ use std::process::{Command, Output};
 const PRELUDE: &str = r#"
 #include <stdint.h>
 typedef struct { uint8_t* ptr; uint64_t len; uint64_t cap; } VeltStr;
-void velt_rt_write_str(uint32_t, const VeltStr*);
-void velt_rt_write_bool(uint32_t, uint8_t);
-void velt_rt_write_byte(uint32_t, uint8_t);
-void velt_rt_flush(void);
+#ifdef _WIN32
+int _write(int, const void*, unsigned int);
+#define OS_WRITE(fd, p, n) _write((fd), (p), (unsigned int)(n))
+#else
+long write(int, const void*, unsigned long);
+#define OS_WRITE(fd, p, n) write((fd), (p), (n))
+#endif
+// The writers are std's (std/lang/hooks/out_native.velt, #2196), not the runtime's: this
+// program has its own, unbuffered, each write straight to the OS.
+static void out_bytes(uint32_t stream, const uint8_t* p, uint64_t n) { OS_WRITE((int)stream, p, n); }
+// A string's bytes: inline (byte 23's 0x80 bit, the length in its low 5 bits) or at `ptr`.
+static void out_str(uint32_t stream, const VeltStr* s) {
+    const uint8_t* raw = (const uint8_t*)s;
+    if (raw[23] & 0x80) {
+        out_bytes(stream, raw, raw[23] & 0x1f);
+    } else {
+        out_bytes(stream, s->ptr, s->len & 0xffffffffu);
+    }
+}
+static void out_byte(uint32_t stream, uint8_t b) { out_bytes(stream, &b, 1); }
+static void out_bool(uint32_t stream, uint8_t v) {
+    out_bytes(stream, (const uint8_t*)(v ? "true" : "false"), v ? 4 : 5);
+}
 void velt_rt_str_concat(const VeltStr*, const VeltStr*, VeltStr*);
 void velt_rt_str_append(VeltStr*, const VeltStr*);
 void velt_rt_str_drop(VeltStr*);
@@ -29,16 +48,16 @@ void velt_rt_panic(const VeltStr*);
 void velt_rt_exit(int32_t);
 // An ASCII literal: `w1` packs the UTF-16 length (high half) and the byte length (low half).
 #define LIT(s) { (uint8_t*)(s), ((uint64_t)(sizeof(s) - 1) << 32) | (sizeof(s) - 1), 0 }
-// An integer's decimal digits through `velt_rt_write_str`, as std's `intWrite` writes them (the
+// An integer's decimal digits through `out_str`, as std's `intWrite` writes them (the
 // runtime prints no integer, #2197).
 static inline void write_u64(uint32_t stream, uint64_t v) {
     char b[20]; int n = 20;
     do { b[--n] = (char)('0' + v % 10); v /= 10; } while (v);
     VeltStr t = { (uint8_t*)b + n, ((uint64_t)(20 - n) << 32) | (uint64_t)(20 - n), 0 };
-    velt_rt_write_str(stream, &t);
+    out_str(stream, &t);
 }
 static inline void write_i64(uint32_t stream, int64_t v) {
-    if (v < 0) { VeltStr m = LIT("-"); velt_rt_write_str(stream, &m); }
+    if (v < 0) { VeltStr m = LIT("-"); out_str(stream, &m); }
     write_u64(stream, v < 0 ? 0 - (uint64_t)v : (uint64_t)v);
 }
 "#;
@@ -49,18 +68,18 @@ int32_t velt_main(void) {
     VeltStr a = LIT("Hello, "), b = LIT("world"), c, f = LIT("0.30000000000000004 1e+21 ");
     velt_rt_str_concat(&a, &b, &c);
     velt_rt_str_append(&c, &b);
-    velt_rt_write_str(1, &c); velt_rt_write_byte(1, '\n');
+    out_str(1, &c); out_byte(1, '\n');
     velt_rt_str_drop(&c);
-    write_i64(1, -42); velt_rt_write_byte(1, ' ');
-    write_u64(1, 18446744073709551615ull); velt_rt_write_byte(1, ' ');
-    velt_rt_write_str(1, &f);
-    velt_rt_write_bool(1, 1); velt_rt_write_byte(1, '\n');
+    write_i64(1, -42); out_byte(1, ' ');
+    write_u64(1, 18446744073709551615ull); out_byte(1, ' ');
+    out_str(1, &f);
+    out_bool(1, 1); out_byte(1, '\n');
     VeltStr g = LIT("1.5e-7");
-    velt_rt_write_str(1, &g); velt_rt_write_byte(1, '\n');
+    out_str(1, &g); out_byte(1, '\n');
     void* p = velt_rt_alloc(1024, 16);
     velt_rt_free(p, 1024, 16);
     VeltStr e = LIT("to stderr");
-    velt_rt_write_str(2, &e); velt_rt_write_byte(2, '\n');
+    out_str(2, &e); out_byte(2, '\n');
     return 3;
 }
 "#;
@@ -68,7 +87,7 @@ int32_t velt_main(void) {
 const PANIC: &str = r#"
 int32_t velt_main(void) {
     VeltStr s = LIT("before"), m = LIT("division by zero");
-    velt_rt_write_str(1, &s); velt_rt_write_byte(1, '\n');
+    out_str(1, &s); out_byte(1, '\n');
     velt_rt_panic(&m);
     return 0;
 }
@@ -77,7 +96,7 @@ int32_t velt_main(void) {
 const EXIT: &str = r#"
 int32_t velt_main(void) {
     int i;
-    for (i = 0; i < 20000; i++) { write_i64(1, i); velt_rt_write_byte(1, '\n'); }
+    for (i = 0; i < 20000; i++) { write_i64(1, i); out_byte(1, '\n'); }
     velt_rt_exit(7);
     return 0;
 }
@@ -89,7 +108,7 @@ const HOST: &str = r#"
 void velt_rt_set_scheduler(uint32_t);
 int32_t velt_main(void) {
     velt_rt_set_scheduler(2);
-    write_i64(1, 1); velt_rt_write_byte(1, '\n');
+    write_i64(1, 1); out_byte(1, '\n');
     return 5;
 }
 "#;
@@ -299,7 +318,7 @@ int32_t velt_main(void) {
     velt_rt_strbuf_push_byte(&b, '3'); velt_rt_strbuf_push_byte(&b, '0');
     velt_rt_strbuf_push_byte(&b, '}');
     velt_rt_strbuf_finish(&b, &s);
-    velt_rt_write_str(1, &s); velt_rt_write_byte(1, '\n');
+    out_str(1, &s); out_byte(1, '\n');
     velt_rt_str_drop(&s);
     return 0;
 }

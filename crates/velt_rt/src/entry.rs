@@ -19,7 +19,6 @@ pub fn init() {
     crate::panic::install_hook();
     crate::process::init_clock();
     crate::process::init_script();
-    crate::io::init_stdout();
     ignore_sigpipe();
     #[cfg(all(debug_assertions, not(velt_rt_host)))]
     crate::debug_alloc::claim_faults();
@@ -36,20 +35,9 @@ fn ignore_sigpipe() {
     }
 }
 
-/// Standard output is a closed pipe (`program | head`): end the process the way it ended before
-/// SIGPIPE was ignored (killed by the signal), instead of printing into the void.
-#[cfg(unix)]
-pub(crate) fn die_of_broken_pipe() -> ! {
-    // SAFETY: restoring the default disposition and raising the signal terminates the process.
-    unsafe {
-        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
-        libc::raise(libc::SIGPIPE);
-    }
-    std::process::exit(141)
-}
-
-/// Run a program: initialize the runtime, call its `velt_main`, flush stdout; returns the exit
-/// code. What `main` does for linked executables, and what the JIT host does with JIT code.
+/// Run a program: initialize the runtime, call its `velt_main` (which flushes stdout before it
+/// returns, std/lang/hooks/stdout.velt); returns the exit code. What `main` does for linked
+/// executables, and what the JIT host does with JIT code.
 pub fn run_main(velt_main: extern "C" fn() -> i32) -> i32 {
     init();
     let code = velt_main();
@@ -71,7 +59,6 @@ fn finish(code: i32) -> i32 {
         }
         crate::str::stats::freeze(tasks_may_run);
     }
-    crate::io::flush_stdout();
     crate::str::stats::report();
     #[cfg(all(debug_assertions, not(velt_rt_host)))]
     crate::debug_alloc::check_quarantine(&crate::GLOBAL_QUARANTINE);
