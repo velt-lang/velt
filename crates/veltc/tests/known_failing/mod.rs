@@ -9,18 +9,26 @@ use std::path::Path;
 pub struct Known {
     /// The issue tracking the failure (`#<number>`).
     pub issue: String,
-    /// Marked `units`: it fails only in a run by units, and a run by units fails when it passes.
+    /// Marked `units` (or `units=<mode>`): it fails only in a run by units, and a run by units
+    /// fails when it passes.
     pub units: bool,
 }
 
-/// The goldens known to fail on this OS, in a run by units when `VELT_UNITS=2`, by path from the
-/// repository root.
+/// The goldens known to fail on this OS, in a run by units in `VELT_UNITS`'s mode when it is set,
+/// by path from the repository root.
 pub fn known_failing() -> HashMap<String, Known> {
     parse_known_failing(
         include_str!("../golden_known_failing.txt"),
         std::env::consts::OS,
-        std::env::var_os("VELT_UNITS").is_some_and(|v| v == "2"),
+        units_mode(std::env::var_os("VELT_UNITS").as_deref()),
     )
+}
+
+/// The mode of a run by units that `VELT_UNITS` (`value`) asks for, as the driver and velt_sema
+/// read it (`crates/veltc/src/driver.rs`, `units::stage2`): `2` with std a unit of its own, `1`
+/// for any other value (std and the program in one context); `None` unset (not by units).
+fn units_mode(value: Option<&std::ffi::OsStr>) -> Option<u8> {
+    value.map(|v| if v == "2" { 2 } else { 1 })
 }
 
 /// Prints `line`, and appends it to the file `VELT_GOLDEN_REPORT` names (the nightly's job
@@ -112,11 +120,12 @@ fn stderr_line(err: &str) -> Option<&str> {
     Some(line.find("tests/golden/").map_or(line, |i| &line[i..]))
 }
 
-/// The entries of known-failing list `text` that apply on `os`, in a run by units when `units`
-/// (`VELT_UNITS=2`). Each line not blank and not a `#`-comment is
-/// `<path> #<issue> [os=<os>,...] [units]`: an entry marked `units` fails only in a run by units
-/// (#2943); anything else is a mistake in the list.
-fn parse_known_failing(text: &str, os: &str, units: bool) -> HashMap<String, Known> {
+/// The entries of known-failing list `text` that apply on `os`, in a run by units in mode `units`
+/// (`VELT_UNITS`: 1 or 2) when there is one. Each line not blank and not a `#`-comment is
+/// `<path> #<issue> [os=<os>,...] [units | units=1 | units=2]`: an entry marked `units` fails
+/// only in a run by units (#2943), in either mode; `units=<mode>` only in that mode. Anything
+/// else is a mistake in the list.
+fn parse_known_failing(text: &str, os: &str, units: Option<u8>) -> HashMap<String, Known> {
     let mut out = HashMap::new();
     for line in text.lines().map(str::trim) {
         if line.is_empty() || line.starts_with('#') {
@@ -132,17 +141,22 @@ fn parse_known_failing(text: &str, os: &str, units: bool) -> HashMap<String, Kno
                 && issue.starts_with('#'),
             "golden_known_failing.txt: `{line}`: the issue is `#<number>`"
         );
-        let (mut on_os, mut by_units) = (true, false);
+        // The modes of a run by units the entry applies in (none: it isn't marked `units`).
+        let (mut on_os, mut modes): (bool, &[u8]) = (true, &[]);
         for w in words.by_ref() {
             match (w.strip_prefix("os="), w) {
                 (Some(list), _) => on_os = list.split(',').any(|o| o == os),
-                (None, "units") => by_units = true,
+                (None, "units") => modes = &[1, 2],
+                (None, "units=1") => modes = &[1],
+                (None, "units=2") => modes = &[2],
                 _ => panic!(
-                    "golden_known_failing.txt: `{line}`: after the issue only `os=...` and `units`"
+                    "golden_known_failing.txt: `{line}`: after the issue only `os=...` and `units` \
+                     (or `units=1`, `units=2`)"
                 ),
             }
         }
-        if on_os && (!by_units || units) {
+        let by_units = !modes.is_empty();
+        if on_os && (!by_units || units.is_some_and(|m| modes.contains(&m))) {
             let issue = issue.to_string();
             out.insert(
                 path.to_string(),
@@ -159,21 +173,21 @@ fn parse_known_failing(text: &str, os: &str, units: bool) -> HashMap<String, Kno
 #[test]
 fn the_known_failing_list_reads_its_entries_by_os() {
     let text = "# comment\n\ntests/golden/a.velt #12\ntests/golden/b.velt #34 os=windows,linux\ntests/golden/c.velt #56 units\ntests/golden/d.velt #78 os=linux units\n";
-    let mac = parse_known_failing(text, "macos", false);
+    let mac = parse_known_failing(text, "macos", None);
     assert_eq!(
         mac.get("tests/golden/a.velt").map(|k| k.issue.as_str()),
         Some("#12")
     );
     assert!(!mac.contains_key("tests/golden/b.velt"));
     assert!(!mac.contains_key("tests/golden/c.velt"));
-    let linux = parse_known_failing(text, "linux", false);
+    let linux = parse_known_failing(text, "linux", None);
     assert_eq!(
         linux.get("tests/golden/b.velt").map(|k| k.issue.as_str()),
         Some("#34")
     );
     assert!(!linux.contains_key("tests/golden/d.velt"));
     // An entry marked `units` applies in a run by units only, on its OSes.
-    let mac_units = parse_known_failing(text, "macos", true);
+    let mac_units = parse_known_failing(text, "macos", Some(2));
     assert_eq!(
         mac_units
             .get("tests/golden/c.velt")
@@ -184,28 +198,68 @@ fn the_known_failing_list_reads_its_entries_by_os() {
     // Only an entry marked `units` fails a run by units when it passes.
     assert!(mac_units["tests/golden/c.velt"].units);
     assert!(!mac_units["tests/golden/a.velt"].units);
-    let linux_units = parse_known_failing(text, "linux", true);
+    let linux_units = parse_known_failing(text, "linux", Some(2));
     assert!(linux_units.contains_key("tests/golden/d.velt"));
     // The words after the issue in either order.
     let either = parse_known_failing(
         "tests/golden/e.velt #90 units os=windows\n",
         "windows",
-        true,
+        Some(2),
     );
     assert!(either.contains_key("tests/golden/e.velt"));
-    let either = parse_known_failing("tests/golden/e.velt #90 units os=windows\n", "linux", true);
+    let either = parse_known_failing(
+        "tests/golden/e.velt #90 units os=windows\n",
+        "linux",
+        Some(2),
+    );
     assert!(!either.contains_key("tests/golden/e.velt"));
-    // Every entry of the real list names a golden that is there, on any OS.
+    // Every entry of the real list names a golden that is there, on any OS, in either mode.
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let all = include_str!("../golden_known_failing.txt");
     for os in ["macos", "linux", "windows"] {
-        for path in parse_known_failing(all, os, true).keys() {
-            assert!(
-                root.join(path).is_file(),
-                "golden_known_failing.txt: no golden {path}"
-            );
+        for mode in [1, 2] {
+            for path in parse_known_failing(all, os, Some(mode)).keys() {
+                assert!(
+                    root.join(path).is_file(),
+                    "golden_known_failing.txt: no golden {path}"
+                );
+            }
         }
     }
+}
+
+/// `units` applies in a run by units in either mode (`VELT_UNITS=1`: std and the program in one
+/// context; `VELT_UNITS=2`: std a unit of its own), `units=<mode>` in that mode only.
+#[test]
+fn the_known_failing_list_reads_the_mode_of_a_run_by_units() {
+    let text = "tests/golden/a.velt #1\ntests/golden/b.velt #2 units\ntests/golden/c.velt #3 units=1\ntests/golden/d.velt #4 os=linux units=2\n";
+    let keys = |mode: Option<u8>| {
+        let mut k: Vec<String> = parse_known_failing(text, "linux", mode)
+            .into_keys()
+            .collect();
+        k.sort();
+        k
+    };
+    let paths = |names: &[&str]| -> Vec<String> {
+        (names.iter())
+            .map(|n| format!("tests/golden/{n}.velt"))
+            .collect()
+    };
+    assert_eq!(keys(None), paths(&["a"]));
+    assert_eq!(keys(Some(1)), paths(&["a", "b", "c"]));
+    assert_eq!(keys(Some(2)), paths(&["a", "b", "d"]));
+    // A `units=<mode>` entry fails the run when it passes in its mode, as a `units` one does.
+    let one = parse_known_failing(text, "linux", Some(1));
+    assert!(matches!(
+        on_pass("tests/golden/c.velt", one.get("tests/golden/c.velt")),
+        OnPass::Fail(_)
+    ));
+    // `VELT_UNITS` as the driver reads it: `2`, or any other value for one context.
+    let mode = |s: &str| units_mode(Some(std::ffi::OsStr::new(s)));
+    assert_eq!(units_mode(None), None);
+    assert_eq!(mode("2"), Some(2));
+    assert_eq!(mode("1"), Some(1));
+    assert_eq!(mode("yes"), Some(1));
 }
 
 #[test]
@@ -239,7 +293,7 @@ fn a_known_failure_says_how_it_failed() {
 #[test]
 fn a_passing_golden_listed_units_fails_the_run() {
     let text = "tests/golden/a.velt #12\ntests/golden/c.velt #56 units\n";
-    let list = parse_known_failing(text, "linux", true);
+    let list = parse_known_failing(text, "linux", Some(2));
     let pass = |rel: &str| on_pass(rel, list.get(rel));
     assert_eq!(
         pass("tests/golden/c.velt"),
