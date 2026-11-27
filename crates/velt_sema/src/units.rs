@@ -70,13 +70,16 @@ pub struct Summaries {
     /// What the app's passes raise of the unit's definitions, kept beside them while they are
     /// frozen (`raised`); empty in a saved unit.
     pub(crate) raised: raised::Raised,
+    /// The implementations the unit converts values to and the types it makes dynamic, which
+    /// decide the interface methods dispatch reaches (`crate::dispatch::Converted`).
+    pub(crate) converted: crate::dispatch::Converted,
 }
 
 // The encoding of a finished unit (`codec`): every field, so a new one fails to build.
 codec::structs! {
     Summaries {
         json_needs, state_facts, module_edges, senders, shared_readers, shared_read_outside,
-        declared_modes, declared_now, trap_sites, raised,
+        declared_modes, declared_now, trap_sites, raised, converted,
     }
 }
 

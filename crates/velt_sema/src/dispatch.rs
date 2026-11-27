@@ -2,12 +2,13 @@
 //! an interface (`Program::impls`) or a base class (vtable slots). The instantiation checks
 //! (`record_keys`, `json`) propagate a generic function's requirements to its callers through
 //! `Callee::Def` type arguments; a dispatched method has no such call, so its requirements are
-//! instantiated wherever its class type is mentioned with concrete arguments instead.
+//! instantiated wherever its class type is mentioned with concrete arguments instead (an interface
+//! implementation's only when a value is converted through it: [`Converted`]).
 //!
 //! Those checks are fixed points over the functions ([`Rounds`]), and their work is counted
 //! ([`instantiation_work`]) so a test can tell that it grows linearly with the program.
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -19,10 +20,26 @@ use crate::types::{children, collect_params};
 /// interface's followed by the implementor, for an interface's default method).
 pub(crate) type Target = (DefId, Vec<TyId>);
 
+/// What makes an interface implementation's methods reachable by dynamic dispatch, for a check
+/// that counts only those ([`Dispatch::converted`]). An interface method runs without a direct
+/// call only on an interface value, and an interface value of a class or struct is made by
+/// converting one (`ToDyn` with the implementation's index; an interface value converted to
+/// another interface keeps the first one's methods). A method called through a type parameter's
+/// bound (`Callee::ParamMethod`), or by name on a value converted to `any`, is no dispatch: the
+/// check resolves it where the type is concrete.
+#[derive(Clone, Default)]
+pub(crate) struct Converted {
+    /// The implementations some value is converted to (`ToDyn`).
+    pub impls: FxHashSet<u32>,
+}
+
 /// [`Dispatch::targets`] per type, memoized.
 #[derive(Default)]
 pub(crate) struct Dispatch {
     memo: FxHashMap<TyId, Vec<Target>>,
+    /// When set, an implementation's methods are targets only when [`Converted`] reaches them;
+    /// the hooks lowering calls from glue (`toString`, `toJSON`, inspect) always are.
+    pub(crate) converted: Option<Converted>,
     /// Indices into `Ctx::impls` per implementing struct or class, built on first use.
     impls_by_adt: Option<FxHashMap<DefId, Vec<usize>>>,
     /// Vtable entries and impls examined: see [`instantiation_work`].
@@ -73,6 +90,10 @@ impl Dispatch {
         impls.dedup();
         self.work += impls.len() as u64;
         for i in impls {
+            let reached = self
+                .converted
+                .as_ref()
+                .is_none_or(|c| c.impls.contains(&(i as u32)));
             let (ty, iface_args, methods) = {
                 let imp = &cx.impls[i];
                 (imp.ty, imp.iface_args.clone(), imp.methods.clone())
@@ -84,6 +105,9 @@ impl Dispatch {
                 continue;
             };
             for m in methods {
+                if !reached && !is_hook(cx, m) {
+                    continue;
+                }
                 let a = if cx.iface(owner(cx, m)).is_some() {
                     let mut a: Vec<TyId> =
                         iface_args.iter().map(|t| cx.subst(*t, &cargs)).collect();
@@ -126,6 +150,20 @@ fn push(out: &mut Vec<Target>, t: Target) {
     if !out.contains(&t) {
         out.push(t);
     }
+}
+
+/// Is `m` a method lowering calls from glue when it formats or serializes a value of its class
+/// (`crate::hooks::NAMES`), reachable whatever the program converts?
+fn is_hook(cx: &Ctx, m: DefId) -> bool {
+    let crate::defs::DefInfo::Fn(f) = &cx.info[m.0 as usize] else {
+        return false;
+    };
+    // By suffix: the inspect hook's key has dots of its own (`nodejs.util.inspect.custom`).
+    crate::hooks::NAMES.iter().any(|n| {
+        f.name.len() > n.len()
+            && f.name.ends_with(n)
+            && f.name[..f.name.len() - n.len()].ends_with('.')
+    })
 }
 
 /// `(d, args)` followed by its base classes with their (substituted) arguments.
@@ -258,5 +296,12 @@ pub fn instantiation_work() -> InstantiationWork {
         json: get(Pass::Json),
         promise_copies: get(Pass::PromiseCopies),
         struct_tuples: get(Pass::StructTuples),
+    }
+}
+
+// The encoding of a finished unit (`crate::units::codec`): every field, so a new one fails to build.
+crate::units::codec::structs! {
+    Converted {
+        impls,
     }
 }
