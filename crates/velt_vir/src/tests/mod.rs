@@ -45,7 +45,6 @@ mod m3_state;
 mod m3_tasks;
 mod member_slots;
 mod mutex_held;
-mod native_init;
 mod numeric;
 mod param_attrs;
 mod programs_m3;

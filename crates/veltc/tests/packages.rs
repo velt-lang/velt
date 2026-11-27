@@ -2,12 +2,10 @@
 //! repositories of their own, docs/internals/design/std-layout.md §3): `velt test` in each, as
 //! their users run it, once in a debug build with the checking allocator (`VELT_RT_DEBUG_ALLOC=1`:
 //! a use after free or a double free aborts, and the block counters on: `VELT_RC_STATS=1`, so a
-//! test file that leaves a block unfreed fails) and once in a release build. A package with
-//! native code builds its
-//! crate from source with cargo first (into `packages/<name>/target/velt-native/`, kept between
-//! runs, as `velt` does for any package with native code that it builds locally), and its crate's
-//! own Rust tests run too (`cargo test`, outside the compiler's workspace). A package where no test
-//! ran fails too.
+//! test file that leaves a block unfreed fails) and once in a release build. A package with C
+//! `sources` builds them with zig first (into `packages/<name>/target/velt-native/`, kept between
+//! runs, as `velt` does for any package that it builds locally). A package where no test ran fails
+//! too.
 //!
 //! Programs that must not compile are `tests/errors/<name>.velt` with a `<name>.err` beside them,
 //! as in the goldens: `velt check` of the program, in the package, must fail, and its output must
@@ -18,8 +16,7 @@
 //! `VELT_TEST_REDISS_CA` (packages/redis). `scripts/linux-check.sh --services` starts the servers
 //! and sets them, as CI does; without them this test says which were not set.
 //!
-//! Filter with `VELT_PACKAGES=<name>` (several separated by `,`). Needs cargo for the packages
-//! with native code; `VELT_SKIP_NATIVE_E2E=1` skips those.
+//! Filter with `VELT_PACKAGES=<name>` (several separated by `,`).
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -49,11 +46,6 @@ fn packages(root: &Path) -> Vec<PathBuf> {
         .collect();
     packages.sort();
     packages
-}
-
-/// Whether the package has native code (a `native/` crate).
-fn native(package: &Path) -> bool {
-    package.join("native").join("Cargo.toml").is_file()
 }
 
 /// `velt test` in `package` (`--release`, or a debug build with the checking allocator): `None`
@@ -92,30 +84,6 @@ fn run_tests(package: &Path, release: bool) -> Option<String> {
     Some(format!(
         "packages/{} ({mode}): {why}\n{stdout}{}",
         package.file_name().unwrap().to_string_lossy(),
-        String::from_utf8_lossy(&out.stderr)
-    ))
-}
-
-/// `cargo test` of a native package's crate (`native/`), in the cargo directory `velt` builds it
-/// in: `None` if it passed, else the report.
-fn native_unit_tests(package: &Path) -> Option<String> {
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let out = no_window::command(&cargo)
-        .arg("test")
-        .arg("--manifest-path")
-        .arg(package.join("native/Cargo.toml"))
-        .arg("--target-dir")
-        .arg(package.join("target/velt-native/cargo"))
-        .output()
-        .expect("run cargo test");
-    if out.status.success() {
-        return None;
-    }
-    Some(format!(
-        "packages/{} (cargo test of native/): failed ({})\n{}{}",
-        package.file_name().unwrap().to_string_lossy(),
-        out.status,
-        String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     ))
 }
@@ -197,24 +165,12 @@ fn the_summary_line_counts_passed_tests() {
 fn every_package_passes_its_tests() {
     let root = root();
     runtime_support::build_native_runtime(&root);
-    let skip_native = std::env::var_os("VELT_SKIP_NATIVE_E2E").is_some_and(|v| v == "1");
-    let packages: Vec<PathBuf> = packages(&root)
-        .into_iter()
-        .filter(|p| {
-            let skip = skip_native && native(p);
-            if skip {
-                eprintln!("skipped {} (VELT_SKIP_NATIVE_E2E=1)", p.display());
-            }
-            !skip
-        })
-        .collect();
-    if !skip_native {
-        assert!(
-            !packages.is_empty(),
-            "no package under packages/ (VELT_PACKAGES={:?})",
-            std::env::var("VELT_PACKAGES").unwrap_or_default()
-        );
-    }
+    let packages: Vec<PathBuf> = packages(&root);
+    assert!(
+        !packages.is_empty(),
+        "no package under packages/ (VELT_PACKAGES={:?})",
+        std::env::var("VELT_PACKAGES").unwrap_or_default()
+    );
     for var in [
         "VELT_TEST_PG_URL",
         "VELT_TEST_REDIS_URL",
@@ -225,20 +181,16 @@ fn every_package_passes_its_tests() {
         }
     }
     // Packages in parallel; a package's two builds one after the other (they share its
-    // `target/`, and the native library's build).
+    // `target/`, and the builds of its C libraries).
     let failures: Vec<String> = std::thread::scope(|s| {
         let runs: Vec<_> = packages
             .iter()
             .map(|p| {
                 s.spawn(move || {
-                    let mut failures: Vec<String> = [false, true]
+                    [false, true]
                         .into_iter()
                         .filter_map(|release| run_tests(p, release))
-                        .collect();
-                    if native(p) {
-                        failures.extend(native_unit_tests(p));
-                    }
-                    failures
+                        .collect::<Vec<String>>()
                 })
             })
             .collect();
@@ -256,11 +208,9 @@ fn every_package_passes_its_tests() {
 #[test]
 fn every_package_rejects_its_error_programs() {
     let root = root();
-    let skip_native = std::env::var_os("VELT_SKIP_NATIVE_E2E").is_some_and(|v| v == "1");
     let failures: Vec<String> = std::thread::scope(|s| {
         let runs: Vec<_> = packages(&root)
             .into_iter()
-            .filter(|p| !(skip_native && native(p)))
             .map(|p| s.spawn(move || compile_errors(&p)))
             .collect();
         runs.into_iter()
@@ -320,7 +270,7 @@ fn a_closed_redis_client_lets_the_program_end() {
         ),
     )
     .unwrap();
-    // Built first (cargo may build the native library), then run with a deadline.
+    // Built first (zig may build the package's C libraries), then run with a deadline.
     let exe = app.join(if cfg!(windows) { "app.exe" } else { "app" });
     let built = no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["build", "-o"])

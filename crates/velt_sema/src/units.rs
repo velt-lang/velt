@@ -22,6 +22,7 @@ pub(crate) mod codec;
 pub(crate) mod disk;
 pub(crate) mod modes;
 pub(crate) mod raised;
+pub(crate) mod std_calls;
 
 use crate::ctx::Ctx;
 
@@ -69,13 +70,16 @@ pub struct Summaries {
     /// What the app's passes raise of the unit's definitions, kept beside them while they are
     /// frozen (`raised`); empty in a saved unit.
     pub(crate) raised: raised::Raised,
+    /// The implementations the unit converts values to and the types it makes dynamic, which
+    /// decide the interface methods dispatch reaches (`crate::dispatch::Converted`).
+    pub(crate) converted: crate::dispatch::Converted,
 }
 
 // The encoding of a finished unit (`codec`): every field, so a new one fails to build.
 codec::structs! {
     Summaries {
         json_needs, state_facts, module_edges, senders, shared_readers, shared_read_outside,
-        declared_modes, declared_now, trap_sites, raised,
+        declared_modes, declared_now, trap_sites, raised, converted,
     }
 }
 
@@ -120,6 +124,10 @@ pub(crate) fn check_definitions(cx: &mut Ctx) {
         cx.freeze_defs();
         #[cfg(test)]
         codec::hook::std_unit(cx);
+        // The memos std's bodies built hold std's definitions alone (the dispatch groups, the
+        // subclasses): the app's check builds them again over its own too, as the app's stage
+        // of `VELT_UNITS=2` does after `finish_std` (#3887).
+        codec::unit::clear_memos(cx);
     }
     // The app's bodies see std's modes as declared, as in a whole-program check (`modes`).
     cx.unit_sums.declared_now = cx.units_stage == Stage::App;

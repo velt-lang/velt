@@ -1,0 +1,16 @@
+// A write to a frozen object's field outside any `try` ends the program with Node's
+// `TypeError`, uncaught (#2623).
+interface Settings {
+  mode: string;
+}
+
+function configure(s: Settings): void {
+  s.mode = "write";
+}
+
+const settings: Settings = { mode: "read" };
+configure(settings);
+console.log(settings.mode);
+Object.freeze(settings);
+configure(settings);
+console.log("not reached");

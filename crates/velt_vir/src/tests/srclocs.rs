@@ -37,7 +37,6 @@ fn lower_located(p: &Program, sm: &SourceMap) -> crate::vir::Program {
     let opts = LowerOptions {
         source_map: Some(sm),
         std_root: None,
-        native_inits: &[],
         cell_checks: false,
         debug_info: false,
         target: None,

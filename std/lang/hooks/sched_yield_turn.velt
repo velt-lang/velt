@@ -2,6 +2,7 @@
 // `fireYields`, #3687): the root's turn placed with no record, and the held records of the
 // root's whose turn is next, which go on in the turn before when nothing would run between.
 
+import { inline } from "velt/lang/intrinsics";
 import * as m from "./sched_mem";
 import * as micro from "./sched_micro";
 import * as t from "./sched_task";
@@ -10,23 +11,12 @@ import * as ls from "./sched_yield_list";
 /**
  * A poll of task `k` begins with its root's turn of the last poll placed (`ROOT_ALONE`) and only
  * the root's records listed after it (`join`): that turn comes before the yields made after it
- * (sched_run.velt `runOther`, sched_fire.velt `fireYields`). Its stamp is kept now, as a yield of
- * the root in this poll may place another.
+ * (sched_run.velt `runOther`, sched_fire.velt `fireYields`). Its stamp plus 1, read now, as a
+ * yield of the root in this poll may place another.
  */
-export function rootTurnNext(k: usize): void {
-  const b = ls.blockOf(k);
-  m.st(b + ls.B_RTURN, m.ld(b + ls.B_ROOT) + 1);
-}
-
-/**
- * The stamp of the root's turn this poll of task `k` has with no record (`rootTurnNext`), plus 1
- * (0: none). Asked once.
- */
+@inline("always")
 export function rootTurn(k: usize): usize {
-  const b = ls.blockOf(k);
-  const s = m.ld(b + ls.B_RTURN);
-  m.st(b + ls.B_RTURN, 0);
-  return s;
+  return m.ld(ls.blockOf(k) + ls.B_ROOT) + 1;
 }
 
 /**
@@ -39,9 +29,22 @@ export function turnNext(k: usize, nx: usize): void {
   m.st(b + ls.B_TAKEN, 0);
 }
 
-/** The turn's poll of task `k`'s root is over (`turnNext`). */
+/**
+ * The turn's poll of task `k`'s root is over (`turnNext`): no record goes on in it from now on,
+ * and the yield whose turn comes next, after those that went on in it (`nextTurn`), is kept for
+ * `after`.
+ */
+@inline("always")
 export function turnOver(k: usize): void {
-  m.st(ls.blockOf(k) + ls.B_NEXT, 0);
+  const b = ls.blockOf(k);
+  m.st(b + ls.B_AFTER, m.ld(b + ls.B_NEXT));
+  m.st(b + ls.B_NEXT, 0);
+}
+
+/** The yield whose turn comes after the turn of task `k` that polled its root (`turnOver`; 0: none). */
+@inline("always")
+export function after(k: usize): usize {
+  return m.ld(ls.blockOf(k) + ls.B_AFTER);
 }
 
 /** A waiter of task `k`'s turn goes on now (a held record fired, or a token 0 after its poll). */
@@ -52,11 +55,19 @@ export function taken(k: usize): void {
   }
 }
 
+/** `taken`, when task `k` is the one polled on this thread (`cur`). */
+@inline("always")
+export function takenBy(k: usize, cur: usize): void {
+  if (k === cur) {
+    taken(k);
+  }
+}
+
 /**
  * Held record `f` of task `k`'s root, asked in a turn's poll of the root once that turn's waiter
  * went on: when its turn is the next one and nothing would run between the two turns (no wake of
- * the root, microtask, rejection to report or woken promise), it goes on now, as at its own turn, which
- * then only frees it (`ls.DROPPED`). The children of an inline `Promise.all` that yielded once each
+ * the root, microtask, rejection to report or woken promise), it goes on now, as at its own turn, and
+ * leaves the list: the caller frees it. The children of an inline `Promise.all` that yielded once each
  * then go on in one poll of the root, in the order they yielded, as their turns would run them.
  */
 export function nextTurn(k: usize, f: usize): bool {
@@ -73,7 +84,6 @@ export function nextTurn(k: usize, f: usize): bool {
   ) {
     return false;
   }
-  m.st(f + ls.Y_STATE, ls.DROPPED);
   m.st(b + ls.B_NEXT, m.ld(f + ls.Y_NEXT));
   return true;
 }

@@ -27,7 +27,10 @@
 //   exit to worker 0, which runs it at the end of its poll or after its park and gives the root
 //   back there (`handToMain`, #3017, #3027). A root queued or polled on another worker is left
 //   alone, and so is anything holding a waker of it (an I/O wait, a promise of the runtime's):
-//   those keep their references, and the block stays counted.
+//   those keep their references, and the block stays counted;
+// - last, by the thread that ends the program, module state (sched_module.velt `dropAtExit`, as
+//   at a normal end: it takes the module lock, so a task in a poll that reaches module state
+//   finishes that poll first, and none starts another), #3878.
 //
 // The hand-over costs two loads per park of worker 0 (`exitDue` before it sleeps, `takeExit`
 // after it, sched_park.velt) and one per park of another worker; between two polls it shares the
@@ -99,6 +102,9 @@ export function exitUncaught(code: i32): never {
   if (self !== 0 && self !== g) {
     handToMain(g, code);
   }
+  if (counting()) {
+    mod.dropAtExit();
+  }
   process.exit(code);
 }
 
@@ -167,6 +173,7 @@ function takeExitNow(e: usize): void {
   }
   if (counting()) {
     root(e);
+    mod.dropAtExit();
   }
   process.exit(c - 1);
 }

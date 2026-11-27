@@ -1,81 +1,82 @@
-//! Packages with native code against an isolated local registry (hand-made bundles, no cargo):
-//! publish → install for a target → `velt.lock.json` pins every target → tampering is caught → a
-//! missing target without cargo gets the documented message → targets can be added, never
-//! replaced. One test: it sets `$VELT_CARGO` for the whole process.
+//! Packages with native code against an isolated local registry (hand-made bundles of C
+//! libraries, no zig): publish → install for a target → `velt.lock.json` pins every target →
+//! tampering is caught → a missing target gets the documented message → targets can be added,
+//! never replaced → a Rust crate's library (the old native ABI) is refused. One test: the steps
+//! build on each other.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use vpm::edit::{add_dependency, DependencySpec};
+use vpm::graph::{CBundle, PackageGraph};
 use vpm::lockfile::Lockfile;
-use vpm::native::{library_files, NativeMeta, NativeOrigin, NATIVE_ABI};
+use vpm::native::{c_library_files, NativeLib, NativeMeta, NativeOrigin};
 use vpm::{install, InstallOptions, Locations};
 
 const LINUX: &str = "x86_64-unknown-linux-gnu";
 const MAC: &str = "aarch64-apple-darwin";
 const WINDOWS: &str = "x86_64-pc-windows-msvc";
 
-/// The shared library `bundle_dir` writes for `content`.
-fn library_of(content: &str) -> Vec<u8> {
-    let exports = BTreeMap::from([("velt_db__open".into(), "(string)->IoResult<u64>".into())]);
-    vpm::native::exports::sample_library("db", &exports, content)
-}
-
+/// A bundle of package `db`'s C library `db` for `target`, as `velt native build` writes it,
+/// each file holding `content`.
 fn bundle_dir(dir: &Path, target: &str, content: &str) -> PathBuf {
     let b = dir.join(target);
     std::fs::create_dir_all(b.join("shared")).unwrap();
     std::fs::create_dir_all(b.join("static")).unwrap();
-    let (shared, import_lib) = library_files("db", target);
-    let (shared, import_lib) = (
-        format!("shared/{shared}"),
-        import_lib.map(|f| format!("shared/{f}")),
-    );
-    std::fs::write(b.join(&shared), library_of(content)).unwrap();
-    let exports = BTreeMap::from([("velt_db__open".into(), "(string)->IoResult<u64>".into())]);
-    if let Some(import_lib) = &import_lib {
-        let dll = shared.trim_start_matches("shared/");
-        let names = vpm::native::exports::exported_names(&library_of(content)).unwrap();
-        let imports: Vec<(String, String)> = names.into_iter().map(|n| (n.clone(), n)).collect();
-        let lib = vpm::native::exports::sample_import_library(dll, &imports);
-        std::fs::write(b.join(import_lib), lib).unwrap();
+    let files = c_library_files("db", "db", target);
+    let all = [
+        Some(&files.shared),
+        files.import_lib.as_ref(),
+        files.static_lib.as_ref(),
+    ];
+    for file in all.into_iter().flatten() {
+        std::fs::write(b.join(file), content).unwrap();
     }
-    let object = vpm::native::exports::sample_object("db", &exports, content);
-    std::fs::write(b.join("static/db.o"), object).unwrap();
     let meta = NativeMeta {
         package: "db".into(),
         version: "1.0.0".into(),
         target: target.into(),
-        abi: 1,
-        shared: Some(shared),
-        import_lib,
-        static_obj: Some("static/db.o".into()),
-        system_libs: None,
-        exports: BTreeMap::from([("velt_db__open".into(), "(string)->IoResult<u64>".into())]),
-        c: BTreeMap::new(),
+        abi: 0,
+        exports: BTreeMap::new(),
+        c: BTreeMap::from([("db".into(), files)]),
     };
     std::fs::write(b.join("native.json"), meta.to_json()).unwrap();
     b
 }
 
+/// The prebuilt bundle `db` has in `graph`.
+fn prebuilt(graph: &PackageGraph) -> Option<&NativeLib> {
+    graph
+        .packages()
+        .iter()
+        .find(|p| p.name == "db")
+        .and_then(|p| match &p.c_bundle {
+            Some(CBundle::Prebuilt(lib)) => Some(&**lib),
+            _ => None,
+        })
+}
+
+/// The shared library of `lib`.
+fn shared(lib: &NativeLib) -> PathBuf {
+    lib.dir.join(&lib.meta.c["db"].shared)
+}
+
 #[test]
 fn native_packages_end_to_end() {
-    std::env::set_var("VELT_CARGO", "velt-test-no-such-cargo");
     let tmp = tempfile::tempdir().unwrap();
     let dir = vpm::relpath::absolute(tmp.path());
     let loc = Locations::under(&dir.join("velt-home"));
 
-    // The library: `native` for two targets.
+    // The library: a C library from `sources`, for two targets.
     vpm::scaffold::new_package(&dir, "db", true).unwrap();
     let lib = dir.join("db");
     std::fs::write(
         lib.join("package.velt"),
-        format!("export const pkg: Package = {{ name: \"db\", version: \"1.0.0\", native: {{ targets: [\"{LINUX}\", \"{MAC}\"] }} }};"),
+        format!("export const pkg: Package = {{ name: \"db\", version: \"1.0.0\", native: {{ targets: [\"{LINUX}\", \"{MAC}\"], c: {{ db: {{ sources: [\"native/db.c\"], unchecked: true }} }} }} }};"),
     )
     .unwrap();
-    std::fs::create_dir_all(lib.join("native/src")).unwrap();
-    std::fs::write(lib.join("native/Cargo.toml"), "[package]\nname = \"db\"\n").unwrap();
-    std::fs::write(lib.join("native/src/lib.rs"), "").unwrap();
-    std::fs::write(lib.join("native/Cargo.lock"), "version = 4\n").unwrap();
+    std::fs::create_dir_all(lib.join("native")).unwrap();
+    std::fs::write(lib.join("native/db.c"), "int db_open(void) { return 1; }\n").unwrap();
     let artifacts = dir.join("artifacts");
     let linux = bundle_dir(&artifacts, LINUX, "linux v1");
 
@@ -103,11 +104,11 @@ fn native_packages_end_to_end() {
     assert_eq!(entry.native.len(), 2);
     let index = vpm::registry::read_index(&loc, "db").unwrap().unwrap();
     assert_eq!(index.versions[0].native, entry.native);
-    assert_eq!(index.versions[0].native_abi, Some(1));
-    // The native crate's sources are published (for builds from source).
+    assert_eq!(index.versions[0].native_abi, Some(0));
+    // The C sources are published (for builds from source).
     assert!(loc
         .registry_package("db", &semver::Version::new(1, 0, 0))
-        .join("native/src/lib.rs")
+        .join("native/db.c")
         .is_file());
 
     // An app installs it for Linux.
@@ -137,18 +138,11 @@ fn native_packages_end_to_end() {
     )
     .unwrap();
     let installed = install(&app, &loc, for_linux.clone()).unwrap();
-    let (pkg, native) = installed.graph.natives().next().unwrap();
-    assert_eq!(pkg.name, "db");
+    let native = prebuilt(&installed.graph).unwrap();
     assert_eq!(native.origin, NativeOrigin::Prebuilt);
-    assert_eq!(
-        native.meta.exports["velt_db__open"],
-        "(string)->IoResult<u64>"
-    );
-    assert_eq!(
-        std::fs::read(native.shared_lib()).unwrap(),
-        library_of("linux v1")
-    );
-    assert!(native.static_obj().unwrap().is_file());
+    assert_eq!(std::fs::read(shared(native)).unwrap(), b"linux v1");
+    let static_lib = native.meta.c["db"].static_lib.as_ref().unwrap();
+    assert!(native.dir.join(static_lib).is_file());
     // The lockfile pins both targets.
     let lock = Lockfile::read(&app).unwrap().unwrap();
     assert_eq!(lock.get("db").unwrap().native, entry.native);
@@ -157,31 +151,29 @@ fn native_packages_end_to_end() {
 
     // Without a target nothing native is provided.
     let plain = install(&app, &loc, InstallOptions::default()).unwrap();
-    assert_eq!(plain.graph.natives().count(), 0);
+    assert!(prebuilt(&plain.graph).is_none());
 
     // A tampered cache entry is replaced by a verified copy.
-    std::fs::write(native.shared_lib(), "evil").unwrap();
+    std::fs::write(shared(native), "evil").unwrap();
     let again = install(&app, &loc, for_linux.clone()).unwrap();
-    let (_, native) = again.graph.natives().next().unwrap();
-    assert_eq!(
-        std::fs::read(native.shared_lib()).unwrap(),
-        library_of("linux v1")
-    );
+    let native = prebuilt(&again.graph).unwrap();
+    assert_eq!(std::fs::read(shared(native)).unwrap(), b"linux v1");
 
     // A tampered registry copy is refused, and nothing unverified lands in the cache.
     let cached = native.dir.clone();
     std::fs::remove_dir_all(&cached).unwrap();
     let published = loc.registry_native("db", &semver::Version::new(1, 0, 0), LINUX);
-    std::fs::write(published.join("shared/libvelt_native_db.so"), "evil").unwrap();
+    let library = published.join(&native.meta.c["db"].shared);
+    std::fs::write(&library, "evil").unwrap();
     let e = install(&app, &loc, for_linux.clone()).unwrap_err();
     assert!(
         e.contains("checksum mismatch for the x86_64-unknown-linux-gnu native library"),
         "{e}"
     );
     assert!(!cached.exists());
-    std::fs::write(published.join("shared/libvelt_native_db.so"), "linux v1").unwrap();
+    std::fs::write(&library, "linux v1").unwrap();
 
-    // No library for Windows, no cargo: the documented message.
+    // No library for Windows: the documented message.
     let for_windows = InstallOptions {
         target: Some(WINDOWS.into()),
         ..Default::default()
@@ -191,20 +183,8 @@ fn native_packages_end_to_end() {
         e.starts_with("`db 1.0.0` has no prebuilt native library for x86_64-pc-windows-msvc (published: aarch64-apple-darwin, x86_64-unknown-linux-gnu)"),
         "{e}"
     );
-    assert!(e.contains("https://rustup.rs"), "{e}");
-
-    // With cargo installed, a registry package's sources are still only built on request.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let fake = dir.join("fake-cargo");
-        std::fs::write(&fake, "#!/bin/sh\nexit 0\n").unwrap();
-        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
-        std::env::set_var("VELT_CARGO", &fake);
-        let e = install(&app, &loc, for_windows.clone()).unwrap_err();
-        assert!(e.contains("set VELT_NATIVE_FROM_SOURCE=1"), "{e}");
-        std::env::set_var("VELT_CARGO", "velt-test-no-such-cargo");
-    }
+    // Its sources are only built on request.
+    assert!(e.contains("Set VELT_NATIVE_FROM_SOURCE=1"), "{e}");
 
     // The author adds Windows later; published targets are never replaced.
     let windows = bundle_dir(&artifacts, WINDOWS, "windows v1");
@@ -228,33 +208,29 @@ fn native_packages_end_to_end() {
     // ...while a normal install adds it to the lockfile.
     let installed = install(&app, &loc, for_windows).unwrap();
     assert!(installed.lock_changed);
-    let (_, native) = installed.graph.natives().next().unwrap();
-    assert_eq!(
-        std::fs::read(native.shared_lib()).unwrap(),
-        library_of("windows v1")
-    );
+    let native = prebuilt(&installed.graph).unwrap();
+    assert_eq!(std::fs::read(shared(native)).unwrap(), b"windows v1");
 
-    // A library needing a newer runtime table is refused before download (once the index is
-    // asked: the locked version in the cache asks none).
+    // A Rust crate's library (the old native ABI, which needed the runtime's function table) is
+    // refused before download (once the index is asked: the locked version in the cache asks
+    // none).
     std::fs::remove_dir_all(loc.cache.join("db-1.0.0")).unwrap();
     let index_path = loc.registry.join("db/index.json");
     let text = std::fs::read_to_string(&index_path).unwrap();
     std::fs::write(
         &index_path,
-        text.replace("\"native_abi\": 1", "\"native_abi\": 99"),
+        text.replace("\"native_abi\": 0", "\"native_abi\": 3"),
     )
     .unwrap();
     let e = install(&dir.join("app"), &loc, for_linux).unwrap_err();
     assert!(
-        e.contains(&format!(
-            "needs Velt native ABI 99; this velt provides {NATIVE_ABI}"
-        )),
+        e.contains("`db 1.0.0` has a Rust crate's native library (native ABI 3), which velt no longer supports"),
         "{e}"
     );
 
-    // A path dependency with native code needs cargo to build it.
+    // A path dependency's C sources build where a program links them: nothing prebuilt.
     std::fs::write(app.join("package.velt"), "export const pkg: Package = { name: \"app\", version: \"0.1.0\", allowNative: [\"db\"], dependencies: { db: { path: \"../db\" } } };").unwrap();
-    let e = install(
+    let installed = install(
         &app,
         &loc,
         InstallOptions {
@@ -262,6 +238,10 @@ fn native_packages_end_to_end() {
             ..Default::default()
         },
     )
-    .unwrap_err();
-    assert!(e.contains("has native code, which needs cargo"), "{e}");
+    .unwrap();
+    let db = installed.graph.packages().iter().find(|p| p.name == "db");
+    assert!(matches!(
+        db.and_then(|p| p.c_bundle.as_ref()),
+        Some(CBundle::FromSource(_))
+    ));
 }

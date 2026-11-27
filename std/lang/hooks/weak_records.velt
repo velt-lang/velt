@@ -16,6 +16,7 @@
 import { addressAtomicLoad, addressAtomicRmw, inline, noInline } from "velt/lang/intrinsics";
 import {
   RC_COUNT,
+  RC_FROZEN,
   RC_GATED,
   RC_WEAK,
   W,
@@ -285,7 +286,7 @@ export function settle(h: usize, obj: usize): void {
   const rec = find(h, obj);
   if (rec !== 0 && isEmpty(rec)) {
     remove(h, rec);
-    st64(rcWord(obj), ld64(rcWord(obj)) & RC_COUNT);
+    st64(rcWord(obj), ld64(rcWord(obj)) & (RC_COUNT | RC_FROZEN));
   }
 }
 

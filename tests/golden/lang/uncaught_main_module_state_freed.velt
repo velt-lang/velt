@@ -1,0 +1,17 @@
+// check: no leaks
+// A throwing `main` whose error nobody catches: module state written before the throw is dropped
+// at the exit with the debug counters on (#3878; the report returned 1 before the drop).
+const seen: string[] = [];
+
+function f(n: number): number throws RangeError {
+  seen.push(`a key long enough for the heap ${n}`);
+  if (n > 2) {
+    throw new RangeError("deep");
+  }
+  return f(n + 1);
+}
+
+function main(): void throws RangeError {
+  console.log("start");
+  console.log(f(0));
+}

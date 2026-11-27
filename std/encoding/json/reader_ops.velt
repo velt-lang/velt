@@ -10,24 +10,11 @@ import {
   NONE,
   PATH_KEEP,
   Reader,
-  ROWS,
   SYNTAX,
   UNKNOWN,
 } from "velt/encoding/json/reader";
 import { numberI64, numberU64 } from "velt/encoding/json/scan_number";
 import { nodeSyntaxMessage } from "velt/encoding/json/node_syntax";
-import {
-  rowsBool,
-  rowsEnd,
-  rowsI64,
-  rowsMessage,
-  rowsNestedMessage,
-  rowsReset,
-  rowsSkip,
-  rowsSkipUnknown,
-  rowsValue,
-  ROWS_MARK,
-} from "velt/encoding/json/rows_side";
 import {
   readerDepthLeft,
   readerDetail,
@@ -40,12 +27,6 @@ import {
 
 /** The `JsonError.message` for the current state: the decoder expected `expected` at `path`. */
 export function readerMessage(r: Reader, expected: string, path: string): string {
-  if (r.failed == ROWS) {
-    return rowsMessage(r, expected, path);
-  }
-  if (r.rowsNested) {
-    return rowsNestedMessage(r, expected, path);
-  }
   // Text that is not JSON fails as in Node, wherever the decoder stopped (not JSONC, which
   // Node does not read).
   if (!r.comments && !r.trailingCommas) {
@@ -70,16 +51,11 @@ export function readerMessage(r: Reader, expected: string, path: string): string
 /**
  * The start of one complete value of any kind, for a `JsonValue` (`JsonValue[JSON_FROM_READER]`
  * parses it into a tape over this reader's source with `parseWith`): the depth limit to give
- * `parseWith` (0: none), or -1 when no text value is to be parsed: on failure, or for a
- * driver's rows, which set `rowsValue` and leave the value's JSON text in `rowsText`. The tape is not
- * named here, so a program that decodes no `JsonValue` checks none of its code.
+ * `parseWith` (0: none), or -1 on failure. The tape is not named here, so a program that decodes
+ * no `JsonValue` checks none of its code.
  */
 export function readerValueLimit(r: Reader): i64 {
-  r.rowsValue = false;
   if (!readerValueStart(r, 0, 0)) {
-    if (r.failed == ROWS) {
-      rowsValue(r);
-    }
     return -1;
   }
   const limit = readerDepthLeft(r);
@@ -104,7 +80,7 @@ export function readerValueLimit(r: Reader): i64 {
  */
 export function readerSkipLookahead(r: Reader): bool {
   if (!readerValueStart(r, 0, 0)) {
-    return r.failed == ROWS && rowsSkip(r);
+    return false;
   }
   const b = strByteAt(r.src, r.pos as u64);
   if (b != 123 && b != 91) {
@@ -123,9 +99,6 @@ export function readerSkipLookahead(r: Reader): bool {
 
 /** Skips the value of a key the target type does not have (fails if unknown keys are rejected). */
 export function readerSkipUnknown(r: Reader): bool {
-  if (r.failed == ROWS) {
-    return rowsSkipUnknown(r);
-  }
   if (r.rejectUnknown) {
     if (r.failed == NONE) {
       r.failed = UNKNOWN;
@@ -137,10 +110,6 @@ export function readerSkipUnknown(r: Reader): bool {
 
 /** Goes back to `mark` and forgets any failure since. */
 export function readerReset(r: Reader, mark: u64) {
-  if (r.failed == ROWS || (mark & ROWS_MARK) != 0) {
-    rowsReset(r, mark);
-    return;
-  }
   r.pos = (mark >> (MARK_DEPTH_BITS + 1)) as usize;
   r.depth = ((mark >> 1) & ((1 << MARK_DEPTH_BITS) - 1)) as usize;
   r.afterOpen = (mark & 1) == 1;
@@ -149,11 +118,11 @@ export function readerReset(r: Reader, mark: u64) {
 
 /**
  * A number value that is an integer in `u64`'s range, `[0, 2^64)`: its bits are `int` after
- * true (the glue reinterprets them). A driver's rows give `i64`s, so there it is `[0, 2^63)`.
+ * true (the glue reinterprets them).
  */
 export function readerReadU64(r: Reader): bool {
   if (!readerNumberStart(r)) {
-    return r.failed == ROWS && rowsI64(r, true);
+    return false;
   }
   const v = numberU64(r.src, r.start, r.end, r.integer);
   if (v == null) {
@@ -167,7 +136,7 @@ export function readerReadU64(r: Reader): bool {
 /** A number value that is an integer exactly representable as `i64`: `int` after true. */
 export function readerReadI64(r: Reader): bool {
   if (!readerNumberStart(r)) {
-    return r.failed == ROWS && rowsI64(r, false);
+    return false;
   }
   if (r.small) {
     const m = r.digitsValue as i64;
@@ -186,7 +155,7 @@ export function readerReadI64(r: Reader): bool {
 /** Only whitespace may follow the top-level value. */
 export function readerFinish(r: Reader): bool {
   if (r.failed != NONE) {
-    return r.failed == ROWS && rowsEnd(r);
+    return false;
   }
   if (r.peekNonWs() >= 0) {
     r.fail(TRAILING);
@@ -222,7 +191,7 @@ export function shortPath(path: string): string {
 /** `true` or `false`: `int` is 1 or 0 after true. */
 export function readerReadBool(r: Reader): bool {
   if (!readerValueStart(r, 116, 102)) {
-    return r.failed == ROWS && rowsBool(r);
+    return false;
   }
   const t = strByteAt(r.src, r.pos as u64) == 116;
   if (!r.literal(t ? "true" : "false")) {

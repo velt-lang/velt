@@ -1,25 +1,22 @@
 // velt/db (internal): the code the generators of the row readers write to read rows column by
-// column into a row type of plain fields: from a native driver's row cursor through the
-// runtime's typed reads (`velt_rt_rows_*`, velt/db/rt), or from a `RowSource` written in Velt
-// through its own methods. Each column is matched to its field once per result, and each value
-// read typed, without JSON text in between; a row that does not fit fails with the message
-// `JSON.parse` gives (`expected i64 at $[0].id`).
+// column into a row type of plain fields, from a `RowSource` through its own methods. Each column
+// is matched to its field once per result, and each value read typed, without JSON text in
+// between; a row that does not fit fails with the message `JSON.parse` gives (`expected i64 at
+// $[0].id`).
 
 import { Model, Output, Type } from "velt/generate";
 import { intRange } from "velt/encoding/json/generate/read_value";
 import { hiddenKey, isIdentifier, member } from "velt/encoding/json/generate/facts";
 
-/** Where the rows come from: a native cursor's rows state `st`, or a `RowSource` `src`. */
+/** Where the rows come from: a `RowSource`. */
 export class RowsFrom {
-  native: bool;
-  /** The local holding the rows state (native) or the source. */
+  /** The local holding the source. */
   name: string;
 
-  /** What a throw ends first (the native rows state, when no `finally` ends it). */
+  /** What a throw runs first. */
   end: string = "";
 
-  constructor(native: bool, name: string) {
-    this.native = native;
+  constructor(name: string) {
     this.name = name;
   }
 }
@@ -89,38 +86,17 @@ function expectedName(t: Type): string {
 }
 
 /**
- * Writes the code that starts reading rows of type `id`: the column map. Native: the rows state
- * `st` over the cursor in the local `cursor` (ended by `endRows`); a source: each column's field,
- * from the source's column names (in the word `fmap` for the first 16 columns of a row type of at
- * most 15 fields, the rest in `fields`).
+ * Writes the code that starts reading rows of type `id`: the column map, each column's field from
+ * the source's column names (in the word `fmap` for the first 16 columns of a row type of at most
+ * 15 fields, the rest in `fields`).
  */
-export function beginRows(
-  out: Output,
-  model: Model,
-  id: i64,
-  from: RowsFrom,
-  cursor: string,
-): void {
+export function beginRows(out: Output, model: Model, id: i64, from: RowsFrom): void {
   const t = model.type(id);
-  if (from.native) {
-    // Each name with its length in UTF-8 bytes in front (`2:id4:name`).
-    let names = "";
-    for (const f of t.fields) {
-      names += `${utf8Bytes(f.name)}:${f.name}`;
-    }
-    out.line(`const st = velt_rt_rows_begin_named(${cursor}, ${out.literal(names)});`);
-    out.line(`const ncols = velt_rt_rows_columns(st);`);
-    if (t.fields.length <= 15) {
-      // The first 16 columns' fields in one word, so a cell's needs no call.
-      out.line(`const fmap = velt_rt_rows_field_map(st);`);
-    }
-    return;
-  }
   const s = from.name;
   out.line(`const ncols = ${s}.columnCount();`);
   if (t.fields.length <= 15) {
-    // As the native cursor's: the first 16 columns' fields (each plus one, 0 for none) in one
-    // word, so matching the columns allocates nothing; `fields` holds those past them.
+    // The first 16 columns' fields (each plus one, 0 for none) in one word, so matching the
+    // columns allocates nothing; `fields` holds those past them.
     out.line(`let fmap: i64 = 0;`);
     out.line(`const fields: i64[] = [];`);
     out.line(`for (let c: i64 = 0; c < ncols; c++) {`);
@@ -143,26 +119,6 @@ export function beginRows(
   out.line(`default: fields.push(-1);`);
   out.line(`}`);
   out.line(`}`);
-}
-
-/** The number of UTF-8 bytes of `s`. */
-function utf8Bytes(s: string): i64 {
-  let n: i64 = 0;
-  const len = s.length as i64;
-  for (let i: i64 = 0; i < len; i++) {
-    const c = s.charCodeAt(i);
-    if (c < 0x80) {
-      n += 1;
-    } else if (c < 0x800) {
-      n += 2;
-    } else if (c >= 0xd800 && c <= 0xdbff && i + 1 < len) {
-      n += 4;
-      i++;
-    } else {
-      n += 3;
-    }
-  }
-  return n;
 }
 
 /**
@@ -194,22 +150,11 @@ export function readRow(
   const obj = `{ ${props.join(", ")} }`;
   const made = t.kind == "object" ? obj : `__construct<${out.typeName(id)}>(${obj})`;
   out.line(`const ${name}: ${out.typeName(id)} = ${made};`);
-  if (from.native) {
-    out.line(`for (let c: u64 = 0; c < ncols; c++) {`);
-    if (n <= 15) {
-      out.line(
-        `const fi: i64 = c < 16 ? (((fmap >> (c * 4)) & 15) as i64) - 1 : velt_rt_rows_field(st, c);`,
-      );
-    } else {
-      out.line(`const fi = velt_rt_rows_field(st, c);`);
-    }
+  out.line(`for (let c: i64 = 0; c < ncols; c++) {`);
+  if (n <= 15) {
+    out.line(`const fi: i64 = c < 16 ? ((fmap >> (c * 4)) & 15) - 1 : fields[c - 16];`);
   } else {
-    out.line(`for (let c: i64 = 0; c < ncols; c++) {`);
-    if (n <= 15) {
-      out.line(`const fi: i64 = c < 16 ? ((fmap >> (c * 4)) & 15) - 1 : fields[c - 16];`);
-    } else {
-      out.line(`const fi = fields[c];`);
-    }
+    out.line(`const fi = fields[c];`);
   }
   for (let i: i64 = 0; i < n; i++) {
     const f = t.fields[i];
@@ -267,7 +212,7 @@ function readCell(
   const t = nullable ? model.type(ft.args[0]) : ft;
   const bad = `${from.end}throw rowMismatch(${out.literal(expectedName(t))}, ${row}, ${out.literal(field)});`;
   // `code`: 1 read (the value is `value`), 2 NULL, 0 another kind.
-  const value = from.native ? nativeCell(out, model, t) : sourceCell(out, t, from.name);
+  const value = sourceCell(out, t, from.name);
   if (nullable) {
     out.line(
       `if (code == 1) { ${local} = ${value}; } else if (code == 2) { ${local} = null; } else { ${bad} }`,
@@ -290,37 +235,6 @@ function fits(repr: string, x: string): string {
     tests.push(`${x} <= ${max}`);
   }
   return tests.join(" && ");
-}
-
-/**
- * The code that reads column `c` of the rows state `st` as a `t` into a new `code`, and the
- * value read.
- */
-function nativeCell(out: Output, model: Model, t: Type): string {
-  if (t.kind == "number" && t.repr != "f64" && t.repr != "f32") {
-    out.line(`let si: RowsI64 = { v: 0 };`);
-    out.line(`let code = velt_rt_rows_i64(st, c, si);`);
-    return integer(out, t, "si.v");
-  }
-  if (t.kind == "number") {
-    out.line(`let sf: RowsF64 = { v: 0 };`);
-    out.line(`const code = velt_rt_rows_f64(st, c, sf);`);
-    return t.repr == "f32" ? "sf.v as f32" : "sf.v";
-  }
-  if (t.kind == "boolean") {
-    out.line(`let sb: RowsU8 = { v: 0 };`);
-    out.line(`const code = velt_rt_rows_bool(st, c, sb);`);
-    return "sb.v != 0";
-  }
-  if (t.kind == "string") {
-    out.line(`let s = "";`);
-    out.line(`const code = velt_rt_rows_str(st, c, s);`);
-    return "s";
-  }
-  // A blob, else NULL or another kind (`velt_rt_rows_kind` numbers kinds as `CellKind`).
-  out.line(`const kb = velt_rt_rows_kind(st, c);`);
-  out.line(`const code: u8 = kb == 5 ? 1 : kb == 0 ? 2 : 0;`);
-  return "velt_rt_rows_blob(st, c)";
 }
 
 /** An integer read into the `i64` expression `x`: one out of range reads as another kind. */

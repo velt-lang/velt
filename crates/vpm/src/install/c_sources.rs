@@ -1,6 +1,6 @@
 //! Where the C libraries a package builds from `sources` come from at install
 //! (docs/internals/design/c-ffi.md "Where libraries come from"): a published bundle for the
-//! target, as a Rust crate's, else a directory to build them into when a program links them.
+//! target, else a directory to build them into when a program links them.
 //! Nothing here runs zig.
 
 use std::collections::BTreeMap;
@@ -16,7 +16,7 @@ use super::{from_source_allowed, FROM_SOURCE_VAR};
 /// The native libraries of an install, by package.
 #[derive(Debug, Default)]
 pub(super) struct Natives {
-    /// Prebuilt or built here: a Rust crate's, or a bundle of C libraries that was published.
+    /// Published bundles of C libraries.
     pub(super) libs: BTreeMap<String, NativeLib>,
     /// Where a package's C `sources` build to.
     pub(super) c_sources: BTreeMap<String, PathBuf>,
@@ -25,10 +25,8 @@ pub(super) struct Natives {
 impl Natives {
     /// Give `package` what this install has for `name`.
     pub(super) fn attach(&mut self, package: &mut GraphPackage, name: &str) {
-        match self.libs.remove(name) {
-            Some(lib) if lib.has_crate() => package.native = Some(lib),
-            Some(lib) => package.c_bundle = Some(CBundle::Prebuilt(Box::new(lib))),
-            None => {}
+        if let Some(lib) = self.libs.remove(name) {
+            package.c_bundle = Some(CBundle::Prebuilt(Box::new(lib)));
         }
         if let Some(out) = self.c_sources.remove(name) {
             package.c_bundle = Some(CBundle::FromSource(out));

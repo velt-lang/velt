@@ -13,6 +13,9 @@ pub(crate) const READ_BY_TESTS: &[(&str, &[&str], &[&str])] = &[
     // `bench_programs` compiles every program.
     ("bench/", &["velt_common", "velt_sema"], &["bench_programs"]),
     ("fuzz/", &["velt_fmt"], &[]),
+    // velt_http's roots test compares std's TLS trust anchors with its own (webpki-roots); a std
+    // file, so std's tests run too.
+    ("std/net/tls/x509/roots_table.velt", &["velt_http"], &[]),
     // The `tsc` oracle's samples and configuration: velt_tscompat's tests read them (and skip
     // the `tsc` run without its Node packages), `veltc`'s check that the samples are valid Velt.
     ("tests/tscompat-oracle/", &["velt_tscompat"], &["ts_compat"]),
@@ -21,15 +24,10 @@ pub(crate) const READ_BY_TESTS: &[(&str, &[&str], &[&str])] = &[
     // The standard library's `velt test` suites (`std_tests`; std and the compiler run it too:
     // they select every `veltc` test).
     ("tests/std/", &[], &["std_tests"]),
-    // `packages` runs `velt test` in every packages/<name>/ (building its native crate);
-    // `native_packages` publishes http-server through a local registry; example apps depend
-    // on packages by path. What else uses a package adds its tests
+    // `packages` runs `velt test` in every packages/<name>/; example apps depend on packages by
+    // path. What else uses a package adds its tests
     // (crates/xtask/src/package_users.rs).
-    (
-        "packages/",
-        &[],
-        &["packages", "native_packages", "example_apps"],
-    ),
+    ("packages/", &[], &["packages", "example_apps"]),
     ("playground/", &[], &["playground"]),
     ("editors/vscode/templates/", &[], &["debugger"]),
     // The LLDB script the toolchain ships (`install_layout` installs it and asks for its path;

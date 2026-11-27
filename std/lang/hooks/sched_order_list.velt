@@ -87,11 +87,16 @@ export const BUSY_MAX: usize = 32;
  * After the room of a look's busy tasks: the worker that waits for `O_WAKE_AT` in its park (0:
  * none; sched_order_wait.velt), then whether the last look met more busy tasks than it
  * remembers (sched_order_pass.velt `P_FULL`), then whether the phase under way (a timers pass or
- * a check phase) began while a keep-alive reference was held (sched_order_pass.velt `commit`).
+ * a check phase) began while a keep-alive reference was held (sched_order_pass.velt `commit`),
+ * then the time of the timer whose turn holds the loop (granted, or its callback's poll under
+ * way), and the workers that hold a due sleep back until that hold ends (a bit per worker index
+ * modulo 64: sched_order_move.velt `holdBack`).
  */
 export const O_WAITER: usize = sl.TM_SIZE + 8 + 8 * BUSY_MAX;
 export const O_ALIVE: usize = O_WAITER + 16;
-const O_END: usize = O_WAITER + 24;
+export const O_HELD_AT: usize = O_WAITER + 24;
+export const O_BACK: usize = O_WAITER + 32;
+const O_END: usize = O_WAITER + 40;
 
 /** The order's block (0 until the first Node timer). */
 const ORDER = new Atomic<u64>(0);
