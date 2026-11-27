@@ -1,8 +1,8 @@
 //! `for...of` over a `Map` (or its `keys()`, `values()`, `entries()`) held in a place iterates
 //! live, as in JS: entries added by the body are visited, deleted ones are not (#624). So does one
-//! over a `Set`'s `values()`, `keys()` or `entries()` (velt/collections), whose class declares the
-//! same cursor methods over its map (a `for...of` over the set itself goes through its iterator,
-//! which walks the same cursor). The array those methods return is a snapshot (#3842). The loop
+//! over a `Set` (velt/collections) or its `values()`, `keys()` or `entries()`, whose class declares
+//! the same cursor methods over its map (the set itself as its `values()`: its iterator walks the
+//! same cursor, but allocates). The array those methods return is a snapshot (#3842). The loop
 //! is desugared into a cursor walk over the map's entries (std/prelude/map.velt; "Live
 //! iteration" in std/lang/map/layout.velt):
 //!
@@ -114,6 +114,13 @@ impl FnCx<'_, '_> {
         if self.is_prelude_map(it.ty) {
             let fixed = self.fixed_source(it);
             return liftable(iter).then_some((iter, velt_common::std_key!(map_entry_at), fixed));
+        }
+        // A `Set` itself walks as its `values()` do: the same live walk as its iterator, without
+        // the iterator, its cursor and its results (a subclass is another type: its own
+        // `[Symbol.iterator]` runs).
+        if self.is_std_set(it.ty) {
+            let fixed = self.fixed_source(it);
+            return liftable(iter).then_some((iter, velt_common::std_key!(map_key_at), fixed));
         }
         let ast::ExprKind::Call { callee, args, .. } = &iter.kind else {
             return None;
