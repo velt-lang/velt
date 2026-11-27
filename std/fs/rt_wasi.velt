@@ -27,7 +27,7 @@ import {
   velt_rt_fs_remove_sync,
   velt_rt_fs_stat_sync,
   velt_rt_fs_write_file_sync,
-} from "./rt";
+} from "./rt_sync";
 
 export {
   velt_rt_fs_open_read,
