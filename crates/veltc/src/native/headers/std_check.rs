@@ -156,6 +156,7 @@ const CHECKED: &[&str] = &[
     "process/child/handle_list_win32.velt",
     "process/child/pipes_win32.velt",
     "process/child/spawn_win32.velt",
+    "process/child/sync_io_win32.velt",
     "process/child/sync_pipe_win32.velt",
     "process/cwd_posix.velt",
     "process/cwd_win32.velt",

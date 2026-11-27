@@ -51,6 +51,8 @@ const GENERIC_WRITE: u32 = 0x40000000;
 const FILE_WRITE_ATTRIBUTES: u32 = 0x100;
 const OPEN_EXISTING: u32 = 3;
 const ERROR_ACCESS_DENIED: u32 = 5;
+const ERROR_NOT_ENOUGH_MEMORY: u32 = 8;
+const ERROR_GEN_FAILURE: u32 = 31;
 const ERROR_PIPE_BUSY: u32 = 231;
 /** A pipe's buffer, as `spawn`'s pipes have. */
 const PIPE_SIZE: u32 = 65536;
@@ -65,6 +67,33 @@ export struct PipeEnds {
 export function lastError(): u32 {
   // SAFETY: no precondition.
   return unsafe { GetLastError$sync() };
+}
+
+/**
+ * The error of a call that failed, read right after it; never 0, so the failure is never taken
+ * for success (`ERROR_GEN_FAILURE` when the call left none).
+ */
+export function errorNow(): u32 {
+  const e = lastError();
+  return e !== 0 ? e : ERROR_GEN_FAILURE;
+}
+
+/** Sets the calling thread's last Windows error to `e`. */
+function setLastError(e: u32): void {
+  // SAFETY: no precondition.
+  unsafe {
+    SetLastError$sync(e);
+  }
+}
+
+/**
+ * A failure made on purpose in place of a call's (tests, `$VELT_TEST_EXEC_SYNC_FAIL`:
+ * exec_sync_win32.velt): the last error set to `ERROR_NOT_ENOUGH_MEMORY` as the failed call would
+ * set it, and the 0 it would return.
+ */
+export function injected(): usize {
+  setLastError(ERROR_NOT_ENOUGH_MEMORY);
+  return 0;
 }
 
 /** Closes handle `h` (not 0). */
@@ -83,6 +112,8 @@ export function overlappedPipe(i: u32): PipeEnds | null {
   // Alive until the pipe is made: its address makes the name unique.
   const mark = m.zeroed(8);
   let ends: PipeEnds | null = null;
+  // The error of the last try, set again at the end: the frees after it may change it.
+  let failed: u32 = 0;
   for (let attempt = 0; attempt < 16 && ends == null; attempt++) {
     // SAFETY: no precondition.
     const pid = unsafe { GetCurrentProcessId() };
@@ -108,7 +139,8 @@ export function overlappedPipe(i: u32): PipeEnds | null {
       );
     }
     if (parent === INVALID_HANDLE || parent === 0) {
-      const e = lastError();
+      const e = errorNow();
+      failed = e;
       m.release(p, cl.wideSize(name));
       if (e === ERROR_ACCESS_DENIED || e === ERROR_PIPE_BUSY) {
         continue;
@@ -132,16 +164,16 @@ export function overlappedPipe(i: u32): PipeEnds | null {
     }
     m.release(p, cl.wideSize(name));
     if (child === INVALID_HANDLE || child === 0) {
-      const e = lastError();
+      failed = errorNow();
       closeHandle(parent);
-      // SAFETY: no precondition; the error the caller reads is the one that failed.
-      unsafe {
-        SetLastError$sync(e);
-      }
       break;
     }
     ends = { parent: parent, child: child };
   }
   m.release(mark, 8);
+  if (ends == null) {
+    // What the caller reads: the error that failed, never 0.
+    setLastError(failed);
+  }
   return ends;
 }

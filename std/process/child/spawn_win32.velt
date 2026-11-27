@@ -286,7 +286,7 @@ export function start(spec: CommandSpec, modes: u32): Started {
   for (let i: u32 = 0; i < 3; i++) {
     const h = streamFor(i, (modes >> (2 * i)) & 3, out);
     if (h === INVALID_HANDLE) {
-      out.error = pw.lastError();
+      out.error = sp.errorNow();
       break;
     }
     m.st(handles + 8 * (i as usize), h);
@@ -337,7 +337,7 @@ function launch(
   // The list of the handles the child inherits (none: no list, and nothing inherited).
   const list = count > 0 ? handleList(handles + 24, count) : 0;
   if (count > 0 && list === 0) {
-    out.error = pw.lastError();
+    out.error = sp.errorNow();
   }
   m.st32(si + SI_CB, (count > 0 ? SIEX_SIZE : SI_SIZE) as u32);
   m.st32(si + SI_FLAGS, STARTF_USESTDHANDLES);
@@ -364,7 +364,7 @@ function launch(
       );
     }
     if (done === 0) {
-      out.error = pw.lastError();
+      out.error = sp.errorNow();
     } else {
       out.process = m.ld(pi + PI_PROCESS);
       out.pid = m.ld32(pi + PI_PID);
