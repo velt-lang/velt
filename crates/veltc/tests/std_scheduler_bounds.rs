@@ -611,8 +611,8 @@ fn a_node_woken_from_another_worker_after_its_task_ended_is_freed() {
         patch(&mut chan, woken, late);
         patch(
             &mut chan,
-            "import { wakeOwned } from \"#sync-chan-word\";",
-            "import { wakeOwned, wakerClone } from \"#sync-chan-word\";",
+            "import { wakeOwned } from \"./channel_word\";",
+            "import { wakeOwned, wakerClone } from \"./channel_word\";",
         );
         std::fs::write(std_dir.join("sync/channel.velt"), chan).unwrap();
         let runs = std_runs_with(

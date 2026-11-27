@@ -3,7 +3,8 @@
 //! ones marked `// requires: unix` or `// requires: windows` ([`needs_an_os`]), built
 //! with `--target wasm32-wasip1` (debug and `--release`) and run under wasmtime by
 //! `velt run`, must print exactly that output and exit with its `.code` (default 0). The M1, M2
-//! and M3 (async) goldens also run as browser modules (`wasm32-unknown-unknown`) through the JS
+//! and M3 (async) goldens and the `lang` ones of [`BROWSER_LANG`] also run as browser modules
+//! (`wasm32-unknown-unknown`) through the JS
 //! glue under node, in the turns it drives.
 //!
 //! Needs the rustup targets (`rustup target add wasm32-wasip1 wasm32-unknown-unknown`), LLVM's
@@ -36,15 +37,16 @@ const UNSUPPORTED: &[&str] = &[
     // WebAssembly stacks overflow.
     "deep_generator_frames",
 ];
-/// Goldens a JS host can't run yet: its programs still run on the runtime's executor, whose
-/// steps differ from Node's (https://veltlang.com/docs/reference/async/). wasm32-wasip1 runs the
-/// executor in Velt (#3905), which keeps Node's order, so WASI runs them all.
-const JS_HOST_ORDER: &[&str] = &[
-    // The runtime's race orders its losers' steps differently from Node (#3077).
+/// The `lang` goldens that also run in the browser glue (`goldens_in_the_browser_glue`, with the
+/// M1, M2 and M3 ones): the executor's order, which a JS host runs on the executor in Velt as
+/// natively and on WASI (#3905), where the runtime's executor it ran on before differed from
+/// Node (https://veltlang.com/docs/reference/async/).
+const BROWSER_LANG: &[&str] = &[
+    // Before: the runtime's race orders its losers' steps differently from Node (#3077).
     "promise_race_array_mixed",
     "promise_race_running_call",
     "promise_race_inline_children_order",
-    // A shared promise settling resumes its waiters at the executor's next step instead of
+    // Before: a shared promise settling resumed its waiters at the executor's next step instead of
     // queueing them as microtasks, and a converted promise's rejection is reported as its own (no
     // views, #1682).
     "await_order_resolve",
@@ -72,12 +74,14 @@ const JS_HOST_ORDER: &[&str] = &[
     // keeps it parked (#3247), and a spawned task parked on one (#3126).
     "promise_abandoned_freed",
     "task_parked_freed",
-    // The runtime's `yieldNow()` wakes at once instead of taking its turn after the microtasks
+    // Before: the runtime's `yieldNow()` wakes at once instead of taking its turn after the microtasks
     // queued before it, as the executor in Velt does (#3307).
     "yield_now_order",
     "yield_now_immediates",
     "yield_now_due_sleep",
     "yield_now_turn_passed",
+    // Promise.race of an async call and a timer (#3919).
+    "promise_race_async_call_timer",
 ];
 /// Goldens that need a file system (not available to browser modules).
 const NEEDS_FS: &[&str] = &["fs"];
@@ -420,10 +424,9 @@ fn goldens_in_the_browser_glue() {
     }
     let root = root();
     build_runtime(&root, "wasm32-unknown-unknown");
-    let skip: Vec<&str> = (UNSUPPORTED.iter().chain(JS_HOST_ORDER).chain(NEEDS_FS))
-        .copied()
-        .collect();
-    let files = programs(&root, &["m1", "m2", "m3"], &skip, None);
+    let skip: Vec<&str> = (UNSUPPORTED.iter().chain(NEEDS_FS)).copied().collect();
+    let mut files = programs(&root, &["m1", "m2", "m3"], &skip, None);
+    files.extend(programs(&root, &["lang"], &skip, Some(BROWSER_LANG)));
     let work = work_dir::work_dir(&root, "golden-work-web");
     let failures = run_all(&files, "wasm32-unknown-unknown", &[None], &work, 4);
     let _ = std::fs::remove_dir_all(&work);

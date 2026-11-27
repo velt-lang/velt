@@ -14,7 +14,7 @@
 // spawned task is no handle).
 
 import { noteStdUse } from "velt/lang/intrinsics";
-import { signalAbort, signalFree, signalRetain } from "#task-signal";
+import { signalAbort, signalFree, signalRetain } from "./signal_sched";
 
 declare function velt_rt_timer_new(ms: i64): u64;
 declare async function velt_rt_timer_turn(timer: u64, gate: u64): Promise<void>;

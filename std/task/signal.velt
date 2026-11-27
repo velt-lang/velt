@@ -1,5 +1,5 @@
 // velt/task (internal): `AbortSignal`, whether and why an operation was aborted. Its underlying
-// signal (`#task-signal`) is owned by a `shared` cell (atomic, so `spawn` shares it rather than
+// signal (signal_sched.velt) is owned by a `shared` cell (atomic, so `spawn` shares it rather than
 // copying it) and released once, at the cell's last reference.
 
 import { AbortError, DEFAULT_REASON } from "velt/task/errors";
@@ -11,7 +11,7 @@ import {
   signalNew,
   signalReason,
   signalWait,
-} from "#task-signal";
+} from "./signal_sched";
 import { TIMEOUT_MARK, arm, timeoutMs } from "velt/task/signal_timeout";
 import { TimeoutError } from "velt/task/timeout";
 import { INSPECT } from "velt/lang/hooks/keys";
