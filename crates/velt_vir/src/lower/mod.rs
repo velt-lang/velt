@@ -185,6 +185,7 @@ mod srcloc;
 mod stabilize;
 mod static_atomic;
 mod std_defs;
+mod stdout;
 mod stmt;
 mod str_data;
 mod strbuf;

@@ -15,6 +15,7 @@ import { Ptr, StrBytes, byteLength, readCString } from "velt/ffi";
 
 import { addressLoad, addressStore, ptrFromAddress } from "velt/lang/intrinsics/address";
 import { addressCall, fnAddress } from "velt/lang/intrinsics/future";
+import { flushForExit } from "./stdout";
 
 declare c("c") function malloc(n: usize): Ptr<u8> | null;
 declare c("c") function free(p: Ptr<u8> | null): void;
@@ -30,7 +31,6 @@ declare c("c") function abort(): void;
 declare c("c") function SetUnhandledExceptionFilter(filter: usize): usize;
 declare c("c") function SwitchToThread(): i32;
 declare function velt_rt_exit(code: i32): never;
-declare function velt_rt_flush(): void;
 
 /** Ends the process at once (a panic during a cleanup): C's `abort`. */
 export function abortProcess(): never {
@@ -78,7 +78,7 @@ function unclaimed(at: usize): usize {
   // whose first field is the code.
   const code = unsafe { addressLoad<u32>(addressLoad<usize>(at)) };
   if (code === CODE) {
-    velt_rt_flush();
+    flushForExit();
     velt_rt_exit(101);
   }
   // Another thread's exception can come here between `SetUnhandledExceptionFilter` and the store

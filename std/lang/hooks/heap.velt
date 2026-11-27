@@ -16,6 +16,7 @@
 
 import { Ptr } from "velt/ffi";
 import { inline, noInline } from "velt/lang/intrinsics";
+import { flushForExit, writeStrCold } from "./stdout";
 
 // Not checked against a header (native/headers/std_check.rs lists no file of mimalloc's): the C
 // library's headers don't declare them, mimalloc.h does, which the runtime's build has.
@@ -30,8 +31,6 @@ declare c("c") function mi_realloc_aligned(
 declare c("c") function mi_free(p: Ptr<u8> | null): void;
 
 declare function velt_rt_exit(code: i32): never;
-declare function velt_rt_flush(): void;
-declare function velt_rt_write_str(stream: u32, s: string);
 
 /** The alignment of every `mi_malloc` block. */
 const MIN_ALIGN: u64 = 8;
@@ -134,17 +133,17 @@ export function heapFree(p: u64, size: u64, align: u64): void {
  */
 @noInline
 export function outOfMemory(size: u64): never {
-  velt_rt_flush();
-  velt_rt_write_str(2, "panic: memory allocation of " + decimal(size) + " bytes failed\n");
+  flushForExit();
+  writeStrCold(2, "panic: memory allocation of " + decimal(size) + " bytes failed\n");
   velt_rt_exit(101);
 }
 
 /**
  * `n` in decimal, by hand: a template, or a digit read from an array (its bounds check), would
  * load the number printing hooks into every program that is checked, as this module is
- * (velt_lsp's `demand` tests).
+ * (velt_lsp's `demand` tests). The stdout writer's `VELT_STDOUT_STATS` line uses it too.
  */
-function decimal(n: u64): string {
+export function decimal(n: u64): string {
   let s = digit(n % 10);
   let rest = n / 10;
   while (rest > 0) {
@@ -187,8 +186,8 @@ function digit(d: u64): string {
  */
 @noInline
 function arrayTooLong(): never {
-  velt_rt_flush();
-  velt_rt_write_str(
+  flushForExit();
+  writeStrCold(
     2,
     "panic: RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most 2^52 - 1 bytes\n",
   );

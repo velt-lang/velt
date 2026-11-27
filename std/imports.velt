@@ -51,10 +51,11 @@ export const imports: Imports = {
     win32: "./lang/hooks/reactor_afd.velt",
     default: "./lang/hooks/reactor_none.velt",
   },
-  // The two OS calls the executor in Velt's core makes whatever its reactor (std/lang/hooks/
-  // sched_mem.velt, sched_io_wait.velt): `sched_yield` and `clock_gettime`, or on Windows
-  // `SwitchToThread` and the performance counter.
+  // The OS calls the executor's core makes whatever its reactor (std/lang/hooks/sched_mem.velt,
+  // sched_io_wait.velt): `sched_yield` and `clock_gettime`, or `SwitchToThread` and the performance
+  // counter. `#stdout-sys`: stdout and stderr's writer, the runtime's on every target for now.
   "#sched-os": { win32: "./lang/hooks/os_win32.velt", default: "./lang/hooks/os_posix.velt" },
+  "#stdout-sys": { default: "./lang/hooks/out_rt.velt" },
   // The memory of the symbol records made at run time: `Symbol.for`'s one at a time
   // (std/lang/symbol/registry.velt) and `Symbol()`'s in 4 KiB chunks (record.velt). The C
   // library's where there is one, the compiled code's allocator (not zeroed) in the browser.
@@ -143,8 +144,6 @@ export const imports: Imports = {
     js: "./sync/channel_word_wasm.velt",
     default: "./sync/channel_word.velt",
   },
-  // velt/sync's hand-offs (std/sync/output.velt): what the thread printed, published through the
-  // runtime's latch; nothing to publish on WebAssembly's one thread.
   // velt/lang/bytes's raw moves and zeroing (std/lang/bytes/raw.velt): the C library's `memmove`
   // and `memset`, or a Velt loop on the JS host, which has no C library.
   "#bytes-move": { js: "./lang/bytes/move_js.velt", default: "./lang/bytes/move_c.velt" },

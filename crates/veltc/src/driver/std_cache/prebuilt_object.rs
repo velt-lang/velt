@@ -20,6 +20,11 @@
 //! links the object loads ([`own_state`]), and the blocks of module state in module_blocks.velt's
 //! own object; and std's process statics, whose words the object imports from the program
 //! ([`import_process_statics`]), which defines them and hands the runtime their addresses.
+//!
+//! The writer of stdout and stderr is the program's state too, which nearly every world reaches:
+//! its hooks (`prebuilt::calls_out`) are declared in the world, not compiled ([`declare_calls_out`]),
+//! so the object calls the program's, and nothing else outside the object
+//! ([`calls_nothing_else`]).
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -111,6 +116,7 @@ pub(super) fn build(
     program.funcs.iter_mut().for_each(|f| f.locs.clear());
     let entries = entry_points(&mut program, &hooks)?;
     import_process_statics(&mut program);
+    let calls = declare_calls_out(&mut program)?;
     velt_opt::optimize(&mut program, velt_opt::OptLevel::Speed);
     // The entry stays declared (`dead_funcs` drops a declaration nothing calls).
     if !program.funcs.iter().any(|f| f.symbol == "velt_main") {
@@ -118,6 +124,7 @@ pub(super) fn build(
         program.funcs.push(main);
     }
     shares_nothing(&program, &own, &own_tls)?;
+    calls_nothing_else(&program, &calls)?;
     holds_no_module_state(&program, prebuilt::private(module_entry))?;
     let tls = thread_locals(&program);
     let statics = process_statics(&program);
@@ -217,11 +224,7 @@ fn entry_points(program: &mut vir::Program, hooks: &[usize]) -> Result<Vec<Strin
         f.symbol = prebuilt::symbol(h);
         f.linkage = Linkage::Export;
         // Its callers are any program's: no whole-program facts about its pointers.
-        for a in &mut f.param_attrs {
-            a.noalias = false;
-            a.readonly = false;
-            a.frozen = false;
-        }
+        unknown_callers(f);
         entries.push(super::prebuilt::entry_line(&f.symbol, &f.params, f.ret));
         is_entry[at] = true;
     }
@@ -231,6 +234,68 @@ fn entry_points(program: &mut vir::Program, hooks: &[usize]) -> Result<Vec<Strin
         }
     }
     Ok(entries)
+}
+
+/// Make each hook of `prebuilt::calls_out` that the world lowered a declaration (`Import`) under
+/// its own symbol, so that the object calls the program's (`prebuilt.rs` "Calls out") and its
+/// state stays there: their symbols. Before the optimizer, which then inlines none of it.
+pub(super) fn declare_calls_out(program: &mut vir::Program) -> Result<Vec<String>, String> {
+    let mut calls = vec![];
+    for h in prebuilt::calls_out() {
+        let symbol = velt_vir::mangle::mangle(&h.qualified());
+        let Some(f) = (program.funcs.iter_mut()).find(|f| f.symbol == symbol) else {
+            continue;
+        };
+        let Sig::Fn(sig) = &h.sig else {
+            return Err(format!("`{}` is no function", h.name));
+        };
+        if !crosses(sig, &f.params, f.ret) {
+            return Err(format!(
+                "`{}` was lowered as {:?} -> {:?}",
+                h.name, f.params, f.ret
+            ));
+        }
+        f.blocks.clear();
+        f.locs.clear();
+        f.locals.truncate(f.params.len());
+        f.linkage = Linkage::Import;
+        unknown_callers(f);
+        calls.push(symbol);
+    }
+    Ok(calls)
+}
+
+/// No facts about `f`'s pointers from its callers or its body: the other side of the call is
+/// another unit's.
+pub(super) fn unknown_callers(f: &mut vir::Function) {
+    for a in &mut f.param_attrs {
+        a.noalias = false;
+        a.readonly = false;
+        a.frozen = false;
+    }
+}
+
+/// `Err` where the object's code calls a function defined outside it but the program's hooks of
+/// `calls` ([`declare_calls_out`]) and `velt_main`, which the program defines.
+fn calls_nothing_else(program: &vir::Program, calls: &[String]) -> Result<(), String> {
+    let called = |at: usize| {
+        (program.funcs.iter().filter(|f| !f.blocks.is_empty())).any(|f| {
+            (f.blocks.iter()).any(|b| match &b.term {
+                Terminator::Call {
+                    callee: Callee::Func(id),
+                    ..
+                } => id.0 as usize == at,
+                _ => false,
+            })
+        })
+    };
+    let outside = (program.funcs.iter().enumerate()).find(|(at, f)| {
+        f.blocks.is_empty() && f.symbol != "velt_main" && !calls.contains(&f.symbol) && called(*at)
+    });
+    match outside {
+        Some((_, f)) => Err(format!("its code calls `{}`, defined outside it", f.symbol)),
+        None => Ok(()),
+    }
 }
 
 /// Was a hook of signature `sig` lowered as `prebuilt.rs` says it crosses: each number or `bool`

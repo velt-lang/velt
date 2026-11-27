@@ -337,3 +337,56 @@ fn the_module_s_own_state_is_taken() {
     let p = program(vec![names_static(0)], &[], vec![named]);
     assert!(shares_nothing(&p, &own, &own).is_err());
 }
+
+/// A call of the program's writer (`prebuilt::calls_out`, #2196): its body, which reaches the
+/// writer's thread-local buffer, is refused in the object; declared under its own symbol, the
+/// object holds only the call. A call of any other function defined outside the object is
+/// refused.
+#[test]
+fn the_writer_is_called_out_to() {
+    let write = velt_vir::mangle::mangle(velt_common::std_hook!(write_str));
+    let tls = velt_vir::tls::TlsCall::Get {
+        id: 7,
+        bits: 64,
+        init: 0,
+    }
+    .symbol();
+    let mut writer = vir::Function::new(
+        write.clone(),
+        vec![Ty::U32, Ty::Ptr],
+        Ty::Unit,
+        Linkage::Internal,
+    );
+    writer.blocks = body(&write, call(0)).blocks;
+    writer.param_attrs = vec![Default::default(); 2];
+    writer.param_attrs[1].readonly = true;
+    let caller = |callee: u32| {
+        body(
+            "_V3stdN1f",
+            Terminator::Call {
+                callee: Callee::Func(vir::FuncId(callee)),
+                args: vec![],
+                dest: None,
+                next: BlockId(1),
+                unwind: None,
+            },
+        )
+    };
+    let mut p = program(vec![writer, caller(0)], &[tls.as_str()], vec![]);
+    assert!(shares_nothing(&p, &HashSet::new()).is_err());
+    let calls = declare_calls_out(&mut p).unwrap();
+    assert_eq!(calls, std::slice::from_ref(&write));
+    let declared = &p.funcs[0];
+    assert!(declared.blocks.is_empty() && declared.linkage == Linkage::Import);
+    assert!(!declared.param_attrs[1].readonly);
+    assert_eq!(shares_nothing(&p, &HashSet::new()), Ok(()));
+    assert_eq!(calls_nothing_else(&p, &calls), Ok(()));
+    // Not called out to: refused.
+    let err = calls_nothing_else(&p, &[]).unwrap_err();
+    assert!(err.contains(&write), "{err}");
+    let other = vir::Function::new("_V3stdN1g".into(), vec![], Ty::Unit, Linkage::Import);
+    p.funcs.push(other);
+    p.funcs.push(caller(2));
+    let err = calls_nothing_else(&p, &calls).unwrap_err();
+    assert!(err.contains("_V3stdN1g"), "{err}");
+}

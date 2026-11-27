@@ -575,6 +575,9 @@ fn lower_checked(
     // What runs before std's start-up check of the CPU is compiled for the baseline CPU, and
     // the std cache never serves it compiled for `--cpu` (`velt_vir::start_up`).
     velt_vir::start_up::mark_baseline(&mut program);
+    if dest == VirFor::Link {
+        std_cache::prebuilt_export_calls_out(sess, &mut program);
+    }
     // The std cache (#1728), around the optimizer. A generator host stays whole:
     // `check_generator_host` looks through its code.
     let std_use = match dest == VirFor::Link && !sess.generator_build {

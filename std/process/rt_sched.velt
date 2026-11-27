@@ -10,7 +10,7 @@
 import { hookCall } from "velt/lang/intrinsics";
 import { StdinRead, readAll, readLine } from "./stdin_buffer";
 
-export { velt_rt_process_args, velt_rt_stdout_write_bytes } from "./rt";
+export { velt_rt_process_args } from "./rt";
 
 /** Standard input's next line, read on the blocking pool. */
 export async function stdinReadLine(): Promise<StdinRead> {

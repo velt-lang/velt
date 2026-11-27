@@ -13,8 +13,7 @@
 
 import { inline, noInline, strAsciiWords } from "velt/lang/intrinsics";
 import { eightWords, longWords } from "velt/lang/number/integer";
-
-declare function velt_rt_write_str(stream: u32, s: string);
+import { writeStr } from "velt/lang/hooks/stdout";
 
 /**
  * Writes `a`, after a minus when `neg`, and the ASCII byte `end` to `stream`: the hooks' one call
@@ -39,10 +38,7 @@ export function digitsWrite(stream: u32, a: u64, neg: bool, end: u8): void {
 @inline("always")
 function oneWord(stream: u32, a: u64, neg: bool, end: u8): void {
   const w = eightWords(a, neg);
-  velt_rt_write_str(
-    stream,
-    strAsciiWords(w.w0 | ((end as u64) << ((w.len as u64) * 8)), 0, 0, w.len + 1),
-  );
+  writeStr(stream, strAsciiWords(w.w0 | ((end as u64) << ((w.len as u64) * 8)), 0, 0, w.len + 1));
 }
 
 // Writes `a` below 10^8, after a minus when `neg`, and `end`, where that is two words: 8 or 9
@@ -51,7 +47,7 @@ function oneWord(stream: u32, a: u64, neg: bool, end: u8): void {
 function midWrite(stream: u32, a: u64, neg: bool, end: u8): void {
   const w = eightWords(a, neg);
   const e = (end as u64) << (((w.len as u64) & 7) * 8);
-  velt_rt_write_str(stream, strAsciiWords(w.w0, w.w1 | e, 0, w.len + 1));
+  writeStr(stream, strAsciiWords(w.w0, w.w1 | e, 0, w.len + 1));
 }
 
 // Writes `a` from 10^8 up, after a minus when `neg`, and `end`: 9 to 20 bytes, then `end`, which
@@ -59,5 +55,5 @@ function midWrite(stream: u32, a: u64, neg: bool, end: u8): void {
 @noInline
 function longWrite(stream: u32, a: u64, neg: bool, end: u8): void {
   const w = longWords(a, neg, end as u64);
-  velt_rt_write_str(stream, strAsciiWords(w.w0, w.w1, w.w2, w.len));
+  writeStr(stream, strAsciiWords(w.w0, w.w1, w.w2, w.len));
 }

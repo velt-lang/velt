@@ -9,13 +9,12 @@
 // is a plain call there.
 
 import { abortProcess, raise } from "#unwind-raise";
+import { flushForExit, flushOutput, writeStrCold } from "./stdout";
 
 export { freePanic, livePanics, panicText, takePanic, unwoundFramesDrop } from "#unwind-raise";
 
 declare function velt_rt_panic(msg: string): never;
 declare function velt_rt_exit(code: i32): never;
-declare function velt_rt_flush(): void;
-declare function velt_rt_write_str(stream: u32, s: string);
 /** 1 where `catchUnwind` catches (its `velt_eh_try` has a landing pad), 0 where it is a plain
  * call (the JIT, Windows on arm64, WebAssembly): defined by the backend (`velt_vir::eh::CATCHES`). */
 declare function velt_eh_catches(): u8;
@@ -42,10 +41,10 @@ const UNWINDING = new ThreadLocal<bool>(false);
  */
 export function panicRaise(msg: string): never {
   if (CATCHING.get() != 0) {
-    velt_rt_flush();
-    velt_rt_write_str(2, "panic: " + msg + "\n");
+    flushOutput();
+    writeStrCold(2, "panic: " + msg + "\n");
     if (UNWINDING.get()) {
-      velt_rt_write_str(2, "panic while unwinding: aborting\n");
+      writeStrCold(2, "panic while unwinding: aborting\n");
       abortProcess();
     }
     UNWINDING.set(true);
@@ -69,7 +68,7 @@ export function raiseAgain(msg: string): never {
   if (CATCHING.get() != 0) {
     raise(msg);
   }
-  velt_rt_flush();
+  flushForExit();
   velt_rt_exit(101);
 }
 

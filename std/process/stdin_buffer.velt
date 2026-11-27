@@ -17,10 +17,10 @@ import { readBytes } from "velt/ffi/read";
 import { addressArray, addressLoad, addressStore, ptrFromAddress } from "velt/lang/intrinsics";
 import { readChunk } from "#stdin-sys";
 import { mutexLock, mutexUnlock } from "#thread-lock";
+import { flushOutput } from "velt/lang/hooks/stdout";
 
 // C declarations, so that a `Ptr` is passed as the pointer it is (an integer address is 64 bits
 // where a wasm32 pointer is 32).
-declare function velt_rt_flush(): void;
 declare c("c") function calloc$stdin(n: usize, size: usize): Ptr<u8> | null;
 declare c("c") function realloc$stdin(p: Ptr<u8> | null, size: usize): Ptr<u8> | null;
 declare c("c") function memchr$stdin(s: Ptr<u8> | null, c: i32, n: usize): Ptr<u8> | null;
@@ -124,7 +124,7 @@ function fill(s: usize): IoError | null {
     setWord(s, CAP, cap);
   }
   // A prompt written before the read is on the screen while the program waits.
-  velt_rt_flush();
+  flushOutput();
   const got = readChunk(buf + unread, CHUNK);
   if (got.error !== null) {
     return got.error;
