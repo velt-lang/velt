@@ -278,12 +278,13 @@ fn a_deleted_extern_is_named_nowhere() {
             || path.ends_with(Path::new("velt_common/src/std_hooks/weak_hooks.rs"))
             || path.ends_with(Path::new("velt_common/src/std_hooks/string_hooks.rs"))
             || path.ends_with(Path::new("velt_common/src/std_hooks/module_hooks.rs"))
+            || path.ends_with(Path::new("velt_common/src/std_hooks/transfer_hooks.rs"))
             || path.ends_with(Path::new("velt_common/src/std_hooks/drop_hooks.rs"))
             || path.ends_with(Path::new("velt_common/src/std_hooks/deleted.rs"))
             || path.file_name() == Some(this)
         {
-            // The table (with its weak, string, module and drop rows) and this test name them as
-            // history.
+            // The table (with its weak, string, module, transfer and drop rows) and this test name
+            // them as history.
             continue;
         }
         let Ok(src) = std::fs::read_to_string(&path) else {

@@ -54,16 +54,16 @@ impl FnLower<'_, '_> {
 
     /// `transfer_value` of a value sema transferred into the caller's container (`share`, from
     /// `share_dest`): in read mode what the reader made stays itself instead of becoming a copy
-    /// (velt_rt `velt_rt_xfer_share_begin`, glue/transfer.rs `share_made`). Into anything else
+    /// (std's `xferShareBegin`, glue/transfer.rs `share_made`). Into anything else
     /// (a container the reader may have made) what it shares stays a copy and what it made
     /// stays its own.
     fn share_stored(&mut self, v: Operand, ty: TyId, share: bool) -> Operand {
         if !share || self.dead() || !self.cx.transfers(ty) || !self.cx.reaches_lock_set(ty) {
             return self.transfer_value(v, ty);
         }
-        self.lk_split(|_| {}, |lw| lw.call_rt(Rt::XferShareBegin, vec![], None));
+        self.lk_split(|_| {}, |lw| lw.xfer_share_begin());
         let v = self.transfer_value(v, ty);
-        self.lk_split(|_| {}, |lw| lw.call_rt(Rt::XferEnd, vec![], None));
+        self.lk_split(|_| {}, |lw| lw.xfer_end());
         v
     }
 

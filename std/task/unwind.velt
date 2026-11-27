@@ -14,10 +14,8 @@ import {
 } from "velt/lang/hooks/unwind";
 import { processEnv } from "velt/lang/hooks/process";
 import { dropRecover, dropState } from "velt/lang/hooks/drop_queue";
+import { xferEnd, xferResume, xferSuspend } from "velt/lang/hooks/transfer";
 
-declare function velt_rt_xfer_suspend(): u32;
-declare function velt_rt_xfer_resume(depth: u32): void;
-declare function velt_rt_xfer_end(): void;
 declare function velt_rt_write_str(stream: u32, s: string);
 
 /**
@@ -92,9 +90,8 @@ export unsafe function catchPanicAt(code: usize, arg: usize): usize {
 }
 
 /**
- * After a caught panic: the state the panicked code left open on this thread is closed, as the
- * runtime's own catch does (`velt_rt::panic::catch`); `drops` is the drop state word when the
- * catch began.
+ * After a caught panic: the state the panicked code left open on this thread is closed; `drops` is
+ * the drop state word when the catch began.
  */
 function caught(drops: u32) {
   // A panic in a drop (a `[Symbol.dispose]()`) left the depth of bounded drop nesting up, and
@@ -106,11 +103,11 @@ function caught(drops: u32) {
   // `suspend` reads the depth (and sets the open transfer aside), `resume` takes it back, and each
   // `end` closes one level; the last clears its copies and releases the references it deferred,
   // which belonged to the transfer, not to the abandoned frames.
-  const depth = velt_rt_xfer_suspend();
+  const depth = xferSuspend();
   if (depth > 0) {
-    velt_rt_xfer_resume(depth);
+    xferResume(depth);
     for (let i: u32 = 0; i < depth; i++) {
-      velt_rt_xfer_end();
+      xferEnd();
     }
   }
   // Where the unwound frames had no cleanup pads (Windows) what they owned leaks and the counts

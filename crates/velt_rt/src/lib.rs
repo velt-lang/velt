@@ -50,7 +50,6 @@ pub mod str_ops;
 pub mod strbuf;
 pub mod task;
 pub mod top_level_await;
-pub mod transfer_map;
 pub mod view;
 
 pub use crate::str::VeltStr;
