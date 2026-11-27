@@ -6,9 +6,9 @@
 // (`#fs-whole`: the C library on macOS and Linux, Win32 on Windows), and so are listing, making
 // and removing directories (`#fs-tree`) and renaming, linking and copying (`#fs-paths`), their
 // async forms on the executor's blocking pool (std/lang/hooks/sched_blocking.velt), which has
-// threads on every OS a native build targets. WebAssembly builds use std/fs/rt.velt:
-// velt_rt_wasm's whole files and directories, and `#fs-paths`' WASI and JS host variants run on
-// the calling task. File streams (`openRead`, `openWrite` and their readers and writers) are Velt
+// threads on every OS a native build targets. WebAssembly builds use std/fs/rt_wasi.velt:
+// velt_rt_wasm's whole files and directories as jobs of the same pool, and `#fs-paths`' WASI and
+// JS host variants on the calling task. File streams (`openRead`, `openWrite` and their readers and writers) are Velt
 // code too (std/fs/stream_sched.velt over `#fs-stream-os`), each operation a job on the same
 // pool.
 

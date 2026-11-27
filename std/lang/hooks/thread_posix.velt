@@ -17,6 +17,17 @@ import * as m from "./sched_mem";
 /** Can this OS start worker threads? (The default variant cannot: one worker.) */
 export const SUPPORTED: bool = true;
 
+// velt_rt's: this thread enters its host's tokio context (rt_abi_async.md §2).
+declare function velt_rt_set_scheduler(kind: u32): void;
+
+/**
+ * This thread polls tasks: the runtime's leaves it polls find the runtime's timers and I/O from
+ * it (`velt_rt_set_scheduler(2)`), before its first task.
+ */
+export function enterRuntime(): void {
+  velt_rt_set_scheduler(2);
+}
+
 /** A worker thread's stack: 8 MiB, as the runtime's task threads and the main thread have. */
 const STACK: usize = 8388608;
 /** Room for a `pthread_attr_t` (56 or 64 bytes on these OSes) and a `pthread_t`. */

@@ -196,8 +196,8 @@ export const imports: Imports = {
   // rt.velt), or, compiled with the executor in Velt (`VELT_SCHEDULER=std`), the same names with
   // whole-file operations and standard input read on its blocking pool (std/lang/hooks/
   // sched_blocking.velt). WebAssembly's are the runtime's sync calls run as blocking-pool jobs
-  // (std/fs/rt_wasi.velt).
-  "#fs-rt": { native: "./fs/rt_sched.velt", wasm: "./fs/rt_wasi.velt", default: "./fs/rt.velt" },
+  // (std/fs/rt_wasi.velt, over std/fs/rt.velt's sync forms).
+  "#fs-rt": { native: "./fs/rt_sched.velt", default: "./fs/rt_wasi.velt" },
   // `readAt`'s read off the calling task's thread: on the executor's blocking pool in a native
   // program; on the calling thread elsewhere, where there are no file descriptors to read.
   "#fs-read-at": {

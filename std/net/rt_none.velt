@@ -1,10 +1,8 @@
-// velt/net (internal): the `wasi` variant of `#net-tcp` (std/imports.velt). A wasm32-wasip1
-// program runs on the executor in Velt (#3905), which can't await velt_rt_wasm's async leaves
-// (their `cx` is the runtime's), and WASI has no sockets anyway: so nothing here calls the
-// runtime. Connecting and listening fail with `ENOTSUP`, and as no stream or listener ever
-// exists, an operation on one finds none (`EBADF`, as for a closed handle), as the runtime's
-// WebAssembly functions answer (velt_rt_wasm net.rs). The names and signatures are
-// std/net/rt.velt's.
+// velt/net (internal): the `wasm` variant of `#net-tcp` (std/imports.velt). A WebAssembly
+// program runs on the executor in Velt (#3905), velt_rt_wasm has no network functions, and
+// WebAssembly has no sockets anyway: so nothing here calls the runtime. Connecting and listening
+// fail with `ENOTSUP`, and as no stream or listener ever exists, an operation on one finds none
+// (`EBADF`, as for a closed handle). The names and signatures are std/net/rt.velt's.
 
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";

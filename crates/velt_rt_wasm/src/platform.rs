@@ -1,6 +1,6 @@
 //! The few services the runtime needs from its host, per target:
 //! - WASI (`wasm32-wasip1`) and native hosts (unit tests): Rust `std` (WASI `fd_write`,
-//!   `proc_exit`, `clock_time_get`, `poll_oneoff`);
+//!   `proc_exit`);
 //! - the browser (`wasm32-unknown-unknown`): imports from the `velt` module that the JS glue
 //!   provides (`editors/web/velt_web.js`), because `std`'s I/O, clocks and exit are stubs there.
 
@@ -12,8 +12,6 @@ mod imports {
         pub fn write(stream: u32, ptr: *const u8, len: usize);
         /// Stop the program with `code` (the glue throws, so this never returns).
         pub fn exit(code: i32) -> !;
-        /// `performance.now()`.
-        pub fn now_ms() -> f64;
     }
 }
 
@@ -50,44 +48,9 @@ pub fn exit(code: i32) -> ! {
     std::process::exit(code)
 }
 
-/// Milliseconds on a monotonic clock (arbitrary origin).
-pub fn monotonic_ms() -> f64 {
-    #[cfg(all(target_family = "wasm", target_os = "unknown"))]
-    // SAFETY: a plain import without arguments.
-    return unsafe { imports::now_ms() };
-    #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
-    {
-        use std::sync::OnceLock;
-        use std::time::Instant;
-        static ORIGIN: OnceLock<Instant> = OnceLock::new();
-        ORIGIN.get_or_init(Instant::now).elapsed().as_secs_f64() * 1000.0
-    }
-}
-
-/// Block the (only) thread for `ms` milliseconds: the executor's wait for its next timer. A JS
-/// host's thread cannot block: the executor returns to the host instead (host_turn.rs).
-#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
-pub fn sleep_ms(ms: f64) {
-    if ms > 0.0 {
-        std::thread::sleep(std::time::Duration::from_secs_f64(ms / 1000.0));
-    }
-}
-
 /// The program's command-line arguments (argv[0] included; empty in the browser).
 pub fn args() -> Vec<String> {
     std::env::args_os()
         .map(|a| a.to_string_lossy().into_owned())
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn clocks_advance() {
-        let a = monotonic_ms();
-        sleep_ms(2.0);
-        assert!(monotonic_ms() - a >= 2.0);
-    }
 }
