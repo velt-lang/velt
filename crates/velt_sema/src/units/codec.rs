@@ -117,8 +117,14 @@ pub(crate) struct Writer {
     frags: Vec<u8>,
     /// Where each fragment starts in `frags`.
     frag_starts: Vec<u32>,
-    /// Write files as their ids, not through the table (a map key's sort key).
-    raw_files: bool,
+    /// Not the unit's bytes but a map key's sort key (`values::sorted_by_key`): files are
+    /// written as their indices in this table, the unit's modules' files in the unit's order
+    /// ([`Writer::module_files`]), and any other as its id after them. Not through the file
+    /// table, which a key's files would join in the order the keys are met, nor as their ids,
+    /// which follow the order the session's source map added the files in (#3907).
+    key_files: Option<Rc<FxHashMap<FileId, u32>>>,
+    /// The table of the modules' files, once the unit has written them ([`Writer::module_files`]).
+    module_files: Rc<FxHashMap<FileId, u32>>,
     /// How many of the bytes written are AST fragments ([`ast_refs`]).
     pub(crate) ast_bytes: usize,
 }
@@ -132,7 +138,28 @@ impl Writer {
             nodes: FxHashMap::default(),
             frags: vec![],
             frag_starts: vec![],
-            raw_files: false,
+            key_files: None,
+            module_files: Rc::default(),
+            ast_bytes: 0,
+        }
+    }
+
+    /// The files written so far are the modules': map keys sort their files by these indices.
+    pub(crate) fn module_files(&mut self) {
+        self.module_files = Rc::new(self.files.clone());
+    }
+
+    /// A writer of a map key's sort key, under `w` (`values::sorted_by_key`).
+    pub(crate) fn for_keys(w: &Writer) -> Writer {
+        Writer {
+            out: vec![],
+            files: FxHashMap::default(),
+            file_list: vec![],
+            nodes: FxHashMap::default(),
+            frags: vec![],
+            frag_starts: vec![],
+            key_files: Some(w.module_files.clone()),
+            module_files: Rc::default(),
             ast_bytes: 0,
         }
     }
@@ -162,8 +189,11 @@ impl Writer {
     }
 
     fn file(&mut self, f: FileId) {
-        if self.raw_files {
-            self.uint(u64::from(f.0));
+        if let Some(t) = &self.key_files {
+            let i = t
+                .get(&f)
+                .map_or(t.len() as u64 + u64::from(f.0), |&i| u64::from(i));
+            self.uint(i);
             return;
         }
         let i = self.file_index(f);

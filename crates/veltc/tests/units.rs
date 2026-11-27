@@ -878,6 +878,7 @@ fn std_s_unit_on_disk_serves_another_program() {
     assert_eq!(error_lines(&whole), error_lines(&second));
     // A byte of the unit changed: refused, std checked again, and the unit saved again.
     let mut bytes = std::fs::read(&saved[0]).unwrap();
+    let first_bytes = bytes.clone();
     let at = bytes.len() / 2;
     bytes[at] ^= 0x5a;
     std::fs::write(&saved[0], &bytes).unwrap();
@@ -885,14 +886,44 @@ fn std_s_unit_on_disk_serves_another_program() {
     let said = String::from_utf8_lossy(&third.stderr).to_string();
     assert!(said.contains("std's unit refused from disk"), "{said}");
     assert_eq!(error_lines(&whole), error_lines(&third));
-    // The unit saved again is the one this check made (of `bad`), whose bytes may differ from
-    // the first one's in more places than the damaged byte: what it is, is a unit that loads.
+    // The unit saved again is the one this check made (of `bad`): the first one, whatever
+    // program saved it (#3907).
     let again = std::fs::read(&saved[0]).unwrap();
     assert!(again != bytes, "the damaged unit was not saved again");
+    assert!(again == first_bytes, "another program saved another unit");
     let fourth = check_on_disk(&disk, bad);
     let said = String::from_utf8_lossy(&fourth.stderr).to_string();
     assert!(said.contains("std's unit loaded from disk"), "{said}");
     assert_eq!(error_lines(&whole), error_lines(&fourth));
+}
+
+/// std's unit on disk is the same for every program under one key (#3907): not numbered in the
+/// order the program's imports, or `JSON.parse<T>` of a type of its own, load std's modules, nor
+/// its maps sorted by the ids the session gave std's files in that order.
+#[test]
+fn std_s_unit_on_disk_is_the_same_whatever_program_saved_it() {
+    let programs = [
+        "function main() {\n  console.log(\"hi\");\n}\n",
+        "type Point = { x: number; y: number };\nfunction main() {\n  const p = JSON.parse<Point>(`{\"x\":1,\"y\":2}`);\n  console.log(p.x + p.y);\n}\n",
+        "import { sha256Hex } from \"velt/crypto\";\nfunction main() {\n  console.log(sha256Hex(\"a\"));\n}\n",
+    ];
+    let dir = test_dir::TestDir::new();
+    let units: Vec<(String, Vec<u8>)> = (programs.iter().enumerate())
+        .map(|(i, src)| {
+            let disk = dir.path().join(format!("units{i}"));
+            let out = check_on_disk(&disk, src);
+            let said = String::from_utf8_lossy(&out.stderr).to_string();
+            assert!(out.status.success(), "program {i}:\n{said}");
+            let saved = units_in(&disk);
+            assert_eq!(saved.len(), 1, "program {i}: {saved:?}");
+            let name = saved[0].file_name().unwrap().to_string_lossy().to_string();
+            (name, std::fs::read(&saved[0]).unwrap())
+        })
+        .collect();
+    for (i, (name, bytes)) in units.iter().enumerate().skip(1) {
+        assert_eq!(name, &units[0].0, "program {i}: another key");
+        assert!(bytes == &units[0].1, "program {i} saved another std unit");
+    }
 }
 
 /// `get message()` on a class extending `Error` (#3792): a whole-program check reads every

@@ -309,6 +309,7 @@ pub(crate) fn encode_unit_sized(cx: &Ctx) -> (Vec<u8>, Vec<(&'static str, usize)
     for m in &cx.modules {
         w.file(m.file);
     }
+    w.module_files();
     enc_fields(cx, &mut w, &mut sizes);
     sizes.push(("(of which AST)", w.ast_bytes));
     let (body, files) = w.finish();
