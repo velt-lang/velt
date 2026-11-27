@@ -177,7 +177,6 @@ Accepted by `tsc`, but behaves differently (all errors):
 | `declare-fn` | `declare function` (a `ReferenceError` in JavaScript) | |
 | `jsx-pragma-comment` | `// @jsxImportSource x`: `tsc` reads the pragma only from a block comment and builds with the client's configured provider | `/** @jsxImportSource x */` |
 | `int-division` | `/` (and `/=`) whose operands have declared integer types: Velt truncates | `Math.trunc(a / b)` |
-| `object-in-template` | `${x}` of a `Promise`: Velt prints it as `console.log` does, JavaScript as `[object Promise]` | |
 | `default-sort` | `sort()` / `toSorted()` without a comparator on numbers | `(a, b) => a - b`, not for unsigned elements |
 
 How the rules decide:
@@ -197,13 +196,10 @@ How the rules decide:
 - `jsx-provider` reports one finding per module, at its first element. `jsx-pragma-comment`
   reports the pragma Velt uses (the first one before the first token, in a module with JSX); its
   fix rewrites a comment holding only the pragma.
-- `declare-fn` is valid Velt only in a package with a native library.
+- `declare-fn` is valid Velt only in the standard library (outside it, `declare c`).
 - `int-division` meets only integer types that `velt-number-type` reports where they are written
   (or that come from another shared file). Unions of integer literal types (`(1 | 3)[]`) are
   numbers and divide as numbers do, so they are no finding.
-- `object-in-template` reports only promises: every other value is written as JavaScript's
-  `String(x)` writes it, through a class's `toString()` (own or inherited, as `Error`'s
-  `"Error: message"`), else `[object Object]`, or `[object Map]` for std's classes.
 - `velt-global` and `velt-member` look only at names that resolve to the prelude or to a builtin;
   a function, class or method the program declares is never one. `x.clone()` is reported wherever
   the receiver's type doesn't declare a `clone()` itself.

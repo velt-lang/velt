@@ -34,6 +34,63 @@ pub(super) fn evaluate(cx: &mut Ctx, w: &Walk) {
     }
     cx.lazy.live.present |= present;
     cx.lazy.live.prints_float |= w.prints_float;
+    note_prints(cx, w.prints.iter().copied());
+}
+
+/// Live code prints values of these types at the top level, each as text (`String(x)`, a
+/// template's part) or inspected: the line breaking is needed once one may hold containers.
+pub(super) fn note_prints(cx: &mut Ctx, prints: impl Iterator<Item = (TyId, bool)>) {
+    for (t, text) in prints {
+        if cx.lazy.live.prints_containers {
+            return;
+        }
+        cx.lazy.live.prints_containers = may_hold_containers(cx, t, text, 0);
+    }
+}
+
+/// May what is printed for a value of type `t` hold a container, so that its line breaking runs
+/// (velt_vir `glue/format.rs` `format_top_inspect`)? As lowering writes it: no for what prints as
+/// one scalar (numbers, booleans, strings, symbols, literals, pointers, an enum without
+/// payloads, an error-set variable), for an option or a union of such (`"AM" | "PM"`,
+/// `string | null`), and for the
+/// `text` of a dynamic value or a promise, which is JavaScript's `ToString` (std's `anyText`:
+/// an array joined, `[object Object]`), never the inspected form. Anything else may.
+pub(super) fn may_hold_containers(cx: &mut Ctx, t: TyId, text: bool, depth: u32) -> bool {
+    if depth > 8 {
+        return true;
+    }
+    let parts: Vec<TyId> = match cx.ty.kind(t) {
+        TyKind::Int(_)
+        | TyKind::Float(_)
+        | TyKind::Bool
+        | TyKind::Str
+        | TyKind::Unit
+        | TyKind::Never
+        | TyKind::Error
+        | TyKind::Symbol
+        | TyKind::Ptr(_)
+        | TyKind::Literal(_) => return false,
+        TyKind::Promise(..) => return !text,
+        // An error-set variable (`throws` of a function whose set is still being found) holds
+        // no type of its own: its members are what the throw sites throw, which live code
+        // records itself, so it counts as the `never` it is checked as without variables.
+        TyKind::Op(crate::hir::TyOp::ErrSite(_), _) => return false,
+        TyKind::Option(e, _) | TyKind::Shared(e) => vec![*e],
+        TyKind::Adt(d, _) => {
+            let d = *d;
+            match cx.union_members(t) {
+                Some(members) => members,
+                None => match cx.enum_info(d) {
+                    Some(e) if e.variants.iter().all(|v| v.payload.is_empty()) => return false,
+                    _ => return true,
+                },
+            }
+        }
+        _ => return !(text && cx.dynamic(t).is_some()),
+    };
+    parts
+        .into_iter()
+        .any(|p| may_hold_containers(cx, p, text, depth + 1))
 }
 
 /// `TextFloat` where text or glue for a value of type `t` may print a float (none needed when
@@ -51,6 +108,8 @@ fn float_bit(cx: &mut Ctx, t: TyId, present: ConstructSet) -> ConstructSet {
 /// the passes after the bodies' check tell ([`too_late`], [`super::finish`]).
 #[derive(Clone, Default)]
 pub(crate) struct Assumed {
+    /// The keys of the freezable types the rounds before found (`crate::freezable`).
+    pub(crate) frozen: Vec<String>,
     pub(in super::super) constructs: ConstructSet,
     /// Live from the start: classes of values reported when thrown and not caught, and bodies
     /// that the code those passes make reaches, by `DefId` and name. Each is a collected
@@ -189,7 +248,23 @@ pub(super) fn gated(name: &str) -> bool {
     use velt_common::std_hooks::{hook_index, HOOKS};
     name == HOOKS[hook_index::inspect_array].name
         || CYCLE_HOOKS.iter().any(|&i| HOOKS[i].name == name)
+        || LAYOUT_HOOKS.iter().any(|&i| HOOKS[i].name == name)
 }
+
+/// The hooks of `console.log`'s line breaking (std/lang/hooks/inspect_layout.velt and the custom
+/// inspect pieces of inspect_layout_text.velt), checked only once live code prints a value that
+/// may hold containers at the top level ([`demand_gated`]): lowering calls them around each such
+/// value (velt_vir `glue/format.rs` `format_top_inspect`), and leaves it on one line where they
+/// are unchecked. `Format` alone is present for any class or array in live code, printed or not.
+const LAYOUT_HOOKS: [usize; 4] = {
+    use velt_common::std_hooks::hook_index as h;
+    [
+        h::inspect_layout,
+        h::inspect_atom,
+        h::inspect_atoms_save,
+        h::inspect_atoms_restore,
+    ]
+};
 
 /// Marks the [`gated`] hooks once their constructs are present and what they print is live: an
 /// array type for the array's, a type that can hold itself for the cycle hooks. Whether any was
@@ -202,6 +277,17 @@ pub(super) fn demand_gated(cx: &mut Ctx) -> bool {
     let arrays = cx.lazy.live.kinds & super::kind_bit(&TyKind::Array(TyId(0))) != 0;
     if arrays && demanded.contains(hook_index::inspect_array) && !cx.lazy.live.finishing {
         marked |= mark_hook(cx, hook_index::inspect_array);
+    }
+    let prints = cx.lazy.live.prints_containers;
+    if prints && demanded.contains(hook_index::inspect_layout) && !cx.lazy.live.finishing {
+        for i in LAYOUT_HOOKS {
+            // The pieces' hooks are prebuilt: declared where the build links their object, whose
+            // module is then not loaded (`hook_stubs::declared_lowered`).
+            let h = &velt_common::std_hooks::HOOKS[i];
+            if !super::super::hook_stubs::declared_lowered(cx, h) {
+                marked |= mark_hook(cx, i);
+            }
+        }
     }
     if cx.lazy.cycles || !demanded.contains(hook_index::inspect_enter) {
         return marked;
@@ -441,8 +527,11 @@ fn held(cx: &mut Ctx, t: TyId, insts: &Insts) -> Option<Vec<TyId>> {
 /// needs (and a source generator must not reach); so are `PowFloat`, std's `pow`, `PowInt`, its
 /// integer `powI64`, `Clock`,
 /// `Weak`: it demands the weak core, which only a program with weak collections needs, and which
-/// prints nothing, `Mutex`, std's inline lock, and `MutexHeld`, its count in a `velt dev` build
-/// (a program that prints a number must not load it). `TextFloat` is its own too, which `Dynamic`
+/// prints nothing, `Mutex`, std's inline lock, `MutexHeld`, its count in a `velt dev` build
+/// (a program that prints a number must not load it), `FnProps`, std's table of function
+/// properties, for a program that writes through `any`, and `ErrorMessage`, std's `errorMessage`
+/// for the `any` glue of a program with `get message()` on an error class. `TextFloat` is its own
+/// too, which `Dynamic`
 /// implies: a numeric key read through `any` is a float's text. A program that converts, formats or
 /// prints nothing that may hold a float checks no float hook. `WriteFloat`, `console.log`'s float
 /// writers, is its own as well, so that a program that prints only floats checks none of the text
@@ -455,7 +544,9 @@ pub(super) fn demanded_for(present: ConstructSet) -> ConstructSet {
         | Construct::Clock.bit()
         | Construct::Weak.bit()
         | Construct::Mutex.bit()
-        | Construct::MutexHeld.bit();
+        | Construct::MutexHeld.bit()
+        | Construct::FnProps.bit()
+        | Construct::ErrorMessage.bit();
     let (text, write) = (Construct::TextFloat.bit(), Construct::WriteFloat.bit());
     let own = alone | text | write;
     let integer = match present & !own {
@@ -586,6 +677,6 @@ pub(super) fn note_program_code(
 // The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
 crate::units::codec::structs! {
     Assumed {
-        constructs, defs, record_conversion, tasks, hooks, module_state,
+        frozen, constructs, defs, record_conversion, tasks, hooks, module_state,
     }
 }

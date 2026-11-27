@@ -131,7 +131,6 @@ fn finish_sema(
             hir,
             &sess.sm,
             std_root.as_deref().filter(|_| opts.std_c_headers),
-            std_root.as_deref(),
             opts.packages.as_ref(),
             &std_files,
             &opts.target(),

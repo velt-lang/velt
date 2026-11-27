@@ -1,0 +1,2 @@
+Uncaught TypeError: Cannot assign to read only property 'anon' of object '#<Object>' at
+frozen_expected_written.velt:6:1

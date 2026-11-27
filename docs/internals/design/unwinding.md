@@ -524,8 +524,7 @@ and cost nothing in programs that do not catch.
   stack of suspended transfers.
 - **Runtime function pointers that are still `extern "C"`.** A Velt exception through one of them
   aborts instead of reaching the catch: `DropFn` in `crates/velt_rt/src/drop_depth.rs` and
-  `crates/velt_rt/src/transfer_map.rs`; `DataFn`, `TransferFn` and `DropFn` in
-  `crates/velt_rt/src/fn_props.rs`; `WorkFn` and `DropCtxFn` in `crates/velt_rt/src/native/mod.rs`.
+  `crates/velt_rt/src/transfer_map.rs`; `WorkFn` and `DropCtxFn` in `crates/velt_rt/src/native/mod.rs`.
 - **The payload is the message only.** No location and no value.
 
 ## Not yet implemented

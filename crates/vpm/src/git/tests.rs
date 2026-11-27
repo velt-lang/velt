@@ -399,15 +399,15 @@ fn native_code_from_a_repository_is_not_built_unasked() {
     let e = env();
     let sib = e.upstream.dir.join("sib");
     std::fs::create_dir_all(sib.join("src")).unwrap();
-    std::fs::create_dir_all(sib.join("native/src")).unwrap();
+    std::fs::create_dir_all(sib.join("native")).unwrap();
     std::fs::write(
         sib.join("package.velt"),
-        "export const pkg: Package = { name: \"sib\", version: \"0.1.0\", native: {} };",
+        "export const pkg: Package = { name: \"sib\", version: \"0.1.0\", native: { c: { sib: { sources: [\"native/sib.c\"], unchecked: true } } } };",
     )
     .unwrap();
     std::fs::write(sib.join("src/lib.velt"), "\n").unwrap();
-    // Never run: the install must refuse before cargo would.
-    std::fs::write(sib.join("native/build.rs"), "fn main() {}").unwrap();
+    // Never compiled: the install must refuse before zig would.
+    std::fs::write(sib.join("native/sib.c"), "int sib(void) { return 1; }\n").unwrap();
     e.upstream.commit_package("lib", "lib", "x");
     std::fs::write(
         e.upstream.dir.join("lib/package.velt"),

@@ -71,6 +71,11 @@ pub(crate) fn run<'m>(
                 held = false;
                 let last = rounds == FN_SITE_ROUNDS;
                 (cx, entry) = new_cx("round: sharing retry", false, &seeds, last, &views);
+            } else if crate::freezable::grown(&mut cx, &mut assumed.borrow_mut().frozen) {
+                // Types whose values may be frozen at run time, known once every body was
+                // checked (`crate::freezable`): their writes are checked against the mark.
+                let last = rounds == FN_SITE_ROUNDS;
+                (cx, entry) = new_cx("round: freezable types", held, &seeds, last, &views);
             } else if error_count(&cx) == 0
                 && body::lazy_std::too_late(&mut cx, &mut assumed.borrow_mut())
             {

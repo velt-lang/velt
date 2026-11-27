@@ -1,0 +1,29 @@
+// Deep copies of an object holding regexes (`structuredClone`, as a copy for another task makes
+// one), each copy then matching: what a copy of a regex costs (#3883: a copy compiles the pattern
+// again, as JavaScript's structured clone does, and starts at `lastIndex` 0) (`bench/regex/run.sh`).
+
+interface Rules {
+  name: string;
+  words: RegExp;
+  dates: RegExp;
+  list: RegExp[];
+}
+
+function main() {
+  const rules: Rules = {
+    name: "rules",
+    words: /\b[a-z]+\b/g,
+    dates: /(\d{4})-(\d{2})-(\d{2})/,
+    list: [/^#/, /\s+$/, /(?:foo|bar|baz)+/i],
+  };
+  const line = "on 2024-05-17 the foo and bar met baz  ";
+  let n = 0;
+  for (let i = 0; i < 20000; i++) {
+    const copy = structuredClone(rules);
+    n += copy.words.exec(line)!.index;
+    n += copy.words.lastIndex;
+    n += copy.dates.test(line) ? 1 : 0;
+    n += copy.list[2].exec(line)!.index;
+  }
+  console.log(n);
+}

@@ -1,0 +1,23 @@
+// check: no leaks
+// A regex prints as Node prints it (#3883; `console.log(re)` did not compile): `/a/g` alone and
+// inside arrays and objects, a subclass's under its name, and `String(re)`, `${re}`, `source` and
+// `flags` as JavaScript gives them: `/` escaped outside a character class, line terminators as
+// escapes, the empty pattern as `(?:)`, the flags in JavaScript's order.
+
+class Sub extends RegExp {}
+
+const r = /a/g;
+console.log(r);
+console.log([r, /b/]);
+console.log({ r, n: 1 });
+console.log(new Sub("x", "y"));
+console.log([new Sub("x", "")]);
+console.log(`${r}`, String(/c/im), r.toString());
+
+const patterns: string[] = ["a/b", "", "\n", "[/]", "\\/", "a b", "\\\nz", "x\ry/"];
+for (const p of patterns) {
+  const re = new RegExp(p, "g");
+  console.log(JSON.stringify(re.source), `${re}`);
+  console.log(re.test(`-${p}-`) === new RegExp(re.source, "g").test(`-${p}-`));
+}
+console.log(new RegExp("a", "yigms").flags, /a/dg.flags);

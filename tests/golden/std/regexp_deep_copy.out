@@ -1,0 +1,10 @@
+clone g 0 a g false
+write copy 1 3
+exec g 3 4
+clone y 0
+exec y 4 1
+in object 0 0 gi
+object after exec 2 1
+spawned 1 2
+channel 1 2 false
+threads 8000 8000 8000 8000 2

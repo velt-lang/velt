@@ -205,7 +205,29 @@ impl FnCx<'_, '_> {
             }
         };
         let kind = H::Call { callee, args: all };
-        self.mk(kind, ret, span)
+        let call = self.mk(kind, ret, span);
+        // `t.step(1)` with `T extends Fluent` and `step(): this`: the result is `t` itself, as a
+        // `T` (`crate::hand_back`). So it is on a value of an interface that extends the one
+        // declaring it (`Totalled extends Fluent`), as that interface; on a `Fluent` value the
+        // slot's result is already the receiver's type.
+        if crate::hand_back::iface_returns_this(self.cx, s.iface, &s.method.name) {
+            let to = self.recv_type_of(&call);
+            if s.on_param || !self.cx.same_ty(to, call.ty) {
+                return self.hand_back_call(call, None, to);
+            }
+        }
+        call
+    }
+
+    /// The receiver's own type in `call` (under its conversion for the call).
+    fn recv_type_of(&self, call: &hir::Expr) -> TyId {
+        match &call.kind {
+            H::Call { args, .. } => match args.first().map(|a| &a.kind) {
+                Some(H::Upcast(x)) => x.ty,
+                _ => args.first().map_or(call.ty, |a| a.ty),
+            },
+            _ => call.ty,
+        }
     }
 
     /// A call through interface slot `src` (result type `ret`) may throw here; the result type.

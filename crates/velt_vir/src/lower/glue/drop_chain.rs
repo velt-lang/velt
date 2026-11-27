@@ -24,7 +24,7 @@ use rustc_hash::FxHashSet;
 
 use velt_sema::hir::{TyId, TyKind};
 
-use crate::lower::{cint, Cx, FnLower};
+use crate::lower::{cint, Cx, DropEntry, FnLower};
 use crate::vir::{self, BinOp, Operand, Place, Rvalue, Ty};
 
 /// How the object drop of a self-referential class walks its nodes.
@@ -123,7 +123,7 @@ impl FnLower<'_, '_> {
         let cur = Place::local(self.temp(Ty::Ptr));
         self.assign(cur.clone(), Rvalue::Use(Operand::Copy(Place::local(obj))));
         // Every node is disposed when it is taken, before it enters the loop.
-        self.call_dispose(Operand::Copy(cur.clone()), ty);
+        self.dispose_node(&cur, ty);
         let top = self.new_block();
         let done = self.new_block();
         self.goto(top);
@@ -135,7 +135,15 @@ impl FnLower<'_, '_> {
         for (i, t) in tys.into_iter().enumerate() {
             let i = i as u32;
             if !chain.loops_over(i) && self.cx.needs_drop(t) {
+                // A field's drop that panics leaves the node's other fields (its tail: the rest
+                // of the list) and its memory to the pad, as `obj_drop_body` does; the self
+                // fields it rotated are empty by now.
+                let held = self.pads.popped.len();
+                self.pads
+                    .popped
+                    .push(DropEntry::Disposing(cur.clone(), ty, i + 1));
                 self.drop_field(&cur, ty, i, t, Some(&chain));
+                self.pads.popped.truncate(held);
             }
         }
         let tail = self.field_place(&cur, ty, chain.tail);
@@ -146,9 +154,20 @@ impl FnLower<'_, '_> {
         self.proxy_chain_split(&next, ty, done);
         self.take(next.clone(), ty, done);
         self.assign(cur.clone(), Rvalue::Use(next));
-        self.call_dispose(Operand::Copy(cur.clone()), ty);
+        self.dispose_node(&cur, ty);
         self.goto(top);
         self.switch_to(done);
+    }
+
+    /// The `[Symbol.dispose]()` of the node at `cur`, whose panic leaves the node (its fields,
+    /// the rest of the list among them, and its memory) to the pad (cleanup.rs).
+    fn dispose_node(&mut self, cur: &Place, ty: TyId) {
+        let held = self.pads.popped.len();
+        self.pads
+            .popped
+            .push(DropEntry::Disposing(cur.clone(), ty, 0));
+        self.call_dispose(Operand::Copy(cur.clone()), ty);
+        self.pads.popped.truncate(held);
     }
 
     /// One rotation step for self field `f` of the node at `cur`: when it holds a node this drop
@@ -194,10 +213,10 @@ impl FnLower<'_, '_> {
         if !self.cx.counted(ty) {
             return;
         }
-        if self.cx.weak_capable(ty) || self.cx.lock_counted(ty) {
+        if self.cx.weak_capable(ty) || self.cx.lock_counted(ty) || self.cx.freezable(ty) {
             // A weakly held node is never unique by its count word (weak-refs.md), nor one an
-            // `RwLock`'s readers share (locks.rs): the release decides, and its last reference
-            // continues the loop.
+            // `RwLock`'s readers share (locks.rs), nor a frozen one (frozen_mark.rs): the release
+            // decides, and its last reference continues the loop.
             let own = self.new_block();
             let weak = self.cx.weak_capable(ty);
             self.release_of(p, ty, weak, |lw| lw.goto(own));

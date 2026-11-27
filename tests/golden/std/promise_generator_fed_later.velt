@@ -1,0 +1,97 @@
+// check: no leaks
+// An async generator that yields `new Promise`s resolved later, each a few microtasks after the
+// last, beside a tick chain (`t0`, `t1`, …: one microtask apart): the generator makes its next
+// promise as early as Node's does, so the feeder finds a resolver for it (#3709's review: a
+// promise run inside `resolve` moved the generator a turn, and the feeder indexed past the
+// resolvers made so far). A second function with the four combinators over shared pending
+// promises is in the program but never called: which shapes a program compiles decided whether
+// that showed. The output is Node 22's.
+
+const log: string[] = [];
+
+function say(s: string): void {
+  log.push(s);
+}
+
+/** Logs `t0` … `t{n-1}`, one microtask apart, from the next microtask on. */
+function ticks(n: number): Promise<void> {
+  let p = Promise.resolve();
+  for (let i = 0; i < n; i++) {
+    p = p.then(() => say(`t${i}`));
+  }
+  return p;
+}
+
+/** Not called (`WHICH`): the four combinators over the same three pending promises. */
+async function combinators(): Promise<void> {
+  const rs: ((v: number) => void)[] = [];
+  const ps = [0, 1, 2].map(
+    (i) => new Promise<number>((r) => {
+      rs.push(r);
+    }),
+  );
+  const c = ticks(8);
+  const all = Promise.all(ps).then((v) => say(`all:${v.join("")}`));
+  const race = Promise.race(ps).then((v) => say(`race:${v}`));
+  const any = Promise.any(ps).then((v) => say(`any:${v}`));
+  const settled = Promise.allSettled(ps).then((v) => say(`settled:${v.length}`));
+  queueMicrotask(() => {
+    rs[2](2);
+    say("r2");
+  });
+  queueMicrotask(() => {
+    rs[0](0);
+    rs[1](1);
+    say("r01");
+  });
+  await all;
+  await race;
+  await any;
+  await settled;
+  await c;
+}
+
+/** The generator's three promises, each resolved three microtasks after the last was. */
+async function fedLater(): Promise<void> {
+  const rs: ((v: number) => void)[] = [];
+  async function* feed(): AsyncGenerator<number> {
+    for (let i = 0; i < 3; i++) {
+      yield await new Promise<number>((r) => {
+        rs.push(r);
+      });
+    }
+  }
+  const c = ticks(10);
+  const reader = (async () => {
+    for await (const v of feed()) {
+      say(`item${v}`);
+    }
+    say("end");
+  })();
+  for (let i = 0; i < 3; i++) {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    rs[i](i);
+    say(`fed${i}`);
+  }
+  await reader;
+  await c;
+  console.log(log.join(" "));
+}
+
+const WHICH: string = "fed";
+const TABLE: [string, () => Promise<void>][] = [
+  ["combinators", combinators],
+  ["fed", fedLater],
+];
+
+async function main(): Promise<void> {
+  for (const [k, f] of TABLE) {
+    if (WHICH == k) {
+      await f();
+    }
+  }
+}
+
+main();

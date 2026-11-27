@@ -1,0 +1,27 @@
+given | [] | 1
+Error: given | Error: [] | Error: []
+Error: given | Error: []
+"" Error 0
+[]
+F:[] | own | Error: F:[]
+[] | own
+[] [] two []
+T getter | t | TypeError: T getter
+"" p Error
+[] true
+"[]" Error: []
+"" Error
+"" TypeError
+"ff" Error: ff
+"plain" Error: plain
+"" true
+caught [] Error: []
+caught t TypeError: t
+[] given F:[]
+[]
+[] given Error: []
+[] Error [] given F:[]
+[] []! 2
+[] given F:[] [] given
+D getter/d own/d 
+D getter D getter

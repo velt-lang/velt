@@ -72,15 +72,10 @@ pub fn check_has_libraries(
 }
 
 /// The bundle of `req`: the one at `req.out` when its key is current, else built. One process at
-/// a time checks and writes it, as for a crate's bundle.
+/// a time checks and writes it.
 pub fn build(req: CBuildRequest) -> Result<NativeLib, String> {
     let name = &req.manifest.package.name;
-    if req.root.join(C_SOURCES_DIR).join("Cargo.toml").is_file() {
-        return Err(format!(
-            "package `{name}` has C `sources` and a Rust crate in `{C_SOURCES_DIR}/`: it has no way to build both yet"
-        ));
-    }
-    let _lock = super::build::lock_bundle(req.out)?;
+    let _lock = lock_bundle(req.out)?;
     let key = key(&req)?;
     let key_file = req.out.with_extension("key");
     let recorded = std::fs::read_to_string(&key_file).ok();
@@ -116,12 +111,7 @@ pub fn build(req: CBuildRequest) -> Result<NativeLib, String> {
             package: name.clone(),
             version: req.manifest.package.version.clone(),
             target: req.target.to_string(),
-            // Calls no function of the runtime's table.
             abi: 0,
-            shared: None,
-            import_lib: None,
-            static_obj: None,
-            system_libs: None,
             exports: std::collections::BTreeMap::new(),
             c,
         };
@@ -453,6 +443,25 @@ fn link_shared(
     Ok(())
 }
 
+/// An exclusive lock on the bundle directory `out` (the file `<out>.lock` beside it), released
+/// when the result is dropped.
+fn lock_bundle(out: &Path) -> Result<std::fs::File, String> {
+    let path = out.with_extension("lock");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create `{}`: {e}", parent.display()))?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("cannot open `{}`: {e}", path.display()))?;
+    file.lock()
+        .map_err(|e| format!("cannot lock `{}`: {e}", path.display()))?;
+    Ok(file)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -513,10 +522,6 @@ mod tests {
             version: "1.0.0".into(),
             target: "x86_64-unknown-linux-gnu".into(),
             abi: 0,
-            shared: None,
-            import_lib: None,
-            static_obj: None,
-            system_libs: None,
             exports: Default::default(),
             c: Default::default(),
         };

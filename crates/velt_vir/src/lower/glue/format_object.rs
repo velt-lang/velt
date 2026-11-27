@@ -7,7 +7,6 @@ use velt_sema::hir::{AdtKind, TyId, TyKind};
 
 use crate::lower::glue::literals::inspect_key;
 use crate::lower::hook_calls::{self as hooks, ty, HookTy};
-use crate::lower::rt::Rt;
 use crate::lower::{cint, FnLower};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Ty, STR_AGG};
 
@@ -192,6 +191,11 @@ impl FnLower<'_, '_> {
             pending.clear();
             match self.accessor_label(ty, *index) {
                 Some(label) => self.push_text(buf, label),
+                // An error's `message` shows what a read gives (`error_message.rs`). Only a
+                // class has it, and a class's fields are never optional here.
+                None if n == "message" && self.error_message_hooked(ty) => {
+                    self.format_error_message(buf, place, child);
+                }
                 // A weak field shows its target, or `null` once it is gone (weak_fields.rs).
                 None if self.cx.weak_field(ty, *index).is_some() => {
                     let fp = self.field_place(place, ty, *index);
@@ -222,11 +226,9 @@ impl FnLower<'_, '_> {
             return self.push_text(buf, &format!("{before}{n}: "));
         }
         self.push_text(buf, before);
-        let start = self.temp(Ty::U64);
-        self.call_rt(Rt::StrbufLen, vec![buf.clone()], Some(Place::local(start)));
+        let start = self.builder_len(buf);
         self.push_text(buf, n);
-        let start = Operand::Copy(Place::local(start));
-        self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
+        self.inspect_atom(buf, start);
         self.push_text(buf, ": ");
     }
 

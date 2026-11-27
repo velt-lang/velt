@@ -51,9 +51,9 @@ cc -o prog prog.o libvelt_rt.a -liconv -lc -lm
 
 `cc` always links libSystem, so `-lSystem` from rustc's list is left out (passing it again makes
 ld64 warn about duplicate libraries). `velt` adds `-Wl,-dead_strip` for release builds. Frameworks
-a package's native library needs come from its bundle (`system_libs` in its `native.json`,
-[native_abi.md](../../docs/internals/contracts/native_abi.md) "Bundles"), so only programs that use
-the package link them.
+a package's C libraries need come from their `system` entries (`framework:Name`,
+[c-ffi.md](../../docs/internals/design/c-ffi.md) "Where libraries come from"), so only programs
+that call them link them.
 
 ## Shared runtime (debug builds)
 

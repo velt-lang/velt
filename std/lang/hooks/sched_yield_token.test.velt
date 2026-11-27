@@ -252,6 +252,33 @@ describe("the root's turns in one poll", () => {
     },
   );
 
+  it("come after a started promise woken in the poll that made the yields", async () => {
+    // In a task's root: a child sends on a channel that a started promise of the task waits on (a
+    // wake of that promise, no microtask), then yields, as its sibling does. The promise goes on
+    // when the next poll begins, before the root's turn, as a resolver's channel orders it in Node.
+    const order = await spawn(async (): Promise<string> => {
+      const log: string[] = [];
+      const ch = channel<number>(1);
+      const waits = (async (): Promise<void> => {
+        await ch.receive();
+        log.push("c");
+      })();
+      const sends = async (): Promise<void> => {
+        ch.trySend(1);
+        await yieldNow();
+        log.push("a");
+      };
+      const later = async (): Promise<void> => {
+        await yieldNow();
+        log.push("b");
+      };
+      await Promise.all([sends(), later()]);
+      await waits;
+      return log.join(",");
+    });
+    expect(order).toBe("c,a,b");
+  });
+
   it("leave a record held for another waker to its own turn when the root polls it", async () => {
     // A held record whose turn is next goes on in this turn's poll of the root only if its turn
     // would wake the root: one that held another waker (a started promise the root adopts) must
@@ -268,11 +295,13 @@ describe("the root's turns in one poll", () => {
     const theirs = ls.held(n, k, ls.nextStamp(b));
     ls.join(k, mine);
     ls.join(k, theirs);
-    // A turn polls the root: its waiter went on, and `mine`'s turn is next. `mine` goes on now.
+    // A turn of a poll that took the list polls the root: its waiter went on, and `mine`'s turn is
+    // next. `mine` goes on now and leaves the list (freed: the debug allocator checks it).
+    const turn = m.ld(b + ls.B_NEXT);
+    expect(ls.take(k)).toBe(mine);
     tn.turnNext(k, mine);
     tn.taken(k);
     expect(ls.heldPoll(mine, k, k)).toBe(1 as u32);
-    expect(m.ld(mine + ls.Y_STATE)).toBe(ls.DROPPED);
     // `theirs` is next now, but it held the stand-in: the root holds it instead, to its own turn,
     // and the stand-in lost its flag and the reference the record had.
     expect(ls.heldPoll(theirs, k, k)).toBe(0 as u32);
@@ -281,6 +310,10 @@ describe("the root's turns in one poll", () => {
     expect((m.load32(n + node.N_FLAGS) & node.YIELDING) === 0).toBe(true);
     expect(m.load(n + node.N_REFS)).toBe(1 as usize);
     tn.turnOver(k);
+    // The turn after that one is `theirs`'s: back on the list, for this task's next poll.
+    expect(tn.after(k)).toBe(theirs);
+    ls.join(k, theirs);
+    m.st(b + ls.B_NEXT, turn);
     m.release(n, node.N_HEAD + 16);
     // Its turn comes before this yield's; then its resume takes it.
     await yieldNow();

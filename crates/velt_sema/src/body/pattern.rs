@@ -112,6 +112,17 @@ impl FnCx<'_, '_> {
         let mut out = vec![];
         for (name, sub) in fields {
             let found = self.field_of(ty, &name.name);
+            if name.name == "message" && found.is_some() && self.message_is_property(ty) {
+                // Read by `errorMessage` (`crate::error_message`), which a pattern can't call.
+                let tn = self.cx.display(ty);
+                self.cx.error(
+                    velt_common::Diagnostic::error(
+                        format!("`message` of a `{tn}` can't be taken apart here: a class extending `Error` declares `get message()`"),
+                        name.span,
+                    )
+                    .with_note("read it as `e.message`, or destructure in a declaration (`const { message } = e`)"),
+                );
+            }
             let (idx, fty) = match found {
                 Some(x) => {
                     self.check_field_private(ty, x.0, name);

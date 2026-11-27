@@ -158,8 +158,8 @@ Linux toolchain archives.
 ## macOS (`*-apple-darwin`)
 
 `ld64.lld` with the kit as the SDK (`-syslibroot`): `usr/lib/libSystem.tbd` and the `CoreFoundation`
-and `SystemConfiguration` frameworks' `.tbd` (for native packages that list them in their bundle's
-`system_libs`: the runtime itself needs only libSystem), TAPI text stubs that Velt writes from
+and `SystemConfiguration` frameworks' `.tbd` (for packages whose C libraries list them as
+`framework:` system libraries: the runtime itself needs only libSystem), TAPI text stubs that Velt writes from
 `kit/macos.txt`: the names of every symbol those libraries export (`libSystem` with the libraries it
 re-exports, about 9 500 names; the frameworks, about 4 100), which `velt-kit lists macos` reads from
 the SDK's stubs. Programs need more than the runtime imports: compiled code calls `libSystem`

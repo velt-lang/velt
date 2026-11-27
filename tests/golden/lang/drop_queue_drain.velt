@@ -1,0 +1,120 @@
+// check: no leaks
+// The queue behind bounded drop nesting (#543, std/lang/hooks/drop_queue.velt): a drop past the
+// depth limit is queued and the outermost drop drains the queue. Each structure here is dropped
+// at the end of a scope and every node's `[Symbol.dispose]()` counts itself:
+// - a chain that fans out past the limit into many deep chains, which queues many values at once
+//   while the drain takes them off (the queue's block grows and wraps around);
+// - a node whose `[Symbol.dispose]()`, run in the middle of a drain, makes and drops a deep list
+//   of its own, which queues behind the values still waiting;
+// - one chain through arrays, disposed from its head on, in order, past the limit too.
+// Node runs every hook by hand, in the same order where the order is printed.
+
+class Log {
+  count: number = 0;
+  sum: number = 0;
+  first: string = "";
+
+  note(id: number) {
+    this.count++;
+    this.sum += id;
+    if (this.count <= 8) {
+      this.first += `${id} `;
+    }
+  }
+}
+
+class Branch {
+  id: number;
+  log: Log;
+  kids: Branch[] = [];
+
+  constructor(id: number, log: Log) {
+    this.id = id;
+    this.log = log;
+  }
+
+  [Symbol.dispose]() {
+    this.log.note(this.id);
+  }
+}
+
+/** A chain of `n` branches through their `kids`, ids from `start`; its head. */
+function chain(start: number, n: number, log: Log): Branch {
+  let head = new Branch(start + n - 1, log);
+  for (let i = n - 2; i >= 0; i--) {
+    const b = new Branch(start + i, log);
+    b.kids.push(head);
+    head = b;
+  }
+  return head;
+}
+
+/** The last branch of the chain from `b`. */
+function last(b: Branch): Branch {
+  let at = b;
+  while (at.kids.length > 0) {
+    at = at.kids[0];
+  }
+  return at;
+}
+
+/** A node that, disposed, makes a chain of `n` and lets it go. */
+class Spawner {
+  n: number;
+  log: Log;
+  inner: Log;
+  next: Spawner[] = [];
+
+  constructor(n: number, log: Log, inner: Log) {
+    this.n = n;
+    this.log = log;
+    this.inner = inner;
+  }
+
+  [Symbol.dispose]() {
+    this.log.note(this.n);
+    if (this.n % 50 == 0) {
+      const c = chain(0, 3000, this.inner);
+      this.inner.note(-1 - last(c).id);
+    }
+  }
+}
+
+function spawners(n: number, log: Log, inner: Log): Spawner {
+  let head = new Spawner(n - 1, log, inner);
+  for (let i = n - 2; i >= 0; i--) {
+    const s = new Spawner(i, log, inner);
+    s.next.push(head);
+    head = s;
+  }
+  return head;
+}
+
+function main() {
+  // 300 deep, then 100 chains of 1000 hanging off the last one.
+  const wide = new Log();
+  {
+    const root = chain(0, 300, wide);
+    const end = last(root);
+    for (let k = 0; k < 100; k++) {
+      end.kids.push(chain(1000 + k * 1000, 1000, wide));
+    }
+  }
+  console.log(`fan-out: ${wide.count} disposed, id sum ${wide.sum}`);
+
+  // Every 50th of 400 nodes drops a chain of 3000 from its dispose.
+  const outer = new Log();
+  const inner = new Log();
+  {
+    const s = spawners(400, outer, inner);
+  }
+  console.log(`spawners: ${outer.count} disposed, id sum ${outer.sum}`);
+  console.log(`their chains: ${inner.count} disposed, id sum ${inner.sum}`);
+
+  // One chain, from its head on.
+  const one = new Log();
+  {
+    const c = chain(0, 100000, one);
+  }
+  console.log(`chain: ${one.count} disposed, first ${one.first}`);
+}

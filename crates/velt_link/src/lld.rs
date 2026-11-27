@@ -84,8 +84,7 @@ fn elf_gnu_args(req: &LinkRequest, kit: &Kit) -> Vec<OsString> {
     args.extend(native::lld_shared_args(req.native));
     args.push("--as-needed".into());
     args.extend(kit::linux_gnu_libs(kit.arch).map(|lib| kit.file(lib).into()));
-    // The packages' prelinked objects' libraries beyond the kit's glibc ones.
-    args.extend(native::system_lib_args(req.native, GLIBC_LIBS));
+    // The C libraries of `declare c` functions beyond the kit's glibc ones.
     args.extend(native::c_lib_args(req.c_libs, GLIBC_LIBS));
     args.push("--no-as-needed".into());
     args.extend(shared::helpers_arg(req, TargetOs::Linux));
@@ -181,10 +180,9 @@ fn macho_args(req: &LinkRequest, kit: &Kit) -> Vec<OsString> {
     }
     args.extend(native::lld_shared_args(req.native));
     args.push("-lSystem".into());
-    // The packages' prelinked objects' libraries (frameworks resolve to the kit's stubs). libc,
-    // libm and libiconv are in libSystem (rustc lists them for every staticlib).
+    // The C libraries of `declare c` functions (frameworks resolve to the kit's stubs). libc,
+    // libm and libiconv are in libSystem.
     let in_libsystem = ["-lSystem", "-lc", "-lm", "-liconv"];
-    args.extend(native::system_lib_args(req.native, &in_libsystem));
     args.extend(native::c_lib_args(req.c_libs, &in_libsystem));
     args
 }

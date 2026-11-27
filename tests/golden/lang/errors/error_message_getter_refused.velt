@@ -1,0 +1,20 @@
+// What a program with `get message()` on a class extending `Error` can't do (#3792): assign
+// `message` through a type that has only the getter (read-only, as TypeScript's TS2540 says),
+// declare `set message()`, and take `message` apart in a `for...of` pattern.
+
+class E extends Error {
+  get message(): string {
+    return "getter";
+  }
+}
+
+class S extends Error {
+  set message(v: string) {}
+}
+
+const e = new E("x");
+e.message = "y";
+e.message += "z";
+for (const { message } of [new E()]) {
+  console.log(message);
+}

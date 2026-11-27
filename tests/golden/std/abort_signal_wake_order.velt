@@ -1,0 +1,19 @@
+// An abort wakes the waits for a signal in the order they began, and the signals derived from it
+// (AbortSignal.any) in the order they were made: the order Node calls "abort" listeners in.
+async function main() {
+  const c = new AbortController();
+  const w1 = c.signal.whenAborted().then(() => console.log("woke 1"));
+  const w2 = c.signal.whenAborted().then(() => console.log("woke 2"));
+  const w3 = c.signal.whenAborted().then(() => console.log("woke 3"));
+  c.abort();
+  await Promise.all([w1, w2, w3]);
+
+  const a = new AbortController();
+  const any1 = AbortSignal.any([a.signal]);
+  const any2 = AbortSignal.any([a.signal]);
+  const x2 = any2.whenAborted().then(() => console.log("any2 woke"));
+  const x1 = any1.whenAborted().then(() => console.log("any1 woke"));
+  a.abort();
+  await Promise.all([x1, x2]);
+}
+main();

@@ -1,0 +1,13 @@
+true false 0
+assign true Cannot assign to read only property 'name' of object '#<Object>'
+compound true Cannot assign to read only property 'hits' of object '#<Object>'
+increment true Cannot assign to read only property 'hits' of object '#<Object>'
+logical written
+bracket true Cannot assign to read only property 'name' of object '#<Object>'
+app 0 [ '/api' ] still open 2
+true false
+view true Cannot assign to read only property 'x' of object '#<Object>'
+15
+true true true false
+true false false true
+true false true

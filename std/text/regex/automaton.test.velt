@@ -55,15 +55,15 @@ describe("Automaton", () => {
     const s = "x".repeat(300) + "abbcbd" + "bbc";
     const m = new Search(2);
     const ends = new Dfa(prog, false);
-    expect(ends.forward(m, s, strByteLen(s), 0, false, false)).toBe(306);
+    expect(ends.forward(prog, m, s, strByteLen(s), 0, false, false)).toBe(306);
     const starts = new Dfa(prog.backward ?? prog, true);
-    expect(backward(starts, s, 306, 0)).toBe(300);
+    expect(backward(starts, prog.backward ?? prog, s, 306, 0)).toBe(300);
     // The leftmost match, not the first to end: `bbc` ends first.
-    expect(ends.forward(m, "abbcd", 5, 0, false, false)).toBe(5);
-    expect(ends.forward(m, "abbcd", 5, 0, false, true)).toBe(4);
-    expect(ends.forward(m, "abbcd", 5, 1, true, false)).toBe(4);
-    expect(ends.forward(m, "xbbcd", 5, 0, true, false)).toBe(-1);
-    expect(ends.forward(m, "x".repeat(400), 400, 0, false, false)).toBe(-1);
+    expect(ends.forward(prog, m, "abbcd", 5, 0, false, false)).toBe(5);
+    expect(ends.forward(prog, m, "abbcd", 5, 0, false, true)).toBe(4);
+    expect(ends.forward(prog, m, "abbcd", 5, 1, true, false)).toBe(4);
+    expect(ends.forward(prog, m, "xbbcd", 5, 0, true, false)).toBe(-1);
+    expect(ends.forward(prog, m, "x".repeat(400), 400, 0, false, false)).toBe(-1);
   });
 
   it("works out the classes from every set, however many cuts they have", () => {
@@ -155,7 +155,7 @@ describe("Automaton", () => {
     }
     const m = new Search(2);
     const ends = new Dfa(prog, false);
-    expect(ends.forward(m, s, strByteLen(s), 0, false, false)).toBe(GAVE_UP);
+    expect(ends.forward(prog, m, s, strByteLen(s), 0, false, false)).toBe(GAVE_UP);
     expect(fd(prog, s)).toEqual([]);
     expect(fd(prog, s + "abbbbbbbbbbbbc")).toEqual([6000, 6014]);
   });

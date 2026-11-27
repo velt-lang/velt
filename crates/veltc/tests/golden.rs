@@ -50,6 +50,9 @@
 //! - A golden whose first lines contain `// check: heap blocks at most N` allocates at most N
 //!   heap blocks in its debug run (`blocks=A/F` of the same report, A <= N): for programs that
 //!   must not allocate per step (e.g. a callback per call).
+//! - A golden with either budget runs on four workers in both modes (`VELT_THREADS=4`, unless a
+//!   `// check: also with` line sets its own): a worker may allocate blocks of its own, and a
+//!   budget must not depend on the cores of the machine it runs on (#3869).
 //! - A golden whose first lines contain `// check: also with NAME=VALUE` runs once more in each
 //!   mode with that environment variable set (several `NAME=VALUE`, separated by spaces, are set
 //!   together), and must print the same: for programs whose paths an environment switch selects
@@ -372,6 +375,8 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
             .collect();
         // Checked in both modes: the block counts of a release build are its own.
         let leak_check = leak_allowance(f);
+        // A golden with a heap budget runs on a fixed number of workers, in both modes.
+        let budgeted = heap_string_limit(f).is_some() || heap_block_limit(f).is_some();
         for (mode, env) in runs {
             // Separate output dirs per mode: on Windows a just-built exe can stay locked briefly
             // (Defender scan), so the release link must not overwrite the debug executable.
@@ -421,7 +426,9 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
                 }
             };
             cmd.current_dir(&dir);
-            for (name, value) in env.iter().flatten() {
+            let str_limit = mode.is_none().then(|| heap_string_limit(f)).flatten();
+            let block_limit = mode.is_none().then(|| heap_block_limit(f)).flatten();
+            for (name, value) in run_env(env.as_ref(), budgeted) {
                 cmd.env(name, value);
             }
             // The debug run checks every allocation (use after free, double free, overflow)
@@ -429,8 +436,6 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
             if mode.is_none() && std::env::var_os("VELT_RT_DEBUG_ALLOC").is_none() {
                 cmd.env("VELT_RT_DEBUG_ALLOC", "1");
             }
-            let str_limit = mode.is_none().then(|| heap_string_limit(f)).flatten();
-            let block_limit = mode.is_none().then(|| heap_block_limit(f)).flatten();
             if leak_check.is_some() || str_limit.is_some() || block_limit.is_some() {
                 cmd.env("VELT_RC_STATS", "1");
             }
@@ -509,6 +514,42 @@ fn also_with_env(file: &Path) -> Option<EnvVar> {
         .map(|(name, value)| (name.to_string(), value.to_string()))
         .collect();
     (!vars.is_empty()).then_some(vars)
+}
+
+/// The workers of a golden with a heap budget: a worker may allocate blocks of its own (on
+/// Windows the count grows with the workers), so with one per core (the default) a budget would
+/// hold on some machines and not on others (#3869). Four: CI's runners have two to four cores, and
+/// the budgets were set there.
+const BUDGET_THREADS: &str = "4";
+
+/// The variables a run sets: for a golden with a heap budget (`budgeted`), a fixed worker count
+/// (`VELT_THREADS`, over one the environment may set), then the golden's own (`env`, of a
+/// `// check: also with` line), which win.
+fn run_env(env: Option<&EnvVar>, budgeted: bool) -> EnvVar {
+    let own = env.cloned().unwrap_or_default();
+    let fixed = (budgeted && !own.iter().any(|(name, _)| name == "VELT_THREADS"))
+        .then(|| ("VELT_THREADS".to_string(), BUDGET_THREADS.to_string()));
+    fixed.into_iter().chain(own).collect()
+}
+
+#[test]
+fn a_heap_budget_runs_on_a_fixed_worker_count() {
+    let vars = |v: &[(&str, &str)]| -> EnvVar {
+        v.iter()
+            .map(|(n, v)| (n.to_string(), v.to_string()))
+            .collect()
+    };
+    assert_eq!(run_env(None, false), vars(&[]));
+    assert_eq!(run_env(None, true), vars(&[("VELT_THREADS", "4")]));
+    let tz = vars(&[("TZ", "Europe/Berlin")]);
+    assert_eq!(run_env(Some(&tz), false), tz);
+    assert_eq!(
+        run_env(Some(&tz), true),
+        vars(&[("VELT_THREADS", "4"), ("TZ", "Europe/Berlin")])
+    );
+    // The golden's own worker count is kept.
+    let one = vars(&[("VELT_THREADS", "1"), ("VELT_RESCUE", "1")]);
+    assert_eq!(run_env(Some(&one), true), one);
 }
 
 /// The blocks a golden may leave unfreed when it asks for a leak check: 0 for `// check: no
@@ -594,16 +635,20 @@ fn too_many_strings(stderr: &str, limit: u64) -> Option<String> {
     }
 }
 
-/// The line a program's own `process.exit` writes before the `rc stats` report.
-const EXIT_NOTE: &str = "rc stats: the program called process.exit: no leak verdict";
+/// Whether `line` is one an exit writes before the `rc stats` report when the counts it reports
+/// are no leak verdict: a program's own `process.exit` (std/prelude/process.velt `processExit`)
+/// and an uncaught error's exit with tasks still live (std/lang/hooks/sched_exit.velt `KEPT`).
+fn exit_note(line: &str) -> bool {
+    line.starts_with("rc stats: ") && line.ends_with(": no leak verdict")
+}
 
 /// The leak in a `rc stats: ... alloc=A free=F blocks=A/F` report: more than `allowed` blocks
 /// allocated but not freed, a heap string buffer allocated but not freed (strings have no
 /// allowance: nothing keeps one on purpose), or no report.
 fn leaked_blocks(stderr: &str, allowed: u64) -> Option<String> {
-    // The program ended itself with `process.exit`: the frames live then keep what they hold,
-    // as Node runs no cleanup there, and the report says so in place of a verdict
-    // (std/prelude/process.velt `processExit`).
+    // The program ended itself with `process.exit`, or an uncaught error ended it with tasks
+    // live: the frames and tasks live then keep what they hold, as Node runs no cleanup there,
+    // and the report says so in place of a verdict (`exit_note`).
     // It is the line just before the report: the same text printed anywhere else is the
     // program's own output.
     let mut last = stderr
@@ -613,7 +658,7 @@ fn leaked_blocks(stderr: &str, allowed: u64) -> Option<String> {
     let Some(report) = last.next() else {
         return Some("leak check: no `rc stats` report on stderr".into());
     };
-    if last.next() == Some(EXIT_NOTE) {
+    if last.next().is_some_and(exit_note) {
         return None;
     }
     let field = |name: &str| report.split_whitespace().find_map(|w| w.strip_prefix(name));

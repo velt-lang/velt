@@ -3,12 +3,12 @@
 //! (std/lang/hooks/any_promise.velt, step 2), which sema calls only where the program's own code
 //! uses one of these members on an `any` (`velt_sema` `any_promise_members.rs`), their module
 //! loaded on demand. Kept apart from the rest of the table ([`super`]), which
-//! [`with_promise_hooks`] gives on, with these rows after it, to `with_decorator_hooks!`.
+//! [`with_promise_hooks`] gives on, with these rows after it, to `with_drop_hooks!`.
 
-/// `with_decorator_hooks!` over the rows given, then these.
+/// `with_drop_hooks!` over the rows given, then these.
 macro_rules! with_promise_hooks {
     ($($rows:tt)*) => {
-        with_decorator_hooks! {
+        with_drop_hooks! {
             $($rows)*
             /// What an `await` of an `any` or `unknown` waits for (`velt_sema` `await_value.rs`).
             await_any => lang_hooks_any_ops, "awaitAny", sig((&unknown) -> Promise(unknown, unknown));

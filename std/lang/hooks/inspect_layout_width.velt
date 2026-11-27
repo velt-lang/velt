@@ -6,15 +6,27 @@
 // pieces without copying them.
 
 import { WIDTH_RUN_COUNT, WIDTH_RUNS } from "velt/lang/hooks/inspect_layout_width_table";
-import { strByteAt } from "velt/lang/intrinsics";
+import { addressLoad, strByteAt, strDataAddress } from "velt/lang/intrinsics";
 
 /**
  * The UTF-16 length of bytes `start..end` of `s`, whole characters: a continuation byte adds
  * nothing, a 4-byte character's lead byte 2 units (a surrogate pair), every other byte 1.
  */
 export function utf16Units(s: string, start: u64, end: u64): u64 {
+  const data = strDataAddress(s) as u64;
   let n: u64 = 0;
-  for (let i = start; i < end; i++) {
+  let i = start;
+  while (i < end) {
+    if (((data + i) & 7) == 0) {
+      // ASCII 8 bytes at a time, each byte a unit.
+      while (i + 8 <= end && (wordAt(data, i) & HIGH) == 0) {
+        n += 8;
+        i += 8;
+      }
+      if (i >= end) {
+        break;
+      }
+    }
     const b = strByteAt(s, i);
     if (b < 0x80) {
       n += 1;
@@ -23,8 +35,53 @@ export function utf16Units(s: string, start: u64, end: u64): u64 {
     } else if (b >= 0xc0) {
       n += 1;
     }
+    i += 1;
   }
   return n;
+}
+
+/** The high bit of each byte. */
+const HIGH: u64 = 0x8080808080808080;
+
+/** The aligned word at byte `i` of the text at `data`, which holds at least `i + 8` bytes. */
+export function wordAt(data: u64, i: u64): u64 {
+  // SAFETY: the callers pass a string's bytes, alive while they run, and an aligned offset at
+  // least 8 bytes before its end.
+  return unsafe { addressLoad<u64>((data + i) as usize) };
+}
+
+/** The high bit of each byte of `w` that is zero, exactly (no borrow between bytes). */
+export function zeroBytes(w: u64): u64 {
+  const low = 0x7f7f7f7f7f7f7f7f;
+  return ~(((w & low) + low) | w) & HIGH;
+}
+
+/** Is each byte of `w` printable ASCII (0x20 to 0x7e), one column? */
+export function printable(w: u64): bool {
+  // A byte below 0x20 has its top three bits clear; 0x7f is a zero byte once XORed with 0x7f.
+  const bad = zeroBytes(w & 0xe0e0e0e0e0e0e0e0) | zeroBytes(w ^ 0x7f7f7f7f7f7f7f7f) | w;
+  return (bad & HIGH) == 0;
+}
+
+/**
+ * Where a run of printable ASCII with neither `quote` nor a backslash, read 8 bytes at a time from
+ * `j` while `j` is aligned, ends in bytes `..end` of the text at `data`: at `j` or a whole word on.
+ */
+export function plainRun(data: u64, j: u64, end: u64, quote: u8): u64 {
+  let i = j;
+  while (((data + i) & 7) == 0 && i + 8 <= end) {
+    const w = wordAt(data, i);
+    if (!printable(w) || hasByte(w, 0x5c) || hasByte(w, quote)) {
+      break;
+    }
+    i += 8;
+  }
+  return i;
+}
+
+/** Does `w` hold byte `b`? */
+export function hasByte(w: u64, b: u8): bool {
+  return zeroBytes(w ^ ((b as u64) * 0x0101010101010101)) != 0;
 }
 
 /**
@@ -37,9 +94,20 @@ export function utf16Units(s: string, start: u64, end: u64): u64 {
  * velt_rt's layout counted them per code point too.
  */
 export function displayWidth(s: string, start: u64, end: u64): u64 {
+  const data = strDataAddress(s) as u64;
   let n: u64 = 0;
   let i = start;
   while (i < end) {
+    if (((data + i) & 7) == 0) {
+      // Printable ASCII 8 bytes at a time, each byte a column.
+      while (i + 8 <= end && printable(wordAt(data, i))) {
+        n += 8;
+        i += 8;
+      }
+      if (i >= end) {
+        break;
+      }
+    }
     const b = strByteAt(s, i) as u64;
     if (b < 0x80) {
       if (b >= 0x20 && b != 0x7f) {

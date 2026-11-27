@@ -26,9 +26,12 @@ pub(super) fn first_conflict(
                     }
                 }
                 let by_ref = matches!(u.access, Access::Shared | Access::Unique);
-                let hit = nested_j
-                    .iter()
-                    .find(|w| by_ref && u.place.overlaps(&w.place) && !changes_inside(u, w));
+                let hit = nested_j.iter().find(|w| {
+                    by_ref
+                        && u.place.overlaps(&w.place)
+                        && !changes_inside(u, w)
+                        && !done_before(j, i, w)
+                });
                 if let Some(w) = hit {
                     return Some(report(u, w));
                 }
@@ -47,6 +50,16 @@ pub(super) fn first_conflict(
 fn changes_inside(u: &Use, w: &Use) -> bool {
     let (held, written) = (u.place.proj.len(), w.place.proj.len());
     u.identity && w.access == Access::Unique && (written > held || (w.inside && written == held))
+}
+
+/// Is `w`, a change made while argument `j` is evaluated, over before argument `i` hands its
+/// place to the callee? Arguments are evaluated left to right, as in JavaScript, so a change an
+/// earlier argument makes is done before a later one is borrowed, and the callee sees the
+/// changed value (`console.log(xs.shift(), xs)`, #748). Not a move (the move analysis reports
+/// the later use) nor a closure's capture, which may run again from the earlier argument's value
+/// while the call holds the place.
+fn done_before(j: usize, i: usize, w: &Use) -> bool {
+    j < i && w.access == Access::Unique && !w.captured
 }
 
 /// Whether Velt, as JavaScript, passes values of type `t` by reference: class instances and

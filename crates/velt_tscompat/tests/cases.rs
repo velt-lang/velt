@@ -111,8 +111,8 @@ fn every_finding_explains_itself() {
     }
 }
 
-/// `declare function` is valid Velt only in a package with a native library, so it has no case
-/// file (cases must pass `velt check` on their own).
+/// `declare function` is valid Velt only in the standard library, so it has no case file (cases
+/// must pass `velt check` on their own).
 #[test]
 fn declare_function_is_reported() {
     let src = "declare function add(a: number, b: number): number;\n";
