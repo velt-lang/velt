@@ -34,9 +34,8 @@ export const imports: Imports = {
     default: "./ffi/errno_none.velt",
   },
   // How a Velt panic under `catchUnwind` is raised and taken (docs/internals/design/unwinding.md):
-  // with `_Unwind_RaiseException` where generated code catches it (the Itanium unwinder), with
-  // `RaiseException` on Windows (structured exceptions); on WebAssembly nothing is raised and no
-  // unwinder function is named.
+  // `_Unwind_RaiseException` where generated code catches it (Itanium), `RaiseException` on
+  // Windows (structured exceptions); WebAssembly raises nothing and names no unwinder function.
   "#unwind-raise": {
     win32: "./lang/hooks/unwind_seh.velt",
     native: "./lang/hooks/unwind_itanium.velt",
@@ -63,10 +62,9 @@ export const imports: Imports = {
     js: "./lang/symbol/record_mem_js.velt",
     default: "./lang/symbol/record_mem.velt",
   },
-  // The clocks of `Date.now()` and `performance.now()` (std/lang/hooks/clock.velt): the C
-  // library's `clock_gettime` on macOS and Linux, the performance counter and the precise system
-  // time on Windows, WASI's `clock_time_get`, a JS host's own. No default: a target without one
-  // fails here, at compile time.
+  // The clocks of `Date.now()` and `performance.now()` (std/lang/hooks/clock.velt): `clock_gettime`
+  // on macOS and Linux, the performance counter and precise system time on Windows, WASI's
+  // `clock_time_get`, a JS host's own. No default: elsewhere it fails here, at compile time.
   "#clock": {
     darwin: "./lang/hooks/clock_darwin.velt",
     linux: "./lang/hooks/clock_linux.velt",
