@@ -27,19 +27,21 @@ export function jsonReplacerDepth(depth: i64): void {
 
 /**
  * Starts the walk through the members of the value with identity `id`, which the replacer kept:
- * Node's `TypeError` when that value is being walked or written already (it contains itself).
- * Each start needs a `jsonWalkLeave`; after a throw the hook's caller ends what is left
- * (`endVisitsTo`).
+ * Node's `TypeError` when that value is being walked or written already (it contains itself). A
+ * value without an identity (0, a struct held by value) is not checked. Each start needs a
+ * `jsonWalkLeave(id)`; after a throw the hook's caller ends what is left (`endVisitsTo`).
  */
 export function jsonWalkEnter(id: u64): void throws TypeError {
-  if (!beginVisit(id)) {
+  if (id != 0 && !beginVisit(id)) {
     throw new TypeError("Converting circular structure to JSON");
   }
 }
 
-/** Ends what `jsonWalkEnter` started. */
-export function jsonWalkLeave(): void {
-  endVisit();
+/** Ends what `jsonWalkEnter(id)` started. */
+export function jsonWalkLeave(id: u64): void {
+  if (id != 0) {
+    endVisit();
+  }
 }
 
 /** The replacer's view of a value: `raw` when its parent's view holds it, else `text` read. */

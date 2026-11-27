@@ -73,7 +73,7 @@ export function replaceJsonAny(
       const e = replaceJsonAny(entryValue(v, i), `${i}`, view.at(i), replacer, depth + 1, true);
       pushRevived(out, e);
     }
-    jsonWalkLeave();
+    jsonWalkLeave(identity(v));
     return out;
   }
   const members =
@@ -83,7 +83,7 @@ export function replaceJsonAny(
   if ((members || kind == "record") && entryCount(v) >= 0) {
     jsonWalkEnter(identity(v));
     const out = replaceMembers(v, view, kind == "record" ? recordOrder(v) : null, replacer, depth);
-    jsonWalkLeave();
+    jsonWalkLeave(identity(v));
     return out;
   }
   // A scalar, a `JsonValue` (JSON data: its members are replaced as JSON), a collection's `{}`.

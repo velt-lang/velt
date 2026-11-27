@@ -70,3 +70,30 @@ attempt("any array:", () => JSON.stringify(arr, keep));
 attempt("any array, left out:", () => JSON.stringify(arr, (k, v) => (k === "1" ? undefined : v)));
 attempt("tree again:", () => JSON.stringify(root, noParent));
 console.log(JSON.stringify({ at: new Date(0), n: 1 }, viewed));
+
+// Deeper than the writer's cycle check starts (16), with no cycle: written whole.
+function deepData() {
+  let t = { id: 0, next: [] };
+  for (let i = 1; i < 40; i++) {
+    t = { id: i, next: [t] };
+  }
+  let b = { id: 0, m: {} };
+  for (let i = 1; i < 40; i++) {
+    const m = {};
+    m["x"] = b;
+    b = { id: i, m };
+  }
+  let n = new Node1("0");
+  for (let i = 1; i < 40; i++) {
+    const p = new Node1(`${i}`);
+    p.kids.push(n);
+    n = p;
+  }
+  console.log("deep:", JSON.stringify(t).length, JSON.stringify(t, keep).length);
+  console.log("deep record:", JSON.stringify(b).length, JSON.stringify(b, keep).length);
+  console.log("deep class:", JSON.stringify(n).length, JSON.stringify(n, keep).length);
+  const self = { id: 1, m: {} };
+  self.m["me"] = self;
+  attempt("record:", () => JSON.stringify(self, keep));
+}
+deepData();

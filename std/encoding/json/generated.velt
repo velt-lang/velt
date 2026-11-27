@@ -92,23 +92,42 @@ function jsonCircular(): never {
 const JSON_DEPTH = new ThreadLocal<u64>(0);
 const JSON_SHALLOW: u64 = 16;
 
-/** Starts writing a value that can contain itself, whose identity is `id`. */
+/**
+ * Starts writing a value that can contain itself, whose identity is `id` (0: a value without
+ * one, which is not checked).
+ */
 export function jsonEnter(id: u64): void {
   const d = JSON_DEPTH.get();
   JSON_DEPTH.set(d + 1);
-  if (d >= JSON_SHALLOW && !beginVisit(id)) {
+  if (d >= JSON_SHALLOW && id != 0 && !beginVisit(id)) {
     jsonCircular();
   }
 }
 
-/** Ends what `jsonEnter` started. */
-export function jsonLeave(): void {
+/** Ends what `jsonEnter(id)` started. */
+export function jsonLeave(id: u64): void {
   const d = JSON_DEPTH.get();
   if (d == 0) {
     return;
   }
   JSON_DEPTH.set(d - 1);
-  if (d - 1 >= JSON_SHALLOW) {
+  if (d - 1 >= JSON_SHALLOW && id != 0) {
+    endVisit();
+  }
+}
+
+/**
+ * Starts writing, as a replacer sees it, a value that can contain itself, whose identity is `id`:
+ * false when it is being written already (it is then cut as `null`). A value without an identity
+ * (0) is not checked.
+ */
+export function jsonViewEnter(id: u64): bool {
+  return id == 0 || beginVisit(id);
+}
+
+/** Ends what `jsonViewEnter(id)` started. */
+export function jsonViewLeave(id: u64): void {
+  if (id != 0) {
     endVisit();
   }
 }

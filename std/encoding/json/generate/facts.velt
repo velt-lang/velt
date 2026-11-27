@@ -209,11 +209,21 @@ export function keyedHook(t: Type): bool {
 }
 
 /**
- * Can a value of type `id` hold, where a writer reaches it, an object of one of the types
+ * Can a value of type `id` hold, where a writer reaches it, a value of one of the types
  * `targets`: through fields (a class's subclasses' too: a field of a class type may hold one),
- * array elements, record values, options, tuples and unions (`seen`: the types looked at)?
+ * options, tuples and unions, and with `containers` through array elements and record values
+ * too (`seen`: the types looked at)?
  */
-export function reaches(model: Model, id: i64, targets: i64[], seen: i64[]): bool {
+export function reaches(
+  model: Model,
+  id: i64,
+  targets: i64[],
+  seen: i64[],
+  containers: bool,
+): bool {
+  if (targets.includes(id)) {
+    return true;
+  }
   if (seen.includes(id)) {
     return false;
   }
@@ -221,30 +231,60 @@ export function reaches(model: Model, id: i64, targets: i64[], seen: i64[]): boo
   const t = model.type(id);
   const k = t.kind;
   if (k == "object" || k == "struct" || k == "class") {
-    if (targets.includes(id)) {
-      return true;
-    }
     for (const f of t.fields) {
-      if (reaches(model, f.type, targets, seen)) {
+      if (reaches(model, f.type, targets, seen, containers)) {
         return true;
       }
     }
     for (const s of t.subclasses) {
-      if (reaches(model, s, targets, seen)) {
+      if (reaches(model, s, targets, seen, containers)) {
         return true;
       }
     }
     return false;
   }
-  if (k == "option" || k == "array") {
-    return reaches(model, t.args[0], targets, seen);
+  if (k == "option" || (containers && k == "array")) {
+    return reaches(model, t.args[0], targets, seen, containers);
   }
-  if (k == "record") {
-    return reaches(model, t.args[1], targets, seen);
+  if (containers && k == "record") {
+    return reaches(model, t.args[1], targets, seen, containers);
   }
   const parts = k == "tuple" ? t.args : k == "union" ? t.arms : [];
   for (const a of parts) {
-    if (reaches(model, a, targets, seen)) {
+    if (reaches(model, a, targets, seen, containers)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** `t` and its base classes: what a field of a type that contains `t` may hold it as. */
+function selfTypes(model: Model, t: Type): i64[] {
+  const targets: i64[] = [t.id];
+  for (let b = t.base; b >= 0 && !targets.includes(b); b = model.type(b).base) {
+    targets.push(b);
+  }
+  return targets;
+}
+
+/**
+ * Can a value of type `t` contain itself, through anything a writer follows (`n.next = n`,
+ * `n.kids.push(n)`, `a.push(a)`)? Such a value is not plain data (plain.velt).
+ */
+export function canContainItself(model: Model, t: Type): bool {
+  const k = t.kind;
+  if (k == "array") {
+    return reaches(model, t.args[0], [t.id], [], true);
+  }
+  if (k == "record") {
+    return reaches(model, t.args[1], [t.id], [], true);
+  }
+  if (k != "object" && k != "struct" && k != "class") {
+    return false;
+  }
+  const targets = selfTypes(model, t);
+  for (const f of t.fields) {
+    if (reaches(model, f.type, targets, [], true)) {
       return true;
     }
   }
@@ -252,21 +292,25 @@ export function reaches(model: Model, id: i64, targets: i64[], seen: i64[]): boo
 }
 
 /**
- * Is `t` an object or class type that can contain itself (`n.next = n`, `n.kids.push(n)`; for a
- * class, through a field of one of its base classes' types too)? Writing it checks for cycles
- * (#3724).
+ * Does writing a value of type `t` check, by its identity, that it is not being written already
+ * (#3724)? A cycle passes through a value with an identity: an object or class value that holds
+ * itself through fields, options, tuples or unions (a class through a field of a base class's
+ * type too), or an array or record that holds itself (`n.kids.push(n)`: a field-only interface
+ * that holds itself only there is held by value, with no identity of its own). The check
+ * (`jsonEnter`) passes over a value without one.
  */
 export function isRecursive(model: Model, t: Type): bool {
+  const k = t.kind;
+  if (k == "array" || k == "record") {
+    return canContainItself(model, t);
+  }
   // A field-only interface is an object type too (the model calls it a struct).
-  if (t.kind != "object" && t.kind != "struct" && t.kind != "class") {
+  if (k != "object" && k != "struct" && k != "class") {
     return false;
   }
-  const targets: i64[] = [t.id];
-  for (let b = t.base; b >= 0 && !targets.includes(b); b = model.type(b).base) {
-    targets.push(b);
-  }
+  const targets = selfTypes(model, t);
   for (const f of t.fields) {
-    if (reaches(model, f.type, targets, [])) {
+    if (reaches(model, f.type, targets, [], false)) {
       return true;
     }
   }

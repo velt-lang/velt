@@ -100,8 +100,13 @@ function body(req: InstanceRequest, out: Output, keyed: bool, raw: bool): void {
     }
   } else if (t.kind == "array") {
     const et = model.type(t.args[0]);
-    out.line(`w.append("[");`);
     out.line(`const n = ${v}.length;`);
+    // One that can hold itself (`n.kids.push(n)`) is checked while it has elements to write.
+    const recursive = isRecursive(model, t);
+    if (recursive) {
+      enterGuard(out, `n > 0`, v, raw);
+    }
+    out.line(`w.append("[");`);
     out.line(`for (let i = 0; i < n; i++) {`);
     out.line(`if (i > 0) { w.append(","); }`);
     if (et.kind == "function") {
@@ -111,6 +116,9 @@ function body(req: InstanceRequest, out: Output, keyed: bool, raw: bool): void {
     }
     out.line(`}`);
     out.line(`w.append("]");`);
+    if (recursive) {
+      leaveGuard(out, `n > 0`, v, raw);
+    }
   } else if (t.kind == "tuple") {
     out.line(`w.append("[");`);
     for (let i: i64 = 0; i < (t.args.length as i64); i++) {
@@ -139,7 +147,14 @@ function body(req: InstanceRequest, out: Output, keyed: bool, raw: bool): void {
       const any = raw ? "writeJsonAnyRaw" : "writeJsonAny";
       out.line(`if (recordViewIs(${v})) { ${any}(w, dynamicOf(${v}), ${key}); return; }`);
     }
+    const recursive = isRecursive(model, t);
+    if (recursive) {
+      enterGuard(out, "true", v, raw);
+    }
     writeEntries(out, model, model.type(t.args[0]), t.args[1], `Object.entries(${v})`, raw);
+    if (recursive) {
+      leaveGuard(out, "true", v, raw);
+    }
   } else if (t.kind == "opaque" && t.qualifiedName == "std/prelude/json/json_value::JsonValue") {
     out.line(`appendJsonValue(w, ${v});`);
   } else if (
@@ -189,15 +204,34 @@ function body(req: InstanceRequest, out: Output, keyed: bool, raw: bool): void {
  */
 function writeGuarded(out: Output, model: Model, t: Type, v: string, raw: bool): void {
   const recursive = isRecursive(model, t);
-  if (recursive && raw) {
-    out.line(`if (!beginVisit(identity(${v}))) { w.append("null"); return; }`);
-  } else if (recursive) {
-    out.line(`jsonEnter(identity(${v}));`);
+  if (recursive) {
+    enterGuard(out, "true", v, raw);
   }
   writeFields(out, model, t, v, raw);
   if (recursive) {
-    out.line(raw ? `endVisit();` : `jsonLeave();`);
+    leaveGuard(out, "true", v, raw);
   }
+}
+
+/**
+ * Starts the cycle check of `v` when `when` holds: Node's circular-structure error when it is
+ * being written already, or in the replacer's view (`raw`) `null` written for it.
+ */
+function enterGuard(out: Output, when: string, v: string, raw: bool): void {
+  const test = when == "true" ? "" : `${when} && `;
+  if (raw) {
+    out.line(`if (${test}!jsonViewEnter(identity(${v}))) { w.append("null"); return; }`);
+  } else if (test == "") {
+    out.line(`jsonEnter(identity(${v}));`);
+  } else {
+    out.line(`if (${when}) { jsonEnter(identity(${v})); }`);
+  }
+}
+
+/** Ends what `enterGuard` started. */
+function leaveGuard(out: Output, when: string, v: string, raw: bool): void {
+  const call = raw ? `jsonViewLeave(identity(${v}));` : `jsonLeave(identity(${v}));`;
+  out.line(when == "true" ? call : `if (${when}) { ${call} }`);
 }
 
 /**

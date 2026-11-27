@@ -225,6 +225,12 @@ function body(req: InstanceRequest, out: Output, hook: bool): void {
     `if (!jsonReplacerKept(r, view)) { return jsonReplacedMembers(r, ${w.f}, ${w.depth}); }`,
   );
   const d = `${w.depth} + 1`;
+  // A value that can contain itself is on the visit stack while its members are walked: met
+  // again in them (the replacer kept it), it is Node's circular-structure `TypeError`.
+  const recursive = isRecursive(model, t);
+  if (recursive) {
+    out.line(`jsonWalkEnter(identity(${v}));`);
+  }
   if (k == "array" || k == "tuple") {
     out.line(`const out = JsonValue.array();`);
     if (k == "array") {
@@ -233,6 +239,9 @@ function body(req: InstanceRequest, out: Output, hook: bool): void {
       const call = walkCall(out, model, t.args[0], true, `${v}[i]`, "`${i}`", "view.at(i)", w, d);
       out.line(`pushRevived(out, ${call});`);
       out.line(`}`);
+      if (recursive) {
+        out.line(`jsonWalkLeave(identity(${v}));`);
+      }
     } else {
       for (let i: i64 = 0; i < (t.args.length as i64); i++) {
         const key = out.literal(`${i}`);
@@ -253,12 +262,6 @@ function body(req: InstanceRequest, out: Output, hook: bool): void {
     out.line(`return out;`);
     return;
   }
-  // A value that can contain itself is on the visit stack while its members are walked: met
-  // again in them (the replacer kept it), it is Node's circular-structure `TypeError`.
-  const recursive = k != "record" && isRecursive(model, t);
-  if (recursive) {
-    out.line(`jsonWalkEnter(identity(${v}));`);
-  }
   out.line(`const out = JsonValue.object();`);
   if (k == "record") {
     out.line(`for (const [k, x] of Object.entries(${v})) {`);
@@ -266,6 +269,9 @@ function body(req: InstanceRequest, out: Output, hook: bool): void {
     const call = walkCall(out, model, wid, true, "x", ks, `view.get(${ks})`, w, d);
     out.line(`setRevived(out, ${ks}, ${call});`);
     out.line(`}`);
+    if (recursive) {
+      out.line(`jsonWalkLeave(identity(${v}));`);
+    }
     out.line(`return out;`);
     return;
   }
@@ -290,7 +296,7 @@ function body(req: InstanceRequest, out: Output, hook: bool): void {
     }
   }
   if (recursive) {
-    out.line(`jsonWalkLeave();`);
+    out.line(`jsonWalkLeave(identity(${v}));`);
   }
   out.line(`return out;`);
 }

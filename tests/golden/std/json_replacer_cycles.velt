@@ -2,7 +2,8 @@
 // called for each key until the walk would enter a value it is inside of, which is a catchable
 // `TypeError`; a replacer that leaves the back reference out writes the rest (#3871). Shapes: a
 // tree with parent links, a subclass in a base-class field, two objects, an array, the same
-// value twice (no cycle), an `any` array, and the same tree again after the errors. A `Date`
+// value twice (no cycle), an `any` array, and the same tree again after the errors; data nested
+// deeper than the writer's cycle check starts, with no cycle, and a record that holds itself. A `Date`
 // member is its text to its parent's replacer, as Node's `JSON.stringify` of the parent writes
 // it. The Node twin is json_replacer_cycles.mjs.
 
@@ -27,6 +28,37 @@ class Derived extends Base {
 interface Link {
   id: number;
   next: Link[];
+}
+
+interface Bag {
+  id: number;
+  m: Record<string, Bag>;
+}
+
+// Deeper than the writer's cycle check starts (16), with no cycle: written whole.
+function deepData(): void {
+  let t: Link = { id: 0, next: [] };
+  for (let i = 1; i < 40; i++) {
+    t = { id: i, next: [t] };
+  }
+  let b: Bag = { id: 0, m: {} };
+  for (let i = 1; i < 40; i++) {
+    const m: Record<string, Bag> = {};
+    m["x"] = b;
+    b = { id: i, m };
+  }
+  let n = new Node1("0");
+  for (let i = 1; i < 40; i++) {
+    const p = new Node1(`${i}`);
+    p.kids.push(n);
+    n = p;
+  }
+  console.log("deep:", JSON.stringify(t).length, JSON.stringify(t, keep).length);
+  console.log("deep record:", JSON.stringify(b).length, JSON.stringify(b, keep).length);
+  console.log("deep class:", JSON.stringify(n).length, JSON.stringify(n, keep).length);
+  const self: Bag = { id: 1, m: {} };
+  self.m["me"] = self;
+  attempt("record:", () => JSON.stringify(self, keep));
 }
 
 function logged(k: string, v: JsonValue): JsonValue | undefined {
@@ -89,6 +121,7 @@ function main(): void {
   );
   attempt("tree again:", () => JSON.stringify(root, noParent));
   console.log(JSON.stringify({ at: new Date(0), n: 1 }, viewed));
+  deepData();
 }
 
 main();

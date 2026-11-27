@@ -16,7 +16,7 @@ import { writeJsonAnyRaw } from "velt/encoding/json/any_raw";
 import { replaceJsonAny } from "velt/encoding/json/any_replace";
 import { beginVisit, dynamicOf, endVisit, identity, isProxy } from "velt/reflect";
 import { recordViewIs } from "velt/lang/intrinsics";
-import { jsonEnter, jsonLeave } from "velt/encoding/json/generated";
+import { jsonEnter, jsonLeave, jsonViewEnter, jsonViewLeave } from "velt/encoding/json/generated";
 import {
   jsonReplaced,
   jsonReplacedField,

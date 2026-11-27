@@ -2,7 +2,7 @@
 // replacer's walk (replace.velt).
 
 import { Model } from "velt/generate";
-import { isRecursive, toJsonMethod } from "velt/encoding/json/generate/facts";
+import { canContainItself, toJsonMethod } from "velt/encoding/json/generate/facts";
 import { writtenFields } from "velt/encoding/json/generate/values";
 
 /**
@@ -35,7 +35,7 @@ export function plainJson(model: Model, id: i64, depth: i64 = 0): bool {
   if (k != "object" && k != "struct") {
     return false;
   }
-  if (toJsonMethod(t) >= 0 || t.mayBeProxy || isRecursive(model, t)) {
+  if (toJsonMethod(t) >= 0 || t.mayBeProxy || canContainItself(model, t)) {
     return false;
   }
   for (const f of writtenFields(model, t)) {
