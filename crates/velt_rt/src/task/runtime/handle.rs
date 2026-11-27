@@ -1,6 +1,5 @@
-//! The handles a spawn on the runtime's host gives back: [`JoinHandle`] (await the task's output;
-//! dropping it detaches the task, whose output is then dropped when it finishes) and
-//! [`AbortHandle`] (drop the task's future on its next turn).
+//! The handle a spawn on the runtime's host gives back: [`JoinHandle`] (await the task's output;
+//! dropping it detaches the task, whose output is then dropped when it finishes).
 
 use std::any::Any;
 use std::future::Future;
@@ -11,7 +10,7 @@ use std::task::{Context, Poll};
 pub enum JoinError {
     /// The task panicked; the payload, to resume unwinding with.
     Panic(Box<dyn Any + Send>),
-    /// The task was aborted.
+    /// The task was cancelled (the host dropped it).
     Cancelled,
 }
 
@@ -51,23 +50,6 @@ impl From<tokio::task::JoinError> for JoinError {
 /// A spawned task's output, once it finishes.
 pub struct JoinHandle<T>(pub(super) tokio::task::JoinHandle<T>);
 
-impl<T> JoinHandle<T> {
-    /// Whether the task finished (its output, or why there is none, is ready).
-    pub fn is_finished(&self) -> bool {
-        self.0.is_finished()
-    }
-
-    /// Aborts the task (see [`AbortHandle`]).
-    pub fn abort(&self) {
-        self.abort_handle().abort()
-    }
-
-    /// A handle that aborts the task.
-    pub fn abort_handle(&self) -> AbortHandle {
-        AbortHandle(self.0.abort_handle())
-    }
-}
-
 impl<T> Future for JoinHandle<T> {
     type Output = Result<T, JoinError>;
 
@@ -75,15 +57,5 @@ impl<T> Future for JoinHandle<T> {
         Pin::new(&mut self.get_mut().0)
             .poll(cx)
             .map_err(JoinError::from)
-    }
-}
-
-/// Aborts a task: its future is dropped on its next turn, and its join handle reports
-/// [`JoinError::Cancelled`].
-pub struct AbortHandle(tokio::task::AbortHandle);
-
-impl AbortHandle {
-    pub fn abort(&self) {
-        self.0.abort()
     }
 }

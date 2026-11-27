@@ -1,10 +1,10 @@
 //! The async runtime behind the runtime's own tasks.
 //!
 //! Programs run on the executor in Velt (std/lang/hooks/sched.velt). What is left here is the host
-//! of the runtime's Rust glue ([`host`], #2649 D1): one tokio runtime with one worker thread and
-//! tokio's blocking pool. Everything else in the crate goes through the functions here
-//! ([`spawn`], [`spawn_blocking`], [`enter`], [`block_on`]) and the handles they
-//! give back ([`JoinHandle`], [`AbortHandle`]), never through tokio's own.
+//! of what is left of the runtime's Rust glue ([`host`], #2649 D1): one tokio runtime with one
+//! worker thread, whose context the executor's workers enter ([`enter`]: the timer of a due
+//! `unref()`'d timer's question, quiet.rs) and on which the ABI tests run compiled states
+//! ([`spawn`], [`block_on`], [`JoinHandle`]). Nothing else in the crate spawns on it.
 //!
 //! The runtime starts lazily on first use and lives until the process exits (there is no
 //! shutdown). Like Node, the program's entry ([`crate::entry::run_main`]) keeps the process alive
@@ -17,9 +17,8 @@
 
 mod handle;
 mod host;
-pub mod time;
 
-pub use handle::{AbortHandle, JoinError, JoinHandle};
+pub use handle::{JoinError, JoinHandle};
 pub use host::runtime;
 
 /// The stack of every thread that runs tasks: 8 MiB, as the main thread has on every platform
@@ -176,15 +175,6 @@ where
     F::Output: Send + 'static,
 {
     JoinHandle(runtime().spawn(fut))
-}
-
-/// Runs `f` on a thread that may block (file system, DNS, a native call), not on the worker.
-pub fn spawn_blocking<R, F>(f: F) -> JoinHandle<R>
-where
-    F: FnOnce() -> R + Send + 'static,
-    R: Send + 'static,
-{
-    JoinHandle(runtime().spawn_blocking(f))
 }
 
 /// Makes the host's tokio context current on this thread while the guard lives, for code that
