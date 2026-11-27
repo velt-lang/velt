@@ -1,0 +1,12 @@
+// A `then` callback calling two function values (#3925, reduced from
+// `golden/std/streams_order_cancel_later.velt`): it throws the union of their two variables,
+// which the check takes at the sets known then. It took one more round with variables before.
+function run(a: () => void, b: () => void): void {
+  let p0 = Promise.resolve();
+  p0 = p0.then(() => {
+    a();
+    b();
+  });
+}
+
+run(() => {}, () => {});

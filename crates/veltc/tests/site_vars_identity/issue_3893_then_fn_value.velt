@@ -1,0 +1,25 @@
+// A `then` callback calling a function value stored in a field (`g.open(n)`, a promise's
+// resolver): with error-set variables what it throws is the field's variable, whose set is
+// empty, so the check chooses `promiseThen`, as the check without variables does, and not
+// `promiseThenThrows` (`golden/std/promise_settle_shared.velt`).
+class Gate {
+  open: (n: number) => void = (n: number) => {};
+  p: Promise<number, never>;
+
+  constructor() {
+    this.p = new Promise<number>((resolve) => {
+      this.open = resolve;
+    });
+  }
+}
+
+async function main(): Promise<void> {
+  const g = new Gate();
+  Promise.resolve().then(() => {
+    g.open(1);
+    console.log("opened");
+  });
+  console.log(await g.p);
+}
+
+main();
