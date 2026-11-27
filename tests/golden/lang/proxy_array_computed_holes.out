@@ -1,0 +1,15 @@
+set 4 has 3: false length 5
+set 3 has 3: true length 5
+set 2 has 3: true length 5
+set 0 has 3: true length 5
+set 1 has 3: true length 5
+set length has 3: true length 5
+[]
+set 0 has 3: true length 5
+set 1 has 3: true length 5
+set 2 has 3: true length 5
+delete 4 has: false length 5
+delete 3 has: false length 5
+set length has 3: false length 3
+[ 7, 8 ]
+1,2,3

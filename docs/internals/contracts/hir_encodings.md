@@ -1639,12 +1639,6 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   `replaced_holders::glue_args`). The `any` tables get slot 15 `AnyDelete (data, key) -> u8`
   (velt_vir `lower/any_delete.rs`; 0 false, 1 true, 2 not supported yet, a `TypeError`) only when
   the program has such a call.
-- `Intrinsic::ProxyArrayCall(x, op)` (std only, `proxyArrayCall`) and
-  `Intrinsic::ProxyArrayHole(x, index, op)` (std only, `proxyArrayHole`), with `x`
-  an `any` (borrowed, passed by its data pointer: the target of an array method running on a
-  proxy, which the proxy keeps alive, or the array a `Reflect` call reaches) and `index` / `op`
-  `i64`, of type `i64`, are calls of `velt_rt_proxy_array_call` and `velt_rt_proxy_array_hole`
-  (rt_abi.md "Array methods on a proxy"). They run no user code.
 - `Intrinsic::AnyKeys(x)` is `Object.keys(x)` on an `any`, `object` or `Function` `x` (borrowed),
   of type `string[]`: the own enumerable string keys of the value held, in JavaScript's order.
   It sets `Program::dyn_members` (a record's keys are its `[RECORD_KEY_NAMES]()`). The `any` tables
