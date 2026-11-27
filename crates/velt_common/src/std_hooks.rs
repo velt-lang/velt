@@ -60,13 +60,14 @@ mod object_hooks;
 #[macro_use]
 mod decorator_hooks;
 #[macro_use]
+mod drop_hooks;
+#[macro_use]
 mod promise_hooks;
 #[macro_use]
 mod tls_hooks;
 pub use module_hooks::BLOCKS_MODULE_ENTRY;
 
-// The table: these rows, then `Object.*`'s, TLS's, promises' through `any`, the decorators', module
-// state's, the string methods' and the weak core's (`*_hooks.rs`), given to `hooks!` together.
+// The table: these rows, then each `*_hooks.rs` file's (`with_object_hooks!` on), to `hooks!`.
 with_object_hooks! {
     // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).

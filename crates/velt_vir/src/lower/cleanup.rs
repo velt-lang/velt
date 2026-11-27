@@ -206,7 +206,7 @@ impl FnLower<'_, '_> {
             }
             DropEntry::Temp(p, ty) => format!("T{p}:{}", ty.0),
             DropEntry::HalfBuilt(p, ty) => format!("H{p}:{}", ty.0),
-            DropEntry::Disposing(p, ty) => format!("D{p}:{}", ty.0),
+            DropEntry::Disposing(p, ty, from) => format!("D{p}:{}:{from}", ty.0),
             DropEntry::Flagged(p, ty, flag) => format!("F{p}:{}:{}", ty.0, flag.0),
             DropEntry::Rest(p, ty, pat) => {
                 format!("R{p}:{}:{:p}", ty.0, std::rc::Rc::as_ptr(pat))
