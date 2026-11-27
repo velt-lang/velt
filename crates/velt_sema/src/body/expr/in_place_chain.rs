@@ -40,13 +40,42 @@ impl FnCx<'_, '_> {
         };
         let elem = self.cx.ty.array_elem(recv)?;
         if self.cx.dynamic(elem) != Some(crate::any::Dynamic::Any) {
-            return None;
+            return self.named_sort_name(elem, prop, cmp);
         }
         let name = match (prop.name.as_str(), self.returns_dynamic(cmp)) {
             ("sort", true) => "sortAnyResult",
             ("toSorted", true) => "toSortedAnyResult",
             _ if !self.may_throw(cmp) => return None,
             ("sort", false) => "sortDynamic",
+            _ => "toSortedDynamic",
+        };
+        Some(ast::Ident {
+            name: name.to_string(),
+            span: prop.span,
+        })
+    }
+
+    /// `sort(cmp)` or `toSorted(cmp)` of an array of `elem` values in a program whose calls
+    /// through `any` throw (`throws::any_calls`): a comparator named here (not an arrow, whose
+    /// calls through `any` throw nothing where its type allows no error) may throw `any`, so it
+    /// sorts as [`Self::dynamic_sort_name`]'s do. An array of `i64`, `u64` or `usize` values,
+    /// whose comparators return an `i64`, sorts as before.
+    fn named_sort_name(
+        &mut self,
+        elem: hir::TyId,
+        prop: &ast::Ident,
+        cmp: &ast::Expr,
+    ) -> Option<ast::Ident> {
+        let arrow = matches!(
+            super::method_value::strip_parens(cmp).kind,
+            ast::ExprKind::Arrow { .. }
+        );
+        let ints = [self.cx.ty.i64, self.cx.ty.u64, self.cx.ty.usize];
+        if !self.cx.fn_sites.seeds.any_calls_throw || arrow || ints.contains(&elem) {
+            return None;
+        }
+        let name = match prop.name.as_str() {
+            "sort" => "sortDynamic",
             _ => "toSortedDynamic",
         };
         Some(ast::Ident {
@@ -96,8 +125,8 @@ impl FnCx<'_, '_> {
     }
 
     /// May comparator `cmp` throw? It writes a `throw`, or in a program with proxies (whose
-    /// traps may throw) it reads through its `any` parameters or calls something; a function
-    /// named here may do anything there. Any other comparator sorts as before, at its cost.
+    /// traps may throw) or whose calls through `any` throw, it reads through its `any`
+    /// parameters or calls something; a function named here may do anything there. Any other comparator sorts as before, at its cost.
     fn may_throw(&self, cmp: &ast::Expr) -> bool {
         use velt_syntax::visit::{walk_expr, Visit};
         struct Seen {
@@ -122,7 +151,10 @@ impl FnCx<'_, '_> {
             ast::ExprKind::Arrow { .. }
         );
         walk_expr(cmp, &mut seen);
-        seen.throws || (self.uses_proxy() && (seen.reads || !arrow))
+        // A program whose calls through `any` throw (`throws::any_calls`) is like one with
+        // proxies: what the comparator reads or calls may throw.
+        let dynamic = self.uses_proxy() || self.cx.fn_sites.seeds.any_calls_throw;
+        seen.throws || (dynamic && (seen.reads || !arrow))
     }
 
     /// `recv`, checked from `object`, as the receiver of a member access: when `object` is a

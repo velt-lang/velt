@@ -36,6 +36,7 @@ pub(super) fn facts(h: &mut Hashing) -> Vec<(&'static str, u64)> {
         any_call_names,         // "dynamic members"
         generator_throw,        // "flags"
         nothing_slots,          // "flags"
+        any_calls_throw,        // "flags"
         upcasts,                // "implementations"
         upcast_impls,           // "implementations"
         cpu_targets: _,         // Per function.
@@ -212,6 +213,7 @@ pub(super) fn facts(h: &mut Hashing) -> Vec<(&'static str, u64)> {
         record_fills,
         generator_throw,
         nothing_slots,
+        any_calls_throw,
     );
     let flags = finish((bits, format!("{hooks_demanded:?}")));
     vec![

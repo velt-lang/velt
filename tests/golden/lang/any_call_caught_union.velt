@@ -1,0 +1,35 @@
+// A throwing function held as a member of a union, or in a field of an object literal, and
+// converted to `any`: a call through the `any` passes its error to the caller's `catch` (#1938).
+type Handler = (() => number) | string;
+
+function pick(n: number): Handler {
+  if (n > 0) {
+    return () => {
+      throw new RangeError("union " + n);
+    };
+  }
+  return "text";
+}
+
+const h: any = pick(1);
+try {
+  h();
+} catch (e) {
+  console.log("caught", `${e}`);
+}
+console.log(typeof pick(0));
+
+const box: any = {
+  run: (n: number): number => {
+    if (n > 1) {
+      throw new TypeError("field " + n);
+    }
+    return n;
+  },
+};
+try {
+  console.log(box.run(1));
+  box.run(2);
+} catch (e) {
+  console.log("caught", `${e}`);
+}

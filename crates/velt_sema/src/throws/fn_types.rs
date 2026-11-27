@@ -83,6 +83,9 @@ pub(crate) struct FnTypeSeeds {
     pub(super) proxy_sites: FxHashSet<Span>,
     /// Check without any variable, also for the traps (`FnSites::doubted`).
     exact: bool,
+    /// The program converts to `any` a function that throws (`throws::any_calls`): a call
+    /// through `any` in a user module throws `any`.
+    pub(crate) any_calls_throw: bool,
 }
 
 /// The sites of one check: the sets it applies and what it found.
@@ -103,6 +106,8 @@ pub(crate) struct FnSites {
     /// The function values (by type) converted in this check into a site its variable names
     /// (`seed_fn_sites`): what they throw has its destination.
     pub(super) var_values: FxHashSet<TyId>,
+    /// A user module calls through `any` (`throws::any_calls`).
+    pub(crate) any_calls: bool,
     /// Structural matches of a converted value's errors (its type, the sites, the errors),
     /// added at the end of the check unless the value reached a site through its variable
     /// ([`Ctx::flush_structural`]).

@@ -62,10 +62,11 @@ impl FnLower<'_, '_> {
         if self.dead() || !self.user_body {
             return None;
         }
-        // A `finally` block is lowered on each edge out of its `try`, with the scopes of the
-        // `try`s it leaves still in place: only those it pushes enclose its code.
-        let inside = self.scopes.get(self.finally_floor..).unwrap_or_default();
-        let to = inside.iter().rev().find_map(|s| match &s.kind {
+        // A `finally` block is lowered on each edge out of its `try`, with the scopes the edge
+        // leaves still in place: they don't enclose its code (`left_by_edge`).
+        let scopes = self.scopes.iter().enumerate().rev();
+        let mut inside = scopes.filter(|(i, _)| !self.left_by_edge(*i));
+        let to = inside.find_map(|(_, s)| match &s.kind {
             ScopeKind::Try { ty, .. } => Some(Some(*ty)),
             ScopeKind::Uncaught | ScopeKind::CatchesNothing => Some(None),
             _ => None,

@@ -66,6 +66,10 @@ pub(crate) struct Frame {
     /// Nesting depth of the `try` blocks with a `catch` being checked: in a program that calls
     /// a generator's `throw()`, a `yield` in one may throw (`generators.rs`).
     pub catch_depth: u32,
+    /// Body of a closure whose function type allows no `any` error (a comparator of a typed
+    /// `sort`, a callback stored as `(x: T) => void`): a call through `any` in it throws only
+    /// to a `catch` in it (`throws::any_calls`).
+    pub any_calls_kept: bool,
     /// Body of a named generator function expression: its name (not in scope there).
     pub fn_expr_name: Option<String>,
     /// Nesting depth of the `finally` blocks being checked (`yield` is not allowed in them).
@@ -269,6 +273,7 @@ impl Frame {
             infer_yields: None,
             next_ty: None,
             catch_depth: 0,
+            any_calls_kept: false,
             fn_expr_name: None,
             finally_depth: 0,
             adopted: vec![],

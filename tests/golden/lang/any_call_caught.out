@@ -1,0 +1,22 @@
+caught RangeError: x 2
+after 30
+caught RangeError: method 2
+method ok 2
+caught TypeError: field a
+caught a value a string
+yy
+element RangeError: x 2
+element ok 2
+element again RangeError: x 2
+computed TypeError: field b
+optional TypeError: field c
+generic Error: negative
+returned TypeError: made
+through fn RangeError: x 2
+inner RangeError: x 2
+rethrown RangeError: x 2
+throw in catch RangeError: x 2
+with finally RangeError: x 2
+finally ran
+async caught RangeError: x 2
+rejected RangeError: x 2

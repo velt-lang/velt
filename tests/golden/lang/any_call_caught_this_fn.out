@@ -1,0 +1,3 @@
+apply 2
+apply caught RangeError: tagged 2
+element RangeError: x 2

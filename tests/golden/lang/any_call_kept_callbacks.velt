@@ -1,0 +1,50 @@
+// Callbacks whose function type allows no error (written without `throws`: an array method's
+// predicate, a field or variable of a function type) calling through `any`, in a program whose
+// calls through `any` throw (#1938): they compile and run as in a program that converts no
+// throwing function; a `catch` inside such a callback gets the error.
+function check(x: number): number {
+  if (x < 0) throw new RangeError("negative");
+  return x;
+}
+const table: any = { check };
+
+interface Row {
+  name: string;
+}
+
+const nums: number[] = [1, 2, 3];
+console.log(nums.find((n: number): boolean => (table.check(n) as number) > 1));
+console.log(nums.some((n: number): boolean => (table.check(n) as number) > 2));
+console.log(nums.every((n: number): boolean => (table.check(n) as number) > 0));
+console.log(nums.filter((n: number): boolean => (table.check(n) as number) > 1).join(","));
+console.log(nums.reduce((s: number, n: number): number => s + (table.check(n) as number), 0));
+console.log(nums.findIndex((n: number): boolean => (table.check(n) as number) == 2));
+console.log(nums.flatMap((n: number): number[] => [table.check(n) as number]).join(","));
+console.log(Array.from(nums, (n: number): number => (table.check(n) as number) * 2).join(","));
+const m = new Map<string, number>([["a", 1]]);
+m.forEach((v: number, k: string): void => console.log(k, table.check(v)));
+
+// Stored where a function type written without `throws` is expected.
+class Hooks {
+  onMount: (r: Row) => void = (r: Row): void => {};
+}
+const hooks = new Hooks();
+hooks.onMount = (r: Row): void => console.log("mount", r.name, table.check(1));
+hooks.onMount({ name: "m" });
+let cb: (n: number) => number = (n: number): number => table.check(n) as number;
+console.log(cb(5));
+cb = (n: number): number => {
+  try {
+    return table.check(n) as number;
+  } catch (e) {
+    console.log("inside", (e as Error).message);
+    return 0;
+  }
+};
+console.log(cb(-5));
+
+try {
+  table.check(-1);
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}

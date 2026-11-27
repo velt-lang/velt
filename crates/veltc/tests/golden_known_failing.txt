@@ -16,6 +16,12 @@ tests/golden/std/timer_spawned_busy.velt                           #2916 os=maco
 tests/golden/lang/error_message_getter.velt                        #3792 units
 tests/golden/lang/error_message_getter_uncaught.velt               #3792 units
 tests/golden/lang/error_message_getter_inspect.velt                #3792 units
+# Calls through `any` that velt/lang/this_fn makes for the program (every run by units loads it)
+# are checked with std, before it is known that the program's calls through `any` throw
+# (velt_sema `throws/any_calls.rs`): their errors stay uncaught there.
+tests/golden/lang/any_call_caught.velt                             #2943 units
+tests/golden/lang/any_call_caught_callbacks.velt                   #2943 units
+tests/golden/lang/any_call_caught_this_fn.velt                     #2943 units
 
 # Fail in a run by units (VELT_UNITS=2) on main 667cfae77, a sample of ~410 goldens (#2943's U6 list):
 tests/golden/lang/class_local_ctor.velt                            #2943 units

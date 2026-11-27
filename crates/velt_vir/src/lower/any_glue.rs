@@ -175,12 +175,15 @@ impl FnLower<'_, '_> {
         // A function returning a promise is called from its apply slot only in a program that
         // calls a value held as `any` (`Boxing::any_applies`); a field's is called by name.
         let promise = matches!(self.cx.kind(ret), TyKind::Promise(..));
-        if !self.cx.any_boxable(ret) || (promise && !field && !self.cx.boxing.any_applies) {
+        // A function that never returns (`() => { throw e; }`) has no result to box.
+        let never = matches!(self.cx.kind(ret), TyKind::Never);
+        let unboxable = !never && !self.cx.any_boxable(ret);
+        if unboxable || (promise && !field && !self.cx.boxing.any_applies) {
             self.any_drop_args(argv, 0, argc);
             return self.ret_status(ST_UNSUPPORTED);
         }
-        // What the function throws leaves the slot as uncaught (`finish_ready_call`): the
-        // slot's status has no error to carry back to the caller's `catch` yet.
+        // What the function throws leaves the slot with `ST_THREW` in a program whose calls
+        // through `any` throw, and as uncaught in another (any_threw.rs).
         let throws = self.cx.error_ty(Some(throws));
         let slots = match (rest, params.split_last()) {
             // A rest parameter gets the arguments past the fixed ones, packed (`any_rest`).
@@ -228,17 +231,33 @@ impl FnLower<'_, '_> {
             params: pt,
             ret: abi.ret,
         };
-        self.push_scope(super::ScopeKind::Uncaught);
-        let v = self.finish_call(callee, av, ret, throws);
-        self.scopes.pop();
-        for (p, t) in slots {
-            self.drop_glue(p, t);
-        }
-        if let Some(h) = held {
-            self.drop_glue(h, fty);
-        }
-        if let Operand::Copy(p) = &v {
-            self.take_temp(&p.clone());
+        let v = match self.slot_catches(throws) {
+            Some(e) => {
+                let mut borrowed = slots;
+                borrowed.extend(held.map(|h| (h, fty)));
+                self.call_catching(e, out, borrowed, |s| s.finish_call(callee, av, ret, throws))
+            }
+            None => {
+                self.push_scope(super::ScopeKind::Uncaught);
+                let v = self.finish_call(callee, av, ret, throws);
+                self.scopes.pop();
+                for (p, t) in slots {
+                    self.drop_glue(p, t);
+                }
+                if let Some(h) = held {
+                    self.drop_glue(h, fty);
+                }
+                if let Operand::Copy(p) = &v {
+                    self.take_temp(&p.clone());
+                }
+                v
+            }
+        };
+        if never {
+            if !self.dead() {
+                self.terminate(Terminator::Unreachable);
+            }
+            return;
         }
         self.any_box_into(v, ret, out);
         self.ret_status(ST_OK);
@@ -573,7 +592,15 @@ impl FnLower<'_, '_> {
                         _ => self.any_params(argv, argc, &params),
                     };
                     let this = self.any_this(data, ty);
-                    self.any_invoke(&r, this, args, &outp);
+                    match self.slot_catches(r.throws) {
+                        Some(e) => {
+                            let v = self.call_catching(e, &outp, vec![], |s| {
+                                s.invoke_ready(&r, this, args)
+                            });
+                            self.any_box_result(v, &r, &outp);
+                        }
+                        None => self.any_invoke(&r, this, args, &outp),
+                    }
                     self.ret_status(ST_OK);
                 }
                 _ => {

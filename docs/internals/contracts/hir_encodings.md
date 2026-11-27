@@ -1591,7 +1591,16 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   5 `AnyGet (data, key, out) -> u8`, 6 `AnyIndex (data, f64, out) -> u8`, 7 `AnyCall (data, key,
   argv, argc, out) -> u8`, 8 `AnyApply (data, argv, argc, out) -> u8`, returning 0 (the result
   is in `*out`), 1 (not supported yet: a `TypeError` naming #924) or 2 (not a function). Without
-  them the tables have no member slots. The `AnyCall` slot of a string, an array, a number
+  them the tables have no member slots. A function called through `any` may throw: when the
+  program converts to `any` a value holding a function, method or accessor whose error type isn't
+  empty (in the value, its fields, elements, options or results, through generic instantiations
+  too; a standard library class counts only through its type arguments, not by its own
+  methods), `Program::any_calls_throw` is set and every `AnyCall` and `AnyApply` in a user module
+  throws `any` (sema counts it as a throw source of the enclosing `try` or function). The call
+  slots then return 4 (the function threw; `*out` holds its error boxed as an `any`), which a
+  call in a user function throws as `throw` does and any other caller reports as uncaught. In
+  another program the slots run a throwing function so that its error ends the process with
+  Node's `Uncaught …` report. The `AnyCall` slot of a string, an array, a number
   or a boolean dispatches by name to the hook `anyStr_<name>(s, args)`,
   `anyArr_<name><T>(a, args)`, `anyNum_<name>(n, args)` and `anyBool_<name>(b, args)`
   (std/lang/hooks/any_methods.velt; the arguments packed into an `any[]`, the result an `any`),

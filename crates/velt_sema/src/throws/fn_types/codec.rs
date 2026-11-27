@@ -10,10 +10,11 @@ crate::units::codec::structs! {
         rejects, anon_written, alias_written, async_args, closure_return, closure_rejects,
         closure_sites, rest_closures, flows, added, last, use_vars, user_vars, var_of, trap_vars,
         vars, solved_anons, solved, var_sets, stored, thrown, reject_values, sets_empty,
-        site_closures, closure_defs, structural, var_values,
+        site_closures, closure_defs, structural, var_values, any_calls,
     }
     FnTypeSeeds {
         sites, hints, slots, no_vars, proxy_sites, exact, closure_targets, methods,
+        any_calls_throw,
     }
 }
 crate::units::codec::enums! {
