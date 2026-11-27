@@ -156,16 +156,6 @@ unsafe fn in_read() -> bool {
     READ_DEPTH != 0
 }
 
-/// A promise or task starting in read mode stops the program (velt_rt `read_mode`).
-pub(crate) fn refuse_tasks_in_read() {
-    // SAFETY: one thread.
-    if unsafe { in_read() } {
-        crate::panic::fatal(
-            "a promise or task cannot start inside a `read` callback: what it holds would outlive the callback, which shares the `RwLock`'s value without counting it (start it after `read`, with what `read` returns)",
-        );
-    }
-}
-
 /// A `with` or `write` (`method`) in read mode stops the program (velt_rt `read_mode`).
 unsafe fn refuse_in_read(method: &str) {
     if in_read() {

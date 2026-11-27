@@ -179,6 +179,9 @@ impl FnLower<'_, '_> {
         let Err((args, dest)) = self.sched_rt(r, args, dest) else {
             return;
         };
+        if self.no_runtime_promises(r, &args, &dest) {
+            return;
+        }
         let id = self.cx.rt(r);
         self.call(vir::Callee::Extern(id), args, dest, r.sig().3);
     }

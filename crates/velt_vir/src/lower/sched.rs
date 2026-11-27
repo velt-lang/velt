@@ -139,6 +139,34 @@ impl FnLower<'_, '_> {
         self.std_sched() && self.sched_hook_live(velt_common::std_hook!(sched_share))
     }
 
+    /// The runtime's answer about a promise (`velt_rt_fut_peek`, `velt_rt_fut_id`,
+    /// `velt_rt_fut_share`) where the executor in Velt's hook doesn't give it, on WebAssembly,
+    /// whose runtime has no promises, hubs or aliases (#3905): written to `dest` here, without a
+    /// call. Such a program runs nothing on the executor (`sched_rt`), so the only promise it holds
+    /// is null (tests/golden/lang/any_promise_no_async.velt): `console.log` shows it pending, its
+    /// identity is its address (0), and another holder of it is null. Whether it answered.
+    pub(super) fn no_runtime_promises(
+        &mut self,
+        r: Rt,
+        args: &[Operand],
+        dest: &Option<Place>,
+    ) -> bool {
+        if !super::c_call::wasm32(&self.cx.target) {
+            return false;
+        }
+        let (Some(dest), Some(f)) = (dest, args.first()) else {
+            return false;
+        };
+        let value = match r {
+            Rt::FutPeek => Rvalue::Use(cint(0, Ty::U8)),
+            Rt::FutId => Rvalue::Cast(f.clone(), Ty::U64),
+            Rt::FutShare => Rvalue::Use(f.clone()),
+            _ => return false,
+        };
+        self.assign(dest.clone(), value);
+        true
+    }
+
     /// `op` (a pointer or an integer) as a `usize` argument.
     pub(super) fn as_usize(&mut self, op: Operand) -> Operand {
         self.rvalue_temp(Ty::U64, Rvalue::Cast(op, Ty::U64))

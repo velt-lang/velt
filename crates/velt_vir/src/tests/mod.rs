@@ -59,6 +59,7 @@ mod transfer_sites;
 mod verifier;
 mod vir_ext;
 mod vtable_word;
+mod wasm_promises;
 mod yield_cancel;
 
 use velt_sema::hir;

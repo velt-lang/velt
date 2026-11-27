@@ -283,7 +283,7 @@ with_any_hooks! {
 
     // mutex.velt: a `Mutex`'s lock (#2196), inline on a native target: a compare-and-swap of its
     // lock word, the runtime's parking only when the lock is taken or a thread waits. Not a
-    // `replaces`: a wasm build keeps velt_rt_wasm's `velt_rt_mutex_lock` and executor.
+    // `replaces`: a wasm build keeps velt_rt_wasm's `velt_rt_mutex_lock`.
     /// `m.with(f)`'s lock of the word at the address.
     mutex_lock => lang_hooks_mutex, "mutexLock", sig((usize) -> void), lowered,
         bench("mutex_with"), constructs(Mutex);

@@ -1,8 +1,8 @@
-// velt/fs (internal): the functions velt/fs calls in a wasm32-wasip1 build (the `wasi` variant of
-// `#fs-rt`, std/imports.velt). The executor in Velt runs WASI programs (#3905), and it can't await
-// velt_rt_wasm's async leaves (their `cx` is the runtime's), so the async forms here run the
+// velt/fs (internal): the functions velt/fs calls in a WebAssembly build (wasm32-wasip1 and JS
+// hosts: the default variant of `#fs-rt`, std/imports.velt). The executor in Velt runs those
+// programs (#3905) and velt_rt_wasm has no async leaves, so the async forms here run the
 // runtime's sync calls as jobs of the executor's blocking pool (std/lang/hooks/sched_blocking.velt):
-// on WASI's one thread the job runs at once, and its result comes at the task's next poll, as a
+// on the one thread the job runs at once, and its result comes at the task's next poll, as a
 // native build's file operations do. Everything else is std/fs/rt.velt's.
 //
 // A job must not throw, so it returns the runtime's `IoResult`/`IoStatus` and the caller's task

@@ -4,6 +4,12 @@
 /** Can this OS start worker threads? */
 export const SUPPORTED: bool = false;
 
+/**
+ * Nothing to enter: WebAssembly's runtime has no executor or leaves (#3905), and no reference to
+ * its functions may stay, which a debug build would keep behind `SUPPORTED`.
+ */
+export function enterRuntime(): void {}
+
 /** The online cores: one worker here. */
 export function cores(): usize {
   return 1;

@@ -5,7 +5,6 @@
 //   write(stream, ptr, len)  bytes for stdout (1) / stderr (2)
 //   exit(code)               stop the program at once (thrown as VeltExit: `process.exit`, a panic)
 //   done(code)               `main` returned `code` (the end, unless the program is hosted)
-//   now_ms()                 performance.now()
 //   host_release(slot)       forget a HostRef's value (HostRefs below)
 //   host_clone(slot)         a second slot for a HostRef's value
 // and, for a program that runs tasks, the host functions of `velt:turns` (the executor in Velt's
@@ -164,7 +163,6 @@ export async function loadVelt(source, host = {}) {
       },
       // `main` returned: the end, unless it handed its root to the turns, which tell theirs.
       done: (code) => rt.hosted || rt.end(code),
-      now_ms: () => performance.now(),
       host_release: (slot) => refs.release(slot >>> 0),
       host_clone: (slot) => refs.add(refs.get(slot >>> 0)),
     },
