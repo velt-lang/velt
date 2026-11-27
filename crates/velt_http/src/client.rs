@@ -329,11 +329,19 @@ fn plain(
         let head = request_head(method, host, path, headers, body.len(), None);
         return exchange(connect(host, 80, budget)?, &head, body, max);
     };
-    // The whole URL as the request target: the proxy connects to the origin.
-    let target = format!("http://{host}{path}");
+    let target = absolute_form(host, path);
     let auth = proxy.authorization.as_deref();
     let head = request_head(method, host, &target, headers, body.len(), auth);
     exchange(to_proxy(proxy, budget)?, &head, body, max)
+}
+
+/// The whole URL as the request target for a proxy, which connects to the origin: `http://`, the
+/// host and port, and the path. A user and password the URL names are never part of it (RFC 9110
+/// §4.2.4): the proxy is a third party. ([`url_host`] already refuses a URL with `@` in its host
+/// part; this holds without that check too.)
+fn absolute_form(authority: &str, path: &str) -> String {
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    format!("http://{host}{path}")
 }
 
 /// One request over TLS, verified with `config`, within the default limits and directly.
@@ -485,6 +493,16 @@ fn exchange(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_absolute_form_never_names_the_urls_user() {
+        assert_eq!(
+            absolute_form("bob:TARGETPW@origin.test:8080", "/a?b=c"),
+            "http://origin.test:8080/a?b=c"
+        );
+        assert_eq!(absolute_form("a@b@origin.test", "/"), "http://origin.test/");
+        assert_eq!(absolute_form("[::1]:80", "/x"), "http://[::1]:80/x");
+    }
 
     #[test]
     fn url_hosts() {

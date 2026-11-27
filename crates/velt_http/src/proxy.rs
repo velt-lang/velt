@@ -105,52 +105,55 @@ pub fn choose(url: &str, var: impl Fn(&str) -> Option<String>) -> Result<Option<
     Proxy::parse(&value, &format!("${name}")).map(Some)
 }
 
-/// Whether `no_proxy` (comma-separated: `*`; a domain, also with a leading `.` or `*.`, which
-/// takes its subdomains too; an IP address or a CIDR range; each optionally with `:port`) lists
-/// `host` (a name or an address without brackets) on `port`.
+/// Whether `no_proxy` (entries separated by commas or white space, as curl and Node read it: `*`;
+/// a domain, also with a leading `.` or `*.`, which takes its subdomains too; an IP address or a
+/// CIDR range; each optionally with `:port`) lists `host` (a name or an address without
+/// brackets) on `port`.
 pub fn bypasses(no_proxy: &str, host: &str, port: Option<u16>) -> bool {
     let host = host.trim_end_matches('.').to_ascii_lowercase();
     let ip = host.parse::<IpAddr>().ok();
-    no_proxy.split([',', ' ']).any(|entry| {
-        let entry = entry.trim();
-        if entry == "*" {
-            return true;
-        }
-        // An entry with a port (`host:8080`, `[::1]:8080`) only covers that port; a bare IPv6
-        // address (`::1`) has colons but no port.
-        let (entry, want) = match split_port(entry) {
-            Some((h, p)) if entry.parse::<IpAddr>().is_err() && !entry.contains('/') => {
-                match p.parse::<u16>() {
-                    Ok(p) => (h, Some(p)),
-                    Err(_) => return false,
-                }
+    no_proxy
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .any(|entry| {
+            let entry = entry.trim();
+            if entry == "*" {
+                return true;
             }
-            _ => (entry, None),
-        };
-        if want.is_some() && want != port {
-            return false;
-        }
-        let entry = entry.trim_start_matches('[').trim_end_matches(']');
-        if let Some((net, bits)) = entry.split_once('/') {
-            return match (ip, net.parse::<IpAddr>(), bits.parse::<u32>()) {
-                (Some(ip), Ok(net), Ok(bits)) => in_range(ip, net, bits),
-                _ => false,
+            // An entry with a port (`host:8080`, `[::1]:8080`) only covers that port; a bare IPv6
+            // address (`::1`) has colons but no port.
+            let (entry, want) = match split_port(entry) {
+                Some((h, p)) if entry.parse::<IpAddr>().is_err() && !entry.contains('/') => {
+                    match p.parse::<u16>() {
+                        Ok(p) => (h, Some(p)),
+                        Err(_) => return false,
+                    }
+                }
+                _ => (entry, None),
             };
-        }
-        if let Ok(addr) = entry.parse::<IpAddr>() {
-            return ip == Some(addr);
-        }
-        let domain = entry
-            .trim_start_matches("*.")
-            .trim_start_matches('.')
-            .trim_end_matches('.')
-            .to_ascii_lowercase();
-        !domain.is_empty()
-            && (host == domain
-                || host
-                    .strip_suffix(&domain)
-                    .is_some_and(|sub| sub.ends_with('.')))
-    })
+            if want.is_some() && want != port {
+                return false;
+            }
+            let entry = entry.trim_start_matches('[').trim_end_matches(']');
+            if let Some((net, bits)) = entry.split_once('/') {
+                return match (ip, net.parse::<IpAddr>(), bits.parse::<u32>()) {
+                    (Some(ip), Ok(net), Ok(bits)) => in_range(ip, net, bits),
+                    _ => false,
+                };
+            }
+            if let Ok(addr) = entry.parse::<IpAddr>() {
+                return ip == Some(addr);
+            }
+            let domain = entry
+                .trim_start_matches("*.")
+                .trim_start_matches('.')
+                .trim_end_matches('.')
+                .to_ascii_lowercase();
+            !domain.is_empty()
+                && (host == domain
+                    || host
+                        .strip_suffix(&domain)
+                        .is_some_and(|sub| sub.ends_with('.')))
+        })
 }
 
 /// Whether `ip` is in `net/bits`.

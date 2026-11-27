@@ -282,6 +282,30 @@ fn http_is_sent_to_the_proxy_whole() {
     assert!(head.contains("\r\nX-A: 1\r\n"), "{head}");
 }
 
+/// The proxy is a third party: a user and password in the URL never reach it (RFC 9110 §4.2.4).
+/// Such a URL is refused before anything is sent, through a proxy as without one.
+#[test]
+fn the_urls_credentials_never_reach_the_proxy() {
+    let (proxy, heads) = proxy_once("HTTP/1.1 200 Connection established\r\n\r\n");
+    for url in [
+        "http://bob:TARGETPW@origin.invalid:8080/a",
+        "https://bob:TARGETPW@origin.invalid/a",
+    ] {
+        let err = fetch_via("GET", url, &[], b"", Limits::DEFAULT, Some(&proxy)).unwrap_err();
+        assert!(err.contains("host part"), "{url}: {err}");
+    }
+    assert!(heads.try_recv().is_err(), "the proxy got a request");
+}
+
+#[test]
+fn no_proxy_is_split_on_commas_and_any_white_space() {
+    let list = " a.test\tb.test\nc.test  d.test,,e.test\r";
+    for host in ["a.test", "b.test", "c.test", "d.test", "e.test"] {
+        assert!(bypasses(list, host, Some(443)), "{host}");
+    }
+    assert!(!bypasses(list, "f.test", Some(443)));
+}
+
 #[test]
 fn a_refused_tunnel_is_an_error() {
     let (proxy, _heads) =
