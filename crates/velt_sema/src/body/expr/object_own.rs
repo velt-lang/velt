@@ -294,16 +294,20 @@ impl FnCx<'_, '_> {
         }
         let read = synth(ast::ExprKind::Ident(ast::Ident { name, span }), span);
         // A record view's source (`velt_vir` `record_view.rs`) is held only by the view's
-        // record, never in a dynamic value: listed, it would make the dispatch depend on whether
-        // its hook module is loaded.
-        let source = match self.cx.std_def(velt_common::std_hook!(record_view_source)) {
-            Some(crate::ctx::Item::Def(d)) => Some(d),
-            _ => None,
-        };
+        // record, and the state of `console.log`'s line breaking only by its own functions,
+        // never in a dynamic value: listed, they would make the dispatch depend on whether
+        // their hook modules are loaded.
+        let held_by_std: Vec<DefId> = NEVER_DYNAMIC
+            .iter()
+            .filter_map(|name| match self.cx.std_def(name) {
+                Some(crate::ctx::Item::Def(d)) => Some(d),
+                _ => None,
+            })
+            .collect();
         let mut classes: Vec<(usize, DefId)> = (0..self.cx.info.len() as u32)
             .map(DefId)
             .filter(|&d| {
-                Some(d) != source
+                !held_by_std.contains(&d)
                     && self
                         .cx
                         .adt(d)
@@ -489,6 +493,16 @@ fn std_string_tag(s: &FnCx<'_, '_>, d: DefId, name: &str) -> Option<&'static str
         _ => return None,
     })
 }
+
+/// The classes of std modules loaded on demand whose objects never reach an `any`, by their
+/// qualified names: a record view's source (std/lang/hooks/any_record.velt) and the layout of a
+/// value being printed (std/lang/hooks/inspect_layout_container.velt). A dispatch over the
+/// classes a dynamic value may hold leaves them out, so it is the same whether their modules
+/// were loaded when it was written or not.
+const NEVER_DYNAMIC: [&str; 2] = [
+    velt_common::std_hook!(record_view_source),
+    velt_common::std_hooks::INSPECT_LAYOUT_STATE,
+];
 
 /// A prelude class whose objects never reach an `any`: an array view's state
 /// (std/lang/hooks; a view converts to `any` as the array it views).

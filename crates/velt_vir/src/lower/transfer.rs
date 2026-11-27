@@ -255,9 +255,10 @@ impl Cx<'_> {
     /// The class's own `clone()` method (declared on the class itself, no parameters, not
     /// async, cannot throw, returns the class) when the class owns a resource that a
     /// field-by-field copy would duplicate (a `[Symbol.dispose]` hook, its own or a part's, or
-    /// a promise): what a deep copy of an instance calls instead (#122). Any other class is
-    /// deep-copied field by field whatever its `clone()` does, so a shallow `clone()` cannot
-    /// leave a deep copy sharing objects (a copy for another thread least of all).
+    /// a promise), and std's `RegExp`'s: what a deep copy of an instance calls instead (#122,
+    /// #3883). Any other class is deep-copied field by field whatever its `clone()` does, so a
+    /// shallow `clone()` cannot leave a deep copy sharing objects (a copy for another thread
+    /// least of all).
     pub(super) fn own_clone(&mut self, t: TyId) -> Option<DefId> {
         let TyKind::Adt(d, _) = self.kind(t) else {
             return None;
@@ -272,9 +273,14 @@ impl Cx<'_> {
             self.own_clones = Some(self.find_own_clones());
         }
         let m = self.own_clones.as_ref().and_then(|m| m.get(&d).copied());
+        // `RegExp`'s too (#3883): its `lastIndex` sits in a `shared` cursor, which a field-by-field
+        // copy would share with the original; its `clone()` is JavaScript's structured clone
+        // (a fresh regex, `lastIndex` 0), and only reads strings (`clone_may_change`).
         let m = m.filter(|_| {
-            self.uncopyable_in(t, false, true, &mut FxHashSet::default())
-                .is_some()
+            self.is_regexp(t)
+                || self
+                    .uncopyable_in(t, false, true, &mut FxHashSet::default())
+                    .is_some()
         });
         self.honoured_clones.insert(t, m);
         m

@@ -1,0 +1,180 @@
+// velt/task (tests): std's abort signals under the executor in Velt (signal_core.velt): waits
+// woken by an abort, waits dropped before it, signals derived from others (`AbortSignal.any`),
+// also of derived ones and freed before their sources abort, and aborts racing on other workers.
+// The leak counters check that every signal, link and wait is given back.
+import { describe, expect, it } from "velt/test";
+import { promiseAt } from "velt/lang/intrinsics";
+import * as c from "velt/task/signal_core";
+import {
+  signalAbort,
+  signalAborted,
+  signalAny,
+  signalFree,
+  signalNew,
+  signalReason,
+  signalRetain,
+  signalWait,
+} from "velt/task/signal_sched";
+
+// Aborts `s` (its own reference) after the caller's waits are pending, then gives it back.
+async function abortLater(s: u64, reason: string): Promise<void> {
+  await Promise.resolve();
+  signalAbort(s, reason);
+  signalFree(s);
+}
+
+describe("signal_core", () => {
+  it("wakes every wait, once, with the first reason", async () => {
+    const s = signalNew();
+    const a = signalWait(s, false);
+    const b = signalWait(s, false);
+    const t = spawn(abortLater(signalRetain(s), "first"));
+    await a;
+    await b;
+    await t;
+    signalAbort(s, "second");
+    expect(signalAborted(s)).toBe(true);
+    expect(signalReason(s)).toBe("first");
+    // A wait on an aborted signal completes at once.
+    await signalWait(s, true);
+    signalFree(s);
+  });
+
+  it("has no reason before the abort", () => {
+    const s = signalNew();
+    expect(signalAborted(s)).toBe(false);
+    expect(signalReason(s)).toBe("");
+    signalFree(s);
+  });
+
+  it("lets go of a wait dropped before the abort", async () => {
+    // Dropped unpolled: its reference keeps the signal until then.
+    const s = signalNew();
+    const w = c.waitFuture(s as usize, true);
+    signalFree(s);
+    dropWait(w);
+    // Polled (linked, a keep-alive reference held), then dropped by a race it loses.
+    const s2 = signalNew();
+    await Promise.race([signalWait(s2, true), Promise.resolve()]);
+    signalAbort(s2, "late");
+    signalFree(s2);
+  });
+
+  it("aborts derived signals with the first source's reason", async () => {
+    const a = signalNew();
+    const b = signalNew();
+    const any = signalAny([a, b]);
+    const anyOfAny = signalAny([any]);
+    const w = signalWait(anyOfAny, false);
+    const t = spawn(abortLater(signalRetain(b), "from b"));
+    await w;
+    await t;
+    expect(signalAborted(any)).toBe(true);
+    expect(signalAborted(a)).toBe(false);
+    expect(signalReason(anyOfAny)).toBe("from b");
+    signalAbort(a, "from a");
+    expect(signalReason(any)).toBe("from b");
+    for (const s of [a, b, any, anyOfAny]) {
+      signalFree(s);
+    }
+  });
+
+  it("is aborted at once by a source aborted already", () => {
+    const a = signalNew();
+    const b = signalNew();
+    signalAbort(b, "done");
+    const any = signalAny([a, b]);
+    expect(signalReason(any)).toBe("done");
+    signalFree(any);
+    signalFree(a);
+    signalFree(b);
+  });
+
+  it("keeps its sources alive, and a freed one is unlinked", () => {
+    const a = signalNew();
+    const other = signalRetain(a);
+    const any = signalAny([a]);
+    const gone = signalAny([a]);
+    signalFree(a);
+    signalFree(gone);
+    signalAbort(other, "late");
+    expect(signalReason(any)).toBe("late");
+    signalFree(other);
+    signalFree(any);
+  });
+
+  it("wakes waits in the order they began", async () => {
+    const s = signalNew();
+    const order: number[] = [];
+    const w1 = noteWoken(s, order, 1);
+    const w2 = noteWoken(s, order, 2);
+    // A wait that was the last one and is dropped (the race it loses) leaves the end of the list
+    // to the one before it.
+    await Promise.race([signalWait(s, false), Promise.resolve()]);
+    const w3 = noteWoken(s, order, 3);
+    signalAbort(s, "stop");
+    await Promise.all([w1, w2, w3]);
+    expect(order).toEqual([1, 2, 3]);
+    signalFree(s);
+  });
+
+  it("aborts derived signals in the order they were made", async () => {
+    const a = signalNew();
+    const order: number[] = [];
+    const first = signalAny([a]);
+    const gone = signalAny([a]);
+    signalFree(gone);
+    const second = signalAny([a]);
+    // The waits begin in the other order: the signals' order decides.
+    const w2 = noteWoken(second, order, 2);
+    const w1 = noteWoken(first, order, 1);
+    signalAbort(a, "stop");
+    await Promise.all([w1, w2]);
+    expect(order).toEqual([1, 2]);
+    for (const s of [a, first, second]) {
+      signalFree(s);
+    }
+  });
+
+  it("wakes waits on other workers, with aborts racing", async () => {
+    for (let round = 0; round < 50; round++) {
+      const a = signalNew();
+      const b = signalNew();
+      const any = signalAny([a, b]);
+      const waits: Promise<void>[] = [];
+      for (let i = 0; i < 8; i++) {
+        waits.push(spawn(waitOn(signalRetain(i % 2 == 0 ? any : a))));
+      }
+      const x = spawn(abortLater(signalRetain(a), "a"));
+      const y = spawn(abortLater(signalRetain(b), "b"));
+      for (const w of waits) {
+        await w;
+      }
+      await x;
+      await y;
+      const r = signalReason(any);
+      expect(r == "a" || r == "b").toBe(true);
+      for (const s of [a, b, any]) {
+        signalFree(s);
+      }
+    }
+  });
+});
+
+// Waits for `s` (its own reference) on whichever worker runs it, then gives it back.
+async function waitOn(s: u64): Promise<void> {
+  await signalWait(s, false);
+  signalFree(s);
+}
+
+// Waits for `s`, then notes `n` in `order`.
+async function noteWoken(s: u64, order: number[], n: number): Promise<void> {
+  await signalWait(s, false);
+  order.push(n);
+}
+
+// Drops wait `w`, a heap future, without polling it.
+function dropWait(w: usize) {
+  // SAFETY: a live heap future of a unit result, owned here.
+  const p = unsafe { promiseAt<void>(w) };
+}

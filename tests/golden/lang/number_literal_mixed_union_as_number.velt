@@ -1,0 +1,50 @@
+// check: no leaks
+// A union of integer and float literals (`1 | 2.5`, #3815) is the `number` it is in TypeScript
+// wherever a `number` takes it, as a union of one kind is (#3867): the operand of a compound
+// assignment to a `number` (also through an optional field narrowed), an element spread into a
+// `number[]` (`[...ks]`, `push(...ks)`, `Math.max(...ks)`), the receiver of `Number` methods
+// (`toFixed`, `toPrecision`, `toExponential`), and an element of a callback's parameter. The Node
+// twin prints the same.
+
+type Step = 1 | 2.5;
+type Opt = { k?: 0 | 1.5 };
+
+function step(i: number): Step {
+  return i > 0 ? 2.5 : 1;
+}
+
+let n: number = 1;
+const k: Step = 2.5;
+n += k;
+n *= k;
+console.log("+= *=", n, k.toFixed(2));
+const u: Step = step(0);
+n -= u;
+n /= step(1);
+n **= u;
+n %= k;
+console.log("-= /= **= %=", n);
+console.log("methods", u.toFixed(1), k.toPrecision(3), k.toExponential(1), u.toExponential(2));
+
+const o: Opt = { k: 1.5 };
+let t: number = 1;
+if (o.k !== undefined) {
+  t += o.k;
+}
+const none: Opt = {};
+if (none.k !== undefined) {
+  t += none.k;
+}
+console.log("optional", t);
+
+const ks: (0 | 1 | 2.5)[] = [0, 1, 2.5];
+const xs: number[] = [...ks];
+const ys: number[] = [10, ...ks];
+ys.push(...ks);
+console.log("spread", xs.join(","), ys.join(","), Math.max(...ks));
+console.log(
+  "callbacks",
+  ks.reduce((a: number, x) => a + x, 0),
+  ks.map((x) => x * 2).join(","),
+  ks.map((x) => x.toFixed(1)).join(" "),
+);

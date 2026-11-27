@@ -159,4 +159,13 @@ pub const DELETED: &[&str] = &[
     "velt_rt_bytes_put_f64",
     // #3530: JSON string escaping, std's (std/encoding/json/writer.velt).
     "velt_rt_strbuf_push_json_str",
+    // #2196: the properties of function values and the identities of declared functions
+    // (std/lang/hooks/fn_props.velt).
+    "velt_rt_fnprop_get",
+    "velt_rt_fnprop_set",
+    "velt_rt_fnprop_delete",
+    "velt_rt_fnprop_len",
+    "velt_rt_fnprop_key",
+    "velt_rt_fnprop_identity",
+    "velt_rt_fnprop_identity_of",
 ];

@@ -523,8 +523,8 @@ and cost nothing in programs that do not catch.
   close the outer transfer too. A transfer the panicked code had suspended stays on std's list of
   suspended transfers.
 - **Runtime function pointers that are still `extern "C"`.** A Velt exception through one of them
-  aborts instead of reaching the catch: `DropFn` in `crates/velt_rt/src/drop_depth.rs`; `DataFn`, `TransferFn` and `DropFn` in
-  `crates/velt_rt/src/fn_props.rs`; `WorkFn` and `DropCtxFn` in `crates/velt_rt/src/native/mod.rs`.
+  aborts instead of reaching the catch: `DropFn` in `crates/velt_rt/src/drop_depth.rs`; `WorkFn`
+  and `DropCtxFn` in `crates/velt_rt/src/native/mod.rs`.
 - **The payload is the message only.** No location and no value.
 
 ## Not yet implemented

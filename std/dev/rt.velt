@@ -1,7 +1,16 @@
 // velt/dev (internal): the runtime's graceful stop under `velt dev` (rt_abi_async.md §13.2,
 // crates/velt_rt/src/dev/shutdown.rs).
 
-/** A signal aborted once the stop request arrives (the caller owns it); 0 outside `velt dev`. */
+/**
+ * A runtime signal aborted once the stop request arrives (the caller owns it); 0 outside
+ * `velt dev`. Not one of `AbortSignal`'s, which are std's: the three below are all it has.
+ */
 export declare function velt_rt_dev_server_stop(): u64;
+/** Completes once runtime signal `s` is aborted; `timed` (false here): keeps the process alive. */
+export declare async function velt_rt_signal_wait(s: u64, timed: bool): Promise<void>;
+/** Runtime signal `s`'s reason (`""` while it is not aborted). */
+export declare function velt_rt_signal_reason(s: u64): string;
+/** Releases runtime signal `s`. */
+export declare function velt_rt_signal_free(s: u64);
 /** The server that joined the stop stopped accepting and finished its requests. */
 export declare function velt_rt_dev_server_drained();

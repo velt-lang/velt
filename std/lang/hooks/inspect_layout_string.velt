@@ -4,8 +4,9 @@
 // ` +` and a new line (lib/internal/util/inspect.js). The printer wrote the string quoted and
 // escaped (velt_rt's `push_inspect_string`), so this reads it back first.
 
-import { utf16Units } from "velt/lang/hooks/inspect_layout_width";
-import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+import { pushRange } from "velt/lang/hooks/inspect_layout_pieces";
+import { hasByte, utf16Units, wordAt } from "velt/lang/hooks/inspect_layout_width";
+import { strByteAt, strByteLen, strDataAddress } from "velt/lang/intrinsics";
 
 declare function velt_rt_strbuf_push_byte(buf: string, b: u8);
 declare function velt_rt_strbuf_push_inspect_str(buf: string, s: string);
@@ -24,71 +25,100 @@ export function splitString(src: string, a: u64, b: u64, indent: u64): string {
   if (!hasEscapedBreak(src, a, b)) {
     return "";
   }
-  const raw = unescapeString(src, a, b);
+  const breaks: u64[] = [];
+  const raw = unescapeString(src, a, b, breaks);
   const n = strByteLen(raw) as u64;
   const len = utf16Units(raw, 0, n);
   // Node's two rules. Within the depth limit (indentation at most 8) a string past the room on its
   // line is longer than 16 units anyway, so the first decides nothing; it stays as Node writes it.
-  if (len <= 16 || len + indent + 4 <= BREAK_LENGTH) {
+  if (len <= 16 || len + indent + 4 <= BREAK_LENGTH || breaks.length == 0) {
+    // No line break after all: each `\n` was an escaped backslash and an `n`.
     return "";
+  }
+  // A piece after each line break, and the rest.
+  if (breaks[breaks.length - 1] + 1 < n) {
+    breaks.push(n - 1);
   }
   let out: string = "";
   let from: u64 = 0;
-  let any = false;
-  for (let j: u64 = 0; j < n; j++) {
-    if (strByteAt(raw, j) == 0x0a || j + 1 == n) {
-      if (strByteAt(raw, j) == 0x0a) {
-        any = true;
-      }
-      const piece = velt_rt_str_byte_slice(raw, from, j + 1);
-      if (from > 0) {
+  for (let k = 0; k < breaks.length; k++) {
+    const to = breaks[k] + 1;
+    const piece = velt_rt_str_byte_slice(raw, from, to);
+    if (from > 0) {
+      velt_rt_strbuf_push_byte(out, 0x20);
+      velt_rt_strbuf_push_byte(out, 0x2b);
+      velt_rt_strbuf_push_byte(out, 0x0a);
+      for (let j: u64 = 0; j < indent + 2; j++) {
         velt_rt_strbuf_push_byte(out, 0x20);
-        velt_rt_strbuf_push_byte(out, 0x2b);
-        velt_rt_strbuf_push_byte(out, 0x0a);
-        for (let k: u64 = 0; k < indent + 2; k++) {
-          velt_rt_strbuf_push_byte(out, 0x20);
-        }
       }
-      velt_rt_strbuf_push_inspect_str(out, piece);
-      from = j + 1;
     }
+    velt_rt_strbuf_push_inspect_str(out, piece);
+    from = to;
   }
-  // An escaped `\n` that was an escaped backslash and an `n`: no line break after all.
-  return any ? out : "";
+  return out;
 }
 
 /** Is there a `\n` escape (a backslash, then `n`) in bytes `a..b` of `s`? */
 function hasEscapedBreak(s: string, a: u64, b: u64): bool {
-  for (let j = a; j + 1 < b; j++) {
-    if (strByteAt(s, j) == 0x5c && strByteAt(s, j + 1) == 0x6e) {
+  const data = strDataAddress(s) as u64;
+  let j = nextBackslash(s, data, a, b);
+  while (j + 1 < b) {
+    if (strByteAt(s, j + 1) == 0x6e) {
       return true;
     }
+    j = nextBackslash(s, data, j + 2, b);
   }
   return false;
+}
+
+/** The offset of the first backslash in bytes `i..end` of `s` (its bytes at `data`), or `end`. */
+function nextBackslash(s: string, data: u64, i: u64, end: u64): u64 {
+  let j = i;
+  while (j < end) {
+    if (((data + j) & 7) == 0) {
+      while (j + 8 <= end && !hasByte(wordAt(data, j), 0x5c)) {
+        j += 8;
+      }
+      if (j >= end) {
+        break;
+      }
+    }
+    if (strByteAt(s, j) == 0x5c) {
+      return j;
+    }
+    j += 1;
+  }
+  return end;
 }
 
 /**
  * The text of the quoted string at bytes `a..b` of `s` (quotes included), as velt_rt's
  * `push_inspect_string` escaped it: `\n`, `\t`, `\b`, `\f`, `\r`, `\xHH` (a control character),
  * `\uXXXX` (a lone surrogate, in WTF-8), and a backslash before any other byte, which stands for
- * that byte.
+ * that byte. `breaks` gets the offset of each line break in the text.
  */
-function unescapeString(s: string, a: u64, b: u64): string {
+function unescapeString(s: string, a: u64, b: u64, breaks: u64[]): string {
   // Built as bytes and made a string once: a character's bytes appended one by one would be
   // checked one by one, each a truncated character.
   const out: u8[] = [];
+  // The text is at most as long as its escaped form.
+  out.reserve((b - a) as usize);
+  const data = strDataAddress(s);
   const end = b > a + 1 ? b - 1 : a + 1;
   let i = a + 1;
   while (i < end) {
-    const c = strByteAt(s, i);
-    if (c != 0x5c || i + 1 >= end) {
-      out.push(c);
-      i += 1;
-      continue;
+    // The run up to the next backslash, in one copy.
+    const j = nextBackslash(s, data as u64, i, end);
+    pushRange(out, data, i, j);
+    i = j;
+    // A backslash escapes the byte after it, so none is the string's last (`skipQuoted`).
+    if (i + 1 >= end) {
+      break;
     }
     const next = strByteAt(s, i + 1);
     i += 2;
     if (next == 0x6e) {
+      breaks.push(out.length as u64);
       out.push(0x0a);
     } else if (next == 0x74) {
       out.push(0x09);

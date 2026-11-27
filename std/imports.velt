@@ -242,6 +242,11 @@ export const imports: Imports = {
   // velt/task's `catchPanic` catch: the runtime's (velt_rt_catch_*), or under the executor in
   // Velt (`VELT_SCHEDULER=std`) its own, with `catchUnwind` (std/task/catch_sched.velt).
   "#task-catch": { "std-scheduler": "./task/catch_sched.velt", default: "./task/catch_rt.velt" },
+  /**
+   * `AbortSignal`'s signals: under the executor in Velt (`VELT_SCHEDULER=std`) std's own
+   * (std/task/signal_core.velt), else the runtime's (velt_rt_signal_*, WebAssembly's runtime).
+   */
+  "#task-signal": { "std-scheduler": "./task/signal_sched.velt", default: "./task/signal_rt.velt" },
   "#task-workers": {
     "std-scheduler": "./task/worker_index_sched.velt",
     default: "./task/worker_index.velt",
@@ -266,6 +271,11 @@ export const imports: Imports = {
   // The path `openRead` and `openWrite` hand the runtime, and their errors: Node's resolved
   // path on Windows (std/fs/whole/win_path.velt), the path as given elsewhere.
   "#fs-stream-path": { win32: "./fs/whole/win_stream_path.velt", default: "./fs/stream_path.velt" },
+  /**
+   * The files under file streams in a native build (std/fs/stream_sched.velt): the C library's
+   * file descriptors (`#fd-system`), or Win32's handles on Windows.
+   */
+  "#fs-stream-os": { win32: "./fs/stream_os/win32.velt", default: "./fs/stream_os/posix.velt" },
   // What a `MappedFile` is made of (velt/fs): a mapping of the file (`mmap` through
   // `#fd-system`, Win32's file mappings on Windows), the file read into memory on WebAssembly.
   "#mapped-source": {

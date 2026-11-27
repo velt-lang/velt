@@ -63,8 +63,9 @@ export declare unsafe function addressCall3(f: usize, a: usize, b: usize, c: usi
 /**
  * The address of the module-level function `f`, which C code may call with the C calling
  * convention: a waker's table entries, a heap future's header (rt_abi_async.md §1). `f` is named
- * directly, is not generic, async or throwing, and takes and returns only numbers and `bool`
- * (sema checks it).
+ * directly, is not generic, async or throwing, and takes and returns only numbers, `bool` and C
+ * pointers (`Ptr<T>`, which is pointer-sized on every target where a `usize` is 64 bits) (sema
+ * checks it).
  */
 @intrinsic
 export declare function fnAddress<F>(f: F): usize;

@@ -1,0 +1,82 @@
+// check: no leaks
+// A deep copy of a regex is JavaScript's structured clone of it (#3883): a fresh regex whose
+// `lastIndex` starts at 0 and moves on its own, never the original's. `structuredClone`, a regex
+// in an object or array that is copied, a copy for a spawned task and one sent through a channel
+// (the sender keeps its regex, so the task gets a copy), each with `g` and `y`; and copies
+// searching on several threads at once. The Node twin stands `structuredClone` in for the copy
+// at the task and channel boundaries, as a worker's `postMessage` makes it.
+import { channel } from "velt/sync";
+
+const s = "aaaa";
+
+function both(label: string, a: RegExp, b: RegExp) {
+  a.exec(s);
+  a.exec(s);
+  b.exec(s);
+  console.log(label, a.lastIndex, b.lastIndex);
+}
+
+async function inTask(r: RegExp): Promise<number> {
+  r.exec(s);
+  return r.lastIndex;
+}
+
+// Copies of one regex searching on several threads at once: they read one compiled program.
+async function searches(re: RegExp, n: number): Promise<number> {
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    re.lastIndex = 0;
+    re.exec("xaab aab");
+    sum += re.lastIndex;
+    sum += re.test("aab") ? 1 : 0;
+  }
+  return sum;
+}
+
+async function main() {
+  const g = /a/g;
+  g.lastIndex = 1;
+  const gc = structuredClone(g);
+  console.log("clone g", gc.lastIndex, gc.source, gc.flags, gc === g);
+  gc.lastIndex = 3;
+  console.log("write copy", g.lastIndex, gc.lastIndex);
+  both("exec g", g, gc);
+
+  const y = /a/y;
+  y.lastIndex = 2;
+  const yc = structuredClone(y);
+  console.log("clone y", yc.lastIndex);
+  both("exec y", y, yc);
+
+  const holder = { name: "h", re: /a/g, list: [/a/y, /b/gi] };
+  holder.re.lastIndex = 2;
+  holder.list[0].lastIndex = 1;
+  const hc = structuredClone(holder);
+  console.log("in object", hc.re.lastIndex, hc.list[0].lastIndex, hc.list[1].flags);
+  hc.re.exec(s);
+  console.log("object after exec", holder.re.lastIndex, hc.re.lastIndex);
+
+  const t = /a/g;
+  t.lastIndex = 1;
+  const fromTask = await spawn(inTask(t));
+  t.exec(s);
+  console.log("spawned", fromTask, t.lastIndex);
+
+  const ch = channel<RegExp>();
+  const sent = /a/y;
+  sent.lastIndex = 1;
+  ch.trySend(sent);
+  const got = ch.tryReceive()!;
+  got.exec(s);
+  sent.exec(s);
+  console.log("channel", got.lastIndex, sent.lastIndex, got === sent);
+
+  const word = /a+b/g;
+  word.lastIndex = 2;
+  const ps: Promise<number>[] = [];
+  for (let k = 0; k < 4; k++) {
+    ps.push(spawn(searches(word, 2000)));
+  }
+  const sums = await Promise.all(ps);
+  console.log("threads", sums.join(" "), word.lastIndex);
+}

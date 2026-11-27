@@ -1,8 +1,9 @@
 //! The weak core's rows of the hook table (std/lang/hooks/weak*.velt, #3145; docs/internals/
 //! design/weak-refs.md, rt_abi.md "Weak references"): the core under `WeakMap`, `WeakSet` and
-//! `WeakRef` and the cold path of a weakly held object's release, all lowered for
-//! `Construct::Weak` and prebuilt. Kept apart from the rest of the table ([`super`]), which
-//! [`with_weak_hooks`] gives to `with_transfer_hooks!` with these rows after it.
+//! `WeakRef` and the cold path of a weakly held object's release, all lowered for `Construct::Weak`
+//! and prebuilt; and the table of function properties (fn_props.velt, #2196), another process-wide
+//! table in std, lowered for `Construct::FnProps`. Kept apart from the rest of the table
+//! ([`super`]), which [`with_weak_hooks`] gives to `with_transfer_hooks!` with these rows after it.
 
 /// `with_transfer_hooks!` over the rows given, then the weak core's.
 macro_rules! with_weak_hooks {
@@ -57,6 +58,35 @@ macro_rules! with_weak_hooks {
             /// A `weak T` field's or variable's reference to `(slot)` given up.
             weak_slot_drop => lang_hooks_weak, "weakSlotDrop", sig((usize) -> void), lowered,
                 constructs(Weak), prebuilt;
+            // fn_props.velt: the properties of function values (#924, #2196; rt_abi.md
+            // "Function properties"), keyed by the function's environment (`env`), in a
+            // program that writes through `any` (velt_vir `any_fn_props.rs`).
+            /// The identity environment of a declared function's code, made on first use.
+            fn_prop_identity => lang_hooks_fn_props, "fnPropIdentity", sig((u64) -> u64), lowered,
+                constructs(FnProps), replaces("velt_rt_fnprop_identity");
+            /// That identity if it was made, else 0.
+            fn_prop_identity_of => lang_hooks_fn_props, "fnPropIdentityOf", sig((u64) -> u64),
+                lowered, constructs(FnProps), replaces("velt_rt_fnprop_identity_of");
+            /// `(env, key)`: the property's index, or -1; `fn_prop_at` gives a share of its value.
+            fn_prop_index => lang_hooks_fn_props, "fnPropIndex", sig((u64, &string) -> i64),
+                lowered, constructs(FnProps), replaces("velt_rt_fnprop_get");
+            /// `(env, index)`: a share of the value of the property at `index` (`fn_prop_index`).
+            fn_prop_at => lang_hooks_fn_props, "fnPropAt", sig((u64, i64) -> any), lowered,
+                constructs(FnProps);
+            /// `(env, key, value)`: the property set, the value taken over.
+            fn_prop_set => lang_hooks_fn_props, "fnPropSet", sig((u64, &string, move any) -> void),
+                lowered, constructs(FnProps), replaces("velt_rt_fnprop_set");
+            /// `(env, key)`: the property removed; whether there was one.
+            fn_prop_delete => lang_hooks_fn_props, "fnPropDelete", sig((u64, &string) -> bool),
+                lowered, constructs(FnProps), replaces("velt_rt_fnprop_delete");
+            /// `(env)`: how many properties; `(env, i)`: the name of property `i`.
+            fn_prop_len => lang_hooks_fn_props, "fnPropLen", sig((u64) -> u64), lowered,
+                constructs(FnProps), replaces("velt_rt_fnprop_len");
+            fn_prop_key => lang_hooks_fn_props, "fnPropKey", sig((u64, u64) -> string), lowered,
+                constructs(FnProps), replaces("velt_rt_fnprop_key");
+            /// The program's normal end: the identities released for the leak counters.
+            fn_props_exit => lang_hooks_fn_props, "fnPropsExit", sig(() -> void), lowered,
+                constructs(FnProps);
         }
     };
 }

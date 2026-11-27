@@ -149,4 +149,20 @@ export class Program {
   hasAscii(set: u32, c: u32): bool {
     return ((this.ascii[2 * (set as usize) + ((c >> 6) as usize)] >> ((c & 63) as u64)) & 1) != 0;
   }
+
+  /** The class of the character `c` (`classStarts`). */
+  classOf(c: u32): usize {
+    const starts = this.classStarts;
+    let lo: usize = 0;
+    let hi = starts.length;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (starts[mid] <= c) {
+        lo = mid;
+      } else {
+        hi = mid;
+      }
+    }
+    return lo;
+  }
 }

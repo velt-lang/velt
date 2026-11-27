@@ -1,10 +1,9 @@
-//! `std/fs` (rt_abi_async.md §5) over WASI files: velt_rt's operations compiled from its
-//! sources, async variants that run the operation on their first poll (there is no blocking
+//! `std/fs` (rt_abi_async.md §5) over WASI files: the shared operations (ops.rs), async variants
+//! that run the operation on their first poll (there is no blocking
 //! pool on one thread), and the `*_sync` functions of whole.rs and tree.rs. In the browser every
 //! operation fails with the error `std` reports there. Renaming, linking and copying are std
 //! code on WebAssembly too (std/fs/paths/wasi.velt and js.velt).
 
-#[path = "../../../velt_rt/src/fs/ops.rs"]
 mod ops;
 mod tree;
 mod whole;
