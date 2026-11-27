@@ -273,7 +273,13 @@ impl Target {
     fn of(lw: &mut FnLower<'_, '_>, def: DefId, targs: Vec<TyId>) -> Self {
         if let hir::Def::ExternFn(x) = lw.cx.hir.def(def) {
             let (symbol, ret) = (x.symbol.clone(), x.ret);
-            let params: Vec<Ty> = x.params.clone().into_iter().map(|p| lw.cx.ty(p)).collect();
+            // An aggregate (a `&string` of a prebuilt hook) by address, as `extern_call` passes it.
+            let params: Vec<Ty> = (x.params.clone().into_iter())
+                .map(|p| match lw.cx.ty(p) {
+                    Ty::Agg(_) => Ty::Ptr,
+                    t => t,
+                })
+                .collect();
             let ret = lw.cx.ty(ret);
             return Target::Extern(lw.cx.extern_sym(&symbol, params, ret, false));
         }
@@ -373,7 +379,8 @@ impl<R> Call<R> {
 
     /// The call of prebuilt hook `hook` in its module's object: the function sema declared for
     /// it in place of loading its module (`velt_sema` `lazy_std/hook_stubs.rs`
-    /// `declared_lowered`), which takes and returns numbers and `bool`s by value.
+    /// `declared_lowered`), which takes numbers and `bool`s by value and a `&string` as the address
+    /// of the caller's value (velt_common `prebuilt.rs`), and returns numbers and `bool`s.
     fn declared<const N: usize>(
         lw: &mut FnLower<'_, '_>,
         hook: &velt_common::std_hooks::Hook,
@@ -388,8 +395,8 @@ impl<R> Call<R> {
         };
         let argv = (args.into_iter())
             .map(|Passed(how, mode)| match (how, mode) {
-                (How::As(op), Mode::Value) => op,
-                _ => ice("a prebuilt hook's argument not passed by value"),
+                (How::As(op), Mode::Value | Mode::Borrow) => op,
+                _ => ice("a prebuilt hook's argument neither a number nor a borrowed string"),
             })
             .collect();
         Call {

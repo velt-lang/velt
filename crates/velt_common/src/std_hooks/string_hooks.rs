@@ -62,12 +62,13 @@ macro_rules! with_string_hooks {
                 bench("string_methods"), prebuilt;
 
             // velt/lang/string/positions: a code unit of a string that is not ASCII, which lowering
-            // calls past `strCharCodeAt`'s inline ASCII read (#2816). Not prebuilt: the
-            // translation keeps its cache in `ThreadLocal`s and reads `STR_EPOCH`.
+            // calls past `strCharCodeAt`'s inline ASCII read (#2816). Prebuilt: the translation's
+            // cache is `ThreadLocal`s the program shares (`prebuilt::thread_shared`), and the
+            // object imports the program's `STR_EPOCH`.
             /// `s.charCodeAt(i)` of a string that is not ASCII: the code unit, or -1 out of range.
             string_char_code_at => lang_string_positions, "charCodeAtWide", sig((&string, i64) -> i64),
                 lowered, constructs(CharCode), replaces("velt_rt_str_char_code_at"),
-                bench("string_methods");
+                bench("string_methods"), prebuilt;
 
             // velt/lang/bytes/range_text: a byte range as a string (#2196), which the prelude's
             // `utf8Slice` calls by role, so a program loads the decoder only when live code calls it.
