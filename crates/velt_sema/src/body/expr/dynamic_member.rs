@@ -651,6 +651,12 @@ impl FnCx<'_, '_> {
                 t => Some(format!("-{t}")),
             },
             H::Cast(x) => self.value_text(x),
+            // An element of a typed array or tuple (`arr[0]`).
+            H::Index { base, index, .. } => Some(format!(
+                "{}[{}]",
+                self.value_text(base)?,
+                self.value_text(index)?
+            )),
             H::Call {
                 callee: hir::Callee::Intrinsic(i @ (Intrinsic::AnyGet | Intrinsic::AnyIndex)),
                 args,

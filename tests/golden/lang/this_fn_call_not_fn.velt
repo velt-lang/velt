@@ -1,0 +1,57 @@
+// In a program with a function taking `this`, a member call whose function is a dynamic value
+// (`o[k](x)`, `arr[0](x)`, `o.m?.(x)`) passes its object as `this`; when the member holds no
+// function, the call throws Node's `TypeError` to the program's `catch`, naming the callee as
+// Node does (`o[1.5]`, `arr[0]`, `o.x`), after the arguments are evaluated. Before, the error
+// named std's parameter (`f is not a function`) and stopped the program.
+const o: any = {
+  x: 5,
+  m: function (this: any, y: number): number {
+    return this.x + y;
+  },
+};
+const arr: any[] = [1, o.m];
+
+function arg(name: string): number {
+  console.log("arg", name);
+  return 1;
+}
+
+function calls(): void {
+  console.log(o.m(1), o["m"](2), arr[1](3));
+  try {
+    o[1658206780088562.25](arg("long key"));
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+  try {
+    o["nope"]();
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+  try {
+    arr[0](arg("element"));
+    console.log("not reached");
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+  const local: any[] = [2];
+  try {
+    local[0]();
+  } catch (e) {
+    console.log((e as Error).name, (e as Error).message);
+  }
+  console.log(local.length, local[0]);
+  try {
+    console.log(o.k?.(arg("never")));
+    o.x?.(arg("optional"));
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+}
+
+calls();
+try {
+  o[2]();
+} catch (e) {
+  console.log("top level:", (e as Error).message);
+}
