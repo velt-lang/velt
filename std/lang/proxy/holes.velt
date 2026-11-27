@@ -17,7 +17,14 @@
 //   `t` is `t` (identities are addresses, so even);
 // - the holes, as pairs (target, index).
 
-import { addressLoad, addressStore, identity, rawAlloc, rawFree } from "velt/lang/intrinsics";
+import {
+  addressLoad,
+  addressStore,
+  identity,
+  noInline,
+  rawAlloc,
+  rawFree,
+} from "velt/lang/intrinsics";
 
 /** The frames' block (0: no method runs). */
 const FRAMES = new ThreadLocal<u64>(0);
@@ -166,6 +173,7 @@ const ALL: i64 = -9223372036854775807;
  * Starts an array method on a proxy of the array `target` (its trap calls are `trapBegin` and
  * `trapEnd`). End it with `methodEnd`, in `finally`.
  */
+@noInline
 export function methodBegin(target: any): void {
   FRAMES.set(pushed(FRAMES.get() as usize, identity(target) | 1) as u64);
 }
@@ -174,6 +182,7 @@ export function methodBegin(target: any): void {
  * Ends the method `methodBegin(target)` started: the first hole it leaves in `target` (forgotten
  * then), or -1 for none. While another method on `target` runs, the holes stay its own (-1).
  */
+@noInline
 export function methodEnd(target: any): i64 {
   const t = identity(target);
   popFrame();
@@ -193,11 +202,13 @@ export function methodEnd(target: any): i64 {
 }
 
 /** Starts a trap call of the method on `target` (`methodBegin`); end it with `trapEnd`. */
+@noInline
 export function trapBegin(target: any): void {
   FRAMES.set(pushed(FRAMES.get() as usize, identity(target)) as u64);
 }
 
 /** Ends the trap call `trapBegin` started. */
+@noInline
 export function trapEnd(): void {
   popFrame();
 }
