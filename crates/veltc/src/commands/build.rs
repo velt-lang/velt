@@ -19,12 +19,12 @@ pub(crate) const SCRIPT_VAR: &str = "VELT_SCRIPT";
 /// whose OS arguments are velt's: [`argv_env`]'s text, read and hidden like [`SCRIPT_VAR`].
 pub(crate) const ARGV_VAR: &str = "VELT_ARGV";
 
-/// `args` (program path first) as [`ARGV_VAR`]'s text: each argument's length in UTF-16 code
-/// units, `:`, the argument (`5:hello3:a b`).
+/// `args` (program path first) as [`ARGV_VAR`]'s text: each argument's length in UTF-8 bytes,
+/// `:`, the argument (`5:hello3:a b`).
 pub(crate) fn argv_env(args: &[String]) -> String {
     let mut out = String::new();
     for a in args {
-        out.push_str(&a.encode_utf16().count().to_string());
+        out.push_str(&a.len().to_string());
         out.push(':');
         out.push_str(a);
     }

@@ -248,6 +248,73 @@ fn std_arguments_and_hidden_variables() {
     assert_eq!(stdout(&built), want, "the built program, odd variables");
 }
 
+/// The arguments are read once per process: a program that sets the variables velt passes them
+/// in afterwards still sees its own, as in Node, where `process.env` doesn't feed `process.argv`.
+const READ_ONCE_PROGRAM: &str = r#"import { argv, setEnv } from "velt/process";
+
+function main() {
+  const node = JSON.stringify(process.argv);
+  const all = JSON.stringify(argv());
+  setEnv("VELT_SCRIPT", "elsewhere.velt");
+  setEnv("VELT_ARGV", "5:other");
+  console.log(JSON.stringify(process.argv) == node);
+  console.log(JSON.stringify(argv()) == all);
+  console.log(JSON.stringify(process.argv.slice(2)));
+}
+"#;
+
+#[test]
+fn arguments_are_read_once() {
+    runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
+    let dir = test_dir::TestDir::new();
+    let src = dir.path().join("read_once.velt");
+    std::fs::write(&src, READ_ONCE_PROGRAM).unwrap();
+    let want = "true\ntrue\n[\"a b\",\"\",\"ü\"]\n";
+    for mode in [&["run"][..], &["dev", "--host"]] {
+        let out = velt()
+            .args(mode)
+            .arg(&src)
+            .arg("--")
+            .args(["a b", "", "ü"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert_eq!(stdout(&out), want, "velt {mode:?}");
+    }
+}
+
+/// `process.argv` read at several places compiles its reader once: the reader takes no caller's
+/// location (a std function that may panic gets a copy per call site, velt_vir track_caller.rs)
+/// and is not inlined into the caller, so a program's code does not grow by a copy of it per
+/// read (a program reading it twice compiled 2.3 times as long as with the runtime's extern).
+#[test]
+fn argv_reader_is_compiled_once() {
+    let dir = test_dir::TestDir::new();
+    let src = dir.path().join("argv_sites.velt");
+    std::fs::write(
+        &src,
+        "function main() {\n  let n = process.argv.length;\n  n += process.argv[0].length;\n  \
+         n += process.argv.slice(2).length;\n  console.log(n > 0);\n}\n",
+    )
+    .unwrap();
+    let out = velt()
+        .args(["build", "--release", "--emit", "vir"])
+        .arg(&src)
+        .output()
+        .unwrap();
+    let vir = stdout(&out);
+    let fns: Vec<&str> = vir.lines().filter(|l| l.starts_with("fn#")).collect();
+    let readers: Vec<&&str> = fns
+        .iter()
+        .filter(|l| l.contains("P4argsN8nodeArgv"))
+        .collect();
+    assert_eq!(readers.len(), 1, "{readers:#?}");
+    assert!(!readers[0].contains("nodeArgv_L"), "{}", readers[0]);
+    // The reading itself (the files, the variables) is one function more, out of line.
+    let reads = fns.iter().filter(|l| l.contains("N12readNodeArgv")).count();
+    assert_eq!(reads, 1, "{fns:#?}");
+}
+
 /// A program whose executable is removed while it runs: Linux's `/proc/self/exe` then ends in
 /// " (deleted)", which `process.argv[0]` leaves out (the path the program was started as).
 #[cfg(target_os = "linux")]

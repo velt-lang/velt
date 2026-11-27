@@ -4,10 +4,11 @@
 
 import { Ptr } from "velt/ffi/ptr";
 import { addressLoad } from "velt/lang/intrinsics";
-import { hiddenVar, withoutHidden } from "./env_hidden";
+import { ARGV_C, hiddenVar, SCRIPT_C, withoutHidden } from "./env_hidden";
 import * as posix from "./env_posix";
 
 export { executablePath, osArgs } from "./args_darwin";
+export { keepArgs, releaseArgs, unpackArgs } from "./args_keep";
 
 /** `char ***_NSGetEnviron(void)` (<crt_externs.h>): where `environ` is. */
 declare c("c") function _NSGetEnviron(): Ptr<void>;
@@ -25,9 +26,14 @@ export function getEnv(name: string): string | undefined {
   return hiddenVar(name, false) ? undefined : posix.getEnv(name);
 }
 
-/** The variable `name` as it is, the hidden ones included (std/process/args.velt). */
+/** The variable `name` as it is, the hidden ones included. */
 export function getEnvRaw(name: string): string | undefined {
   return posix.getEnv(name);
+}
+
+/** `VELT_ARGV` (`argv`) or `VELT_SCRIPT`, which velt passes (std/process/args.velt). */
+export function passedVar(argv: bool): string | undefined {
+  return argv ? posix.getEnvC(ARGV_C) : posix.getEnvC(SCRIPT_C);
 }
 
 export function setEnv(name: string, value: string) {

@@ -5,7 +5,8 @@
 
 import { arrayDataAddress, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 
-export { envPairs, getEnv, getEnvRaw, removeEnv, setEnv } from "./env_wasm";
+export { envPairs, getEnv, getEnvRaw, passedVar, removeEnv, setEnv } from "./env_wasm";
+export { keepArgs, releaseArgs, unpackArgs } from "./args_keep";
 
 /** `args_sizes_get`: the number of arguments and the bytes they take, NULs included. */
 declare c("c") function __wasi_args_sizes_get(argc: u32[], size: u32[]): u16;

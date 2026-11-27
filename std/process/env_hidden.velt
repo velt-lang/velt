@@ -11,6 +11,13 @@ export const SCRIPT_VAR = "VELT_SCRIPT";
 /** `VELT_ARGV`: the program's arguments under `velt dev` and the generator host. */
 export const ARGV_VAR = "VELT_ARGV";
 
+/**
+ * `VELT_SCRIPT` and `VELT_ARGV` as NUL-terminated bytes, for the C library's `getenv` (macOS and
+ * Linux: `passedVar`), so that reading them converts no text for C.
+ */
+export const SCRIPT_C: u8[] = [86, 69, 76, 84, 95, 83, 67, 82, 73, 80, 84, 0];
+export const ARGV_C: u8[] = [86, 69, 76, 84, 95, 65, 82, 71, 86, 0];
+
 /** Whether `name` is one of them; `fold`: names compare without regard to ASCII case (Windows). */
 export function hiddenVar(name: string, fold: bool): bool {
   return same(name, SCRIPT_VAR, fold) || same(name, ARGV_VAR, fold);

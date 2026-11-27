@@ -1,10 +1,12 @@
 // velt/process (internal): the arguments on Linux (std/process/env_linux.velt re-exports them):
 // `/proc/self/cmdline`, the NUL-separated arguments the kernel keeps (glibc's and musl's alike;
 // the C library gives a program no way to reach `main`'s `argv` later), and the executable's
-// path (`/proc/self/exe`).
+// path (`/proc/self/exe`). Both work on bytes, the paths as NUL-terminated byte constants: no
+// string goes to C, so a program reading its arguments loads no conversion of text to C's.
 
 import { CVarArgs } from "velt/ffi/c_var_args";
-import { cBytes, resolved } from "./args_posix";
+import { buffer, resolvedC } from "./args_posix";
+import { textOf } from "./args_text";
 
 declare c("c") function open$args(path: readonly u8[], flags: i32, ...args: CVarArgs): i32;
 declare c("c") function read$args(fd: i32, buf: u8[], n: usize): isize;
@@ -15,15 +17,44 @@ declare c("c") function access$args(path: readonly u8[], mode: i32): i32;
 /** `O_RDONLY | O_CLOEXEC`. */
 const READ_ONLY: i32 = 0o2000000;
 
-/** The bytes of the file at `path`, or none when it can't be read. */
-function readAll(path: string): u8[] {
-  // SAFETY: `cBytes` is NUL-terminated.
-  const fd = unsafe { open$args(cBytes(path), READ_ONLY) };
+/** `/proc/self/cmdline`, NUL-terminated. */
+const CMDLINE: u8[] = [
+  47,
+  112,
+  114,
+  111,
+  99,
+  47,
+  115,
+  101,
+  108,
+  102,
+  47,
+  99,
+  109,
+  100,
+  108,
+  105,
+  110,
+  101,
+  0,
+];
+
+/** `/proc/self/exe`, NUL-terminated. */
+const EXE: u8[] = [47, 112, 114, 111, 99, 47, 115, 101, 108, 102, 47, 101, 120, 101, 0];
+
+/** ` (deleted)`: what the kernel adds to the link of a removed executable. */
+const GONE: u8[] = [32, 40, 100, 101, 108, 101, 116, 101, 100, 41];
+
+/** The bytes of the file at `path` (NUL-terminated), or none when it can't be read. */
+function readAll(path: readonly u8[]): u8[] {
+  // SAFETY: `path` is NUL-terminated.
+  const fd = unsafe { open$args(path, READ_ONLY) };
   const out: u8[] = [];
   if (fd < 0) {
     return out;
   }
-  const chunk: u8[] = new Array<u8>(4096).fill(0);
+  const chunk = buffer(4096);
   while (true) {
     // SAFETY: `chunk` holds 4096 bytes.
     const n = unsafe { read$args(fd, chunk, 4096) };
@@ -43,19 +74,32 @@ function readAll(path: string): u8[] {
 
 /** Every argument the process was started with, program path first. */
 export function osArgs(): string[] {
-  const bytes = readAll("/proc/self/cmdline");
+  const bytes = readAll(CMDLINE);
   const out: string[] = [];
+  const n = bytes.length;
   let start: usize = 0;
-  for (let i: usize = 0; i < bytes.length; i++) {
-    if (bytes[i] === 0) {
-      out.push(bytes.utf8Slice(start as i64, i as i64));
+  // Each argument ends at its NUL, the last one at the end if the kernel left its NUL out.
+  for (let i: usize = 0; i <= n; i++) {
+    if (i < n ? bytes[i] === 0 : start < n) {
+      out.push(textOf(bytes, start, i));
       start = i + 1;
     }
   }
-  if (start < bytes.length) {
-    out.push(bytes.utf8Slice(start as i64, bytes.length as i64));
-  }
   return out;
+}
+
+/** Whether the `n` bytes of `buf` end with ` (deleted)`. */
+function endsGone(buf: u8[], n: usize): bool {
+  if (n < GONE.length) {
+    return false;
+  }
+  const from = n - GONE.length;
+  for (let i: usize = 0; i < GONE.length; i++) {
+    if (buf[from + i] !== GONE[i]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -66,20 +110,19 @@ export function osArgs(): string[] {
 export function executablePath(): string {
   let room: usize = 256;
   while (true) {
-    const buf: u8[] = new Array<u8>(room).fill(0);
+    const buf = buffer(room);
     // SAFETY: `buf` holds `room` bytes; readlink writes no NUL.
-    const n = unsafe { readlink$args(cBytes("/proc/self/exe"), buf, room) };
+    const n = unsafe { readlink$args(EXE, buf, room) };
     if (n < 0) {
       return "";
     }
     if ((n as usize) < room) {
-      let path = buf.utf8Slice(0, n as i64);
-      const gone = " (deleted)";
-      // SAFETY: `cBytes` is NUL-terminated; F_OK is 0.
-      if (path.endsWith(gone) && unsafe { access$args(cBytes(path), 0) } !== 0) {
-        path = path.slice(0, (path.length - gone.length) as i64);
+      // `buf` was zeroed: its byte `n` ends the path. F_OK is 0.
+      // SAFETY: `buf` is NUL-terminated.
+      if (endsGone(buf, n as usize) && unsafe { access$args(buf, 0) } !== 0) {
+        buf[(n as usize) - GONE.length] = 0;
       }
-      return resolved(path);
+      return resolvedC(buf);
     }
     room *= 2;
   }
