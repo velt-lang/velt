@@ -188,3 +188,20 @@ fn a_borrow_answers_for_the_reference_it_borrows() {
          }");
     assert_eq!(out, "true\nfalse\ntrue 0\n");
 }
+
+#[test]
+fn a_frozen_object_is_never_unique_and_is_freed() {
+    // The frozen mark is a flag in the count word (frozen_mark.rs): copy-on-write never writes a
+    // frozen object in place, and its release still frees it (`run` asserts no live allocation).
+    let (out, _) = run("interface P { n: number; }
+         function main() {
+           const a: P = { n: 0 };
+           a.n = 1;
+           console.log(isUnique(a), Object.isFrozen(a));
+           Object.freeze(a);
+           console.log(isUnique(a), Object.isFrozen(a), a.n);
+           const xs: P[] = [a, { n: 2 }];
+           console.log(isUnique(xs[1]), Object.isFrozen(xs[1]));
+         }");
+    assert_eq!(out, "true false\nfalse true 1\ntrue false\n");
+}

@@ -1,7 +1,8 @@
-// velt/native (internal): `IoStatus`, the result of a runtime or native-package operation that
-// produces nothing (the 32-byte `VeltErr` prefix of `IoResult`, velt/native/result).
+// velt/native (internal): `IoStatus`, the result of a runtime operation that produces nothing
+// (the 32-byte `VeltErr` prefix of `IoResult`, velt/native/result).
 
-import { ioError } from "velt/native/error";
+import { IoError } from "velt/io/error";
+import { errorCodeName, ioError } from "velt/native/error";
 
 /** Result slot of a runtime operation producing nothing (`VeltErr`). */
 export struct IoStatus {
@@ -14,4 +15,21 @@ export function checkIo(s: IoStatus) {
   if (s.code != 0) {
     throw ioError(s.code, s.message);
   }
+}
+
+/**
+ * The status `checkIo` throws `e` back from (null: success), for std code that stands in for a
+ * runtime function: the code of `e.code`'s name (`UNKNOWN`'s for a name the table lacks), `e`'s
+ * message.
+ */
+export function ioStatusOf(e: IoError | null): IoStatus {
+  if (e === null) {
+    return { code: 0, message: "" };
+  }
+  for (let c: i32 = 1; c <= 16; c++) {
+    if (errorCodeName(c) == e.code) {
+      return { code: c, message: e.message };
+    }
+  }
+  return { code: 17, message: e.message };
 }

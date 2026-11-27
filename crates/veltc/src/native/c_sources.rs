@@ -86,7 +86,7 @@ fn bundled(
 
 /// What the linker adds for the libraries of `c_libs` built from `sources`: the shared library in
 /// debug builds, and the static one in release builds so the executable stays self-contained
-/// (where there is one: not on Windows, as for a crate). A musl program is static: always that.
+/// (where there is one: not on Windows). A musl program is static: always that.
 pub fn links(
     graph: Option<&PackageGraph>,
     c_libs: &[String],
@@ -99,7 +99,6 @@ pub fn links(
             shared: dir.join(&f.shared),
             import_lib: f.import_lib.map(|p| dir.join(p)),
             static_obj: f.static_lib.filter(|_| wanted).map(|p| dir.join(p)),
-            system_libs: Vec::new(),
         }
     });
     Ok(links.collect())

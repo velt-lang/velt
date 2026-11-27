@@ -1,0 +1,11 @@
+// A `get message()` of a class extending `Error` that can throw is refused (#3792): `String(e)`,
+// `console.log` and the report of an uncaught error read `message`, where its error would have
+// nowhere to go, as for a `toString()` that throws.
+
+class Boom extends Error {
+  get message(): string {
+    throw new RangeError("boom");
+  }
+}
+
+console.log(new Boom("fine").message);

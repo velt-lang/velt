@@ -7,7 +7,7 @@ use velt_sema::hir::{TyId, TyKind};
 use super::{Glue, SLOT_DROP};
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
-use crate::lower::{cint, unit, DropEntry, FnLower};
+use crate::lower::{cint, ice, unit, DropEntry, FnLower, ScopeKind};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl FnLower<'_, '_> {
@@ -233,10 +233,22 @@ impl FnLower<'_, '_> {
             if lw.cx.needs_drop(e) {
                 let k = lw.temp(Ty::U64);
                 lw.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
+                // An element's drop that panics (a dispose) leaves the elements after it and the
+                // buffer to the pad (cleanup.rs), as a consumed array's are.
+                let rest = lw.temp(Ty::U64);
                 let len = Operand::Copy(proj(arr, Proj::Field(1)));
                 lw.count_loop(k, len, |lw, k| {
+                    let next = Rvalue::Binary(vir::BinOp::Add, k.clone(), cint(1, Ty::U64));
+                    lw.assign(Place::local(rest), next);
+                    let held = lw.pads.popped.len();
+                    lw.pads.popped.push(DropEntry::ConsumedArray {
+                        arr: arr.clone(),
+                        next: rest,
+                        elem: e,
+                    });
                     let p = lw.elem_place(arr, k, e);
                     lw.drop_glue(p, e);
+                    lw.pads.popped.truncate(held);
                 });
             }
             lw.free_buffer(arr, e);
@@ -309,8 +321,25 @@ impl FnLower<'_, '_> {
             return;
         };
         let targs = self.cx.method_targs(m, ty);
-        let f = self.cx.func_for_direct(m, targs, self.mode);
-        self.call(vir::Callee::Func(f), vec![this], None, false);
+        let fd = self.cx.fn_def(m);
+        let (ret, throws) = self.cx.call_sig(fd);
+        let f = self.cx.func_for_direct(m, targs.clone(), self.mode);
+        let Some(e) = throws else {
+            self.call(vir::Callee::Func(f), vec![this], None, false);
+            return;
+        };
+        // A drop has nowhere to throw to: an error out of the hook is uncaught (`Uncaught …`,
+        // exit 1), as one out of a module state initializer is. The hook takes its error's
+        // out-pointer, so the call is a throwing function's.
+        let ret = self.cx.subst(ret, &targs);
+        let e = self.cx.subst(e, &targs);
+        let throws = self.cx.error_ty(Some(e));
+        self.push_scope(ScopeKind::Uncaught);
+        let v = self.finish_call(vir::Callee::Func(f), vec![this], ret, throws);
+        self.scopes.pop();
+        if let Operand::Copy(p) = v {
+            self.drop_glue(p, ret);
+        }
     }
 
     /// The object drop of class `ty`: a loop over its self fields (drop_chain.rs) or one
@@ -320,15 +349,24 @@ impl FnLower<'_, '_> {
             self.obj_drop_chain_body(obj, ty, chain);
         } else {
             let p = Place::local(obj);
-            // A dispose that panics leaves the fields and the memory to the pad (cleanup.rs).
+            // A dispose that panics leaves the fields and the memory to the pad (cleanup.rs), and
+            // so does a field's drop that panics (a dispose further down), the fields after it.
             let held = self.pads.popped.len();
-            self.pads.popped.push(DropEntry::Disposing(p.clone(), ty));
+            self.pads
+                .popped
+                .push(DropEntry::Disposing(p.clone(), ty, 0));
             self.call_dispose(Operand::Copy(p.clone()), ty);
-            self.pads.popped.truncate(held);
             let tys = self.cx.adt_field_tys(ty);
             for (i, t) in tys.into_iter().enumerate() {
+                let rest = DropEntry::Disposing(p.clone(), ty, i as u32 + 1);
+                *self
+                    .pads
+                    .popped
+                    .last_mut()
+                    .unwrap_or_else(|| ice("no pad entry")) = rest;
                 self.drop_field(&p, ty, i as u32, t, None);
             }
+            self.pads.popped.truncate(held);
             self.object_free(Operand::Copy(p), ty);
         }
         self.terminate(Terminator::Return(unit()));

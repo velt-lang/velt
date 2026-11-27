@@ -255,6 +255,9 @@ pub(crate) struct FnCx<'a, 'm> {
     pub constraints: Vec<Option<TyId>>,
     /// Name of the enclosing top-level function (for closure names).
     pub fn_name: String,
+    /// What checking the arguments of calls in std's bodies by units noted, by the call's span
+    /// (`expr::default_args::ArgNote`, #3789), until their call takes them.
+    pub undefined_args: Vec<(velt_common::Span, expr::default_args::ArgNote)>,
     /// Type whose body is being checked (methods, constructors, defaults, field initializers):
     /// its `private` members are accessible.
     pub owner: Option<DefId>,
@@ -299,6 +302,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// Hidden temporaries of the call being checked, evaluated before it (`spread_args`): the
     /// call's expression is a block with these first (`FnCx::expr`).
     pub call_temps: Vec<hir::Stmt>,
+    /// The write being checked is `Object.defineProperty`'s (`expr/object_define.rs`): on a
+    /// frozen object it throws Node's error for a definition (`expr/frozen_write.rs`).
+    pub defining: bool,
     /// The tuple places of an assignment target `p![i]` / `(p as T)[i]` that writes in place
     /// (`expr/assign_paths.rs`), outermost last: checked again, in order, after a right-hand
     /// side with effects.
@@ -485,6 +491,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             bounds: vec![],
             constraints: vec![],
             fn_name: String::new(),
+            undefined_args: vec![],
             owner: None,
             body_def: None,
             static_this: None,
@@ -514,6 +521,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             literal_slot: None,
             method_this: None,
             call_temps: vec![],
+            defining: false,
             held_recheck: Vec::new(),
             callee_effects: None,
             void_task: None,

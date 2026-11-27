@@ -1,0 +1,94 @@
+// velt/text (internal): a regex's `source` and `flags` as JavaScript reports them (#3883).
+
+import { strByteLen, strDataAddress } from "velt/lang/intrinsics";
+import { byteAt } from "velt/text/regex/decode";
+
+/**
+ * The pattern `p` as a regex literal's body, V8's `EscapeRegExpSource`: a `/` outside a
+ * character class is escaped, a line terminator is written as its escape (`\n`, `\r`, ` `,
+ * ` `; a backslash before one is dropped, the escape standing for it), and the empty
+ * pattern is `(?:)`. Compiling the result gives the same regex.
+ */
+export function sourceText(p: string): string {
+  if (p.length == 0) {
+    return "(?:)";
+  }
+  if (!needsEscapes(p)) {
+    return p;
+  }
+  let out = "";
+  let inClass = false;
+  let i: i64 = 0;
+  while (i < (p.length as i64)) {
+    const c = p[i];
+    if (c == "\\") {
+      if (i + 1 < (p.length as i64) && isLineTerminator(p[i + 1])) {
+        // The terminator after it is written as an escape.
+        i++;
+        continue;
+      }
+      out += c;
+      i++;
+      if (i < (p.length as i64)) {
+        out += p[i];
+        i++;
+      }
+      continue;
+    }
+    if (c == "/" && !inClass) {
+      out += "\\/";
+    } else if (c == "\n") {
+      out += "\\n";
+    } else if (c == "\r") {
+      out += "\\r";
+    } else if (c == " ") {
+      out += "\\u2028";
+    } else if (c == " ") {
+      out += "\\u2029";
+    } else {
+      if (c == "[") {
+        inClass = true;
+      } else if (c == "]") {
+        inClass = false;
+      }
+      out += c;
+    }
+    i++;
+  }
+  return out;
+}
+
+/**
+ * May `sourceText(p)` differ from `p` (beside the empty pattern)? Read by bytes, as a regex is
+ * made: a `/`, `\n` or `\r`, or the first byte of U+2028 and U+2029, which a few other
+ * characters have too (they take the slow way, which leaves them as they are).
+ */
+function needsEscapes(p: string): bool {
+  const base = strDataAddress(p);
+  const n = strByteLen(p);
+  for (let i: usize = 0; i < n; i++) {
+    const b = byteAt(base, i);
+    if (b == 0x2f || b == 0x0a || b == 0x0d || b == 0xe2) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isLineTerminator(c: string): bool {
+  return c == "\n" || c == "\r" || c == " " || c == " ";
+}
+
+/** `flags` in JavaScript's order (`hasIndices`, `global`, … `sticky`): `ig` reads `gi`. */
+export function flagsText(flags: string): string {
+  if (flags.length < 2) {
+    return flags;
+  }
+  let out = "";
+  for (const f of ["d", "g", "i", "m", "s", "u", "v", "y"]) {
+    if (flags.includes(f)) {
+      out += f;
+    }
+  }
+  return out;
+}

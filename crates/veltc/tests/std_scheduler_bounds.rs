@@ -521,7 +521,7 @@ async function main() {
 "#;
 
 /// A task that ends last on another worker gives the executor's reference to its block back
-/// before it counts itself no longer live (sched_run.velt `finish`): once that count says no task
+/// before it counts itself no longer live (sched_run_done.velt `finish`): once that count says no task
 /// is live, worker 0 may end the program, and a block freed after that counts as leaked
 /// (`VELT_RC_STATS`; #2825's `close_now` golden, 8 blocks allocated and 7 freed). A copy of std
 /// pauses 300 ms after the count on another worker; a second copy gives the reference back after
@@ -537,7 +537,7 @@ fn a_task_ending_last_on_another_worker_frees_its_block_first() {
     for released_first in [true, false] {
         let std_dir = dir.path().join(format!("std_{released_first}"));
         copy_dir(&manifest().join("../../std"), &std_dir);
-        let mut run = read_std(&std_dir, "lang/hooks/sched_run.velt");
+        let mut run = read_std(&std_dir, "lang/hooks/sched_run_done.velt");
         run.push_str(&PAUSE.replace("now()", "(performance.now() * 1000000.0) as u64"));
         let to = if released_first {
             format!("{counted}{pause}")
@@ -548,7 +548,7 @@ fn a_task_ending_last_on_another_worker_frees_its_block_first() {
             )
         };
         patch(&mut run, counted, &to);
-        std::fs::write(std_dir.join("lang/hooks/sched_run.velt"), run).unwrap();
+        std::fs::write(std_dir.join("lang/hooks/sched_run_done.velt"), run).unwrap();
         let runs = std_runs_with(
             &format!("last_task_{released_first}"),
             LAST_TASK,
@@ -576,7 +576,7 @@ fn a_task_ending_last_on_another_worker_frees_its_block_first() {
 /// which such a wake goes through): the waker wins the node's `QUEUED` flag, then pushes it on the
 /// task's woken stack. A microtask
 /// that runs the node does not look at the flag, so the node can finish meanwhile and the task
-/// end (sched_run.velt `finish` finds the stack empty); the push then comes too late, and the
+/// end (sched_run_done.velt `finish` finds the stack empty); the push then comes too late, and the
 /// waker gives the reference back itself. The std copies pause 300 ms between the flag and the
 /// push of a wake from off the node's worker, and the channel's send wakes its receiver a second
 /// time 100 ms after the first (a late wake any waker's holder may send) so that wake is still

@@ -5,7 +5,8 @@
 // `catch (e) { e.message }` works either way (every member has `message`). User error classes
 // extend it too.
 
-import { ERROR_NAME, errorText } from "velt/lang/hooks/error";
+import { ERROR_NAME, errorText, noMessage } from "velt/lang/hooks/error";
+import { ERROR_MESSAGE } from "velt/lang/hooks/keys";
 import { own } from "velt/lang/intrinsics/decorators";
 
 /**
@@ -26,8 +27,11 @@ export class Error {
   // error that never has its stack assigned, nearly every one, pays one word and no allocation.
   #stack: AssignedStack | null = null;
 
-  /** An error with the given `message`. */
-  constructor(message: string = "") {
+  /**
+   * An error with the given `message`. Without one, its `message` is `""`, or what the class's
+   * `get message()` returns (JavaScript's `Error.prototype.message`, [`ERROR_MESSAGE`]).
+   */
+  constructor(message: string = noMessage()) {
     this.message = message;
   }
 
@@ -42,6 +46,14 @@ export class Error {
   /** Sets the name `String(e)` and an uncaught error's report start with. */
   set name(value: string) {
     this.#name = value;
+  }
+
+  /**
+   * `Error.prototype.message`: what `message` reads on an error made without one. A program's
+   * class extending `Error` overrides it by declaring `get message()`; programs never name it.
+   */
+  get [ERROR_MESSAGE](): string {
+    return "";
   }
 
   /** Sets `#name` without the accessor a subclass may override (a built-in subclass's name). */
@@ -93,7 +105,7 @@ class AssignedStack {
 /** A value is not of the expected type (thrown by the runtime in JavaScript). */
 export class TypeError extends Error {
   /** An error with the given `message`. */
-  constructor(message: string = "") {
+  constructor(message: string = noMessage()) {
     super(message);
     // Its `name`, as on its prototype in JavaScript: written to `Error`'s `#name`, never through
     // the accessor a subclass may override.
@@ -104,7 +116,7 @@ export class TypeError extends Error {
 /** A number is outside the range of allowed values. */
 export class RangeError extends Error {
   /** An error with the given `message`. */
-  constructor(message: string = "") {
+  constructor(message: string = noMessage()) {
     super(message);
     // Its `name`, as on its prototype in JavaScript: written to `Error`'s `#name`, never through
     // the accessor a subclass may override.
@@ -115,7 +127,7 @@ export class RangeError extends Error {
 /** Text could not be parsed. */
 export class SyntaxError extends Error {
   /** An error with the given `message`. */
-  constructor(message: string = "") {
+  constructor(message: string = noMessage()) {
     super(message);
     // Its `name`, as on its prototype in JavaScript: written to `Error`'s `#name`, never through
     // the accessor a subclass may override.
@@ -126,7 +138,7 @@ export class SyntaxError extends Error {
 /** A name that does not exist was referenced. */
 export class ReferenceError extends Error {
   /** An error with the given `message`. */
-  constructor(message: string = "") {
+  constructor(message: string = noMessage()) {
     super(message);
     // Its `name`, as on its prototype in JavaScript: written to `Error`'s `#name`, never through
     // the accessor a subclass may override.
@@ -137,7 +149,7 @@ export class ReferenceError extends Error {
 /** Kept for compatibility with JavaScript, which no longer throws it. */
 export class EvalError extends Error {
   /** An error with the given `message`. */
-  constructor(message: string = "") {
+  constructor(message: string = noMessage()) {
     super(message);
     // Its `name`, as on its prototype in JavaScript: written to `Error`'s `#name`, never through
     // the accessor a subclass may override.
@@ -148,7 +160,7 @@ export class EvalError extends Error {
 /** A URI-handling function was given a malformed URI. */
 export class URIError extends Error {
   /** An error with the given `message`. */
-  constructor(message: string = "") {
+  constructor(message: string = noMessage()) {
     super(message);
     // Its `name`, as on its prototype in JavaScript: written to `Error`'s `#name`, never through
     // the accessor a subclass may override.

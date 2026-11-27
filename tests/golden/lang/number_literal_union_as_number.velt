@@ -1,0 +1,155 @@
+// check: no leaks
+// A value of a number literal type or a union of them (`2.5`, `1.5 | 2.5`, `0 | 1 | 2`) is the
+// `number` it is in TypeScript wherever a `number` takes it (#3867): the operand of a compound
+// assignment to a `number`, an element spread into a `number[]` (`[...ks]`, `push(...ks)`), and
+// the receiver of `Number` methods (`toFixed`, `toPrecision`, `toExponential`, `toString`), and
+// an element of an array a `readonly number[]` or a `number[]` takes, on integer and float
+// literals alike. A string literal union is a `string` there too. The Node twin prints the same.
+
+type Half = 1.5 | 2.5;
+type Small = 0 | 1 | 2;
+type Tag = "a" | "b";
+type Mixed = 1 | "a";
+
+function pick(i: number): Half {
+  return i > 0 ? 2.5 : 1.5;
+}
+
+function small(i: number): Small {
+  return i > 1 ? 2 : i > 0 ? 1 : 0;
+}
+
+function twice(n: number): number {
+  return n * 2;
+}
+
+function add(...xs: number[]): number {
+  return xs.reduce((a, b) => a + b, 0);
+}
+
+// Compound assignments to a `number` with a literal-typed operand.
+const k: Half = 2.5;
+const one: 2.5 = 2.5;
+const w: Half = pick(0);
+const j: Small = small(2);
+let c: number = 1;
+c += k;
+c += one;
+c += w;
+console.log("+=", c);
+c -= k;
+c -= w;
+console.log("-=", c);
+c *= k;
+c *= w;
+console.log("*=", c);
+c /= w;
+c /= k;
+console.log("/=", c);
+c **= k;
+console.log("**=", c);
+c %= w;
+console.log("%=", c);
+c += j;
+c *= j;
+c **= j;
+c -= j;
+c /= j;
+console.log("int", c);
+let f: number = 0.5;
+for (let i = 0; i < 3; i++) {
+  f += pick(i);
+  f *= small(i) + 1;
+}
+console.log("loop", f);
+
+// Spreads into a `number[]` and `(number | null)[]`.
+const ks: Small[] = [0, 1, 2];
+const hs: Half[] = [1.5, 2.5];
+const ns: number[] = [...ks];
+const ms: number[] = [0.5, ...ks, ...hs, 3];
+const ps: number[] = [];
+ps.push(...ks);
+ps.push(...hs, 7);
+const qs: (number | null)[] = [null, ...ks];
+console.log(ns, ms, ps, qs);
+console.log(Math.max(...ns), ns.map((n) => n / 4), ms.reduce((a, b) => a + b, 0));
+
+// From an iterable, and as the arguments of a `...number[]` parameter.
+function* bits3(): Generator<Small> {
+  yield 1;
+  yield 2;
+}
+
+const seen = new Set<Small>([2, 0]);
+const gs: number[] = [...bits3()];
+const ss3: number[] = [0.5, ...seen];
+console.log(gs, ss3, Math.max(...ks), Math.min(...hs), add(...ks), add(1, ...hs));
+
+// Number methods on a literal-typed receiver.
+const m: Small = small(2);
+const z: 0 = 0;
+console.log(m.toFixed(1), k.toFixed(2), w.toFixed(0), z.toFixed(3), one.toFixed(1));
+console.log(m.toPrecision(3), k.toPrecision(2), m.toExponential(1), k.toExponential());
+console.log(m.toString(), m.toString(2), k.toString(), small(1).toFixed(2), pick(1).toFixed(1));
+
+// A literal union as a `number` argument, in a ternary, and in a template.
+const t: number = c > 0 ? k : j;
+console.log(twice(k), twice(j), t, `${k}|${j}|${one}`, String(m) + "!");
+
+// Other values a `number` takes: a `readonly number[]` argument, a fresh array, a generic's
+// array, a field, an element, a record's value and a bitwise operand.
+function sum(xs: readonly number[]): number {
+  let total = 0;
+  for (const x of xs) {
+    total += x;
+  }
+  return total;
+}
+
+function make(): Small[] {
+  return [2, 1];
+}
+
+function wrap<T>(x: T): T[] {
+  return [x];
+}
+
+class Acc {
+  total: number = 1;
+  add(): void {
+    this.total += k;
+    this.total *= j;
+  }
+}
+
+const fresh: number[] = make();
+const wrapped: number[] = wrap(j);
+const acc = new Acc();
+acc.add();
+const xs: number[] = [1, 2];
+xs[0] += k;
+xs[1] *= j;
+const r: Record<string, number> = { a: 1 };
+r["a"] += w;
+let bits: number = 4;
+bits |= j;
+bits &= m + 1;
+console.log(sum(ks), sum(hs), sum(make()), fresh, wrapped, acc.total, xs, r, bits);
+
+// A union of number and string literals where a `string` or `number | string` takes it.
+const mx: Mixed = small(1) > 0 ? "a" : 1;
+const mxs: Mixed[] = [1, "a"];
+const sn: (string | number)[] = [...mxs, 2];
+let s0: string = "s";
+s0 += mx;
+console.log(s0, sn, `${mx}`);
+
+// A string literal union where a `string` takes it.
+const tag: Tag = "b";
+let s: string = "x";
+s += tag;
+const tags: Tag[] = ["a", "b"];
+const ss: string[] = [...tags, "c"];
+ss.push(...tags);
+console.log(s, ss, tag.toUpperCase(), tag.padStart(3, "-"));

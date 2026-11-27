@@ -10,6 +10,7 @@ import { inline, noInline } from "velt/lang/intrinsics";
 import * as lk from "./sched_lock";
 import * as l from "./sched_order_list";
 import * as m from "./sched_mem";
+import * as mv from "./sched_order_move";
 import * as q from "./sched_queue";
 import * as sl from "./sched_sleep";
 import * as sp from "./sched_spread";
@@ -67,15 +68,25 @@ export function parksNext(e: usize, k: usize): bool {
 export function wait(e: usize, timeout: i64): i64 {
   // The only worker bounded its wait by the order's time already (sched_order.velt `next`).
   if ((lk.mode() & lk.LK_ON) === 0) {
-    return timeout;
+    return timeout === HELD ? 0 : timeout;
   }
   return waitFor(e, timeout);
 }
+
+/**
+ * `sched_order.velt` `next`'s timeout for a worker whose due sleep waits for the hold of the loop
+ * to end (sched_order_move.velt `holdBack`): it waits with no limit while still marked, as that
+ * end wakes it; once unmarked (the end came, maybe before its park word went up), not at all.
+ */
+export const HELD: i64 = -2;
 
 /** `wait` with several workers. */
 @noInline
 function waitFor(e: usize, timeout: i64): i64 {
   const b = l.order();
+  if (timeout === HELD) {
+    return (m.load(b + l.O_BACK) & mv.backBit(e)) !== 0 ? -1 : 0;
+  }
   if (b === 0 || m.load(b + l.O_WAKE_AT) === 0) {
     return timeout;
   }

@@ -154,8 +154,9 @@ impl FnCx<'_, '_> {
     }
 
     /// Checks that `f`, the argument of `fnAddress`, names a module-level function C can call:
-    /// not generic, async or throwing, and taking and returning only numbers and `bool` (or
-    /// returning nothing), which cross the C calling convention as they are.
+    /// not generic, async or throwing, and taking and returning only numbers, `bool` and C
+    /// pointers (`Ptr<T>`, `Ptr<T> | null`: pointer-sized on every target, where a `usize` is
+    /// 64 bits on wasm32), or returning nothing, which cross the C calling convention as they are.
     fn c_callable(&mut self, f: &hir::Expr) -> Option<()> {
         if matches!(self.cx.ty.kind(f.ty), TyKind::Error) {
             return None;
@@ -176,9 +177,8 @@ impl FnCx<'_, '_> {
                 let plain = targs.is_empty() && info.owner.is_none() && info.extern_sig.is_none();
                 plain
                     && self.cx.ty.is_bottom(throws)
-                    && params.iter().all(|&p| self.raw_value_ty(p, false))
-                    && (matches!(self.cx.ty.kind(ret), TyKind::Unit)
-                        || self.raw_value_ty(ret, false))
+                    && params.iter().all(|&p| self.c_value_ty(p))
+                    && (matches!(self.cx.ty.kind(ret), TyKind::Unit) || self.c_value_ty(ret))
             }
             _ => false,
         };
@@ -187,10 +187,17 @@ impl FnCx<'_, '_> {
         }
         self.cx.error(
             Diagnostic::error("`fnAddress` needs a module-level function C can call", f.span).with_note(
-                "name it directly; it must not be generic, async or throwing, and takes and returns only numbers and `bool`",
+                "name it directly; it must not be generic, async or throwing, and takes and returns only numbers, `bool` and `Ptr<T>`",
             ),
         );
         None
+    }
+
+    /// A parameter or result type `fnAddress`'s function may have: a number, `bool` or a C pointer.
+    fn c_value_ty(&self, t: TyId) -> bool {
+        let ty = &self.cx.ty;
+        let ptr = |t: TyId| matches!(ty.kind(t), TyKind::Ptr(_));
+        self.raw_value_ty(t, false) || ptr(t) || ty.opt_payload(t).is_some_and(ptr)
     }
 
     /// Checks that `a`, the argument of `atomicAddress`, is an `Atomic` of a 32- or 64-bit

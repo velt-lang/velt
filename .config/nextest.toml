@@ -50,7 +50,7 @@ priority = 50
 
 [[profile.default.overrides]]
 filter = """
-binary(wasm_goldens) | binary(native_packages) | binary(reload) | binary(debugger) \
+binary(wasm_goldens) | binary(reload) | binary(debugger) \
 | binary(docs) | binary(llvm_goldens) | binary(panic_locations) | binary(playground)\
 """
 test-group = "end-to-end"
@@ -59,7 +59,7 @@ test-group = "end-to-end"
 # VELT_ROBUSTNESS=full) start first, so they don't finish alone at the end.
 [[profile.default.overrides]]
 filter = """
-test(/^prefixes_never_panic_/) | binary(native_packages) | (package(velt_vir) & binary(native)) \
+test(/^prefixes_never_panic_/) | (package(velt_vir) & binary(native)) \
 | test(=examples_compile_and_run) | test(=random_programs_match_interpreter) | binary(reload) \
 | test(/^std_modules_pass_their_tests_shard_/)\
 """

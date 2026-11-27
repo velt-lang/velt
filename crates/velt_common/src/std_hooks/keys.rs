@@ -131,4 +131,7 @@ keys! {
     proxy_json => "PROXY_JSON", "proxyJson";
     proxy_array_call => "PROXY_ARRAY_CALL", "proxyArrayCall";
     proxy_has_own => "PROXY_HAS_OWN", "proxyHasOwn";
+    // Error: `Error.prototype.message`, which a program's `get message()` on a class extending
+    // `Error` overrides (`velt_sema` `error_message.rs`).
+    error_message => "ERROR_MESSAGE", "errorMessage";
 }

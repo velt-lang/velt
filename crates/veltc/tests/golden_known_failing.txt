@@ -11,7 +11,11 @@ tests/golden/lang/rwlock_read_tasks_stop.velt                      #2917 os=maco
 tests/golden/std/abort_signal_identity.velt                        #3011
 tests/golden/std/fetch_abort_custom_reason.velt                    #3005
 tests/golden/std/timer_spawned_busy.velt                           #2916 os=macos,windows
-tests/golden/lang/std_typed_receiver_override.velt                 #3684 units
+# Refused by units on purpose: std's reads of `message` are checked before a program's
+# `get message()` on a class extending `Error` is known (velt_sema `error_message.rs`).
+tests/golden/lang/error_message_getter.velt                        #3792 units
+tests/golden/lang/error_message_getter_uncaught.velt               #3792 units
+tests/golden/lang/error_message_getter_inspect.velt                #3792 units
 
 # Fail in a run by units (VELT_UNITS=2) on main 667cfae77, a sample of ~410 goldens (#2943's U6 list):
 tests/golden/lang/class_local_ctor.velt                            #2943 units
@@ -30,15 +34,7 @@ tests/golden/std/db_rows_source_throws.velt                        #2943 units
 
 # Fail in a run by units, from the whole suite (the nightly's golden-units, run 45498934030 on
 # 5d06f3628, all eight shards), and of the goldens main added or changed since, run by units
-# with main merged in (78ed9bf63). std's own calls of a std method a program's override gives a
-# slot (#3684):
-tests/golden/lang/std_virtual_override_writes.velt                 #3684 units
-tests/golden/std/date_subclass_text.velt                           #3684 units
-tests/golden/std/error_name_getter.velt                            #3684 units
-tests/golden/std/error_name_getter_uncaught.velt                   #3684 units
-tests/golden/std/set_ctor_subclass_add.velt                        #3684 units
-tests/golden/std/set_map_return_this.velt                          #3684 units
-# The others (#2943's U6 list):
+# with main merged in (78ed9bf63) (#2943's U6 list):
 tests/golden/lang/any_not_fn_catch.velt                            #2943 units
 tests/golden/lang/any_operators_objects.velt                       #2943 units
 tests/golden/lang/any_promise_cast_optional.velt                   #2943 units
@@ -89,3 +85,8 @@ tests/golden/std/shared_fn_panic_caught_resource_interface.velt    #2943 units
 tests/golden/std/shared_fn_spawn_after_caught_transfer_panic.velt  #2943 units
 tests/golden/std/shared_fn_walk_after_caught_transfer_panic.velt   #2943 units
 tests/golden/std/simd_half_range.velt                              #2943 units
+
+# Fails by units on main c016f2513 too (std never calls the subclass's exec there): std's calls of a
+# program's throwing override now reach it, but std's callers of the method (RegExp.test) keep
+# the throws std's unit gave them.
+tests/golden/std/regex_subclass_exec_throws.velt                   #3684 units

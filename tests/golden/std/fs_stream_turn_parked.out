@@ -1,0 +1,3 @@
+read 10 10
+parked: true
+writer exit: 0

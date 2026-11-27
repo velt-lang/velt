@@ -164,6 +164,12 @@ pub enum Intrinsic {
     /// `(field: borrow T | null) -> bool`, `field` a `Field` place of a `presence` field: whether
     /// it is present (written, or given in the literal that made the object)
     FieldPresent,
+    /// `(v: T) -> T`, `T` in `Program::freezable`: `Object.freeze(v)` of a value made before, `v`
+    /// with its frozen mark set (rt_abi.md `RC_FROZEN`): its type's checked writes throw (#2623)
+    Freeze,
+    /// `(v: borrow T) -> bool`: `Object.isFrozen(v)`, the mark of a freezable type's value; true
+    /// for a primitive and for a frozen literal's type (readonly fields), else false (#2623)
+    IsFrozen,
     /// std only (std/prelude/promise.velt): `transfer<T>(value: T) -> T`, the value made safe for
     /// another task (moved where this task held the only reference, deep-copied where it is still
     /// shared; velt_vir transfer.rs), like a `spawn` argument. Also emitted by sema around a value

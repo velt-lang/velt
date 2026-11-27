@@ -1,0 +1,163 @@
+// velt/lang/hooks (internal): the queue behind bounded drop nesting (#543). Dropping an object
+// whose fields lead back to objects of its own kind (a long list through an array, a `Map` or a
+// closure, a deep tree) would nest one call per level and overflow the stack. Lowering
+// (`velt_vir` `lower/glue/drop_depth.rs`) brackets such a drop: it counts the drops under way in
+// this thread's `STATE` word, read and written inline by name (as a `ThreadLocal` lowers). Past
+// its depth limit it hands what it was about to drop to `dropQueue` instead (a value that lives in
+// a slot about to be freed moved to a heap box first), and the outermost drop, finding the word
+// equal to `QUEUED` when it ends, calls `dropDrain`, which drops the queued values, each with the
+// full depth again, in the order they were queued. Values up to the limit drop exactly as nested
+// calls would; deeper ones drop after the outermost drop's other work.
+//
+// The queue is a ring of `(value, glue)` word pairs in a block of its own, which a drain cycle
+// allocates on its first queued value and gives back when the drain ends, so a thread keeps
+// nothing between drops and leaves nothing behind when it ends.
+
+import { addressLoad, addressStore, noInline, rawAlloc, rawFree } from "velt/lang/intrinsics";
+import { stateDrop } from "velt/lang/intrinsics/future";
+
+/**
+ * This thread's state word, which lowering names (`velt_vir` `tls::DROP_STATE_SLOT`): bits
+ * 0 to 29 count the bracketed drops under way, `QUEUED` says a value was queued since the last
+ * drain, `DRAINING` that the outermost drop is draining the queue, so a drop that ends inside the
+ * drain never drains itself.
+ */
+const STATE = new ThreadLocal<u32>(0);
+
+/** The state word's bit: a value was queued since the queue was last drained. */
+const QUEUED: u32 = 1073741824;
+/** The state word while the outermost drop drains the queue. */
+const DRAINING: u32 = 2147483648;
+
+/** The ring's block (0: none), its capacity in pairs (a power of two), first pair and length. */
+const RING = new ThreadLocal<u64>(0);
+const CAP = new ThreadLocal<u64>(0);
+const HEAD = new ThreadLocal<u64>(0);
+const LEN = new ThreadLocal<u64>(0);
+
+/** The pairs a new ring holds. */
+const FIRST_CAP: u64 = 16;
+/** Bytes per pair: the value and its glue, a word each. */
+const PAIR: u64 = 16;
+
+function load(a: u64): u64 {
+  // SAFETY: `a` is a word of the ring's block, which this thread allocated and has not freed.
+  return unsafe { addressLoad<u64>(a as usize) };
+}
+
+function store(a: u64, v: u64): void {
+  // SAFETY: as `load`.
+  unsafe {
+    addressStore<u64>(a as usize, v);
+  }
+}
+
+/** A ring of twice the capacity (or the first one), holding the queued pairs from its start. */
+function grow(): void {
+  const old = RING.get();
+  const cap = CAP.get();
+  const len = LEN.get();
+  const next = cap === 0 ? FIRST_CAP : cap * 2;
+  const ring = rawAlloc((next * PAIR) as usize) as u64;
+  const head = HEAD.get();
+  for (let i: u64 = 0; i < len; i++) {
+    const from = old + ((head + i) & (cap - 1)) * PAIR;
+    const to = ring + i * PAIR;
+    store(to, load(from));
+    store(to + 8, load(from + 8));
+  }
+  if (old !== 0) {
+    // SAFETY: the old ring's block, of its capacity, nothing of it read any more.
+    unsafe {
+      rawFree(old as usize, (cap * PAIR) as usize);
+    }
+  }
+  RING.set(ring);
+  CAP.set(next);
+  HEAD.set(0);
+}
+
+/**
+ * Drops `value` with `glue` (drop glue that takes it over) when the outermost drop ends: called
+ * by a bracketed drop past the depth limit with the last reference to `value`.
+ *
+ * Kept out of line, as `dropDrain`: the drop glue that calls them stays as small as it was without
+ * the queue, its common path a load and store of the state word on each side of the drop.
+ */
+@noInline
+export function dropQueue(value: usize, glue: usize): void {
+  const len = LEN.get();
+  if (len === CAP.get()) {
+    grow();
+  }
+  const at = RING.get() + ((HEAD.get() + len) & (CAP.get() - 1)) * PAIR;
+  store(at, value as u64);
+  store(at + 8, glue as u64);
+  LEN.set(len + 1);
+  STATE.set(STATE.get() | QUEUED);
+}
+
+/**
+ * Drops the queued values, which may queue more, in the order they were queued: called by the
+ * outermost drop when it ends with `QUEUED` set. The ring goes when the queue is empty.
+ */
+@noInline
+export function dropDrain(): void {
+  STATE.set(DRAINING);
+  while (LEN.get() !== 0) {
+    const head = HEAD.get();
+    const at = RING.get() + head * PAIR;
+    const value = load(at);
+    const glue = load(at + 8);
+    // Taken off before its glue runs, which may queue (and grow the ring).
+    HEAD.set((head + 1) & (CAP.get() - 1));
+    LEN.set(LEN.get() - 1);
+    // SAFETY: `glue` is the drop glue lowering queued with `value`, which takes it over; the
+    // queue held it alone.
+    unsafe {
+      stateDrop(glue as usize, value as usize);
+    }
+  }
+  const ring = RING.get();
+  // SAFETY: the ring's block, of its capacity; the queue is empty.
+  unsafe {
+    rawFree(ring as usize, (CAP.get() * PAIR) as usize);
+  }
+  RING.set(0);
+  CAP.set(0);
+  HEAD.set(0);
+  STATE.set(0);
+}
+
+/** This thread's state word, which a catch of a panic keeps to give `dropRecover`. */
+export function dropState(): u32 {
+  return STATE.get();
+}
+
+/**
+ * After a caught panic (std/task/unwind.velt): the state word as it was when the catch began
+ * (`saved`, from `dropState`). The brackets the panic unwound never lowered the depth they had
+ * raised, and a drain it cut short left the word `DRAINING`, with its queue: the depth goes back
+ * to the catch's. Values still queued are dropped by the drop that drains around the catch, or
+ * now when the catch is outside every drop, so they don't wait (or leak) until a later one.
+ */
+export function dropRecover(saved: u32): void {
+  if (LEN.get() === 0) {
+    STATE.set(saved);
+    if (saved === 0 && RING.get() !== 0) {
+      // A drain cut short after its last value: its ring.
+      // SAFETY: the ring's block, of its capacity; the queue is empty.
+      unsafe {
+        rawFree(RING.get() as usize, (CAP.get() * PAIR) as usize);
+      }
+      RING.set(0);
+      CAP.set(0);
+      HEAD.set(0);
+    }
+    return;
+  }
+  STATE.set(saved | QUEUED);
+  if (saved === 0) {
+    dropDrain();
+  }
+}

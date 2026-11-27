@@ -1,0 +1,87 @@
+// check: no leaks
+// Bounded drop nesting (#543) is per thread (std/lang/hooks/drop_queue.velt: the state word and
+// the queue are `ThreadLocal`s): four spawned tasks, which run on the workers side by side, each
+// build and drop deep structures past the depth limit, a chain through arrays and one through a
+// `Map`, several times, and each disposes every node of its own once.
+
+class Log {
+  count: number = 0;
+  sum: number = 0;
+}
+
+class Link {
+  id: number;
+  log: Log;
+  next: Link[] = [];
+
+  constructor(id: number, log: Log) {
+    this.id = id;
+    this.log = log;
+  }
+
+  [Symbol.dispose]() {
+    this.log.count++;
+    this.log.sum += this.id;
+  }
+}
+
+class Entry {
+  id: number;
+  log: Log;
+  rest: Map<string, Entry> = new Map();
+
+  constructor(id: number, log: Log) {
+    this.id = id;
+    this.log = log;
+  }
+
+  [Symbol.dispose]() {
+    this.log.count++;
+    this.log.sum += this.id;
+  }
+}
+
+function links(n: number, log: Log): Link {
+  let head = new Link(n - 1, log);
+  for (let i = n - 2; i >= 0; i--) {
+    const l = new Link(i, log);
+    l.next.push(head);
+    head = l;
+  }
+  return head;
+}
+
+function entries(n: number, log: Log): Entry {
+  let head = new Entry(n - 1, log);
+  for (let i = n - 2; i >= 0; i--) {
+    const e = new Entry(i, log);
+    e.rest.set("next", head);
+    head = e;
+  }
+  return head;
+}
+
+async function work(t: number): Promise<string> {
+  const log = new Log();
+  const n = 20000 + t * 5000;
+  for (let round = 0; round < 5; round++) {
+    {
+      const l = links(n, log);
+    }
+    {
+      const e = entries(n / 2, log);
+    }
+    await yieldNow();
+  }
+  return `task ${t}: ${log.count} disposed, id sum ${log.sum}`;
+}
+
+async function main() {
+  const tasks: Promise<string>[] = [];
+  for (let t = 0; t < 4; t++) {
+    tasks.push(spawn(work(t)));
+  }
+  for (const r of await Promise.all(tasks)) {
+    console.log(r);
+  }
+}

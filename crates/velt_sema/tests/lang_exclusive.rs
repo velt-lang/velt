@@ -136,6 +136,22 @@ fn mutating_or_moving_while_borrowed_by_the_call() {
 }
 
 #[test]
+fn a_change_an_earlier_argument_made_is_over() {
+    // Arguments are evaluated left to right: the change is done before `xs` is borrowed (#748).
+    ok_main(
+        "const xs: i64[] = [1, 2]; console.log(popIt(xs), xs); console.log(sum([popIt(xs)], xs));
+         const b = new Box(); fill([popIt(b.items)], b.items); console.log(xs.pop(), xs);",
+    );
+    // A closure an earlier argument hands on may change `xs` while the call holds it.
+    let r = err_src(&format!(
+        "{FNS} function keep(f: () => void): () => void {{ return f; }}
+         function run(f: () => void, a: i64[]): void {{ f(); console.log(a.length); }}
+         function main() {{ const xs: i64[] = [1]; run(keep(() => {{ xs.push(2); }}), xs); }}"
+    ));
+    assert!(r.contains("already borrowed by this call"), "{r}");
+}
+
+#[test]
 fn modification_on_any_path_counts() {
     // Only one branch modifies `a`; only a helper called from a loop modifies `this`.
     let r = err_src(

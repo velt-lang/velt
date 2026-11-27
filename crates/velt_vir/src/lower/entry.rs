@@ -16,10 +16,6 @@
 //! `velt_rt_block_on`, `velt_main` hands the root to `velt_rt_host_main` with the code that
 //! runs after it (`MainFinish`: the uncaught error, the exit code), which the runtime calls when
 //! the root is done, in whichever turn of the host that is (velt_rt_wasm host_turn.rs).
-//!
-//! Before anything else, `velt_main` initializes the native libraries of packages
-//! (native_abi.md "Start-up"): for each, `rc = velt_native_init_<pkg>(velt_rt_native_api())`
-//! then `velt_rt_native_check(rc, &"<pkg>")`, which stops the program when `rc != 0`.
 
 use velt_sema::hir::{self, DefId, TyId, TyKind};
 
@@ -49,7 +45,6 @@ impl<'c, 'h> FnLower<'c, 'h> {
             // Before anything starts the runtime (#211).
             lw.call_rt(Rt::SetScheduler, vec![cint(1, Ty::U32)], None);
         }
-        lw.init_natives();
         let Some(def) = lw.cx.hir.entry else {
             lw.terminate(Terminator::Return(cint(0, Ty::I32)));
             return lw.finish_export();
@@ -62,6 +57,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             lw.push_scope(ScopeKind::Block);
             let code = lw.run_async_main(def);
             lw.sched_finish(&code);
+            lw.fn_props_exit();
             lw.terminate(Terminator::Return(code));
             lw.scopes.clear();
             return lw.finish_export();
@@ -94,6 +90,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             }
             code
         };
+        lw.fn_props_exit();
         lw.terminate(Terminator::Return(code));
         lw.scopes.clear();
         lw.finish_export()
@@ -247,71 +244,42 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
     }
 
-    /// Call every native library's init with the runtime table, checking each result.
-    fn init_natives(&mut self) {
-        let inits = self.cx.native_inits.clone();
-        if inits.is_empty() {
-            return;
-        }
-        let api_fn = self
-            .cx
-            .extern_sym("velt_rt_native_api", vec![], Ty::Ptr, false);
-        let check = self.cx.extern_sym(
-            "velt_rt_native_check",
-            vec![Ty::I32, Ty::Ptr],
-            Ty::Unit,
-            false,
-        );
-        for init in inits {
-            let api = self.temp(Ty::Ptr);
-            self.call(
-                vir::Callee::Extern(api_fn),
-                vec![],
-                Some(Place::local(api)),
-                false,
-            );
-            let f = self
-                .cx
-                .extern_sym(&init.symbol, vec![Ty::Ptr], Ty::I32, false);
-            let rc = self.temp(Ty::I32);
-            let args = vec![Operand::Copy(Place::local(api))];
-            self.call(vir::Callee::Extern(f), args, Some(Place::local(rc)), false);
-            let name = self.cx.static_str_object(&init.package);
-            let name = Operand::Const(vir::Const::Static(name), Ty::Ptr);
-            let args = vec![Operand::Copy(Place::local(rc)), name];
-            self.call(vir::Callee::Extern(check), args, None, false);
-        }
-    }
-
     fn finish_export(self) -> Function {
         let mut f = self.finish("velt_main".into(), vec![], Ty::I32);
         f.linkage = Linkage::Export;
         f
     }
 
-    /// Handle the `Result` of a throwing `main`; yields the exit code for the Ok case.
+    /// Handle the `Result` of a throwing `main`; yields the exit code: 1 after reporting an
+    /// uncaught error, else the Ok case's. Both go on to what follows `main` (the module state's
+    /// drop with the debug counters on, `moduleExit` or `schedFinish`, #3878).
     pub(super) fn uncaught_check(&mut self, res: vir::Local, ret: TyId, err: TyId) -> Operand {
         let rty = self.cx.intern(TyKind::Result(ret, err));
         let rp = Place::local(res);
         let tag = Operand::Copy(proj(&rp, Proj::Field(0)));
         let is_err = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, tag, cint(0, Ty::U8)));
-        let (err_bb, ok_bb) = (self.new_block(), self.new_block());
+        let code = Place::local(self.temp(Ty::I32));
+        let (err_bb, ok_bb, join) = (self.new_block(), self.new_block(), self.new_block());
         self.branch(is_err, err_bb, ok_bb);
         self.switch_to(err_bb);
         let ev = self.cx.view(rty, 1);
         let ep = proj(&proj(&rp, Proj::Cast(ev)), Proj::Field(1));
         self.report_uncaught(&ep, err);
         self.drop_glue(ep, err);
-        self.terminate(Terminator::Return(cint(1, Ty::I32)));
+        self.store(code.clone(), cint(1, Ty::I32));
+        self.goto(join);
         self.switch_to(ok_bb);
-        match self.cx.ty(ret) {
+        let ok = match self.cx.ty(ret) {
             Ty::I32 => {
                 let ov = self.cx.view(rty, 0);
-                let p = proj(&proj(&rp, Proj::Cast(ov)), Proj::Field(1));
-                Operand::Copy(p)
+                Operand::Copy(proj(&proj(&rp, Proj::Cast(ov)), Proj::Field(1)))
             }
             _ => cint(0, Ty::I32),
-        }
+        };
+        self.store(code.clone(), ok);
+        self.goto(join);
+        self.switch_to(join);
+        Operand::Copy(code)
     }
 
     /// `Uncaught <Name>: <message>` (an `Error`) or `Uncaught <value>` (anything else) on stderr
@@ -522,7 +490,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// The prelude `Error` class when class `err` is it or extends it.
-    fn error_root(&mut self, err: TyId) -> Option<DefId> {
+    pub(super) fn error_root(&mut self, err: TyId) -> Option<DefId> {
         let TyKind::Adt(mut d, _) = self.cx.kind(err) else {
             return None;
         };

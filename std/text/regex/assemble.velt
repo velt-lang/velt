@@ -38,8 +38,10 @@ export function assemble(pattern: string, flags: string, names: string[]): Progr
   if (prog.automaton) {
     const back = new Compiler(parser, true);
     back.compile(tree);
-    back.prog.classStarts = prog.classStarts;
-    back.prog.asciiClass = prog.asciiClass;
+    // Copies, not the same arrays: a regex puts its program in a `shared`, whose transfer copies
+    // what two places hold, at more cost than these copies (#3883).
+    back.prog.classStarts = prog.classStarts.clone();
+    back.prog.asciiClass = prog.asciiClass.clone();
     prog.backward = back.prog;
   }
   return prog;

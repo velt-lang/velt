@@ -1,12 +1,13 @@
 //! What the app's passes change of a finished unit's definitions (#3543), kept beside them:
 //! the app's code can raise the pass modes of a std method it overrides or of a std generated
 //! function it instantiates (`ownership::mutation`'s groups), the modes of a std interface's slot
-//! it implements, and the throws of a std function whose throw group it joins
-//! (`throws::infer`). In a whole-program check those write the definitions; in the app's stage
-//! of a check by units std's definitions are frozen, so the raised values are kept here, read in
-//! their place while the app's passes run ([`Ctx::raised_modes_of`], [`Ctx::slot_modes`],
-//! [`Ctx::fn_throws`]), and written onto the definitions once the freeze lifts to build the
-//! program ([`apply`]), which a whole-program check had written by then.
+//! it implements, the throws of a std function whose throw group it joins (`throws::infer`),
+//! and the vtable slots its overrides add to a std class (`collect::program_slots`, #3684). In a
+//! whole-program check those write the definitions; in the app's stage of a check by units std's
+//! definitions are frozen, so the raised values are kept here, read in their place while the
+//! app's passes run ([`Ctx::raised_modes_of`], [`Ctx::slot_modes`], [`Ctx::fn_throws`],
+//! [`Ctx::vtable_of`], [`Ctx::vslot`]), and written onto the definitions once the freeze lifts
+//! to build the program ([`apply`]), which a whole-program check had written by then.
 
 use rustc_hash::FxHashMap;
 
@@ -28,7 +29,20 @@ pub struct Raised {
     /// (`ownership::finish::demote_fn_values`): the parameter indices (`this` not counted) whose
     /// locals become `mutable` in the body.
     pub(crate) demoted: FxHashMap<DefId, Vec<usize>>,
+    /// A class's vtable with the slots the program's overrides add to it or to a base of it
+    /// (`collect::program_slots`, #3684): its entries, and each method key's slot.
+    pub(crate) vtables: FxHashMap<DefId, Vtable>,
+    /// The (origin class, method key) of each slot the program's overrides added, whose calls in
+    /// std's bodies dispatch once the freeze lifts (`units::std_calls`).
+    pub(crate) added: Vec<(DefId, String)>,
+    /// The (std class, fill key) of each default-filling slot the program's overrides added
+    /// (`collect::program_slots`): std's calls that leave out the arguments it fills take it
+    /// once the freeze lifts (`units::std_calls`, #3789).
+    pub(crate) added_fills: rustc_hash::FxHashSet<(DefId, String)>,
 }
+
+/// A class's vtable entries and the slot of each method key, as `AdtInfo` holds them.
+pub(crate) type Vtable = (Vec<DefId>, FxHashMap<String, u32>);
 
 /// A saved unit holds none: what a finished unit keeps is raised only by a later unit's passes,
 /// and [`apply`] empties it before a unit is saved.
@@ -38,7 +52,10 @@ impl super::codec::Codec for Raised {
             self.fns.is_empty()
                 && self.slots.is_empty()
                 && self.throws.is_empty()
-                && self.demoted.is_empty(),
+                && self.demoted.is_empty()
+                && self.vtables.is_empty()
+                && self.added.is_empty()
+                && self.added_fills.is_empty(),
             "ICE: a unit saved with raised definitions"
         );
     }
@@ -72,6 +89,48 @@ impl Ctx<'_> {
         }
         let m = self.iface(iface)?.methods.get(slot)?;
         Some((m.mut_this, m.params.iter().map(|p| p.mode).collect()))
+    }
+
+    /// Class `d`'s vtable entries, with the slots the program's overrides add when `d` is a
+    /// finished unit's class.
+    pub(crate) fn vtable_of(&self, d: DefId) -> Option<&[DefId]> {
+        match self.unit_sums.raised.vtables.get(&d) {
+            Some((entries, _)) => Some(entries),
+            None => self.adt(d).map(|a| a.vtable.as_slice()),
+        }
+    }
+
+    /// Class `d`'s slot of each method key, with the slots the program's overrides add when `d`
+    /// is a finished unit's class.
+    pub(crate) fn vslots_of(&self, d: DefId) -> Option<&FxHashMap<String, u32>> {
+        match self.unit_sums.raised.vtables.get(&d) {
+            Some((_, slots)) => Some(slots),
+            None => self.adt(d).map(|a| &a.vslots),
+        }
+    }
+
+    /// Class `d`'s vtable entry of each slot, `None` for a slot that only pads a vtable the
+    /// program extended (`collect::program_slots`): no call reaches the class through it, and
+    /// it pairs with nothing of its base's or subclasses'.
+    pub(crate) fn vtable_entries(&self, d: DefId) -> Vec<Option<DefId>> {
+        let Some(v) = self.vtable_of(d) else {
+            return vec![];
+        };
+        match self.unit_sums.raised.vtables.get(&d) {
+            None => v.iter().copied().map(Some).collect(),
+            Some((_, slots)) => {
+                let mut out = vec![None; v.len()];
+                for &s in slots.values() {
+                    out[s as usize] = Some(v[s as usize]);
+                }
+                out
+            }
+        }
+    }
+
+    /// Class `d`'s slot for method `key`, if a call through it dispatches (see [`Ctx::vtable_of`]).
+    pub(crate) fn vslot(&self, d: DefId, key: &str) -> Option<u32> {
+        self.vslots_of(d)?.get(key).copied()
     }
 
     /// Function `d`'s final throws, as raised in the app's passes when `d` is a finished unit's.
@@ -146,25 +205,21 @@ fn write_slot(cx: &mut Ctx, iface: DefId, slot: usize, mut_this: bool, params: &
 /// as a whole-program check had written it.
 pub(crate) fn apply(cx: &mut Ctx) {
     let raised = std::mem::take(&mut cx.unit_sums.raised);
+    // `VELT_UNITS_RAISED=1`: what the program raised of a finished unit's definitions, one line
+    // each, sorted, as the `velt-units:` report lists the writes (the tests read it).
+    if std::env::var_os("VELT_UNITS_RAISED").is_some() {
+        report(cx, &raised);
+    }
     let mut fns: Vec<_> = raised.fns.into_iter().collect();
     fns.sort_by_key(|(d, _)| *d);
-    // `VELT_UNITS_RAISED=1`: what the program raised of a finished unit's definitions, one line
-    // each, as the `velt-units:` report lists the writes (the tests read it).
-    if std::env::var_os("VELT_UNITS_RAISED").is_some() {
-        for (d, _) in &fns {
-            eprintln!("velt-units-raised: modes {}", cx.fn_info(*d).name);
-        }
-        for (iface, slot) in raised.slots.keys() {
-            let name = cx.iface(*iface).and_then(|i| i.methods.get(*slot as usize));
-            eprintln!(
-                "velt-units-raised: slot {}",
-                name.map_or("?", |m| m.name.as_str())
-            );
-        }
-        for d in raised.throws.keys() {
-            eprintln!("velt-units-raised: throws {}", cx.fn_info(*d).name);
-        }
+    let mut vtables: Vec<_> = raised.vtables.into_iter().collect();
+    vtables.sort_by_key(|(d, _)| *d);
+    for (d, (entries, slots)) in vtables {
+        let a = cx.adt_mut(d);
+        a.vtable = entries;
+        a.vslots = slots;
     }
+    super::std_calls::redispatch(cx, &raised.added, &raised.added_fills);
     for (d, modes) in fns {
         write_modes(cx, d, &modes);
         // The body's parameters too, which lowering reads, as `ownership::infer`'s
@@ -193,5 +248,37 @@ pub(crate) fn apply(cx: &mut Ctx) {
     }
     for (d, t) in raised.throws {
         cx.fn_info_mut(d).throws = t;
+    }
+}
+
+/// The `VELT_UNITS_RAISED` lines of what the program raised: one per definition, sorted, so
+/// two checks of a program print the same.
+fn report(cx: &Ctx, raised: &Raised) {
+    let mut lines: Vec<String> = (raised.fns.keys())
+        .map(|d| format!("modes {}", cx.fn_info(*d).name))
+        .collect();
+    for (iface, slot) in raised.slots.keys() {
+        let name = cx.iface(*iface).and_then(|i| i.methods.get(*slot as usize));
+        lines.push(format!("slot {}", name.map_or("?", |m| m.name.as_str())));
+    }
+    for d in raised.throws.keys() {
+        lines.push(format!("throws {}", cx.fn_info(*d).name));
+    }
+    for (d, (_, slots)) in &raised.vtables {
+        let mut keys: Vec<&str> = slots.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        let name = cx.adt(*d).map_or("?", |a| a.qual_name.as_str());
+        lines.push(format!("vtable {name} {}", keys.join(",")));
+    }
+    // Std's calls no program slot can give an override's default (#3789): none in std today.
+    for s in &cx.unit_sums.left_out_general {
+        let m = cx.modules.iter().find(|m| m.file == s.file);
+        let path = m.map_or("?", |m| m.path.as_str());
+        lines.push(format!("unfillable call {path}@{}", s.lo));
+    }
+    lines.sort();
+    lines.dedup();
+    for l in lines {
+        eprintln!("velt-units-raised: {l}");
     }
 }

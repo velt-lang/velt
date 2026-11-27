@@ -1,0 +1,39 @@
+// Reads and writes started together through one FileReader or FileWriter run in the order they
+// were started, as Node's stream writes land in call order: each waits for the ones before it.
+import { openRead, openWrite, readFile, remove, writeFile } from "velt/fs";
+import { IoError } from "velt/io";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+
+async function main() {
+  const path = `${tmpdir()}/velt-stream-order-${uuidv4()}.txt`;
+  const w = await openWrite(path);
+  const writes: Promise<void, IoError>[] = [];
+  for (let i = 0; i < 8; i++) {
+    writes.push(w.write(`${i}`.repeat(70000)));
+  }
+  await Promise.all(writes);
+  await w.close();
+  const text = await readFile(path);
+  let order = "";
+  for (let i = 0; i < 8; i++) {
+    order += text.charAt(i * 70000);
+  }
+  console.log("writes:", order, text.length);
+
+  await writeFile(path, "0123456789");
+  const r = await openRead(path);
+  const reads: Promise<u8[], IoError>[] = [];
+  for (let i = 0; i < 8; i++) {
+    reads.push(r.read(1));
+  }
+  let read = "";
+  for (const p of reads) {
+    read += String.fromCharCode((await p)[0] as number);
+  }
+  console.log("reads:", read);
+  r.close();
+  await remove(path);
+}
+
+main();

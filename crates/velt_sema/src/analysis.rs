@@ -37,6 +37,12 @@ pub(crate) fn analyze(
         // check had written it during them (`units::raised`).
         units::raised::apply(cx);
     }
+    // A check of both units in one context (`VELT_UNITS=1`) lifts the freeze before the passes
+    // after the bodies, which write what they raise; the vtable slots the app's collection
+    // added while std was frozen are kept beside std's classes until here, as by units.
+    if cx.units && cx.units_stage == units::Stage::Both {
+        units::raised::apply(cx);
+    }
     let entry = main_fn::check_main(cx, root, root_mod, opts.require_main);
     alias_expand::check_unused_aliases(cx);
     entry
@@ -184,6 +190,7 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
         return;
     }
     timings::pass("hooks::check_throws", || hooks::check_throws(cx));
+    crate::error_message::check_throws(cx);
     decorators::export_throws(cx);
     let uses = timings::pass("record_keys::check_instantiations", || {
         record_keys::check_instantiations(cx)

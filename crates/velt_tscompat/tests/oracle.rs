@@ -83,7 +83,6 @@ const CLAIMS: &[(&str, Claim)] = &[
              `tsc` rejects; a union of integer literal types divides as numbers (#2686)",
         ),
     ),
-    ("object-in-template", Claim::Behaviour),
     ("default-sort", Claim::Behaviour),
     ("map-iter-as-array", Claim::Rejected),
     ("velt-global", Claim::Rejected),

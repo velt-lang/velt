@@ -113,41 +113,48 @@ fn a_check_by_units_accepts_what_a_whole_program_check_does() {
     assert_eq!(whole.status.code(), units.status.code());
 }
 
-/// An override of a std method that has no slot would give std's class a slot: until D1 gives
-/// every such method its slot in std's unit, the check counts it where the program crosses.
+/// An override of a std method that has no slot gives std's class a slot: the program's slot is
+/// kept beside std's frozen class (`units::raised`'s `vtables`, #3684), not written into it.
 #[test]
-fn an_override_of_a_std_method_without_a_slot_is_counted_as_a_crossing() {
+fn an_override_of_a_std_method_without_a_slot_keeps_the_slot_beside_std() {
     let stderr = crossings("1");
     assert!(
-        stderr.contains("velt-units:") && stderr.contains("collect/classes.rs"),
-        "the crossing wasn't counted:\n{stderr}"
+        stderr.contains(SLOT_KEPT),
+        "the slot wasn't kept beside std's class:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("collect/classes.rs"),
+        "the slot was written into std's class:\n{stderr}"
     );
 }
 
 /// With std checked as a unit of its own (`VELT_UNITS=2`), the app's rounds start from a frozen
-/// copy of it: the same write is reported. Building the program after the app's passes writes
-/// every definition and is not counted.
+/// copy of it: the slot is kept beside it (only a frozen class's is). Building the program after
+/// the app's passes writes every definition and is not counted.
 #[test]
-fn std_s_frozen_copy_reports_the_app_writing_std() {
+fn std_s_frozen_copy_keeps_the_app_s_slot_beside_std() {
     let stderr = crossings("2");
     assert!(
-        stderr.contains("velt-units:") && stderr.contains("collect/classes.rs"),
+        stderr.contains(SLOT_KEPT),
         "the app's copy of std wasn't frozen:\n{stderr}"
     );
     assert!(
-        !stderr.contains("finalize.rs"),
-        "building the program was counted as the app writing std:\n{stderr}"
+        !stderr.contains("collect/classes.rs") && !stderr.contains("finalize.rs"),
+        "std's class was written:\n{stderr}"
     );
 }
 
+/// The `VELT_UNITS_RAISED` line of the slot [`crossings`]'s program adds to std's class.
+const SLOT_KEPT: &str =
+    "velt-units-raised: vtable std/net/url/search_params::URLSearchParams getAll";
+
 /// `velt check`'s report of writes to std's definitions (`velt-units:` lines, places with `/`)
-/// for a program overriding a std method that has no slot, checked by units as `VELT_UNITS`
-/// says.
+/// and of what the program raised beside them (`velt-units-raised:`) for a program overriding a
+/// std method that has no slot, checked by units as `VELT_UNITS` says.
 ///
 /// The method must stay slot-less in std: no std class may override `URLSearchParams.getAll`
 /// (std/net/url/search_params.velt). An override in std gives the method its slot there, and the
-/// app's override then crosses nothing (as `Error.toString` did once std's `ArgError` overrode
-/// it).
+/// app's override then adds none (as `Error.toString` did once std's `ArgError` overrode it).
 fn crossings(units: &str) -> String {
     let dir = test_dir::TestDir::new();
     let src = r#"
@@ -165,6 +172,7 @@ function main() {
         .args(["check", "main.velt"])
         .current_dir(dir.path())
         .env("VELT_UNITS", units)
+        .env("VELT_UNITS_RAISED", "1")
         .env_remove("VELT_UNITS_FREEZE")
         .output()
         .unwrap();
@@ -877,6 +885,43 @@ fn std_s_unit_on_disk_serves_another_program() {
     let said = String::from_utf8_lossy(&third.stderr).to_string();
     assert!(said.contains("std's unit refused from disk"), "{said}");
     assert_eq!(error_lines(&whole), error_lines(&third));
+    // The unit saved again is the one this check made (of `bad`), whose bytes may differ from
+    // the first one's in more places than the damaged byte: what it is, is a unit that loads.
     let again = std::fs::read(&saved[0]).unwrap();
-    assert_ne!(again[at], bytes[at], "the damaged unit was saved again");
+    assert!(again != bytes, "the damaged unit was not saved again");
+    let fourth = check_on_disk(&disk, bad);
+    let said = String::from_utf8_lossy(&fourth.stderr).to_string();
+    assert!(said.contains("std's unit loaded from disk"), "{said}");
+    assert_eq!(error_lines(&whole), error_lines(&fourth));
+}
+
+/// `get message()` on a class extending `Error` (#3792): a whole-program check reads every
+/// `message` of an error through it, but a check by units checks std's bodies (`toString`,
+/// `stack`) before the program's classes are known, so both modes refuse it rather than give
+/// those reads another answer.
+#[test]
+fn a_get_message_override_of_error_is_refused_by_units() {
+    let src = "class E extends Error {\n  get message(): string {\n    return \"g\";\n  }\n}\nconsole.log(String(new E()));\n";
+    let whole = check_in(None, src);
+    assert!(
+        whole.status.success(),
+        "{}",
+        String::from_utf8_lossy(&whole.stderr)
+    );
+    for units in ["1", "2"] {
+        let out = check_in(Some(units), src);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !out.status.success(),
+            "VELT_UNITS={units}: accepted\n{stderr}"
+        );
+        let errors: Vec<&str> = stderr.lines().filter(|l| l.contains("error:")).collect();
+        assert_eq!(errors.len(), 1, "VELT_UNITS={units}:\n{stderr}");
+        assert!(
+            errors[0].contains(
+                "`get message()` on a class extending `Error` is not supported in a check by units"
+            ),
+            "VELT_UNITS={units}:\n{stderr}"
+        );
+    }
 }

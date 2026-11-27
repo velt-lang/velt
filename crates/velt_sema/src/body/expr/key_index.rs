@@ -130,6 +130,7 @@ impl FnCx<'_, '_> {
             name: String::new(),
             span,
             dynamic: false,
+            checkable: false,
         };
         self.cx.object_copies.writes.push(write);
         let t = obj.ty;

@@ -51,6 +51,7 @@ mod iterable;
 mod lookup;
 mod nested;
 mod operators;
+mod program_slots;
 mod regexp_symbols;
 pub(crate) mod ret_infer;
 pub(crate) mod shapes;
@@ -73,6 +74,11 @@ pub(crate) use shapes::self_type;
 
 /// The def allocated for each module-level and nested item.
 pub(crate) type ItemDefs = Vec<DefId>;
+
+/// The class class `d` extends.
+pub(crate) fn base_class(cx: &Ctx, d: DefId) -> Option<DefId> {
+    classes::base_of_def(cx, d)
+}
 
 /// Collect generated modules `ms` once the program's bodies are checked
 /// (docs/internals/design/source-generators.md "Compilation"): their items declared in their own
@@ -137,6 +143,8 @@ fn collect_items(cx: &mut Ctx, items: &ItemDefs, from: Added) {
     c_struct::check_all(cx, items);
     cx.shapes_done = true;
     cx.check_deferred_ts_returns();
+    // Before any method key is computed: `get message()` of a class extending `Error`.
+    crate::error_message::mark_getters(cx, from.defs);
     sigs::resolve_sigs(cx, items, from);
     // After signatures: std's generated functions take their final modes from `@modifies`.
     crate::decorators::apply_modifies(cx, from.defs);
