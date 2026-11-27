@@ -1,21 +1,11 @@
-// velt/process (internal): the environment under WASI (`#env-sys`' wasi variant,
-// std/imports.velt): the variables of std/process/env_wasm.velt, and the arguments the host
-// passes (`args_sizes_get`, `args_get` through wasi-libc: docs/internals/design/wasi-libc.md).
-// WebAssembly has no separate executable: its path is the first argument, the module's.
+// velt/process (internal): the arguments under WASI (`#args-sys`' wasi variant,
+// std/imports.velt): the ones the host passes (`args_sizes_get`, `args_get` through wasi-libc:
+// docs/internals/design/wasi-libc.md). WebAssembly has no separate executable: its path is the
+// first argument, the module's.
 
 import { arrayDataAddress, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 
-export {
-  envPairs,
-  getEnv,
-  getEnvRaw,
-  lockEnv,
-  passedVar,
-  removeEnv,
-  setEnv,
-  unlockEnv,
-} from "./env_wasm";
-export { keepArgs, keptArg, keptCount, releaseArgs } from "./args_keep";
+export { keepArgs, keptArg, keptCount } from "./args_keep";
 
 /** `args_sizes_get`: the number of arguments and the bytes they take, NULs included. */
 declare c("c") function __wasi_args_sizes_get(argc: u32[], size: u32[]): u16;

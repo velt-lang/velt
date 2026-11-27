@@ -710,7 +710,7 @@ joins the graceful stop through velt/dev (std/dev, §13.2), which has no runtime
 | `velt_rt_exit` | see rt_abi.md | |
 
 The command-line arguments (`argv()`, `args()`, Node's `process.argv`) are std code
-(std/process/args_read.velt), which reads them from the OS (`#env-sys`: `_NSGetArgv` on macOS,
+(std/process/args_read.velt), which reads them from the OS (`#args-sys`: `_NSGetArgv` on macOS,
 `/proc/self/cmdline` on Linux, `GetCommandLineW` split by the C runtime's rules on Windows, WASI's
 `args_get`; none in the browser). A program velt runs in its own process (`velt dev`, the
 generator host) gets them in `VELT_ARGV` (each argument as its length in UTF-8 bytes, `:` and

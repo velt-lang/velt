@@ -7,12 +7,12 @@ import { argList } from "velt/lang/hooks/process";
 
 /** Every command-line argument, starting with the program path (like C's `argv`). */
 export function argv(): string[] {
-  return argList(false);
+  return argList(0);
 }
 
 /** The arguments after the program path. */
 export function args(): string[] {
-  let all = argList(false);
+  let all = argList(0);
   if (all.length > 0) {
     arrayRemove(all, 0);
   }

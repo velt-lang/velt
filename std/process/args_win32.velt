@@ -1,5 +1,5 @@
-// velt/process (internal): the arguments on Windows (std/process/env_win32.velt re-exports
-// them): the process's command line (`GetCommandLineW`) split by the C runtime's rules
+// velt/process (internal): the arguments on Windows (`#args-sys`' win32 variant,
+// std/imports.velt): the process's command line (`GetCommandLineW`) split by the C runtime's rules
 // (std/process/args_cmdline.velt), and the executable's path (`GetModuleFileNameW`, as it is:
 // resolving it would make it a `\\?\` path).
 
@@ -7,6 +7,8 @@ import { Ptr } from "velt/ffi/ptr";
 import { wideText } from "velt/ffi/wide";
 import { addressLoad, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 import { splitCommandLine } from "./args_cmdline";
+
+export { keepArgs, keptArg, keptCount } from "./args_keep";
 
 declare c("c") function GetCommandLineW(): Ptr<u16> | null;
 declare c("c") function GetModuleFileNameW(module: Ptr<void> | null, buf: u16[], size: u32): u32;
