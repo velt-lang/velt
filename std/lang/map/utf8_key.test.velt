@@ -1,11 +1,10 @@
 // velt/lang/map (internal): tests of utf8_key.velt, run by `velt test std/`. `utf8KeyHash` must give
-// the hash string keys are stored under (`velt_rt_str_hash`) for every length and form of string:
+// the hash string keys are stored under (`strHash`) for every length and form of string:
 // a difference would make `getUtf8` miss keys that are there.
 import { describe, expect, it } from "velt/test";
 import { utf8Encode } from "velt/encoding";
 import { utf8KeyEquals, utf8KeyHash } from "velt/lang/map/utf8_key";
-
-declare function velt_rt_str_hash(s: string): u64;
+import { strHash } from "velt/lang/hooks/str_key";
 
 /** Strings of every length from 0 to 70 (inline and heap forms, every tail length), ASCII. */
 function asciiStrings(): string[] {
@@ -21,14 +20,14 @@ function asciiStrings(): string[] {
 describe("utf8KeyHash", () => {
   it("is the string key hash for every length", () => {
     for (const s of asciiStrings()) {
-      expect(utf8KeyHash(utf8Encode(s))).toBe(velt_rt_str_hash(s));
+      expect(utf8KeyHash(utf8Encode(s))).toBe(strHash(s));
     }
   });
 
   it("is the string key hash for text that is not ASCII", () => {
     const words = ["päron", "日本", "😀", "a\u{FFFD}b", "κόσμε мир", "\0", "a\0", "x".repeat(1000)];
     for (const w of words) {
-      expect(utf8KeyHash(utf8Encode(w))).toBe(velt_rt_str_hash(w));
+      expect(utf8KeyHash(utf8Encode(w))).toBe(strHash(w));
     }
   });
 

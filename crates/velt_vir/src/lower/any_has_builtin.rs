@@ -349,12 +349,12 @@ impl FnLower<'_, '_> {
         let s = self.temp(Ty::Agg(STR_AGG));
         hooks::uint_text(self, Construct::Dynamic, ty::U64::arg(i)).emit_to(self, Place::local(s));
         let sp = self.addr(Place::local(s));
-        let eq = Place::local(self.temp(Ty::U8));
-        self.call_rt(Rt::StrEq, vec![k, sp.clone()], Some(eq.clone()));
+        let same = self.str_eq(k, sp.clone());
+        let eq = self.rvalue_temp(Ty::U8, Rvalue::Cast(same, Ty::U8));
         self.call_rt(Rt::StrDrop, vec![sp], None);
         let st = self.rvalue_temp(
             Ty::U8,
-            Rvalue::Binary(BinOp::Mul, Operand::Copy(eq), cint(yes - no, Ty::U8)),
+            Rvalue::Binary(BinOp::Mul, eq, cint(yes - no, Ty::U8)),
         );
         let st = self.rvalue_temp(Ty::U8, Rvalue::Binary(BinOp::Add, st, cint(no, Ty::U8)));
         self.terminate(Terminator::Return(st));

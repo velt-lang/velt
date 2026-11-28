@@ -1,0 +1,86 @@
+// velt/lang/string (internal): is a string well-formed UTF-16 (no lone surrogates), so that its
+// bytes are UTF-8? On the string's words and its buffer's header (rt_abi.md "Strings"), as the
+// runtime's own check reads them (velt_rt `str/mod.rs` `is_well_formed`):
+// - ASCII text (as many units as bytes) is well-formed: one compare.
+// - An inline string whose flag (bit `INLINE_LONE` of byte 23) is clear has none; one whose flag
+//   is set (after a join) is scanned.
+// - A non-ASCII heap buffer is `[crumbs][lone: u64][count: u64][text]` (crumbs.velt): `lone` is
+//   the count, or unknown (all ones: text that came from a static string). An unknown count is
+//   counted once and recorded (relaxed: every reader counts the same immutable text).
+// - A slice's share of its buffer's count is recorded nowhere: none when the buffer has none,
+//   else scanned. A non-ASCII static string has no room for a count: scanned.
+//
+// In canonical WTF-8 a lone surrogate is the 3-byte sequence `ED A0..BF xx` (a pair is one 4-byte
+// sequence), and `ED` is never a continuation byte, so a scan looks for `ED` followed by a byte
+// of `A0` or more.
+
+import {
+  addressAtomicLoad,
+  addressAtomicStore,
+  noInline,
+  strByteAt,
+  strByteLen,
+  strDataAddress,
+  strLen,
+  strWord2,
+} from "velt/lang/intrinsics";
+
+/** Bit 63 of `w2`: an inline string. */
+const INLINE: u64 = 0x8000000000000000;
+/** Byte 23 of an inline string that may hold lone surrogates has this bit set (bit 61 of `w2`). */
+const INLINE_LONE: u64 = 0x2000000000000000;
+/** The longest string (velt_rt `str::MAX_LEN`): a plain heap string's `w2` is its capacity, from
+ * 1 to this; a slice's has bit 62 set. */
+const MAX_LEN: u64 = 0x7fffffff;
+/** The `lone` field of a non-ASCII heap buffer: 16 bytes before its text. */
+const LONE_FIELD: usize = 16;
+/** A `lone` field at or above this is unknown (velt_text `wtf8::LONE_UNKNOWN`, `usize::MAX`: all
+ * ones in the 8-byte field on 64-bit targets, the low 32 bits on wasm32). */
+const LONE_UNKNOWN: u64 = 0xffffffff;
+
+/** Does `s` hold no lone surrogate (JS `s.isWellFormed()`)? */
+export function strIsWellFormed(s: string): bool {
+  if (strLen(s) == strByteLen(s)) {
+    return true;
+  }
+  const w2 = strWord2(s);
+  if ((w2 & INLINE) != 0) {
+    return (w2 & INLINE_LONE) == 0 || countLone(s) == 0;
+  }
+  if (w2 - 1 < MAX_LEN) {
+    return heapWellFormed(s);
+  }
+  return countLone(s) == 0;
+}
+
+/** `strIsWellFormed` of a plain non-ASCII heap string: its header's count, counted once when
+ * unknown. */
+@noInline
+function heapWellFormed(s: string): bool {
+  const field = strDataAddress(s) - LONE_FIELD;
+  // SAFETY: a non-ASCII plain heap string's buffer has the header, alive while `s` is.
+  const lone = unsafe { addressAtomicLoad<u64>(field, "relaxed") };
+  if (lone < LONE_UNKNOWN) {
+    return lone == 0;
+  }
+  const n = countLone(s);
+  // SAFETY: as above; racing stores write the same count of the same immutable text.
+  unsafe {
+    addressAtomicStore<u64>(field, n as u64, "relaxed");
+  }
+  ;
+  return n == 0;
+}
+
+/** The lone surrogates of `s`: each `ED` followed by a byte of `A0` or more. */
+@noInline
+function countLone(s: string): usize {
+  const n = strByteLen(s);
+  let count: usize = 0;
+  for (let i: usize = 0; i + 1 < n; i++) {
+    if (strByteAt(s, i as u64) == 0xed && strByteAt(s, (i + 1) as u64) >= 0xa0) {
+      count += 1;
+    }
+  }
+  return count;
+}

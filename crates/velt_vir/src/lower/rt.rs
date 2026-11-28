@@ -29,7 +29,6 @@ pub(super) enum Rt {
     Alloc,
     Realloc,
     Free,
-    StrHash,
     Sqrt,
     Floor,
     Ceil,
@@ -114,7 +113,6 @@ pub(super) enum Rt {
     RwLockWriteUnlock,
     MutexUnlock,
     // M4: string builder and JSON pull reader (rt_abi_async.md §12)
-    StrEq,
     /// JavaScript's `Number(s)` of a string (`any` == conversions, any.rs).
     StrToNumber,
     StrbufNew,
@@ -158,7 +156,6 @@ impl Rt {
             Rt::Alloc => ("velt_rt_alloc", vec![U64, U64], Ptr, false),
             Rt::Realloc => ("velt_rt_realloc", vec![Ptr, U64, U64, U64], Ptr, false),
             Rt::Free => ("velt_rt_free", vec![Ptr, U64, U64], Unit, false),
-            Rt::StrHash => ("velt_rt_str_hash", vec![Ptr], U64, false),
             Rt::Sqrt => math(MathOp::Sqrt),
             Rt::Floor => math(MathOp::Floor),
             Rt::Ceil => math(MathOp::Ceil),
@@ -257,7 +254,6 @@ impl Rt {
         use Ty::*;
         let f = |s, params, ret| (s, params, ret, false);
         match self {
-            Rt::StrEq => f("velt_rt_str_eq", vec![Ptr, Ptr], U8),
             Rt::StrToNumber => f("velt_rt_str_to_number", vec![Ptr], F64),
             Rt::StrbufNew => f("velt_rt_strbuf_new", vec![U64, Ptr], Unit),
             Rt::StrbufAdopt => f("velt_rt_strbuf_adopt", vec![Ptr, Ptr, U64, Ptr], U8),

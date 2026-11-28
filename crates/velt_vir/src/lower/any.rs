@@ -256,16 +256,9 @@ impl FnLower<'_, '_> {
             let (x, y) = (Operand::Copy(pa), Operand::Copy(pb));
             self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y))
         } else if matches!(self.cx.kind(ty), TyKind::Str) {
-            let out = Place::local(self.temp(Ty::U8));
-            let args = vec![
+            self.str_eq(
                 Operand::Copy(Place::local(a)),
                 Operand::Copy(Place::local(b)),
-            ];
-            self.call_rt(Rt::StrEq, args, Some(out.clone()));
-            let zero = cint(0, Ty::U8);
-            self.rvalue_temp(
-                Ty::Bool,
-                Rvalue::Binary(BinOp::Ne, Operand::Copy(out), zero),
             )
         } else if self.cx.is_fn_or_dyn(ty) {
             // A function value boxed twice is the same function: its code and environment.

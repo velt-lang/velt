@@ -225,6 +225,13 @@ impl Interp<'_> {
                 self.write_bytes(a[0], &ticks.to_le_bytes());
                 return Ok(0);
             }
+            // The test builder's string key hash (`tests/builder.rs` `str_key_hooks`): FNV-1a.
+            "velt_test_str_hash" => {
+                let b = self.str_bytes(a[0]);
+                return Ok(b.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &x| {
+                    (h ^ x as u64).wrapping_mul(0x100_0000_01b3)
+                }));
+            }
             "velt_rt_free" => {
                 assert_eq!(
                     self.allocs.get(&a[0]).copied(),
@@ -232,12 +239,6 @@ impl Interp<'_> {
                     "interp: free with wrong size"
                 );
                 self.heap_free(a[0]);
-            }
-            "velt_rt_str_hash" => {
-                let b = self.str_bytes(a[0]);
-                return Ok(b.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &x| {
-                    (h ^ x as u64).wrapping_mul(0x100_0000_01b3)
-                }));
             }
             "velt_rt_rc_inc" => {
                 let n = self.read_u64(a[0]) + 1;

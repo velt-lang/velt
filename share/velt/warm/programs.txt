@@ -32,6 +32,8 @@
 ../../../bench/stdport/pow_int.velt
 # The string methods in Velt (#2198): trim, repeat, pad, split, replace and the ASCII case mapping.
 ../../../bench/stdport/string_methods.velt
+# String keys' hash in Velt (#2196): `Map.getUtf8` and `Map.get` of string keys.
+../../../bench/stdport/map_get_utf8.velt
 # The transfer map in Velt (#3584): a graph copied for each of 2,000 tasks.
 ../../../bench/stdport/transfer_graph.velt
 #

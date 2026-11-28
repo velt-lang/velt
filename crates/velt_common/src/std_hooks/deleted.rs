@@ -24,6 +24,12 @@ pub const DELETED: &[&str] = &[
     // #2196: a byte range as a string (the `bytes_range_text` hook, std/lang/bytes/range_text.velt).
     "velt_rt_bytes_range_to_str",
     "velt_rt_bytes_range_to_str_lossy",
+    // #2196: a string's well-formedness (std/lang/string/well_formed.velt), which only std called.
+    "velt_rt_str_is_well_formed",
+    // #2196: a string's `==` and its hash as a key (the `str_equals` and `str_hash` hooks,
+    // std/lang/hooks/str_key.velt).
+    "velt_rt_str_eq",
+    "velt_rt_str_hash",
     // #2196: standard input (std/process/stdin_buffer.velt over `#stdin-sys`), which only std
     // called.
     "velt_rt_stdin_read_line_sync",

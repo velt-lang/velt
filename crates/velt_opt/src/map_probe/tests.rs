@@ -18,10 +18,10 @@ enum Between {
     UnknownCall,
 }
 
-/// The externs and the `lookup` instance every test program uses.
+/// The externs, std's `strHash` and the `lookup` instance every test program uses.
 struct Kit {
     pb: ProgramBuilder,
-    hash: ExternId,
+    hash: FuncId,
     clone: ExternId,
     other: ExternId,
     lookup: FuncId,
@@ -29,7 +29,6 @@ struct Kit {
 
 fn kit() -> Kit {
     let mut pb = ProgramBuilder::new();
-    let hash = pb.ext("velt_rt_str_hash", &[Ty::Ptr], Ty::U64, false);
     let clone = pb.ext("velt_rt_str_clone", &[Ty::Ptr, Ty::Ptr], Ty::Unit, false);
     let other = pb.ext("velt_rt_str_push", &[Ty::Ptr, Ty::Ptr], Ty::Unit, false);
     let mut fb = FuncBuilder::internal(
@@ -42,6 +41,15 @@ fn kit() -> Kit {
     fb.assign(b, r, Rvalue::Use(copy_place(deref(fb.param(0), Ty::I64))));
     fb.ret(b, copy_local(r));
     let lookup = pb.add(fb.finish());
+    // std's `strHash` (std/lang/hooks/str_key.velt), by its mangled name: here the string's
+    // first word.
+    let symbol = velt_vir::mangle::mangle(velt_common::std_hook!(str_hash));
+    let mut fb = FuncBuilder::internal(&symbol, &[Ty::Ptr], Ty::U64);
+    let r = fb.local(Ty::U64);
+    let b = fb.block();
+    fb.assign(b, r, Rvalue::Use(copy_place(deref(fb.param(0), Ty::U64))));
+    fb.ret(b, copy_local(r));
+    let hash = pb.add(fb.finish());
     Kit {
         pb,
         hash,
@@ -54,7 +62,7 @@ fn kit() -> Kit {
 /// `hash(k)` then `lookup(m, k, hash * FIB)` into fresh locals, continuing in the returned block.
 fn probe(fb: &mut FuncBuilder, kit: &Kit, b: BlockId, m: Local, k: Local) -> (BlockId, Local) {
     let (h, p, r) = (fb.local(Ty::U64), fb.local(Ty::U64), fb.local(Ty::I64));
-    let b = fb.call(b, Callee::Extern(kit.hash), vec![copy_local(k)], Some(h));
+    let b = fb.call(b, Callee::Func(kit.hash), vec![copy_local(k)], Some(h));
     fb.assign(b, p, bin(BinOp::Mul, copy_local(h), int(FIB, Ty::U64)));
     let args = vec![copy_local(m), copy_local(k), copy_local(p)];
     (fb.call(b, Callee::Func(kit.lookup), args, Some(r)), r)
@@ -128,7 +136,7 @@ fn calls_to(f: &Function, callee: &Callee) -> usize {
 fn probes_left(mut p: Program) -> (usize, usize) {
     let probes = Probes::find(&p);
     let (hash, lookup) = (
-        Callee::Extern(probes.hash.expect("hash extern")),
+        Callee::Func(*probes.hash.iter().next().expect("strHash")),
         Callee::Func(*probes.lookups.keys().next().expect("lookup")),
     );
     let last = p.funcs.len() - 1;
@@ -227,9 +235,10 @@ fn the_kept_probe_feeds_the_replaced_one() {
     let mut p = get_then_set(Between::Nothing, false);
     let probes = Probes::find(&p);
     let aggs = p.aggs.clone();
-    assert!(run(&aggs, &probes, &mut p.funcs[1]));
+    let last = p.funcs.len() - 1;
+    assert!(run(&aggs, &probes, &mut p.funcs[last]));
     // Running again finds nothing more to do.
-    assert!(!run(&aggs, &probes, &mut p.funcs[1]));
+    assert!(!run(&aggs, &probes, &mut p.funcs[last]));
     assert_valid(&p);
 }
 

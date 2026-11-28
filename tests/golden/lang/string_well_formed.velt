@@ -1,0 +1,69 @@
+// Is a string well-formed UTF-16 (std/lang/string/well_formed.velt, #2196)? `encodeURIComponent`
+// refuses a lone surrogate (URIError), and `repeat` / `padStart` join copies of text that may hold
+// one by appending. Every form of string: ASCII and non-ASCII literals, inline strings with and
+// without lone surrogates, heap strings whose count is known, heap strings built from a static
+// string's text (count unknown until first asked, then recorded: asked three times), and slices
+// of a buffer with and without lone surrogates. Expected output from node 22.
+
+const smile = "😀";
+const hi = smile.slice(0, 1);
+const lo = smile.slice(1);
+
+/** `encodeURIComponent(s)`: its length and first 24 characters, or "URIError". */
+function encoded(s: string): string {
+  try {
+    const e = encodeURIComponent(s);
+    return e.length + ":" + e.slice(0, 24);
+  } catch (e) {
+    return "URIError";
+  }
+}
+
+/** The code units of `s` at a few positions, as numbers joined with commas. */
+function units(s: string): string {
+  const out: string[] = [];
+  for (const i of [0, 1, s.length - 2, s.length - 1]) {
+    out.push(String(s.charCodeAt(i)));
+  }
+  return out.join(",");
+}
+
+const long = "é".repeat(30);
+const cases: string[] = [
+  "abc",
+  "héllo",
+  "x" + hi,
+  lo + "y",
+  hi + lo,
+  "a".repeat(40) + "é" + hi,
+  long,
+  (long + hi).slice(0, 31),
+  (long + hi).slice(1),
+  (long + hi).slice(1, 30),
+  long.slice(3),
+  "日本語テキスト".repeat(5),
+  "naïve café, déjà vu — the static literal kind of string",
+  "naïve café, déjà vu — a static literal, then a lone half" + hi,
+  lo + "naïve café, déjà vu — a lone half, then a static literal",
+];
+for (const c of cases) {
+  const padded = c.padStart(c.length + 3, hi + "é");
+  const repeated = c.repeat(3);
+  console.log(c.length, encoded(c), padded.length, units(padded), repeated.length, units(repeated));
+}
+
+let big = "é";
+for (let i = 0; i < 6; i++) {
+  big = big + big;
+}
+const withLone = big + lo;
+const fromStatic = "naïve café, déjà vu — a static literal, asked three times" + lo;
+for (let k = 0; k < 3; k++) {
+  console.log(encoded(withLone), encoded(big), encoded(big + "z"), encoded(fromStatic));
+}
+
+// A lone high surrogate at the end of one copy and a lone low one at the start of the next pair
+// up when joined.
+const halves = lo + "é".repeat(20) + hi;
+const three = halves.repeat(3);
+console.log(three.length, encoded(three), encoded(three.slice(1, three.length - 1)));

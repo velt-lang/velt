@@ -74,6 +74,17 @@ macro_rules! with_string_hooks {
             string_slice => lang_string_positions, "sliceWide", sig((&string, i64, i64) -> string),
                 replaces("velt_rt_str_slice"), bench("string_methods"), prebuilt;
 
+            // velt/lang/hooks/str_key: a string's `==` and its hash as a `Map`/`Set` key (#2196),
+            // which lowering calls for every string comparison and key, so they load with the
+            // prelude. `@noInline`: velt_opt's `map_probe` knows them by name, and
+            // velt_codegen_llvm `strings.rs` writes their common cases inline in their place.
+            /// `a == b` on strings: the same UTF-8 bytes.
+            str_equals => lang_hooks_str_key, "strEquals", sig((&string, &string) -> bool), lowered,
+                replaces("velt_rt_str_eq"), bench("string_methods");
+            /// The hash a string key is stored under (`Map`, `Set`, `Record` keys).
+            str_hash => lang_hooks_str_key, "strHash", sig((&string) -> u64), lowered,
+                replaces("velt_rt_str_hash"), bench("map_get_utf8");
+
             // velt/lang/bytes/range_text: a byte range as a string (#2196), which the prelude's
             // `utf8Slice` calls by role, so a program loads the decoder only when live code calls it.
             /// `b.utf8Slice(start, end)` with its positions clamped (`from <= to <= b.length`).

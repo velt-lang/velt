@@ -1,15 +1,16 @@
-//! Inline fast paths for the string runtime functions short-lived strings call most (#531).
+//! Inline fast paths for the string functions short-lived strings call most (#531).
 //!
-//! A call to one of these externs is emitted as a call to an `internal alwaysinline` helper
+//! A call to one of these functions is emitted as a call to an `internal alwaysinline` helper
 //! defined in the module, which handles the common forms in a few instructions and calls the
-//! runtime function for the rest. Once inlined, LLVM sees the string's words, so temporaries stay
+//! function itself for the rest. Once inlined, LLVM sees the string's words, so temporaries stay
 //! in registers and comparisons with literals fold to constant-size compares:
 //! - `velt_rt_str_drop`: only a heap string (`(int64_t)w2 > 0`) has anything to release; static
 //!   and inline strings are left as they are (they drop as nothing, zeroed or not).
-//! - `velt_rt_str_eq`: different byte lengths are unequal; equal lengths compare the bytes with
-//!   `memcmp`, which LLVM expands inline when the length is a constant (a literal operand).
-//! - `velt_rt_str_hash`: an inline string of at most 8 bytes (most `Map<string, V>` keys) hashes
-//!   from the first word of the value, masked to its length.
+//! - std's `strEquals` (`==`, std/lang/hooks/str_key.velt, `@noInline`): different byte lengths
+//!   are unequal; equal lengths compare the bytes with `memcmp`, which LLVM expands inline when
+//!   the length is a constant (a literal operand). The helper never calls `strEquals`.
+//! - std's `strHash` (the same file): an inline string of at most 8 bytes (most `Map<string, V>`
+//!   keys) hashes from the first word of the value, masked to its length; other strings call it.
 //! - `velt_rt_str_cmp` against a one-byte literal: see `string_compare`.
 //!
 //! (`slice`'s one unit of an ASCII string, which was here, is std's own code now:
@@ -59,7 +60,8 @@ done:
     .into()
 }
 
-/// `velt_rt_str_eq(ptr, ptr) -> u8`; `size_t` is `memcmp`'s length type (`i32` on wasm32).
+/// `strEquals(ptr, ptr) -> bool` (an `i8`); `size_t` is `memcmp`'s length type (`i32` on
+/// wasm32).
 fn eq_helper(size_t: &str) -> String {
     let (trunc, n) = if size_t == "i64" {
         (String::new(), "%a.len")
@@ -89,12 +91,12 @@ no:
     )
 }
 
-/// `velt_rt_str_hash(ptr) -> u64` for inline strings of at most 8 bytes, bit for bit
-/// `velt_rt::hash::hash` (one word: the bytes zero-extended little-endian, `mix`, `fmix64`). The
-/// word is masked to the string's length, so whatever an inline string holds after its text
+/// `strHash(ptr) -> u64` (`hook`, the function's LLVM name) for inline strings of at most 8
+/// bytes, bit for bit std's (one word: the bytes zero-extended little-endian, `mix`, `fmix64`).
+/// The word is masked to the string's length, so whatever an inline string holds after its text
 /// does not matter.
-fn hash_helper() -> String {
-    // velt_rt::hash::{SEED, K} and murmur3's fmix64 constants.
+fn hash_helper(hook: &str) -> String {
+    // std/lang/hooks/str_key.velt's SEED and K, and murmur3's fmix64 constants.
     const SEED: u64 = 0x243f_6a88_85a3_08d3;
     const K: u64 = 0x9e37_79b9_7f4a_7c15;
     const C1: u64 = 0xff51_afd7_ed55_8ccd;
@@ -133,7 +135,7 @@ finish:
   %out = xor i64 %d, %d.33
   ret i64 %out
 call:
-  %result = call i64 @velt_rt_str_hash(ptr %s)
+  %result = call i64 {hook}(ptr %s)
   ret i64 %result
 }}",
         view("s")
@@ -142,19 +144,44 @@ call:
 
 /// The helper to call instead of the runtime string function `symbol` (of VIR signature
 /// `params -> ret`), with the module-level definitions it needs; `None` for other functions (or
-/// an unexpected signature, e.g. a user `declare` of the same name). `ptr32`: the target's
-/// pointers and `size_t` are 32 bits (wasm32).
+/// an unexpected signature, e.g. a user `declare` of the same name).
 pub(crate) fn fast_path(
+    symbol: &str,
+    params: &[Ty],
+    ret: Ty,
+) -> Option<(&'static str, Vec<String>)> {
+    use Ty::{Ptr, Unit};
+    match (symbol, params, ret) {
+        ("velt_rt_str_drop", [Ptr], Unit) => Some(("@velt.str_drop", vec![drop_helper()])),
+        _ => None,
+    }
+}
+
+/// The mangled symbols of std's `strEquals` and `strHash` (`velt_vir::math::STR_EQUALS`, `STR_HASH`).
+fn hook_symbols() -> &'static (String, String) {
+    static SYMBOLS: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
+    SYMBOLS.get_or_init(|| {
+        (
+            velt_vir::mangle::mangle(velt_vir::math::STR_EQUALS),
+            velt_vir::mangle::mangle(velt_vir::math::STR_HASH),
+        )
+    })
+}
+
+/// The helper to call instead of the std function `symbol` (of VIR signature `params -> ret`)
+/// when it is `strEquals` or `strHash`, with the module-level definitions it needs; `None` for
+/// other functions. `ptr32`: the target's pointers and `size_t` are 32 bits (wasm32).
+pub(crate) fn hook_fast_path(
     symbol: &str,
     params: &[Ty],
     ret: Ty,
     ptr32: bool,
 ) -> Option<(&'static str, Vec<String>)> {
-    use Ty::{Ptr, Unit, U64, U8};
+    use Ty::{Bool, Ptr, U64};
+    let (eq, hash) = hook_symbols();
     let size_t = if ptr32 { "i32" } else { "i64" };
-    let (name, defs) = match (symbol, params, ret) {
-        ("velt_rt_str_drop", [Ptr], Unit) => ("@velt.str_drop", vec![drop_helper()]),
-        ("velt_rt_str_eq", [Ptr, Ptr], U8) => (
+    match (params, ret) {
+        ([Ptr, Ptr], Bool) if symbol == eq => Some((
             "@velt.str_eq",
             vec![
                 eq_helper(size_t),
@@ -162,11 +189,13 @@ pub(crate) fn fast_path(
                     "declare i32 @memcmp(ptr, ptr, {size_t}) nounwind willreturn memory(argmem: read)"
                 ),
             ],
-        ),
-        ("velt_rt_str_hash", [Ptr], U64) => ("@velt.str_hash", vec![hash_helper()]),
-        _ => return None,
-    };
-    Some((name, defs))
+        )),
+        ([Ptr], U64) if symbol == hash => Some((
+            "@velt.str_hash",
+            vec![hash_helper(&crate::types::global_name(symbol))],
+        )),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -175,37 +204,41 @@ mod tests {
 
     #[test]
     fn only_the_expected_signatures_take_a_fast_path() {
-        assert!(fast_path("velt_rt_str_drop", &[Ty::Ptr], Ty::Unit, false).is_some());
-        assert!(fast_path("velt_rt_str_drop", &[Ty::Ptr, Ty::Ptr], Ty::Unit, false).is_none());
-        assert!(fast_path("velt_rt_str_eq", &[Ty::Ptr, Ty::Ptr], Ty::U8, false).is_some());
-        assert!(fast_path("velt_rt_str_hash", &[Ty::Ptr], Ty::U64, false).is_some());
-        assert!(fast_path("velt_rt_str_hash", &[Ty::Ptr], Ty::I64, false).is_none());
+        assert!(fast_path("velt_rt_str_drop", &[Ty::Ptr], Ty::Unit).is_some());
+        assert!(fast_path("velt_rt_str_drop", &[Ty::Ptr, Ty::Ptr], Ty::Unit).is_none());
         // std's `slice` makes one unit of an ASCII string itself (std/prelude/string.velt, #2198).
         let slice = [Ty::Ptr, Ty::U64, Ty::U64, Ty::U64, Ty::Ptr];
-        assert!(fast_path("velt_rt_str_byte_slice", &slice, Ty::Unit, false).is_none());
-        assert!(fast_path(
-            "velt_rt_str_concat",
-            &[Ty::Ptr, Ty::Ptr, Ty::Ptr],
-            Ty::Unit,
-            false
-        )
-        .is_none());
+        assert!(fast_path("velt_rt_str_byte_slice", &slice, Ty::Unit).is_none());
+        assert!(fast_path("velt_rt_str_concat", &[Ty::Ptr, Ty::Ptr, Ty::Ptr], Ty::Unit).is_none());
+        // std's `==` and hash, by their mangled names, with their signatures only.
+        let (eq, hash) = hook_symbols();
+        assert_eq!(eq, "_V3stdP4langP5hooksP8str__keyN9strEquals");
+        assert_eq!(hash, "_V3stdP4langP5hooksP8str__keyN7strHash");
+        assert!(hook_fast_path(eq, &[Ty::Ptr, Ty::Ptr], Ty::Bool, false).is_some());
+        assert!(hook_fast_path(eq, &[Ty::Ptr], Ty::Bool, false).is_none());
+        assert!(hook_fast_path(hash, &[Ty::Ptr], Ty::U64, false).is_some());
+        assert!(hook_fast_path(hash, &[Ty::Ptr], Ty::I64, false).is_none());
+        assert!(hook_fast_path("_V4main", &[Ty::Ptr], Ty::U64, false).is_none());
     }
 
     #[test]
     fn hash_masks_the_inline_word_to_the_length() {
-        let (name, defs) = fast_path("velt_rt_str_hash", &[Ty::Ptr], Ty::U64, false).unwrap();
+        let hash = &hook_symbols().1;
+        let (name, defs) = hook_fast_path(hash, &[Ty::Ptr], Ty::U64, false).unwrap();
         assert_eq!(name, "@velt.str_hash");
         let ir = &defs[0];
-        // Only inline strings of at most 8 bytes; everything else calls the runtime.
+        // Only inline strings of at most 8 bytes; everything else calls std's function.
         assert!(ir.contains("%fits = icmp ule i64 %s.len, 8"), "{ir}");
         assert!(ir.contains("%fast = and i1 %s.inl, %fits"), "{ir}");
-        assert!(ir.contains("call i64 @velt_rt_str_hash(ptr %s)"), "{ir}");
+        assert!(
+            ir.contains(&format!("call i64 @\"{hash}\"(ptr %s)")),
+            "{ir}"
+        );
         // The word is read only for a non-empty string and masked to its bytes.
         let mix = &ir[ir.find("\nmix:").expect("mix block")..];
         assert!(mix.contains("%mask = lshr i64 -1, %unused"), "{ir}");
         assert!(mix.contains("%x = xor i64 %seed, %text"), "{ir}");
-        // velt_rt::hash's seed, multiplier and rotation.
+        // std's seed, multiplier and rotation.
         assert!(
             ir.contains(&format!("xor i64 {}", 0x243f_6a88_85a3_08d3u64)),
             "{ir}"
@@ -224,7 +257,8 @@ mod tests {
 
     #[test]
     fn memcmp_takes_the_targets_size_t() {
-        let eq = |ptr32| fast_path("velt_rt_str_eq", &[Ty::Ptr, Ty::Ptr], Ty::U8, ptr32).unwrap();
+        let sym = &hook_symbols().0;
+        let eq = |ptr32| hook_fast_path(sym, &[Ty::Ptr, Ty::Ptr], Ty::Bool, ptr32).unwrap();
         let (_, defs) = eq(true);
         assert!(defs[0].contains("@memcmp(ptr %a.data, ptr %b.data, i32 %n)"));
         assert!(defs[1].contains("@memcmp(ptr, ptr, i32)"));

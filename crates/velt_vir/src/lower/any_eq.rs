@@ -17,7 +17,6 @@ use super::any::{
 };
 use super::hook_calls::{self as hooks, ty, HookTy};
 use super::operand::proj;
-use super::rt::Rt;
 use super::{cint, FnLower};
 use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Terminator, Ty, STR_AGG};
 
@@ -142,12 +141,7 @@ impl FnLower<'_, '_> {
                 let x = self.key_float_bits(f, Ty::F64);
                 self.fx_combine(zero, x)
             }
-            TyKind::Str => {
-                let r = self.temp(Ty::U64);
-                let a = Operand::Copy(Place::local(data));
-                self.call_rt(Rt::StrHash, vec![a], Some(Place::local(r)));
-                Operand::Copy(Place::local(r))
-            }
+            TyKind::Str => self.str_hash(Operand::Copy(Place::local(data))),
             // A `struct` value: its content, agreeing with `AnySame` (#641). A C struct's is
             // below, by its number rules.
             _ if self.cx.value_struct(ty) && !self.cx.c_struct(ty) => {

@@ -173,6 +173,41 @@ impl PB {
         }
     }
 
+    /// A string's `==` and key hash (velt_common `std_hooks.rs` `str_equals`, `str_hash`), which a
+    /// hand-built program has no std for: each forwards to an extern the interpreter compares or
+    /// hashes the bytes with (`velt_test_str_eq`, `velt_test_str_hash`). Tests of the hooks
+    /// themselves load the real std (std/lang/hooks/str_key.test.velt).
+    fn str_key_hooks(&mut self) {
+        let t = self.t;
+        let u64 = self.types.intern(TyKind::Int(IntTy::U64));
+        let extern_fn = |pb: &mut Self, symbol: &str, params: Vec<TyId>, ret: TyId| {
+            let ext = pb.declare();
+            pb.defs[ext.0 as usize] = Some(Def::ExternFn(ExternFnDef {
+                name: symbol.into(),
+                symbol: symbol.into(),
+                params,
+                ret,
+                is_async: false,
+                host: None,
+                c: None,
+                is_decorator: false,
+                span: SP,
+            }));
+            ext
+        };
+        let eq = extern_fn(self, "velt_test_str_eq", vec![t.str, t.str], t.bool);
+        let mut f = FB::new(velt_common::std_hook!(str_equals), t.bool);
+        let a = f.param("a", t.str, PassMode::Borrow);
+        let b = f.param("b", t.str, PassMode::Borrow);
+        let body = vec![ret(Some(call(eq, vec![f.bw(a), f.bw(b)], t.bool)))];
+        self.add_fn(f.build(body));
+        let hash = extern_fn(self, "velt_test_str_hash", vec![t.str], u64);
+        let mut f = FB::new(velt_common::std_hook!(str_hash), u64);
+        let s = f.param("s", t.str, PassMode::Borrow);
+        let body = vec![ret(Some(call(hash, vec![f.bw(s)], u64)))];
+        self.add_fn(f.build(body));
+    }
+
     /// The cycle hooks of what `console.log` prints (std/lang/hooks/inspect_cycles.velt), which a
     /// hand-built program has no std for: the programs here print no cyclic graph and no
     /// container of more than 100 entries, so every object is printed (`inspectEnter` is true,
@@ -232,6 +267,7 @@ impl PB {
         self.console_writers();
         self.float_hooks();
         self.inspect_hooks();
+        self.str_key_hooks();
         let unchecked = self.unchecked_fallbacks();
         // Sema demands the writers of a program that prints a number; a hand-built program says
         // so here, for the hooks it defines above.

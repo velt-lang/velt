@@ -21,7 +21,7 @@ enum Between {
     UnknownExtern,
     /// A call of a Velt function.
     VeltCall,
-    /// A call of a runtime function that only reads (`velt_rt_str_eq` of the copy and the source).
+    /// A call of a runtime function that only reads (`velt_rt_str_cmp` of the copy and the source).
     ReadOnlyExtern,
     /// The copy's address stored into the object.
     AddressEscapes,
@@ -79,7 +79,7 @@ fn kit() -> Kit {
     );
     let clone = pb.ext(STR_CLONE, &[Ty::Ptr, Ty::Ptr], Ty::Unit, false);
     let drop = pb.ext(STR_DROP, &[Ty::Ptr], Ty::Unit, false);
-    let eq = pb.ext("velt_rt_str_eq", &[Ty::Ptr, Ty::Ptr], Ty::U8, false);
+    let eq = pb.ext("velt_rt_str_cmp", &[Ty::Ptr, Ty::Ptr], Ty::I32, false);
     let other = pb.ext("velt_rt_str_append", &[Ty::Ptr, Ty::Ptr], Ty::Unit, false);
     let mut fb = FuncBuilder::internal("g", &[Ty::Ptr], Ty::Unit);
     let b = fb.block();
@@ -117,7 +117,7 @@ fn reader(
         fb.local(Ty::U64),
         fb.local(Ty::Ptr),
         fb.local(Ty::U8),
-        fb.local(Ty::U8),
+        fb.local(Ty::I32),
     );
     let text = Place {
         local: a,
@@ -209,7 +209,7 @@ fn readers(pb: &mut ProgramBuilder, eq: ExternId, other: ExternId) -> Vec<(Betwe
                 Terminator::Call {
                     callee: Callee::Extern(eq),
                     args: vec![copy_local(a), copy_local(c)],
-                    dest: Some(deref(a, Ty::U8)),
+                    dest: Some(deref(a, Ty::I32)),
                     next,
                     unwind: None,
                 },
@@ -363,7 +363,7 @@ fn program(between: Between, gated: bool) -> Program {
             b = fb.call(b, Callee::Func(f), args, dest);
         }
         Between::ReadOnlyExtern => {
-            let r = fb.local(Ty::U8);
+            let r = fb.local(Ty::I32);
             let args = vec![copy_local(t), copy_local(s)];
             b = fb.call(b, Callee::Extern(kit.eq), args, Some(r));
         }
@@ -671,7 +671,7 @@ fn read_only_runtime_functions_come_from_the_effects_table() {
     let bits = pb.ext("velt_rt_math_f64_bits", &[Ty::F64], Ty::U64, false);
     let from_bits = pb.ext("velt_rt_math_bits_f64", &[Ty::U64], Ty::F64, false);
     let umulh = pb.ext("velt_rt_math_umulh", &[Ty::U64, Ty::U64], Ty::U64, false);
-    let eq = pb.ext("velt_rt_str_eq", &[Ty::Ptr, Ty::Ptr], Ty::U8, false);
+    let eq = pb.ext("velt_rt_str_cmp", &[Ty::Ptr, Ty::Ptr], Ty::I32, false);
     let append = pb.ext("velt_rt_str_append", &[Ty::Ptr, Ty::Ptr], Ty::Unit, false);
     let rt = Runtime::find(&pb.finish());
     for id in [bits, from_bits, umulh, eq] {

@@ -11,7 +11,6 @@ use super::any_member::{SLOT_APPLY, ST_NOT_FN, ST_OK, ST_UNSUPPORTED};
 use super::any_proxy::ProxyKey;
 use super::glue::Glue;
 use super::operand::proj;
-use super::rt::Rt;
 use super::{cint, FnLower, Work};
 use crate::vir::{self, BinOp, Callee, Operand, Place, Proj, Rvalue, Terminator, Ty, STR_AGG};
 
@@ -26,13 +25,7 @@ impl FnLower<'_, '_> {
     pub(super) fn key_is(&mut self, key: vir::Local, name: &str) -> Operand {
         let lit = self.str_lit(name);
         let la = self.operand_addr(lit, Ty::Agg(STR_AGG));
-        let out = Place::local(self.temp(Ty::U8));
-        let k = Operand::Copy(Place::local(key));
-        self.call_rt(Rt::StrEq, vec![k, la], Some(out.clone()));
-        self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::Ne, Operand::Copy(out), cint(0, Ty::U8)),
-        )
+        self.str_eq(Operand::Copy(Place::local(key)), la)
     }
 
     /// Branch on `key == name`: the current block becomes the matching one; returns the block

@@ -426,17 +426,26 @@ impl Emitter<'_> {
         ret: Ty,
         args: &[Operand],
     ) -> Option<String> {
-        let Callee::Extern(id) = callee else {
-            return None;
+        let symbol = match callee {
+            Callee::Extern(id) => &self.program.externs.get(id.0 as usize)?.symbol,
+            Callee::Func(id) => {
+                let symbol = &self.program.func(*id).symbol;
+                let (name, defs) =
+                    strings::hook_fast_path(symbol, params, ret, self.wide_pointer_slots)?;
+                for d in defs {
+                    self.intrinsics.need(d);
+                }
+                return Some(name.to_string());
+            }
+            Callee::Ptr { .. } => return None,
         };
-        let symbol = &self.program.externs.get(id.0 as usize)?.symbol;
         if let Some((name, def)) =
             string_compare::literal_compare(self.function, symbol, params, ret, args)
         {
             self.intrinsics.need(def);
             return Some(name.to_string());
         }
-        let (name, defs) = strings::fast_path(symbol, params, ret, self.wide_pointer_slots)?;
+        let (name, defs) = strings::fast_path(symbol, params, ret)?;
         for d in defs {
             self.intrinsics.need(d);
         }

@@ -6,7 +6,7 @@
 //! and environment), everything else by content. The hash agrees with the key comparison, `Intrinsic::KeyEq` (same.rs): objects (class
 //! instances, object types, arrays, interface and function values, promises) hash their identity, a type
 //! declared with `struct` its fields, the rest by value. Hashes combine parts FxHash-style: `h = (rotl(h, 5) ^ part) * 0x517cc1b727220a95`;
-//! strings hash their bytes with `velt_rt_str_hash`. Values that may hold themselves compare
+//! strings hash their bytes with std's `strHash` (std/lang/hooks/str_key.velt). Values that may hold themselves compare
 //! under a cycle guard (eq_cycles.rs).
 //!
 //! `Intrinsic::KeyEq` compares floats with JS's SameValueZero, as JS compares `Map` keys: `NaN`
@@ -18,7 +18,6 @@ use velt_sema::hir::{TyId, TyKind};
 
 use super::Glue;
 use crate::lower::operand::proj;
-use crate::lower::rt::Rt;
 use crate::lower::{cint, FnLower};
 use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
@@ -142,9 +141,7 @@ impl FnLower<'_, '_> {
         match self.cx.kind(ty) {
             TyKind::Str => {
                 let a = self.addr(place.clone());
-                let r = self.temp(Ty::U64);
-                self.call_rt(Rt::StrHash, vec![a], Some(Place::local(r)));
-                Operand::Copy(Place::local(r))
+                self.str_hash(a)
             }
             TyKind::Unit | TyKind::Never | TyKind::Literal(_) => cint(0, Ty::U64),
             TyKind::Dyn(..) if self.cx.is_dynamic(ty) => self.any_hash(place),
