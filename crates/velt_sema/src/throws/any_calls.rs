@@ -77,6 +77,15 @@ impl FnCx<'_, '_> {
         }
         self.cx.error_outside(Some(t), Some(any)).is_some()
     }
+
+    /// Is `t`, the function type a closure is checked against, a site of `throws::fn_types` (a
+    /// function type written without `throws` in a user module, a `ProxyHandler` trap)? Its
+    /// error type grows with what the closures stored into it throw, `any` too: in a check
+    /// after the first it reads as the set found so far, which bounds nothing.
+    pub(crate) fn grows_with_closures(&self, t: TyId) -> bool {
+        let sites = &self.cx.fn_sites.sites;
+        sites.iter().any(|(_, g)| *g == t) || self.cx.var_site(t).is_some()
+    }
 }
 
 impl Ctx<'_> {

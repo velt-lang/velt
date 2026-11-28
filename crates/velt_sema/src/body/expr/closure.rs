@@ -264,7 +264,10 @@ impl FnCx<'_, '_> {
         frame.truthy_returns =
             std_callback.is_some() && ret.is_none() && ret_ty == Some(self.cx.ty.bool_);
         frame.trap_key = self.trap_key_of(e);
-        frame.any_calls_kept = declared_err.is_some_and(|t| self.allows_no_any(t));
+        // Not against a function type whose errors are inferred from what is stored into it
+        // (`grows_with_closures`), unless the arrow writes its own `throws`.
+        let grows = throws.is_none() && exp.is_some_and(|t| self.grows_with_closures(t));
+        frame.any_calls_kept = !grows && declared_err.is_some_and(|t| self.allows_no_any(t));
         let saved = std::mem::replace(&mut self.f, frame);
         self.outer.push(saved);
         if let Some((g, m, _)) = member {
