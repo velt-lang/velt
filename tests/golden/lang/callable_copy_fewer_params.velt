@@ -1,6 +1,7 @@
 // A callable object whose function takes fewer parameters than the expected callable object
 // type's is not converted: the copy would call it without the arguments, which its own function
-// may read in Node (a cast of `(...args) => …` to `{ (): T }` keeps them there).
+// may read in Node. The cast of `(...args) => …` to `{ (): T }` that would make one is refused
+// first (#2787): Node keeps the arguments there.
 interface Thunk {
     (): number;
     label: string;
