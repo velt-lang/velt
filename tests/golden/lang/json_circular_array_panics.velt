@@ -1,0 +1,14 @@
+// JSON.stringify of an object that contains itself through an array fails as a direct cycle
+// does (json_circular_panics) instead of writing until the stack runs out (#3724).
+
+interface Tree {
+  id: number;
+  kids: Tree[];
+}
+
+function main() {
+  const t: Tree = { id: 1, kids: [{ id: 2, kids: [] }] };
+  console.log(JSON.stringify(t));
+  t.kids[0].kids.push(t);
+  console.log(JSON.stringify(t));
+}

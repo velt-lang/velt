@@ -1,0 +1,1 @@
+Uncaught TypeError: JSON.stringify: the replacer returned undefined for the value itself

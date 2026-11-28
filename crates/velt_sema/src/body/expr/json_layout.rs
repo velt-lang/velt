@@ -87,8 +87,9 @@ impl FnCx<'_, '_> {
         let helper = self.cx.prelude_fn("jsonStringifyReplaced");
         let pty = helper.and_then(|d| self.cx.try_fn(d)?.params.get(1).map(|p| p.ty));
         // An arrow or function expression must write its value parameter `JsonValue`
-        // (`json_callbacks`); its other parameters take their types from `JsonReplacer`.
-        match self.json_callback_typed(a, "`JSON.stringify`") {
+        // (`json_callbacks`); its other parameters take their types from `JsonReplacer`. One
+        // written `any` or `unknown` is checked below, as a function value is.
+        match self.json_callback_typed(a, "`JSON.stringify`", true) {
             Some(false) => return Ok(self.error_expr(a.span)),
             Some(true) if pty.is_some() => {
                 let pty = pty.expect("ICE: checked");
@@ -103,6 +104,11 @@ impl FnCx<'_, '_> {
         let h = self.expr(a, None, Want::Borrow);
         if let (TyKind::FnPtr { .. } | TyKind::Closure(_), Some(pty)) = (self.cx.ty.kind(h.ty), pty)
         {
+            // One that returns `any`: what it returns is converted as Node writes it.
+            let h = match self.json_replacer_of_any(h) {
+                Ok(w) => return Ok(w),
+                Err(h) => h,
+            };
             // Any other function is a `JsonReplacer` as a whole, or the error below.
             match self.try_coerce(h, pty) {
                 Ok(h) => return Ok(h),
@@ -110,6 +116,37 @@ impl FnCx<'_, '_> {
             }
         }
         Err(self.json_replacer(h, a.span))
+    }
+
+    /// The replacer function `h` when it returns `any` or `unknown` (`(k: string, v: any): any`):
+    /// the prelude's `jsonReplacerOfAny(h)`, a `JsonReplacer` that converts what `h` returns as
+    /// Node writes it, where a plain conversion would take only a `JsonValue` (#3871). `Err(h)`
+    /// for any other function, or one that does not fit `(key: string, value: any) => any`.
+    fn json_replacer_of_any(&mut self, h: hir::Expr) -> Result<hir::Expr, hir::Expr> {
+        let ret = match self.cx.ty.kind(h.ty).clone() {
+            TyKind::FnPtr { ret, .. } => ret,
+            TyKind::Closure(d) => match self.cx.try_fn(d) {
+                Some(f) => f.ret,
+                None => return Err(h),
+            },
+            _ => return Err(h),
+        };
+        if !matches!(self.cx.dynamic(ret), Some(Dynamic::Any | Dynamic::Unknown)) {
+            return Err(h);
+        }
+        let Some(d) = self.cx.prelude_fn("jsonReplacerOfAny") else {
+            return Err(h);
+        };
+        let Some((pty, wrapped)) = self.cx.try_fn(d).map(|f| (f.params[0].ty, f.ret)) else {
+            return Err(h);
+        };
+        let span = h.span;
+        let h = self.try_coerce(h, pty)?;
+        let kind = H::Call {
+            callee: Callee::Def(d, vec![]),
+            args: vec![h],
+        };
+        Ok(self.mk(kind, wrapped, span))
     }
 
     /// `JSON.stringify(value)` (`call`, checked) with the replacer function `f`: the prelude's

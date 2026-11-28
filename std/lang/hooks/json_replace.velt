@@ -5,14 +5,32 @@
 
 import { JsonValue } from "velt/prelude/json/json_value";
 import { replaceJsonTop } from "velt/encoding/json/replaced";
+import { endVisitsTo, visitDepth } from "velt/reflect/reflect";
+import {
+  jsonReplacerDepthNow,
+  jsonReplacerDepthRestore,
+  jsonResultRestore,
+  jsonResultSave,
+} from "velt/encoding/json/replace_ops";
 
 /**
  * `JSON.stringify(value, replacer)`: `value` walked as JavaScript walks it, its `toJSON(key)`
- * and the replacer per key (velt/encoding/json/replace_ops.velt).
+ * and the replacer per key (velt/encoding/json/replace_ops.velt). A cycle's `TypeError` is
+ * thrown from inside the walk's visits, which end here. A call made inside another one's walk
+ * (from a `toJSON` or a replacer) leaves that walk's result state and depth as they were.
  */
 export function jsonStringifyReplaced<T>(
   value: T,
   replacer: (key: string, value: JsonValue) => JsonValue | undefined,
 ): string throws RangeError | TypeError {
-  return replaceJsonTop<T>(value, replacer);
+  const mark = visitDepth();
+  const result = jsonResultSave();
+  const depth = jsonReplacerDepthNow();
+  try {
+    return replaceJsonTop<T>(value, replacer);
+  } finally {
+    endVisitsTo(mark);
+    jsonResultRestore(result);
+    jsonReplacerDepthRestore(depth);
+  }
 }

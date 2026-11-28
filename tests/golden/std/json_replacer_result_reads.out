@@ -1,0 +1,18 @@
+getter, cycle dropped: {"a":{"a":1},"g":1} rep(a) rep(a) rep(self) get g 1 rep(g)
+getter, cycle kept: TypeError rep(a) rep(a) rep(self)
+reentrant getter: {"a":{"a":1},"g":"{\"q\":1}"} rep(a) rep(a) rep(self) get g rep(g)
+dropped toJSON result: {"n":{"key":"n","inner":["inner"]}} counted(n) rep(n) rep(key) inner(inner) rep(inner) rep(0) counted(gone) rep(gone)
+under a dropped member: {"l":["l"]} rep(gone) toJSON(l) rep(l) rep(0)
+under a replaced member: {"gone":0,"l":["l"]} rep(gone) toJSON(l) rep(l) rep(0)
+after a kept cycle: TypeError rep(a) rep(a) rep(self)
+after a dropped cycle: {"a":{"a":1},"t":["t"]} rep(a) rep(a) rep(self) toJSON(t) rep(t) rep(0)
+order: {"a":1,"t":["t"],"b":2,"n":[["0"],4]} get a rep(a) toJSON(t) rep(t) rep(0) get b rep(b) rep(n) toJSON(0) rep(0) rep(0) rep(1)
+getter dropped: {"kept":["kept"]} get gone rep(gone) toJSON(kept) rep(kept) rep(0)
+array, cycle dropped: [["0"],{"a":1},{"n":3}] toJSON(0) rep(0) rep(0) rep(1) rep(a) rep(self) self(2) rep(2) rep(n)
+array, cycle kept: TypeError toJSON(0) rep(0) rep(0) rep(1) rep(a) rep(self)
+nested stringify: {"a":"{\"q\":[\"q\"]}","b":{"a":1}} nested(a) toJSON(q) rep(a) rep(b) rep(a) rep(self)
+nested in a result: TypeError counted(c) rep(c) rep(key) inner(inner) rep(inner) rep(0) rep(d) counted(c) rep(c) rep(key) inner(inner) rep(inner) rep(0) rep(d)
+nested getter: {"m":{"g":1,"t":["t"]}} rep(m) rep(g) toJSON(t) rep(t) rep(0) reads 1
+return this: {"w":{"s":{"o":{"g":1}}}} rep(w) selfGetter(s) rep(s) rep(o) rep(g) reads 1
+ancestor returned: TypeError rep() rep(a)
+next call: {"x":[1,["1"]]} rep() rep(x) rep(0) toJSON(1) rep(1) rep(0)

@@ -1,0 +1,35 @@
+// A replacer that pushes to a module-level array, beside one that returns an array holding its
+// value twice, in a program that ends on an uncaught error: every block is freed at exit (the
+// two left over were #3878's; #3871). The Node twin is json_replacer_module_state.mjs (its
+// stdout; the uncaught error's report is Velt's).
+
+const seen: string[] = [];
+
+function logger(k: string, v: JsonValue): JsonValue | undefined {
+  seen.push(k);
+  return v;
+}
+
+function twice(k: string, v: JsonValue): JsonValue | undefined {
+  if (k === "x") {
+    const a = JsonValue.array();
+    a.push(v);
+    a.push(v);
+    return a;
+  }
+  return v;
+}
+
+function gone(k: string, v: JsonValue): JsonValue | undefined {
+  seen.push(`gone ${k}`);
+  return undefined;
+}
+
+function main(): void {
+  console.log(JSON.stringify({ x: 1, y: [2, 3] }, logger));
+  console.log(JSON.stringify({ x: { q: 1 }, y: 2 }, twice));
+  console.log(seen.join(","));
+  console.log(JSON.stringify({ x: 1 }, gone));
+}
+
+main();

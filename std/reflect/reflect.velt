@@ -197,6 +197,18 @@ export function endVisit(): void {
   }
 }
 
+/** How many visits are under way on this thread: a mark for `endVisitsTo` (std code). */
+export function visitDepth(): u64 {
+  return VISIT_DEPTH.get();
+}
+
+/** Ends the visits started after `mark` (`visitDepth`), as an error thrown through them left them. */
+export function endVisitsTo(mark: u64): void {
+  while (VISIT_DEPTH.get() > mark) {
+    endVisit();
+  }
+}
+
 /**
  * The deep visits found by one loop; deeper ones are also kept in the block's hash table, so
  * deep nesting costs O(1) per visit instead of a scan of every visit under way.

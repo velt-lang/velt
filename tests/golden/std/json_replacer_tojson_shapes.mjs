@@ -5,6 +5,9 @@
 // `JsonValue`, cannot get (#924), so the golden's absent optional field is not visited.
 
 function view(v) {
+  if (v instanceof Date) {
+    return JSON.stringify(v);
+  }
   if (Array.isArray(v)) {
     return `[${v.map((e) => (e === undefined || typeof e === "function" ? "null" : view(e))).join(",")}]`;
   }
