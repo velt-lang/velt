@@ -372,9 +372,9 @@ fn sigterm_stops_the_program() {
 }
 
 /// A server's log line reaches stdout while the server waits for the next request (a worker going
-/// idle writes stdout out), before an interrupt stops the program: the program's exit on `velt
-/// dev`'s stop request is the runtime's and writes nothing out (#2196), so this is what keeps a
-/// server's log complete.
+/// idle writes stdout out), before an interrupt stops the program (#2196): the dev JIT registers
+/// no exit flush, so this is what keeps a server's log complete should the program end by an exit
+/// of the runtime's own.
 #[cfg(unix)]
 #[test]
 fn a_servers_log_is_out_before_an_interrupt() {

@@ -876,10 +876,13 @@ even if the task moved threads) and lines from different tasks never interleave 
 thread buffer is published only through its last newline; only a single line longer than 1 MiB
 may be split). Buffered output reaches the OS when buffers fill, when a worker goes idle (so
 servers logging to a pipe show output promptly, `flushIdle`), before stderr writes, on
-`flushOutput`, and at every exit Velt code reaches (`flushForExit`, which lowering calls). An exit
-the runtime takes by itself (a fatal error inside the runtime's Rust, `velt dev`'s server stopping
-on a signal) does not flush: it loses what was printed since a worker last went idle. On
-WebAssembly velt_rt_wasm's single-threaded writer does this (`velt_rt_flush`).
+`flushOutput`, and at every exit Velt code reaches (`flushForExit`, which lowering calls; `velt
+dev`'s stop of a server is one, std/dev/stop.velt). An exit the runtime takes by itself (a fatal
+error inside the runtime's Rust) flushes through the end of the process: std registers its flush
+with the C library's `exit` (`__cxa_atexit`), and on Windows, which ends the process with
+`ExitProcess`, as the exiting thread's fiber-local callback. In the dev JIT, whose reload replaces
+that code, it registers nothing, and such an exit loses what was printed since a worker last went
+idle. On WebAssembly velt_rt_wasm's single-threaded writer does this (`velt_rt_flush`).
 
 ## 11. Worked example (what lowering emits)
 
