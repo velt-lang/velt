@@ -1,0 +1,13 @@
+3
+0
+-7
+9007199254740992
+-9223372036854775808
+expected i64 at $[0].n
+expected i64 at $[0].n
+expected i64 at $[0].n
+expected i64 at $[0].n
+expected i64 at $[0].n
+255
+expected u8 at $[0].n
+expected u8 at $[0].n

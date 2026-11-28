@@ -109,12 +109,6 @@ impl VeltBytes {
     }
 }
 
-/// Drop an owned byte buffer (no-op for `cap == 0`) and zero `*b`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_bytes_drop(b: *mut VeltBytes) {
-    drop((*b).take_vec());
-}
-
 /// Copy a string's UTF-8 into a new owned byte buffer (one U+FFFD per lone surrogate, as
 /// `TextEncoder` does).
 #[no_mangle]
@@ -177,7 +171,7 @@ mod tests {
         let mut v = unsafe { r.value.assume_init() };
         assert_eq!(unsafe { v.as_bytes() }, "héllo".as_bytes());
         unsafe { crate::str::velt_rt_str_drop(&mut v) };
-        unsafe { velt_rt_bytes_drop(&mut b) };
+        drop(unsafe { b.take_vec() });
         assert_eq!((b.len, b.cap), (0, 0));
 
         let bad = VeltBytes::from_vec(vec![0xff, 0xfe]);
@@ -187,7 +181,7 @@ mod tests {
         assert_eq!(r.err.code, crate::result::code::INVALID_DATA);
         unsafe { crate::str::velt_rt_str_drop(&mut r.err.message) };
         let mut bad = bad;
-        unsafe { velt_rt_bytes_drop(&mut bad) };
+        drop(unsafe { bad.take_vec() });
     }
 
     /// An empty array's data pointer is even: bit 0 marks an array view's header (#1963).
