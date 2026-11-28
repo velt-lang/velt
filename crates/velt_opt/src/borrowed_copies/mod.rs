@@ -35,6 +35,8 @@
 //! ASCII source instead of a borrow.
 
 #[cfg(test)]
+mod positions_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod views_tests;
