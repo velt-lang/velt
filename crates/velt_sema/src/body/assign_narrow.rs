@@ -12,13 +12,41 @@ use super::FnCx;
 use crate::hir::{self, ExprKind as H, LocalId, Nothing};
 
 impl FnCx<'_, '_> {
+    /// `target = value` (`place = v` checked) narrows the target like a check would (TS): to
+    /// non-null, or to the union member assigned. A narrowed checked copy (`st.b = b` with
+    /// `const b = st.b`) narrows a field path or a module variable, whose reads are checked, to
+    /// non-null (`checked_copies`). A value that never comes (`pc = document.createElement("div")`,
+    /// a cast of one too) narrows to what its type says, as under `tsc`.
+    pub(crate) fn narrow_after_assign(
+        &mut self,
+        place: &hir::Expr,
+        target: &ast::Expr,
+        value: &ast::Expr,
+        v: &hir::Expr,
+    ) {
+        let never = self.never_comes(v);
+        let copy = !matches!(place.kind, H::Local(..)) && self.narrowed_copy(value);
+        let token = match place.kind {
+            H::Local(l, _) => Some(l),
+            _ if copy || never || matches!(v.kind, H::WrapSome(_)) => self.field_token(target),
+            _ => None,
+        };
+        let Some(t) = token.filter(|_| never || !is_cast(value)) else {
+            return;
+        };
+        match copy {
+            true => self.narrow(&Fact::NonNull(t)),
+            false => self.narrow_to_assigned(t, place.ty, v),
+        }
+    }
+
     /// `token` (a local or the token of a field path, of type `ty`) was just assigned the
     /// checked value `v`: the facts `v` establishes.
     pub(crate) fn narrow_to_assigned(&mut self, token: LocalId, ty: hir::TyId, v: &hir::Expr) {
         // A value that never comes (`x = document.createElement("div")`, whose read of
         // `document` throws as on Node) leaves nothing after it to run: there the variable holds
         // what the expression's type says, which isn't null, as under `tsc`.
-        if v.ty == self.cx.ty.never {
+        if self.never_comes(v) {
             self.narrow(&Fact::NonNull(token));
             return;
         }
@@ -66,6 +94,18 @@ impl FnCx<'_, '_> {
 }
 
 impl FnCx<'_, '_> {
+    /// Does the checked value `v` never come: of type `never`, or such a value as another type
+    /// (`document.createElement("div") as HTMLDivElement`, a `T | null` holding one)?
+    pub(crate) fn never_comes(&self, v: &hir::Expr) -> bool {
+        if v.ty == self.cx.ty.never {
+            return true;
+        }
+        match &v.kind {
+            H::WrapSome(x) | H::Cast(x) | H::Downcast(x) => self.never_comes(x),
+            _ => false,
+        }
+    }
+
     /// A union value made of branches that each give some of the members of `token`'s union
     /// type: a re-tag (`result = await result` of a `R | Promise<R>` where `R` is `A | B`), or
     /// a conditional, `||` or `&&` (`x &&= "c"` on `"" | "a" | "c"` after `x = s` with

@@ -639,7 +639,8 @@ impl FnCx<'_, '_> {
             self.check_disposable(ty, false, v.span);
         }
         // `let u: string | number = "x"` holds a `string` until it is assigned (TS).
-        let cast = v.init.as_ref().is_some_and(super::assign_narrow::is_cast);
+        let cast = v.init.as_ref().is_some_and(super::assign_narrow::is_cast)
+            && !init.as_ref().is_some_and(|h| self.never_comes(h));
         if let (Some(_), Some(h), false) = (ann, &init, cast) {
             self.narrow_to_assigned(local, ty, h);
         }
