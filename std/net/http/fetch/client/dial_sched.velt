@@ -159,14 +159,31 @@ export async function idleReadable(c: TcpStream, ms: i64): Promise<bool> {
   // A readable socket may hold part of a record: the stream is asked again after each wait, as
   // tcp_sched.velt's `tlsReadableWithin` does.
   while (true) {
-    const fd = tls.readyOrFd(h);
-    if (fd.code !== 0 || fd.value == 0) {
+    const fd = socketUnder(h);
+    if (fd == 0) {
       return true;
     }
-    if (!(await idleSocket(fd.value, deadline))) {
+    if (!(await idleSocket(fd, deadline))) {
       return false;
     }
   }
+}
+
+/**
+ * The socket under TLS stream `h`, or 0 when a read may find something now (or it failed). Through
+ * an `https://` proxy the origin's TLS runs over the proxy's TLS stream, not a socket: each layer
+ * is asked in turn, since the one below may hold bytes already (conn.velt `viaProxy`).
+ */
+function socketUnder(h: u64): u64 {
+  let s = h;
+  while (tls.isTls(s)) {
+    const fd = tls.readyOrFd(s);
+    if (fd.code !== 0 || fd.value == 0) {
+      return 0;
+    }
+    s = fd.value;
+  }
+  return s;
 }
 
 /**
