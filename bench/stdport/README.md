@@ -303,6 +303,18 @@ compiler and runtime with only std swapped, cachegrind, 2026-11-20: 278M instruc
 254M after (−8.7%); wall clock, best of 7 interleaved, 28.1 → 24.6 ms. The Rust port (a leaked
 record sharing an `Rc<str>`, `format!` for the text) executes 984M.
 
+## Deep equality
+
+`deep_equal`: `deepEqual` of lists of 64 nodes whose nodes all point back at the list's head
+(every node compared under the cycle guard, each `head` met again as the pair being compared),
+equal and differing at the end, and rings of 1 to 8 nodes against rings of the same length,
+3,000 rounds. The guard is Velt code (std/lang/hooks/deep_eq.velt: the pairs in a block of
+words in a thread-local, scanned from the innermost out); it was the runtime's
+`deep_eq.rs`. x86-64 Linux, release, cachegrind, 2026-11-28: 207M instructions before, 213M
+after (+2.5%; a scan by index kept a count beside the address and cost +11.6%, the scan that
+counts its offset down to 0, as Rust's loop does, is the one above). The Rust port (the pairs
+in a `Vec`, the graphs in an arena) executes the same comparisons.
+
 ## The transfer map
 
 `transfer_graph` (a chain of 1,000 objects, each reached twice and kept by the sender, sent to
