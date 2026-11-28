@@ -1,0 +1,23 @@
+// `k in r` of a record view of a class instance in a program that also makes a record with
+// `Object.create(null)`, where `in` with a key known only at run time asks whether the record
+// inherits from `Object.prototype`: the view still answers as `k in` its source (#3087), and the
+// prototype-less record has only its own keys.
+
+class Product {
+  name = "pen";
+  label(): string {
+    return this.name;
+  }
+}
+
+function main(): void {
+  const a: any = new Product();
+  const r = a as Record<string, any>;
+  const bare: Record<string, number> = Object.create(null);
+  bare.own = 1;
+  for (const k of ["label", "name", "toString", "own", "zz"]) {
+    console.log(k, k in r, k in bare, Object.hasOwn(r, k));
+  }
+}
+
+main();

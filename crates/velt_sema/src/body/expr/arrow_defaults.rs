@@ -102,9 +102,27 @@ impl FnCx<'_, '_> {
         } else {
             self.open_slots(arg, pty, known, &mut open);
             // An object literal leaving out the optional fields that name a slot (`count({})`
-            // for `count<S>(o: { input?: S })`) offers it nothing: as with no candidate (#3116).
+            // for `count<S>(o: { input?: S })`, also nested) offers it nothing: as with no
+            // candidate (#3116).
+            // A field written as `undefined` (`{ input: undefined }`) offers `undefined`, one
+            // written as `null` offers `null`, as TypeScript infers them.
             let left_out = self.left_out_slots(arg, pty);
-            open.fix.extend(left_out);
+            let written = (left_out.undefined.iter().map(|&k| (k, true)))
+                .chain(left_out.null.iter().map(|&k| (k, false)));
+            for (k, undefined) in written.collect::<Vec<_>>() {
+                let k = k as usize;
+                if k < known.len() && known[k].is_none() {
+                    let t = match undefined {
+                        true => self.cx.ty.undefined(),
+                        false => self.cx.ty.null_alone(),
+                    };
+                    known[k] = Some(t);
+                    slots[k] = Some(t);
+                }
+            }
+            // A slot a nested literal leaves out is no sibling's to infer (`{ opts: {} }`).
+            open.keep.retain(|s| !left_out.none.contains(s));
+            open.fix.extend(left_out.none);
         }
         if open.fix.is_empty() {
             return;
