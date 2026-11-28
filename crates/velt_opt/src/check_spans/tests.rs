@@ -21,6 +21,13 @@ enum Shape {
     Narrow,
     /// The base is a `u64` and the index its sum, without a cast.
     Unsigned,
+    /// The length is read from an array header (`(*h as T[]).1`) by every check.
+    HeaderLength,
+    /// The same, with a store into the header's length (through a pointer that is not an
+    /// element pointer) between the first and the second check.
+    HeaderStore,
+    /// The same, with a `memset` of the header between the first and the second check.
+    HeaderFill,
     /// Between the first and the second check: a branch out (`cur == 7` returns 50) and a check
     /// of another array (`cur < 1000`, failing returns 60), as a tree's descent has.
     Interleaved,
@@ -37,6 +44,21 @@ fn program(ks: &[i128], shape: Shape) -> Program {
     let mut fb = FuncBuilder::export("main", &[Ty::U64, base_ty], Ty::U64);
     let (len, cur) = (fb.param(0), fb.param(1));
     let other = fb.local(Ty::U64);
+    let hdr = pb.agg(
+        velt_vir::ARRAY_AGG_NAME,
+        24,
+        8,
+        &[(Ty::Ptr, 0), (Ty::U64, 8), (Ty::U64, 16)],
+    );
+    let (hv, h) = (fb.local(Ty::Agg(hdr)), fb.local(Ty::Ptr));
+    let header_len = Place {
+        local: h,
+        proj: vec![Proj::Deref(Ty::Agg(hdr)), Proj::Field(1)],
+    };
+    let from_header = matches!(
+        shape,
+        Shape::HeaderLength | Shape::HeaderStore | Shape::HeaderFill
+    );
     let blocks: Vec<BlockId> = ks.iter().map(|_| fb.block()).collect();
     let fails: Vec<BlockId> = ks.iter().map(|_| fb.block()).collect();
     let ok = fb.block();
@@ -44,6 +66,29 @@ fn program(ks: &[i128], shape: Shape) -> Program {
         let b = blocks[i];
         if i == 0 {
             fb.assign(b, other, Rvalue::Use(copy_local(len)));
+            fb.assign(b, h, Rvalue::AddrOf(Place::local(hv)));
+            fb.push(
+                b,
+                Stmt::Assign(header_len.clone(), Rvalue::Use(copy_local(len))),
+            );
+        }
+        if i == 1 && shape == Shape::HeaderStore {
+            // `len` shrinks to 1 between the checks.
+            fb.push(
+                b,
+                Stmt::Assign(header_len.clone(), Rvalue::Use(int(1, Ty::U64))),
+            );
+        }
+        if i == 1 && shape == Shape::HeaderFill {
+            // The whole header becomes zeros: its length is 0.
+            fb.push(
+                b,
+                Stmt::MemSet {
+                    dst: copy_local(h),
+                    byte: int(0, Ty::U8),
+                    len: int(24, Ty::U64),
+                },
+            );
         }
         if i == 1 && shape == Shape::BaseChanged {
             fb.assign(b, cur, bin(BinOp::Add, copy_local(cur), int(1, base_ty)));
@@ -62,7 +107,11 @@ fn program(ks: &[i128], shape: Shape) -> Program {
         } else {
             len
         };
-        fb.assign(b, l, Rvalue::Use(copy_local(src)));
+        if from_header {
+            fb.assign(b, l, Rvalue::Use(copy_place(header_len.clone())));
+        } else {
+            fb.assign(b, l, Rvalue::Use(copy_local(src)));
+        }
         let c = fb.local(Ty::Bool);
         fb.assign(b, c, bin(BinOp::Lt, copy_local(ix), copy_local(l)));
         let mut next = blocks.get(i + 1).copied().unwrap_or(ok);
@@ -237,4 +286,25 @@ fn checks_of_one_offset_are_left_alone() {
     // A loop's test `i < xs.length` and its `xs[i]` check one index: nothing to widen.
     let mut p = program(&[0, 0], Shape::Plain);
     assert!(!optimize(&mut p));
+}
+
+#[test]
+fn a_length_read_from_the_header_is_one_chain() {
+    let before = program(&[0, 1, 2], Shape::HeaderLength);
+    let mut after = before.clone();
+    assert!(optimize(&mut after));
+    same_behaviour(&before, &after, false);
+}
+
+#[test]
+fn a_store_into_the_header_between_the_checks_keeps_them_apart() {
+    // The second check reads the length the store made (1): it must still run.
+    for shape in [Shape::HeaderStore, Shape::HeaderFill] {
+        let before = program(&[0, 1, 2], shape);
+        assert_eq!(run_main(&before, 10, 0), 101);
+        // The second and third checks may still be one chain, of the new length.
+        let mut after = before.clone();
+        optimize(&mut after);
+        same_behaviour(&before, &after, false);
+    }
 }
