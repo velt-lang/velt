@@ -88,6 +88,8 @@ impl Interp<'_> {
                 self.write_bytes(a[1], &hdr);
                 self.write_bytes(a[0], &[0; 24]);
             }
+            // The test builder's `==` of strings (`tests/builder.rs` `str_key_hooks`).
+            "velt_test_str_eq" => return Some((self.str_bytes(a[0]) == self.str_bytes(a[1])) as u64),
             _ => return None,
         }
         Some(0)
