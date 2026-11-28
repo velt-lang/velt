@@ -2,8 +2,7 @@
 // call (docs/internals/contracts/rt_abi_async.md §6), through `#net-tcp` (std/imports.velt). This
 // file is the variant of a build without the executor in Velt (WebAssembly), whose runtime defines
 // them without a network. A build with the executor uses std/net/tcp_sched.velt, which exports the
-// same names on the executor's reactor and calls only `velt_rt_tcp_listen` here, for the listener
-// `velt dev` hands over.
+// same names on the executor's reactor and calls nothing here.
 
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
@@ -11,8 +10,8 @@ import { moduleStateUsed } from "velt/lang/intrinsics/task";
 import { velt_rt_worker_count } from "velt/task/rt";
 
 /**
- * Under `velt dev`: the listening socket the supervisor hands over (a descriptor, or a `SOCKET` on
- * Windows), which std/net/tcp_sched.velt registers with the reactor. No other build has it.
+ * Defined by no runtime: a WebAssembly program that listens fails to link, with velt_link's note
+ * that it cannot use TCP (native builds listen in std/net/tcp_sched.velt).
  */
 export declare async function velt_rt_tcp_listen(addr: string): Promise<IoResult<u64>>;
 

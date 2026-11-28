@@ -356,10 +356,11 @@ const EXECUTOR_ONLY: &[&str] = &[
 ];
 
 /// `#net-tcp`'s default variant (std/imports.velt), which only WebAssembly builds compile: native
-/// builds take std/net/tcp_sched.velt, which imports from it only `velt_rt_tcp_listen` (velt dev's
-/// listener, which velt_rt defines). Its other declarations are velt_rt_wasm's where it has them,
-/// and otherwise undefined there on purpose: a WebAssembly program that uses TCP fails to link,
-/// with velt_link's note that it cannot (crates/velt_link/src/wasm.rs `explain_missing_symbols`).
+/// builds take std/net/tcp_sched.velt, which imports nothing from it (velt dev's listener is
+/// std's, `#dev-handover`). Its declarations are velt_rt_wasm's where it has them, and otherwise
+/// undefined there on purpose (`velt_rt_tcp_listen` among them): a WebAssembly program that uses
+/// TCP fails to link, with velt_link's note that it cannot (crates/velt_link/src/wasm.rs
+/// `explain_missing_symbols`).
 const WASM_TCP_BINDINGS: &str = "std/net/rt.velt";
 
 /// Whether `name`, declared in `paths` and not defined by velt_rt, is declared only in

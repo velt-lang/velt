@@ -4,7 +4,7 @@
 // Winsock error (std/native/error.velt), as Rust's `io::ErrorKind` sorts them.
 
 import { Ptr } from "velt/ffi/ptr";
-import { addressLoad } from "velt/lang/intrinsics";
+import { addressLoad, addressStore } from "velt/lang/intrinsics";
 import * as m from "velt/lang/hooks/sched_mem";
 
 // As std/lang/hooks/reactor_afd.velt declares it: one C symbol has one signature in a program.
@@ -87,6 +87,23 @@ function loopback(sa: usize): bool {
       addressLoad<u64>(sa + 16) === 0x0100000000000000
     );
   }
+}
+
+// A Unix socket address and a control message header, as on Linux (std/dev/handover_posix.velt;
+// Windows' channel is a named pipe, std/dev/handover_win32.velt, so nothing here uses them).
+export const SUN_PATH_AT: usize = 2;
+export const SUN_PATH_MAX: usize = 108;
+export const CMSG_LEVEL: usize = 8;
+export const CMSG_TYPE: usize = 12;
+export const CMSG_DATA: usize = 16;
+
+/** Writes the family of a Unix socket address at `sa` with a `len`-byte path; its length. */
+export function unixAddress(sa: usize, len: usize): u32 {
+  // SAFETY: `sa` is a zeroed `sockaddr_un`.
+  unsafe {
+    addressStore<u16>(sa, 1);
+  }
+  return (SUN_PATH_AT + len + 1) as u32;
 }
 
 /** The runtime's error code (std/native/error.velt) of Winsock error `e`. */

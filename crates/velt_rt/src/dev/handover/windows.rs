@@ -9,19 +9,25 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, Write};
+#[cfg(test)]
+use std::io::{BufRead, BufReader, Read};
 use std::net::TcpListener;
 use std::os::windows::ffi::OsStrExt;
-use std::os::windows::io::{AsRawHandle, AsRawSocket, FromRawHandle, FromRawSocket, OwnedHandle};
+#[cfg(test)]
+use std::os::windows::io::FromRawSocket;
+use std::os::windows::io::{AsRawHandle, AsRawSocket, FromRawHandle, OwnedHandle};
 use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{
     GetLastError, ERROR_FILE_NOT_FOUND, ERROR_NO_DATA, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED,
     INVALID_HANDLE_VALUE,
 };
+use windows_sys::Win32::Networking::WinSock::{WSADuplicateSocketW, SOCKET, WSAPROTOCOL_INFOW};
+#[cfg(test)]
 use windows_sys::Win32::Networking::WinSock::{
-    WSADuplicateSocketW, WSASocketW, WSAStartup, FROM_PROTOCOL_INFO, INVALID_SOCKET, SOCKET,
-    WSADATA, WSAPROTOCOL_INFOW, WSA_FLAG_NO_HANDLE_INHERIT, WSA_FLAG_OVERLAPPED,
+    WSASocketW, WSAStartup, FROM_PROTOCOL_INFO, INVALID_SOCKET, WSADATA,
+    WSA_FLAG_NO_HANDLE_INHERIT, WSA_FLAG_OVERLAPPED,
 };
 use windows_sys::Win32::Storage::FileSystem::{FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX};
 use windows_sys::Win32::System::Pipes::{
@@ -29,6 +35,7 @@ use windows_sys::Win32::System::Pipes::{
     PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 
+#[cfg(test)]
 use super::MAX_LINE;
 
 /// One connection on the dev channel (either end of a pipe instance).
@@ -168,7 +175,9 @@ pub fn peer_pid(stream: &Stream) -> io::Result<u32> {
     Ok(pid)
 }
 
-/// Program side: the listener from an `ok <record>` reply, or the `err` reply as an error.
+/// The tests' program side (a program's is std's, std/dev/handover_win32.velt): the listener
+/// from an `ok <record>` reply, or the `err` reply as an error.
+#[cfg(test)]
 pub(super) fn receive_listener(stream: &Stream) -> io::Result<TcpListener> {
     let mut line = String::new();
     BufReader::new(stream.take(MAX_LINE as u64)).read_line(&mut line)?;
@@ -225,6 +234,7 @@ fn record_bytes(info: &WSAPROTOCOL_INFOW) -> &[u8] {
     }
 }
 
+#[cfg(test)]
 fn decode_hex(hex: &str) -> Option<Vec<u8>> {
     if !hex.len().is_multiple_of(2) {
         return None;
@@ -236,6 +246,7 @@ fn decode_hex(hex: &str) -> Option<Vec<u8>> {
 }
 
 /// Winsock must be started before `WSASocketW`; std starts it only inside its own calls.
+#[cfg(test)]
 fn start_winsock() {
     static STARTED: std::sync::Once = std::sync::Once::new();
     STARTED.call_once(|| {

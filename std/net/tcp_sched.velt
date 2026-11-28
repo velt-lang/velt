@@ -10,7 +10,7 @@
 // role (`hookCall`) so that a program loads them only when live code listens or connects with TLS,
 // and their handles are ours too; only a program with TLS tests for them (`stdUsed("reactorTls")`,
 // std/net/tls/fd_hook.velt's operations). Their sockets are the reactor's: a listener under
-// `velt dev` is the supervisor's, handed over through the runtime (`devHandover`) and registered
+// `velt dev` is the supervisor's, handed over by `#dev-handover` (`devHandover`) and registered
 // here. An OS without a reactor (std/lang/hooks/reactor_none.velt) has no sockets: `listen` and
 // `connect` fail with `ENOTSUP`. `fetch`'s keep-alive pool (`park`/`unpark`) is Velt's
 // (std/net/tcp_sched_pool.velt).
@@ -31,7 +31,7 @@ import * as fio from "velt/net/fd_io";
 import * as pool from "velt/net/fd_pool";
 import * as fs from "velt/net/fd_socket";
 import { readableUntil } from "velt/net/fd_until";
-import * as rt from "velt/net/rt";
+import * as handover from "#dev-handover";
 import { parkStream, unparkStream } from "velt/net/tcp_sched_pool";
 import { isTls } from "velt/net/tls/fd_hook";
 import * as tlsOps from "velt/net/tls/fd_hook";
@@ -41,8 +41,8 @@ import * as tlsOps from "velt/net/tls/fd_hook";
 import { signalAborted, signalWait } from "velt/task/signal_sched";
 
 /**
- * Whether listeners come from `velt dev`'s supervisor (`VELT_DEV_SOCKET`, velt_rt's `dev::bind`),
- * which keeps the socket across a restart: the runtime asks it for each one and hands its socket
+ * Whether listeners come from `velt dev`'s supervisor (`VELT_DEV_SOCKET`, std/dev/handover_*.velt),
+ * which keeps the socket across a restart: `#dev-handover` asks it for each one and hands its socket
  * here, to be registered with the reactor as one of ours.
  */
 function devHandover(): bool {
@@ -65,14 +65,15 @@ export async function velt_rt_tcp_listen(addr: string): Promise<IoResult<u64>> {
 }
 
 /**
- * The listener `velt dev`'s supervisor hands over for `addr`: the runtime's leaf, which the
- * executor does not see, so the process stays alive while the supervisor answers
+ * The listener `velt dev`'s supervisor hands over for `addr` (std/dev/handover_posix.velt,
+ * handover_win32.velt): its round trip runs on the blocking pool, which the executor does not
+ * count, so the process stays alive while the supervisor answers
  * (std/lang/hooks/sched_end.velt), whatever way the wait ends.
  */
 async function handedOver(addr: string): Promise<IoResult<u64>> {
   schedKeepAliveAcquire();
   try {
-    return await rt.velt_rt_tcp_listen(addr);
+    return await handover.listener(addr);
   } finally {
     schedKeepAliveRelease();
   }

@@ -1,0 +1,75 @@
+// velt/dev (internal): the supervisor's dev pipe on Windows (`VELT_DEV_SOCKET`, a local named
+// pipe, crates/velt_rt/src/dev/handover): opening it, and the Win32 calls that read and write it,
+// for the stop channel (std/dev/stop_win32.velt) and the listener handover
+// (std/dev/handover_win32.velt).
+
+import { Ptr } from "velt/ffi/ptr";
+import { monotonicNs } from "#clock";
+
+/** C's `SECURITY_ATTRIBUTES` (never passed) and `OVERLAPPED` (32 bytes, `hEvent` at 24). */
+export declare c type _SECURITY_ATTRIBUTES;
+export declare c type _OVERLAPPED;
+
+declare c("c") function CreateFileW(
+  name: readonly u16[],
+  access: u32,
+  share: u32,
+  security: Ptr<_SECURITY_ATTRIBUTES> | null,
+  disposition: u32,
+  flags: u32,
+  template: Ptr<void> | null,
+): Ptr<void> | null;
+export declare c("c") function ReadFile(
+  file: Ptr<void> | null,
+  buf: Ptr<void> | null,
+  n: u32,
+  read: Ptr<u32> | null,
+  overlapped: Ptr<_OVERLAPPED> | null,
+): i32;
+export declare c("c") function WriteFile(
+  file: Ptr<void> | null,
+  buf: Ptr<void> | null,
+  n: u32,
+  written: Ptr<u32> | null,
+  overlapped: Ptr<_OVERLAPPED> | null,
+): i32;
+export declare c("c") function CloseHandle(h: Ptr<void> | null): i32;
+export declare c("c") function GetLastError(): u32;
+declare c("c") function Sleep(ms: u32): void;
+
+/** `GENERIC_READ | GENERIC_WRITE`. */
+const READ_WRITE: u32 = 0xc0000000;
+const OPEN_EXISTING: u32 = 3;
+/** `FILE_FLAG_OVERLAPPED`. */
+export const OVERLAPPED: u32 = 0x40000000;
+const INVALID_HANDLE: usize = 0xffffffffffffffff;
+const ERROR_FILE_NOT_FOUND: u32 = 2;
+const ERROR_PIPE_BUSY: u32 = 231;
+/** How long `openPipe` tries again while the pipe is busy or not there yet. */
+const CONNECT_MS: u64 = 5000;
+
+/**
+ * The supervisor's pipe `wide` opened with `flags` (0 or `OVERLAPPED`), or null (`GetLastError`
+ * says why). Its one waiting instance may be taken by another connection for a moment: tries
+ * again until `CONNECT_MS` have passed, as the supervisor's side expects (a deadline, not a count
+ * of tries: `Sleep(1)` lasts a timer tick, 15.6 ms by default).
+ */
+export function openPipe(wide: readonly u16[], flags: u32): Ptr<void> | null {
+  const deadline = monotonicNs() + CONNECT_MS * 1000000;
+  while (true) {
+    // SAFETY: `wide` is NUL-terminated; no security attributes, no template.
+    const h = unsafe { CreateFileW(wide, READ_WRITE, 0, null, OPEN_EXISTING, flags, null) };
+    if (h !== null && Ptr.addressOf(h) !== INVALID_HANDLE) {
+      return h;
+    }
+    // SAFETY: no precondition.
+    const e = unsafe { GetLastError() };
+    if ((e !== ERROR_PIPE_BUSY && e !== ERROR_FILE_NOT_FOUND) || monotonicNs() >= deadline) {
+      return null;
+    }
+    // SAFETY: no precondition.
+    unsafe {
+      Sleep(1);
+    }
+  }
+}

@@ -343,7 +343,7 @@ mod tests {
         for every in [
             "std/net/tcp_stream.velt",
             "std/test/run.velt",
-            "crates/velt_rt/src/net/tcp.rs",
+            "crates/velt_rt/src/dev/handover/mod.rs",
             "crates/veltc/src/commands/test/mod.rs",
         ] {
             assert_eq!(p(&["packages/sqlite/src/db.velt", every]), "all", "{every}");

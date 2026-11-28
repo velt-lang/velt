@@ -1,0 +1,206 @@
+// velt/dev (internal): the listener `velt dev`'s supervisor hands a program on macOS and Linux
+// (`#dev-handover`, std/net/tcp_sched.velt's `listen` under `velt dev`). The supervisor's dev
+// channel is a Unix socket (`VELT_DEV_SOCKET`, crates/velt_rt/src/dev/handover): the program
+// connects, sends `listen <addr>\n` and reads `ok\n` with the listening socket's descriptor
+// attached (`SCM_RIGHTS`), or `err <message>\n`. The supervisor binds the address on its first
+// request and hands the same socket to every later version, so the port (port 0's too) and the
+// connections waiting in its backlog survive a reload. The round trip blocks (a local socket,
+// once per listener), so it runs on the executor's blocking pool.
+
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+import { Ptr } from "velt/ffi/ptr";
+import { utf8Encode } from "velt/encoding/utf8";
+import { addressLoad, addressStore } from "velt/lang/intrinsics";
+import * as bl from "velt/lang/hooks/sched_blocking";
+import * as m from "velt/lang/hooks/sched_mem";
+import { cText } from "velt/net/fd_addr";
+import * as fs from "velt/net/fd_socket";
+import { close$net, connect$net, recv$net, send$io, sockaddr, socket } from "#net-calls";
+import * as sys from "#net-sys";
+import * as r from "#reactor";
+import { getEnv } from "#env-sys";
+
+/** C's `struct msghdr`, filled in the block. */
+declare c type msghdr;
+declare c("c") function recvmsg(fd: i32, msg: Ptr<msghdr> | null, flags: i32): isize;
+
+const AF_UNIX: i32 = 1;
+const SOCK_STREAM: i32 = 1;
+const SCM_RIGHTS: i32 = 1;
+/** Longest request and reply line, as the supervisor's side. */
+const MAX_LINE: usize = 4096;
+
+// The round trip's block: the supervisor's address, then what the pool thread reports (the
+// descriptor received or -1, the `errno` of a failure and at which step), the control message
+// buffer, the `msghdr` and its one `iovec`, the request line, the reply (NUL-terminated).
+// `msghdr` is read at Linux's offsets: on macOS its `iovlen` and `controllen` are 32-bit, and
+// the 64-bit stores below also zero the padding and the flags after them.
+const B_ADDR: usize = 0;
+const B_ADDR_LEN: usize = 128;
+const B_OUT_LEN: usize = 136;
+const B_FD: usize = 144;
+const B_ERRNO: usize = 152;
+const B_STEP: usize = 160;
+const B_CMSG: usize = 176;
+const B_MSG: usize = 240;
+const B_IOV: usize = 304;
+const B_OUT: usize = 320;
+const B_REPLY: usize = B_OUT + MAX_LINE;
+const B_SIZE: usize = B_REPLY + MAX_LINE + 8;
+/** `B_STEP`: connecting failed, or writing or reading after it. */
+const CONNECTING: u32 = 1;
+const TALKING: u32 = 2;
+
+/** The supervisor's listener for `addr` (a descriptor ready for the reactor), or the failure. */
+export async function listener(addr: string): Promise<IoResult<u64>> {
+  const path = utf8Encode(getEnv("VELT_DEV_SOCKET") ?? "");
+  const line = utf8Encode(`listen ${addr}\n`);
+  if (path.length >= sys.SUN_PATH_MAX) {
+    return fs.failed<u64>(unreachable(4, "path must be shorter than SUN_LEN"), 0);
+  }
+  if (line.length > MAX_LINE) {
+    return fs.failed<u64>({ code: 4, message: "listen: address too long" }, 0);
+  }
+  const b = m.zeroed(B_SIZE);
+  // SAFETY: the block's address and request line, within their room (checked above).
+  unsafe {
+    for (let i = 0; i < path.length; i++) {
+      addressStore<u8>(b + B_ADDR + sys.SUN_PATH_AT + (i as usize), path[i]);
+    }
+    for (let i = 0; i < line.length; i++) {
+      addressStore<u8>(b + B_OUT + (i as usize), line[i]);
+    }
+  }
+  m.st32(b + B_ADDR_LEN, sys.unixAddress(b + B_ADDR, path.length as usize));
+  m.st(b + B_OUT_LEN, line.length as usize);
+  if (bl.supported()) {
+    await bl.run((): i32 => roundTrip(b));
+  } else {
+    roundTrip(b);
+  }
+  const got = finish(b);
+  m.release(b, B_SIZE);
+  return got;
+}
+
+/** On a pool thread: connects, sends the request and reads the reply into block `b`. */
+function roundTrip(b: usize): i32 {
+  m.st(b + B_FD, 0xffffffffffffffff);
+  // SAFETY: no precondition.
+  const s = unsafe { socket(AF_UNIX, SOCK_STREAM, 0) };
+  if (s < 0) {
+    return failedAt(b, CONNECTING, -1);
+  }
+  const at = m.ptrTo<sockaddr>(b + B_ADDR);
+  // SAFETY: the Unix socket address in the block and its length.
+  if (unsafe { connect$net(s, at, m.ld32(b + B_ADDR_LEN)) } !== 0) {
+    return failedAt(b, CONNECTING, s);
+  }
+  const n = m.ld(b + B_OUT_LEN);
+  let sent: usize = 0;
+  while (sent < n) {
+    // SAFETY: the rest of the request line in the block.
+    const k = unsafe { send$io(s, m.ptrTo<u8>(b + B_OUT + sent), n - sent, 0) };
+    if (k < 0) {
+      if (r.errno() === r.EINTR) {
+        continue;
+      }
+      return failedAt(b, TALKING, s);
+    }
+    sent += k as usize;
+  }
+  m.st(b + B_IOV, b + B_REPLY);
+  m.st(b + B_IOV + 8, MAX_LINE - 1);
+  m.st(b + B_MSG + 16, b + B_IOV);
+  m.st(b + B_MSG + 24, 1);
+  m.st(b + B_MSG + 32, b + B_CMSG);
+  m.st(b + B_MSG + 40, 64);
+  let got: isize = -1;
+  while (got < 0) {
+    // SAFETY: the block's `msghdr`, its `iovec` over the reply and its control buffer.
+    got = unsafe { recvmsg(s, m.ptrTo<msghdr>(b + B_MSG), 0) };
+    if (got < 0 && r.errno() !== r.EINTR) {
+      return failedAt(b, TALKING, s);
+    }
+  }
+  takeDescriptor(b);
+  let len = got as usize;
+  // The rest of the line, when the first read was short.
+  while (len > 0 && len < MAX_LINE - 1 && lastByte(b, len) !== 10) {
+    // SAFETY: the reply's free room, one byte kept for its NUL.
+    const k = unsafe { recv$net(s, m.ptrTo<u8>(b + B_REPLY + len), MAX_LINE - 1 - len, 0) };
+    if (k < 0 && r.errno() === r.EINTR) {
+      continue;
+    }
+    if (k <= 0) {
+      break;
+    }
+    len += k as usize;
+  }
+  // SAFETY: the socket, not used after.
+  unsafe {
+    close$net(s);
+  }
+  return 0;
+}
+
+/** The descriptor the reply's control message carries, if any, into `B_FD`. */
+function takeDescriptor(b: usize): void {
+  const c = b + B_CMSG;
+  if ((m.ld32(b + B_MSG + 40) as usize) < sys.CMSG_DATA + 4) {
+    return;
+  }
+  if ((m.ld32(c + sys.CMSG_LEVEL) as i32) === sys.SOL_SOCKET) {
+    if ((m.ld32(c + sys.CMSG_TYPE) as i32) === SCM_RIGHTS) {
+      m.st(b + B_FD, m.ld32(c + sys.CMSG_DATA) as usize);
+    }
+  }
+}
+
+function lastByte(b: usize, len: usize): u8 {
+  // SAFETY: a byte of the reply read so far.
+  return unsafe { addressLoad<u8>(b + B_REPLY + len - 1) };
+}
+
+/** Notes the failure of step `step` (this thread's `errno`) and closes `s` (-1: none). */
+function failedAt(b: usize, step: u32, s: i32): i32 {
+  m.st32(b + B_ERRNO, r.errno() as u32);
+  m.st32(b + B_STEP, step);
+  if (s >= 0) {
+    // SAFETY: the socket, not used after.
+    unsafe {
+      close$net(s);
+    }
+  }
+  return 0;
+}
+
+/** Back on the program's thread: the listener block `b` received, or why there is none. */
+function finish(b: usize): IoResult<u64> {
+  const step = m.ld32(b + B_STEP);
+  if (step !== 0) {
+    const st = fs.osError(m.ld32(b + B_ERRNO) as i32);
+    return fs.failed<u64>(step === CONNECTING ? unreachable(st.code, st.message) : st, 0);
+  }
+  const fd = m.ld(b + B_FD);
+  const line = cText(b + B_REPLY).trimEnd();
+  if (!line.startsWith("ok") || fd === 0xffffffffffffffff) {
+    if (fd !== 0xffffffffffffffff) {
+      fs.closeFd(fd as i32);
+    }
+    const message = line.startsWith("err ") ? line.slice(4) : line;
+    return fs.failed<u64>({ code: 99, message: message }, 0);
+  }
+  const e = r.prepare(fd as i32);
+  if (e !== 0) {
+    fs.closeFd(fd as i32);
+    return fs.failed<u64>(fs.osError(e), 0);
+  }
+  return fs.value<u64>(fd as u64);
+}
+
+/** A failure to reach the supervisor, as the runtime's side worded it. */
+function unreachable(code: i32, message: string): IoStatus {
+  return { code: code, message: `velt dev: cannot reach the supervisor: ${message}` };
+}

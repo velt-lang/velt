@@ -375,8 +375,9 @@ the runtime's Rust glue (child processes on Windows, file streams).
 | `velt_rt_set_scheduler` | `(u32 kind)` | A no-op, kept for programs compiled before the executor in Velt and for `velt_vir`'s `Rt::SetScheduler`. `1`: what `velt_main` calls first when the program pins a task (`spawn(p, { worker })`). `2`: each thread of the executor in Velt calls it before it polls its first task (std/lang/hooks/sched_workers.velt, spare workers too). |
 
 velt_rt has no async runtime of its own: it starts no threads and runs no tasks. Its remaining
-leaves (`velt_rt_tcp_listen`, velt dev's listener handover) are polled by the executor in Velt
-like any other future. Neither the compiler nor the runtime reads `VELT_SCHEDULER`.
+leaf (`velt_rt_latch_wait`'s) is polled by the executor in Velt like any other future; velt dev's
+listener handover is std's (§13.1).
+Neither the compiler nor the runtime reads `VELT_SCHEDULER`.
 Programs run on the executor in Velt (std/lang/hooks/sched*.velt), with `VELT_THREADS` workers
 (a positive integer) or one per core. With more than one worker it rescues a stalled one
 (std/lang/hooks/sched_monitor.velt); with one, only when `VELT_RESCUE=1`: no monitor thread, and a
@@ -675,17 +676,16 @@ no path (`EISDIR: illegal operation on a directory, read`), and a directory open
 ## 6. std/net (TCP)
 
 Native programs' TCP sockets are std's, on the executor's reactor (std/net/tcp_sched.velt); TLS
-is Velt's over them (§14.8). velt_rt keeps one function here, `velt_rt_tcp_listen`, for the
-listener `velt dev`'s supervisor hands over (§13.1). The stream functions below are WebAssembly
-only: velt_rt_wasm defines them without a network (crates/velt_rt_wasm/src/net.rs), so that
+is Velt's over them (§14.8), and so is the listener `velt dev`'s supervisor hands over (§13.1).
+velt_rt has no function here. The functions below are WebAssembly only: velt_rt_wasm defines them without a network (crates/velt_rt_wasm/src/net.rs), so that
 programs that reach `fetch` link and run, and std/net/rt.velt declares them for that build.
 Connecting fails with `ENOTSUP` (`fetch failed: WebAssembly programs have no network access`),
 so no stream ever exists: an operation on one fails with `EBADF` (`handle is closed`), as for a
-closed handle.
+closed handle. std/net/rt.velt also declares `velt_rt_tcp_listen(addr)`, which no runtime defines:
+a WebAssembly program that listens fails to link, with velt_link's note that it cannot use TCP.
 
 | Symbol | Signature | Result slot / notes |
 |---|---|---|
-| `velt_rt_tcp_listen` | `(const VeltStr* addr) -> VeltFut*` | `IoResult<u64>`: the listening socket (a non-blocking descriptor, or a `SOCKET` on Windows), which the caller owns; `addr` = `"host:port"`, port 0 = any free port. Only std/net/tcp_sched.velt calls it, under `velt dev` (§13.1), and registers the socket with the executor's reactor; listeners are std's. Outside `velt dev` it fails (unsupported): the runtime binds nothing itself |
 | `velt_rt_tcp_connect` | `(const VeltStr* addr) -> VeltFut*` | WebAssembly only. `IoResult<VeltStream>`: ready at once with `ENOTSUP` |
 | `velt_rt_tcp_try_read_into` | `(VeltStream s, const VeltBytes* data, u64 start, u64 end, IoResult<i64>* out)` | WebAssembly only. `readInto`'s probe (`data` is a `u8[]` the caller lends for the call; sema's written-parameter list has it): writes `EBADF` to `out` |
 | `velt_rt_tcp_readable` | `(VeltStream s) -> VeltFut*` | WebAssembly only. `IoStatus`: ready at once with `EBADF` |
@@ -1075,10 +1075,11 @@ Nothing here changes the ABI generated code uses; it is how the runtime behaves 
 ### 13.1 Listener handover
 `VELT_DEV_SOCKET` names the supervisor's dev channel: a Unix socket path, or on Windows a local
 named pipe (`\\.\pipe\velt-dev-<pid>-<n>`, byte mode; a program retries for up to 5 s while every
-pipe instance is busy). Each request is one connection. When the variable is set,
-`velt_rt_tcp_listen` connects, sends
-`listen <addr>\n` (the address exactly as the program passed it) and receive the listening
-socket, or `err <message>\n` (the operation then fails with that message):
+pipe instance is busy). Each request is one connection. When the variable is set, std's
+`listen` (std/net/tcp_sched.velt, through `#dev-handover`: std/dev/handover_posix.velt,
+handover_win32.velt, on the executor's blocking pool) connects, sends `listen <addr>\n` (the
+address exactly as the program passed it) and receives the listening socket, or
+`err <message>\n` (the operation then fails with that message and code 99, other):
 - Unix: `ok\n` with the socket's descriptor attached (`SCM_RIGHTS`);
 - Windows: `ok <hex>\n`, where `<hex>` is the `WSAPROTOCOL_INFOW` record (lowercase hex, two
   digits per byte) from `WSADuplicateSocketW` for the requesting process (the supervisor takes its
@@ -1089,7 +1090,7 @@ socket, or `err <message>\n` (the operation then fails with that message):
 The supervisor
 binds each address on its first request and returns the same socket to every later request and
 program version, so connections queue in the kernel backlog across restarts and port 0 keeps
-its port. Without the variable the runtime binds the address itself.
+its port. Without the variable std binds the address itself.
 
 ### 13.2 Stopping
 In dev mode (`VELT_DEV_SOCKET` set) std handles a stop request while a server that joined the

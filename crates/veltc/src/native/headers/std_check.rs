@@ -292,7 +292,7 @@ mod tests {
     #[test]
     fn only_the_runtime_s_exports_are_skipped() {
         let exports = runtime_exports();
-        assert!(exports.contains("velt_rt_tcp_listen"));
+        assert!(exports.contains("velt_rt_alloc"));
         assert!(exports.contains("velt_rt_latch_new"));
         assert!(!exports.contains("velt_rt_not_exported"));
         assert!(!exports.contains("strlen"));
