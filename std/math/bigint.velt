@@ -1,8 +1,8 @@
 // velt/math (internal): arbitrary-precision integers (JS `BigInt`): a sign and 64-bit limbs
 // (nat_add.velt) in a block of the number's own (bigint_store.velt), the arithmetic in Velt
-// (nat_*.velt, bigint_signed.velt). `a.add(b)` or `a + b` returns a new BigInt; `a.addAssign(b)`
-// or `a += b` changes `a` in place, reusing its buffer (bigint_ops.velt has the operators), and
-// the `Int` twins (`mulIntAssign(k)`) take a machine integer. Division truncates and `rem` takes
+// (nat_*.velt, bigint_signed.velt). `a.add(b)`, `a + b` and `a += b` give a new BigInt; the
+// in-place `a.addAssign(b)` reuses `a`'s buffer (bigint_ops.velt has the operators), and the
+// `Int` twins (`mulIntAssign(k)`) take a machine integer. Division truncates and `rem` takes
 // the dividend's sign; dividing by zero panics with JS's RangeError; a negative shift count
 // shifts the other way (`1n << -1n` is `0n`). `[Symbol.dispose]()` frees the block.
 

@@ -48,6 +48,40 @@ fn name_ref(name: &str, span: Span) -> ast::Expr {
     )
 }
 
+impl FnCx<'_, '_> {
+    /// Does `e` run no code of the program's: a variable, a literal, or `new BigInt(k)` of
+    /// literals, number variables and arithmetic on them (`bigint_compound`)? An operand of an
+    /// operator inside must be a number: on a class, `a + b` and `-a` call its operator methods.
+    fn runs_no_code(&mut self, e: &ast::Expr) -> bool {
+        match &e.kind {
+            ast::ExprKind::Ident(_) | ast::ExprKind::Lit(_) => true,
+            ast::ExprKind::Paren(x) => self.runs_no_code(x),
+            ast::ExprKind::New { class, args } => {
+                let named = matches!(&class.kind, ast::TypeExprKind::Named { path, args }
+                    if args.is_empty() && path.len() == 1 && path[0].name == "BigInt");
+                named && args.iter().all(|a| self.number_of_numbers(a))
+            }
+            _ => false,
+        }
+    }
+
+    /// Is `e` a number literal, a variable of a number type, or operators on such operands
+    /// only (which call no operator method)?
+    fn number_of_numbers(&mut self, e: &ast::Expr) -> bool {
+        match &e.kind {
+            ast::ExprKind::Lit(ast::Lit::Int { .. } | ast::Lit::Float { .. }) => true,
+            ast::ExprKind::Ident(_) => self.peek_ty(e).is_some_and(|t| self.is_number_ty(t)),
+            ast::ExprKind::Paren(x) | ast::ExprKind::Unary { expr: x, .. } => {
+                self.number_of_numbers(x)
+            }
+            ast::ExprKind::Binary { lhs, rhs, .. } => {
+                self.number_of_numbers(lhs) && self.number_of_numbers(rhs)
+            }
+            _ => false,
+        }
+    }
+}
+
 /// `1`, what `++` adds.
 fn one(span: Span) -> ast::Expr {
     synth(
@@ -115,6 +149,9 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let mut stmts = vec![];
         let assign = operators::assign_method(op).expect("ICE: a binary operator");
+        if in_place && self.has_instance_op(place.ty, assign) && self.is_bigint(place.ty) {
+            return self.bigint_compound(place, op, value, span);
+        }
         if in_place && self.has_instance_op(place.ty, assign) {
             let prop = ast::Ident {
                 name: assign.into(),
@@ -143,6 +180,82 @@ impl FnCx<'_, '_> {
         };
         let assign = self.mk(kind, unit, span);
         self.with_temps(stmts, assign)
+    }
+
+    /// `z op= v` on a `velt/math` `BigInt`, a value as in JavaScript (#3108): `z = z op v`, a new
+    /// number, unless nothing can tell the difference: `z` a `let` variable of this function
+    /// holding the number's only reference, then `z[Symbol.opAssign](v)` in place.
+    /// `{ if (!isUnique(z)) z = z.clone(); z[opAssign](v) }`, one call of the method either way.
+    /// Only for the arithmetic operators and a `v` that runs no code of the program's (a
+    /// variable, a literal, `new BigInt(k)`), which so can neither assign `z` nor make another
+    /// reference to it between the test and the write (`z += z` comes here as a temporary
+    /// sharing `z`, `place_compound_operator`, so it is not unique). A parameter, a
+    /// field, an element, or a binding of a pattern or a loop may lend a reference another holds
+    /// (a borrow counts as the reference it borrows): always a new number there.
+    fn bigint_compound(
+        &mut self,
+        place: hir::Expr,
+        op: ast::BinaryOp,
+        value: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        use ast::BinaryOp as B;
+        let own_let = match place.kind {
+            H::Local(l, _) => matches!(self.f.kinds[l.0 as usize], LocalKind::Let),
+            _ => false,
+        };
+        let arithmetic = matches!(op, B::Add | B::Sub | B::Mul | B::Div | B::Rem);
+        if !own_let || !arithmetic || !self.runs_no_code(value) {
+            return self.place_compound(place, op, value, false, span);
+        }
+        let assign = operators::assign_method(op).expect("ICE: a binary operator");
+        let (bool_ty, unit) = (self.cx.ty.bool_, self.cx.ty.unit);
+        let mut stmts = vec![];
+        let target = self.place_read(&place, Want::Borrow);
+        let callee = hir::Callee::Intrinsic(hir::Intrinsic::IsUnique);
+        let cond = self.mk(
+            H::Call {
+                callee,
+                args: vec![target],
+            },
+            bool_ty,
+            span,
+        );
+        // Held elsewhere: `z` gets a copy of its own first, which the method then changes, so
+        // `z` is a new number. One call of the method either way (inlined as the in-place
+        // operator is without the test).
+        let recv = self.place_read(&place, Want::Borrow);
+        let ident = |name: &str| ast::Ident {
+            name: name.into(),
+            span,
+        };
+        let copy = self.method_call_on(recv, &ident("clone"), &[], &[], None, span);
+        let fresh = self.mk(
+            H::Assign {
+                place: Box::new(place.clone()),
+                value: Box::new(copy),
+            },
+            unit,
+            span,
+        );
+        let kept = self.mk(H::Block(block(vec![], None, span)), unit, span);
+        let kind = H::If {
+            cond: Box::new(cond),
+            then: Box::new(kept),
+            els: Box::new(fresh),
+        };
+        let own = self.mk(kind, unit, span);
+        stmts.push(stmt(hir::StmtKind::Expr(own), span));
+        // `v` runs no code, so it is read after the test: no temporary (a share) of it.
+        let call = self.method_call_on(
+            place,
+            &ident(assign),
+            &[],
+            std::slice::from_ref(value),
+            None,
+            span,
+        );
+        self.with_temps(stmts, call)
     }
 
     /// `++place` / `place--` on a type with operator methods (`as_value`: its value is used);
@@ -200,7 +313,8 @@ impl FnCx<'_, '_> {
 
     /// The new value of `<old> op= v` in a read-then-write (an accessor's or an indexer's,
     /// `old` the temporary holding the value read): `{ <old>[Symbol.opAssign](v); <old> }` when
-    /// its type has that method, else `<old> op v`.
+    /// its type has that method, else `<old> op v` (always for a `BigInt`, a value: the value
+    /// read may be held elsewhere too).
     pub(super) fn rmw_compound_value(
         &mut self,
         op: ast::BinaryOp,
@@ -209,7 +323,7 @@ impl FnCx<'_, '_> {
         v: &ast::Expr,
         span: Span,
     ) -> hir::Expr {
-        let assign = operators::assign_method(op);
+        let assign = operators::assign_method(op).filter(|_| !self.is_bigint(old_ty));
         if let Some(assign) = assign.filter(|a| self.has_instance_op(old_ty, a)) {
             let prop = ast::Ident {
                 name: assign.into(),

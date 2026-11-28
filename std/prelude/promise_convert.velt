@@ -1,0 +1,14 @@
+// Prelude (internal): the conversion of a promise to another promise type (a `Promise<T>`
+// used as a `Promise<unknown>`, a method's promise read through an interface adapter; #1682).
+
+/**
+ * `p` converted to a promise of another type (the compiler's `then` that retypes a promise's
+ * value): the same promise in JS, so it settles when `p` does, without the microtask a `then`
+ * callback waits for (#3277). `f` converts the value; what `p` rejects with passes through.
+ */
+export async function promiseConvert<T, E, U>(
+  p: Promise<T, E>,
+  f: (value: T) => U,
+): Promise<U> throws E {
+  return f(await p);
+}

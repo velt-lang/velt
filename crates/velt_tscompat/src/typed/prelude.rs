@@ -216,6 +216,7 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
     ("promiseReject", "use `Promise.reject(…)`"),
     ("promiseResolve", "use `Promise.resolve(…)`"),
     ("promiseResolveVoid", "use `Promise.resolve()`"),
+    ("promiseConvert", "use `p.then(…)`"),
     ("promiseThen", "use `p.then(…)`"),
     ("promiseThenAsync", "use `p.then(…)`"),
     ("promiseThenAsyncThrows", "use `p.then(…)`"),
@@ -596,6 +597,7 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
             ("setAt", JSON_VALUE),
             ("stringify", JSON_VALUE),
             ("toJSON", JSON_VALUE),
+            ("toString", JSON_VALUE),
         ],
     ),
     (

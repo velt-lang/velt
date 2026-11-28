@@ -6,4 +6,4 @@ top [ 'in' ]
 Holder { v: { k: [ 1, 2 ], s: 't' } }
 [ { k: [ 1, 2 ] }, [ [], {} ] ]
 { k18: 18, k19: 19, k0: 'again' } [ 'k18', 'k19', 'k0' ]
-v = { e: true, f: -1.5 }
+v = [object Object]

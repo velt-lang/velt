@@ -1,0 +1,139 @@
+// A promise Velt converts to another promise type settles when the promise it converts does
+// (#3277): in JS it is the same promise. `Promise.all` of two promises that have both rejected
+// takes the first in array order, also when the first is a converted one made just before:
+// - a `Promise<number>` used as a `Promise<unknown>` (a `then` that retypes the value);
+// - an object literal's async method called through an interface (its slot method awaits the
+//   function in the literal's field), at the literal's own type and through an adapter
+//   (`Options<unknown>` reading a `Schema<number>`).
+type Res<O> = { value: O };
+
+interface Schema<O> {
+  validate(value: unknown): Promise<Res<O>>;
+}
+
+interface Options<S> {
+  input: Schema<S>;
+  handler(input: S): string;
+}
+
+async function fail(x: string): Promise<number> {
+  throw new Error(x);
+}
+
+async function retyped(): Promise<string> {
+  let out = "retyped:";
+  const kept: Promise<unknown> = fail("kept");
+  try {
+    await kept;
+  } catch (e) {}
+  const before: Promise<unknown> = fail("before");
+  try {
+    await Promise.all([before, kept]);
+  } catch (e) {
+    out += " " + String(e);
+  }
+  return out;
+}
+
+async function literal(s: Schema<number>): Promise<string> {
+  let out = "literal:";
+  const kept = s.validate("kept");
+  try {
+    await kept;
+  } catch (e) {}
+  try {
+    await Promise.all([s.validate("before"), kept]);
+  } catch (e) {
+    out += " " + String(e);
+  }
+  return out;
+}
+
+function adapted<S>(options: Options<S>): Promise<string>;
+async function adapted(options: Options<unknown>): Promise<string> {
+  let out = "adapted:";
+  const kept = options.input.validate("kept");
+  try {
+    await kept;
+  } catch (e) {}
+  const before = options.input.validate("before");
+  try {
+    await Promise.all([before, kept]);
+  } catch (e) {
+    out += " " + String(e);
+  }
+  const fresh = options.input.validate("fresh");
+  const other = options.input.validate("other");
+  try {
+    await Promise.all([fresh, other]);
+  } catch (e) {
+    out += " / " + String(e);
+  }
+  return out;
+}
+
+const count: Schema<number> = {
+  async validate(value: unknown): Promise<Res<number>> {
+    if (typeof value === "number") {
+      return { value: value + 1 };
+    }
+    throw new Error(String(value));
+  },
+};
+
+// Fulfilled sources: a callback on the converted promise registered before one on the source
+// runs first, as in Node; a converted promise of a fulfilled one has settled when made, so
+// `Promise.race` takes it, first in the array.
+const log: string[] = [];
+
+async function later(v: number, tag: string): Promise<number> {
+  log.push(tag + "1");
+  await null;
+  log.push(tag + "2");
+  await null;
+  log.push(tag + "3");
+  return v;
+}
+
+async function ticks(tag: string): Promise<void> {
+  for (const s of ["a", "b", "c", "d"]) {
+    await null;
+    log.push(tag + s);
+  }
+}
+
+async function callbacks(): Promise<string> {
+  const p = later(1, "C");
+  const c: Promise<unknown> = p;
+  const t = ticks("x");
+  const a = c.then(() => log.push("c1"));
+  const b = p.then(() => log.push("p1"));
+  await Promise.all([a, b, t]);
+  return "callbacks: " + log.join(" ");
+}
+
+async function raced(): Promise<string> {
+  const kept: Promise<unknown> = later(1, "K");
+  await kept;
+  const fresh: Promise<unknown> = Promise.resolve(2);
+  return "raced: " + String(await Promise.race([fresh, kept]));
+}
+
+function adaptedRace<S>(options: Options<S>): Promise<string>;
+async function adaptedRace(options: Options<unknown>): Promise<string> {
+  const kept = options.input.validate(1);
+  await kept;
+  const fresh = options.input.validate(5);
+  const r = await Promise.race([fresh, kept]);
+  return "adapted race: " + String(r.value);
+}
+
+async function main(): Promise<void> {
+  console.log(await retyped());
+  console.log(await literal(count));
+  console.log(await adapted({ input: count, handler: (n: number): string => "" + n }));
+  console.log(await callbacks());
+  console.log(await raced());
+  console.log(await adaptedRace({ input: count, handler: (n: number): string => "" + n }));
+}
+main();

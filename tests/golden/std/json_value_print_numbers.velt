@@ -1,0 +1,24 @@
+// Printing a `JsonValue` as Node prints the value it stands for (#3118): `console.log` shows a
+// number stored into it with `JsonValue.of` as Node does (`-0`, `Infinity`, `NaN`), and
+// `String(v)` / `${v}` convert it as JavaScript does (an array's elements joined with `,`, a null
+// element as empty text, an object as `[object Object]`). `JSON.stringify` writes `0` and `null`.
+const v = JsonValue.parse('{"a":[1,"x",null,[2,[3]],{"b":3},true],"n":0,"s":"t"}');
+v.set("z", JsonValue.of(-0.0));
+v.set("i", JsonValue.of(Infinity));
+v.set("m", JsonValue.of(-Infinity));
+v.set("q", JsonValue.of(NaN));
+const nums = JsonValue.array();
+nums.push(JsonValue.of(-0.0));
+nums.push(JsonValue.of(Infinity));
+nums.push(JsonValue.of(1.5));
+nums.push(JsonValue.of(null));
+console.log(v);
+console.log(nums);
+console.log(v.get("z")!, v.get("i")!, v.get("m")!, v.get("q")!);
+const a = v.get("a")!;
+console.log(`${a}|${v}|${nums}|${v.get("s")!}|${v.get("n")!}|${v.get("z")!}|${v.get("i")!}`);
+console.log(String(a), String(v), String(nums), a.toString(), nums.toString());
+const [ea, eo] = [JsonValue.array(), JsonValue.object()];
+console.log(`${ea}|${eo}|${JsonValue.of(null)}|${JsonValue.of(true)}`);
+console.log(JSON.stringify(v));
+console.log(JSON.stringify(nums));

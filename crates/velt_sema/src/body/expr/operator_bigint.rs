@@ -55,7 +55,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Is `t` a number type or a number literal type?
-    fn is_number_ty(&self, t: TyId) -> bool {
+    pub(super) fn is_number_ty(&self, t: TyId) -> bool {
         match self.cx.ty.kind(t) {
             TyKind::Int(_) | TyKind::Float(_) => true,
             TyKind::Literal(v) => matches!(v, LitValue::Int(..) | LitValue::Float(..)),

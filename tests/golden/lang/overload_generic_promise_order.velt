@@ -1,9 +1,7 @@
-// A documented difference from Node (#379): a promise converted by an interface adapter
-// (`validate(): Promise<Res<S>>` read through `Options<unknown>`) settles one step after the
-// method's own promise, because the conversion runs when that promise settles. It shows when
-// `Promise.all` gets two promises that have both rejected already and the converted one comes
-// first: Node rejects with the first in array order (`before`), Velt with the one that had
-// settled when `Promise.all` looked (`kept`). With the kept promise first, both agree.
+// A promise converted by an interface adapter (#379; `validate(): Promise<Res<S>>` read through
+// `Options<unknown>`) settles when the method's own promise does, as in Node, where it is that
+// promise (#3277). It shows when `Promise.all` gets two promises that have both rejected already
+// and the converted one comes first: both reject with the first in array order (`before`).
 interface Ctx {
   id: string;
 }

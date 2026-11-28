@@ -100,7 +100,7 @@ impl FnCx<'_, '_> {
                 callee: Box::new(synth(
                     ast::ExprKind::Member {
                         object: Box::new(var(&src_name)),
-                        prop: ident("then".into()),
+                        prop: ident(super::promise_then::CONVERT_THEN.into()),
                         optional: false,
                     },
                     span,

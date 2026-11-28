@@ -252,10 +252,11 @@ impl FnLower<'_, '_> {
     /// step and its ticket is waited for. `drop_held` drops the settled value when the state is
     /// cancelled meanwhile. Standard-library code takes no step: the prelude counts Node's steps
     /// itself (std/prelude/promise.velt). Nor does a program in which nothing can make the word
-    /// non-0 (await_order.rs): it is lowered again without any step code.
+    /// non-0 (await_order.rs): it is lowered again without any step code. Nor does an object
+    /// literal's slot method, which JS doesn't have (`AsyncCx::forwarder`).
     /// Returns whether step code was emitted.
     pub(super) fn await_step(&mut self, drop_held: impl FnOnce(&mut Self)) -> bool {
-        if self.in_std() {
+        if self.in_std() || self.asyncx.as_ref().is_some_and(|a| a.forwarder) {
             return false;
         }
         self.step(drop_held)

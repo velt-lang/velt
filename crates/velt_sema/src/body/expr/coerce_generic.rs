@@ -125,7 +125,7 @@ impl FnCx<'_, '_> {
             let then = syn(ast::ExprKind::Member {
                 object: Box::new(p.clone()),
                 prop: ast::Ident {
-                    name: "then".into(),
+                    name: super::promise_then::CONVERT_THEN.into(),
                     span,
                 },
                 optional: false,
