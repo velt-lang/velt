@@ -351,6 +351,7 @@ impl FnCx<'_, '_> {
                 self.cx.note_written_type(name.span, t.span);
             }
             self.decl_keeping_arms(v, name, ann, span, out);
+            self.note_std_const(v, name, out);
             // `const f = () => …`: a function with no `this` of its own (`literal_this.rs`).
             if v.kind == ast::VarKind::Const && v.init.as_ref().is_some_and(super::expr::is_arrow) {
                 if let Some(l) = self.declared_local(&name.name) {

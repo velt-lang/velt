@@ -62,6 +62,10 @@ pub(crate) struct VarSets {
     /// A function value of a known error type stored as a site's, or a promise or a rejected
     /// value retyped as one with a variable (`promise_vars`): the set must be that type.
     pub(super) exact: Vec<(u32, TyId)>,
+    /// Error types with variables a value passed between both ways, of the same written
+    /// members, that the variables' sets can't make one type alone (`V | W` and `never`, or
+    /// `X`): their solved forms must be equal (`Ctx::unify_parts`).
+    pub(super) joins: Vec<(TyId, TyId)>,
     /// `t` with every variable replaced by `never` (the type as written).
     plain: FxHashMap<TyId, TyId>,
     /// The earliest type id each plain or solved type stands for: the id it would have in a
@@ -397,18 +401,24 @@ impl Ctx<'_> {
         // variable each (`IoError | V` and `IoError | W`: a `() => Promise<string, IoError>`
         // site's rejection with the site's variable, stored as another such site's) are one
         // type when the variables are one set, as two variables alone are (#3893). Any other
-        // union holding variables: the program is checked again with the solved sets.
+        // pair with variables and the same written members (a `then` callback calling two
+        // function values, `V | W` where `never` is written; two such unions) is one type when
+        // the solved sets make the two equal, checked after solving (`VarSets::joins`, #3925);
+        // when they don't, the program is checked again with the solved sets.
         if self.union_members(a).is_some() || self.union_members(b).is_some() {
             let va: Vec<u32> = self.vars_of(a);
             let vb: Vec<u32> = self.vars_of(b);
-            if let ([x], [y]) = (va.as_slice(), vb.as_slice()) {
-                if self.plain_type(a) == self.plain_type(b) {
-                    return self.fn_sites.var_sets.union(*x, *y);
-                }
+            if va.is_empty() && vb.is_empty() {
+                return;
             }
-            if va.len() + vb.len() > 0 {
+            if self.plain_type(a) != self.plain_type(b) {
                 self.fn_sites.var_sets.unsupported = true;
+                return;
             }
+            if let ([x], [y]) = (va.as_slice(), vb.as_slice()) {
+                return self.fn_sites.var_sets.union(*x, *y);
+            }
+            self.fn_sites.var_sets.joins.push((a, b));
             return;
         }
         // Anonymous object types of two defs: their fields, at their type arguments.
@@ -614,6 +624,14 @@ impl Ctx<'_> {
             let have = self.error_union(&sets[reps[v as usize] as usize]);
             ok &= self.canon_error(Some(want)) == have;
         }
+        // A check that reported errors, which the pairs taken as one type may have caused (a
+        // type argument inferred from one), is checked again, as such a pair was before.
+        let joins = std::mem::take(&mut self.fn_sites.var_sets.joins);
+        ok &= joins.is_empty() || crate::analysis::error_count(self) == 0;
+        for (a, b) in joins {
+            let (a, b) = (self.solved_type(a), self.solved_type(b));
+            ok &= self.canon_error(Some(a)) == self.canon_error(Some(b));
+        }
         ok
     }
 
@@ -734,7 +752,7 @@ impl Ctx<'_> {
 // The encoding of a finished unit (`units::codec`): every field, so a new one fails to build.
 crate::units::codec::structs! {
     VarSets {
-        parent, members, edges, closures, assumed, exact, plain, first, plain_defs, mentions,
+        parent, members, edges, closures, assumed, exact, joins, plain, first, plain_defs, mentions,
         unsupported,
     }
 }
