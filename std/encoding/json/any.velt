@@ -115,8 +115,7 @@ export function holdsJsonValue(v: any): bool {
 }
 
 // 1 while `jsonOfAny` writes what a replacer declared with `any` returned, 2 once a value met
-// again inside itself was cut there (written as `null`), or a member with a `toJSON` was left to
-// the walk of that result (`writeHooked`), and 3 from when that result has been
+// again inside itself was cut there (written as `null`), and 3 from when that result has been
 // walked through itself (`jsonCutWalked`) until the walk takes it as it is (`jsonCutTaken`,
 // replace_ops.velt); 4 (a `TypeError`) or 5 (a `RangeError`) when that walk threw, until the
 // walk takes the `null` returned instead and throws it (`jsonCutError`). Otherwise (0) such a
@@ -150,10 +149,7 @@ export function jsonCutBegin(): u64 {
   return before;
 }
 
-/**
- * Ends what `jsonCutBegin` started (`before`: what it returned): whether a cycle was cut or a
- * `toJSON` left to the walk (`writeHooked`).
- */
+/** Ends what `jsonCutBegin` started (`before`: what it returned): whether a cycle was cut. */
 export function jsonCutEnd(before: u64): bool {
   const cut = JSON_CUT.get() == 2;
   JSON_CUT.set(before == 3 ? 0 : before);
@@ -216,18 +212,8 @@ function writeNumber(w: StringBuilder, v: any, repr: string): void {
   }
 }
 
-/**
- * What a class instance's `toJSON(key)` returns, written ([`writeJsonResult`]); inside a
- * replacer's result (`jsonCutBegin`), `null`, the result then being walked through itself as a
- * cut one is: its `toJSON` runs once, when that walk meets it, as in Node.
- */
+/** What a class instance's `toJSON(key)` returns, written ([`writeJsonResult`]). */
 function writeHooked(w: StringBuilder, v: any, key: string): void {
-  const s = JSON_CUT.get();
-  if (s == 1 || s == 2) {
-    JSON_CUT.set(2);
-    w.append("null");
-    return;
-  }
   writeJsonResult(w, callToJSON(v, key), key);
 }
 

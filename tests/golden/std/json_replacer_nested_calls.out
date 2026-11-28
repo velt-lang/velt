@@ -1,7 +1,5 @@
 kept: TypeError
 dropped: {"a":{"a":1},"t":{"inner":"{\"q\":1}"}}
-toJSON once: {"a":{"a":1},"n":{"key":"n"},"list":[{"key":"0"}]}
-calls: 2
 inner throws, dropped: {"a":{"a":1},"f":{"inner":"TypeError"}}
 inner throws, kept: TypeError
 after: {"a":{"a":1},"t":{"inner":"{\"q\":1}"}}

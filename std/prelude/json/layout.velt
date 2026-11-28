@@ -48,9 +48,8 @@ function jsonReplacerOfAny(f: (key: string, value: any) => any): JsonReplacer {
 // What a replacer declared with `any` returned for `key`, as JSON: a `JsonValue` as it is;
 // `undefined`, a function or a symbol left out, as Node leaves them; anything else as Node
 // writes it, without its own `toJSON` (that ran before the replacer, if it was the value). A
-// value met again inside itself is cut there, and a member with a `toJSON` left out (it runs
-// once, in the walk): then the result is walked here, through itself (`replaceJsonResult`), and
-// the walk takes it as it is (`jsonCutTaken`).
+// value met again inside itself is cut there: then the result is walked here, through itself
+// (`replaceJsonResult`), and the walk takes it as it is (`jsonCutTaken`).
 function jsonOfAny(
   r: any,
   key: string,
