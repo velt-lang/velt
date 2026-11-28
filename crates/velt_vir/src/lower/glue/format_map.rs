@@ -13,9 +13,9 @@ use velt_sema::hir::{self, LitValue, TyId, TyKind};
 
 use super::format_array::MAX_ARRAY_LENGTH;
 use crate::lower::glue::literals::inspect_key;
+use crate::lower::hook_calls::{self as hooks, ty, Construct, HookTy};
 use crate::lower::json::RecordOrder;
 use crate::lower::operand::proj;
-use crate::lower::rt::Rt;
 use crate::lower::{cint, FnLower};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
@@ -422,7 +422,8 @@ impl FnLower<'_, '_> {
     fn format_record_key(&mut self, buf: &Operand, kp: &Place, kt: TyId) {
         if let TyKind::Str = self.cx.kind(kt) {
             let a = self.addr(kp.clone());
-            self.call_rt(Rt::StrbufPushInspectKey, vec![buf.clone(), a], None);
+            let (b, k) = (ty::Str::arg(buf.clone()), ty::Str::arg(a));
+            _ = hooks::inspect_key(self, Construct::Format, b, k).emit(self);
             return;
         }
         // A union of literal types switches on its tag; a string enum on its member index.

@@ -1,0 +1,49 @@
+[
+  'plain',
+  '',
+  "it's",
+  'say "hi"',
+  `both ' and "`,
+  'all \' " `',
+  'tpl \' " ${x}',
+  'back\\slash',
+  'tab\there',
+  'nl\nx',
+  'cr\rx',
+  'bs\bx',
+  'ff\fx',
+  'nul\x00x',
+  'esc\x1Bx',
+  'del\x7Fx',
+  'c1\x85x\x9Fy',
+  'é ü 日本語 😀',
+  ' nbsp',
+  'lone \ud800 hi',
+  'lo \udfff',
+  'pair 😀',
+  '\ud83d\x01',
+  "ab'cd'ef'gh'ij'kl'mn'op",
+  'aaaaaaaabbbbbbbb"cccccccc',
+  'x\'`"$',
+  '1234567890123456789012345',
+  '  ',
+  '\x80'
+]
+{
+  '1': 6,
+  a: 0,
+  _x1: 1,
+  A_9: 2,
+  '$': 3,
+  '$a': 4,
+  'a b': 5,
+  '1a': 7,
+  'é': 8,
+  '': 9,
+  "it's": 10,
+  'a\nb': 11,
+  Z: 12,
+  _: 13
+}
+Map(2) { "k'1" => 'v"1', 'k\t2' => 'v`2' }
+[ [ 'deep', [ "x'y" ] ] ]

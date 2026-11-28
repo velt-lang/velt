@@ -1,11 +1,11 @@
 // velt/lang/hooks (internal): what `console.log` and `util.inspect` write the same way for every
-// type (docs/internals/design/inspect-shapes.md): the depth limit, arrays and `... n more items`
-// (objects that hold themselves are inspect_cycles.velt's). Lowering writes what differs per type
+// type (docs/internals/design/inspect-shapes.md): the depth limit, arrays and `... n more items`,
+// and strings and object keys quoted (objects that hold themselves are inspect_cycles.velt's). Lowering writes what differs per type
 // around these (an object's fields, the member a union holds) and calls them with the line's own
 // builder, so a value has no builder of its own. Sema checks them where live code may print one
 // (velt_common `std_hooks.rs`), so a program without arrays or objects does not pay for them.
 
-import { inspectNested, noInline } from "velt/lang/intrinsics";
+import { hookCall, inspectNested, noInline, strByteAt, strByteLen } from "velt/lang/intrinsics";
 
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
 declare function velt_rt_strbuf_push_byte(buf: string, b: u8);
@@ -81,4 +81,48 @@ function inspectElements<E>(buf: string, a: E[], c: u32): void {
     inspectNested(buf, x, c);
     i++;
   }
+}
+
+/**
+ * `s` as Node's `util.inspect` writes a string inside a container (`console.log([s])`): printable
+ * ASCII without a quote or a backslash in single quotes here, anything else quoted and escaped by
+ * inspect_quote.velt's `quotedText`. velt_vir's format glue quotes compile-time strings the same
+ * way.
+ */
+export function inspectStr(buf: string, s: string): void {
+  const n = strByteLen(s) as u64;
+  for (let i: u64 = 0; i < n; i++) {
+    const c = strByteAt(s, i);
+    if (c < 0x20 || c >= 0x7f || c == 0x27 || c == 0x22 || c == 0x60 || c == 0x5c) {
+      const q: string = hookCall("inspect_quote", s);
+      velt_rt_strbuf_push_str(buf, q);
+      return;
+    }
+  }
+  velt_rt_strbuf_push_byte(buf, 0x27);
+  velt_rt_strbuf_push_str(buf, s);
+  velt_rt_strbuf_push_byte(buf, 0x27);
+}
+
+/**
+ * An object key as `util.inspect` writes it: bare when it is an identifier of ASCII letters,
+ * digits and `_` that doesn't start with a digit (`a`, `_x1`), else quoted as `inspectStr`
+ * quotes a string (`'a b'`, `'1'`, `'$'`, `'é'`, `''`), as Node does.
+ */
+export function inspectKey(buf: string, s: string): void {
+  const n = strByteLen(s) as u64;
+  let bare = n > 0 && !isDigit(strByteAt(s, 0));
+  for (let i: u64 = 0; bare && i < n; i++) {
+    const c = strByteAt(s, i);
+    bare = isDigit(c) || c == 0x5f || ((c | 0x20) >= 0x61 && (c | 0x20) <= 0x7a);
+  }
+  if (bare) {
+    velt_rt_strbuf_push_str(buf, s);
+  } else {
+    inspectStr(buf, s);
+  }
+}
+
+function isDigit(c: u8): bool {
+  return c >= 0x30 && c <= 0x39;
 }

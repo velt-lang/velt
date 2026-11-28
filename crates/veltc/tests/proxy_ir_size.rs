@@ -66,8 +66,9 @@ const PRINTS_ANY: &str = "const a: any = { a: 1 };\nconsole.log(a.a);\n";
 /// inspect_layout_pieces and inspect_layout. A real build links it prebuilt
 /// (velt/lang/hooks/inspect_layout_text), but `--emit llvm` compiles it in. A program that
 /// prints only numbers, strings and booleans has none of it
-/// ([`one_proxy_stays_within_its_budget`]).
-const PRINTS_ANY_BUDGET: usize = 45_000;
+/// ([`one_proxy_stays_within_its_budget`]). 45,459 since strings inside containers are quoted
+/// by std (#2196): std/lang/hooks/inspect_quote, about 2,500 lines, is prebuilt the same way.
+const PRINTS_ANY_BUDGET: usize = 47_000;
 
 #[test]
 fn printing_an_any_stays_within_its_budget() {

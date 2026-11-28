@@ -1,0 +1,6 @@
+// `console.log` of a parsed `JsonValue` holding negative zero prints `-0`, as Node's inspect of
+// `JSON.parse` of the same text does (not `String(-0)`, which is `0`). Expected output: node of
+// json_value_negative_zero.mjs.
+console.log(JsonValue.parse("-0"));
+console.log(JsonValue.parse("[-0, 0, -0.5]"));
+console.log(JsonValue.parse("{\"a\": -0}"));

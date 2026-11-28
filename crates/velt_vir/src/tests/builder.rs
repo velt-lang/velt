@@ -131,7 +131,8 @@ impl PB {
     /// `number_text`, `number_push`, `number_inspect_push`), which a hand-built program has no std
     /// for: each forwards to an extern the interpreter formats with (`velt_test_str_from_f64`,
     /// `velt_test_strbuf_push_f64`, `velt_test_strbuf_push_inspect_f64`), so these tests keep
-    /// printing floats (#2196). Tests of the hooks themselves are goldens.
+    /// printing floats (#2196); and the quoting of strings and keys in containers the same way.
+    /// Tests of the hooks themselves are goldens.
     fn float_hooks(&mut self) {
         let t = self.t;
         let extern_fn = |pb: &mut Self, symbol: &str, params: Vec<TyId>, ret: TyId| {
@@ -169,6 +170,25 @@ impl PB {
             let buf = f.param("buf", t.str, PassMode::BorrowMut);
             let x = f.param("x", t.f64, PassMode::Copy);
             let body = vec![se(call(ext, vec![f.bm(buf), f.cp(x)], t.unit))];
+            self.add_fn(f.build(body));
+        }
+        // A string and an object key inside a container (std/lang/hooks/inspect.velt
+        // `inspectStr`, `inspectKey`), quoted by the interpreter as lowering quotes a literal.
+        for (hook, symbol) in [
+            (
+                velt_common::std_hook!(inspect_str),
+                "velt_test_strbuf_push_inspect_str",
+            ),
+            (
+                velt_common::std_hook!(inspect_key),
+                "velt_test_strbuf_push_inspect_key",
+            ),
+        ] {
+            let ext = extern_fn(self, symbol, vec![t.str, t.str], t.unit);
+            let mut f = FB::new(hook, t.unit);
+            let buf = f.param("buf", t.str, PassMode::BorrowMut);
+            let s = f.param("s", t.str, PassMode::Borrow);
+            let body = vec![se(call(ext, vec![f.bm(buf), f.bw(s)], t.unit))];
             self.add_fn(f.build(body));
         }
     }
@@ -247,6 +267,8 @@ impl PB {
             velt_common::std_hooks::hook_index::inspect_circular,
             velt_common::std_hooks::hook_index::inspect_leave,
             velt_common::std_hooks::hook_index::inspect_more,
+            velt_common::std_hooks::hook_index::inspect_str,
+            velt_common::std_hooks::hook_index::inspect_key,
             velt_common::std_hooks::hook_index::inspect_save,
             velt_common::std_hooks::hook_index::inspect_restore,
         ] {

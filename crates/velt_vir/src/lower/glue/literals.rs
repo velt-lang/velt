@@ -93,8 +93,8 @@ pub(in crate::lower) fn int_literal_text(it: IntTy, n: i128) -> String {
 }
 
 /// An object key as `console.log` shows it: bare when it is an identifier of ASCII letters,
-/// digits and `_` (node quotes `$` and non-ASCII keys), else quoted (the runtime's
-/// `velt_rt_strbuf_push_inspect_key` does the same at run time).
+/// digits and `_` (node quotes `$` and non-ASCII keys), else quoted (std's `inspectKey`,
+/// std/lang/hooks/inspect.velt, does the same at run time).
 pub(crate) fn inspect_key(s: &str) -> String {
     let b = s.as_bytes();
     let ident = b
@@ -109,7 +109,7 @@ pub(crate) fn inspect_key(s: &str) -> String {
 }
 
 /// `s` quoted and escaped the way `console.log` shows a string inside a container (node's
-/// `util.inspect`; the runtime's `velt_rt_strbuf_push_inspect_str` does the same at run time).
+/// `util.inspect`; std's `inspectStr`, std/lang/hooks/inspect.velt, does the same at run time).
 pub(crate) fn inspect_quote(s: &str) -> String {
     let quote = if !s.contains('\'') {
         '\''

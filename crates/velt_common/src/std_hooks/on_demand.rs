@@ -56,6 +56,8 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     // `console.log`'s line breaking (#3508), where a value that isn't scalar is printed.
     "std/lang/hooks/inspect_layout",
     "std/lang/hooks/inspect_layout_text",
+    // A string quoted inside a container, by role from inspect.velt (prebuilt).
+    "std/lang/hooks/inspect_quote",
     "std/lang/hooks/pow",
     "std/lang/hooks/pow_int",
     "std/lang/hooks/prebuilt_probe",

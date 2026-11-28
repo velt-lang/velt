@@ -161,20 +161,6 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_byte(buf: *mut VeltStrBuf, byte: u8
     }
 }
 
-/// Append `s` as a string inside a container prints in `console.log` (node's `util.inspect`
-/// quoting and escaping, `crate::inspect`).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_strbuf_push_inspect_str(buf: *mut VeltStrBuf, s: *const VeltStr) {
-    // Escaped into scratch space first, so `s` may be the builder itself.
-    (*buf).push_with(|b| crate::inspect::push_inspect_string(b, (*s).as_bytes()));
-}
-
-/// Append `s` as an object key in `console.log` (bare if it is an identifier, else quoted).
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_strbuf_push_inspect_key(buf: *mut VeltStrBuf, s: *const VeltStr) {
-    (*buf).push_with(|b| crate::inspect::push_inspect_key(b, (*s).as_bytes()));
-}
-
 /// Move the built string to `*out` and leave `*buf` empty (still usable). A short result built
 /// in a heap buffer moves inline (the buffer is freed), so copying it later is free.
 #[no_mangle]

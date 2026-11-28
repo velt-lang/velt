@@ -56,6 +56,16 @@ impl Interp<'_> {
                 let text = inspect_num(f64::from_bits(a[1]));
                 self.buf_push(a[0], text.as_bytes());
             }
+            "velt_test_strbuf_push_inspect_str" => {
+                let s = self.str_bytes(a[1]);
+                let q = crate::lower::inspect_quote(&String::from_utf8_lossy(&s));
+                self.buf_push(a[0], q.as_bytes());
+            }
+            "velt_test_strbuf_push_inspect_key" => {
+                let s = self.str_bytes(a[1]);
+                let text = crate::lower::inspect_key(&String::from_utf8_lossy(&s));
+                self.buf_push(a[0], text.as_bytes());
+            }
             "velt_rt_strbuf_drop" => {
                 if let Some(p) = self.str_heap(a[0]) {
                     self.heap_free(p);
@@ -72,16 +82,6 @@ impl Interp<'_> {
             "velt_rt_strbuf_push_words" => {
                 let words: Vec<u8> = a[1..4].iter().flat_map(|w| w.to_le_bytes()).collect();
                 self.buf_push(a[0], &words[..a[4] as usize]);
-            }
-            "velt_rt_strbuf_push_inspect_str" => {
-                let s = self.str_bytes(a[1]);
-                let q = crate::lower::inspect_quote(&String::from_utf8_lossy(&s));
-                self.buf_push(a[0], q.as_bytes());
-            }
-            "velt_rt_strbuf_push_inspect_key" => {
-                let s = self.str_bytes(a[1]);
-                let text = crate::lower::inspect_key(&String::from_utf8_lossy(&s));
-                self.buf_push(a[0], text.as_bytes());
             }
             "velt_rt_strbuf_finish" => {
                 let hdr = self.read_bytes(a[0], 24);

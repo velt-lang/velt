@@ -5,14 +5,11 @@
 //! one, well-formedness as the model says) after each step, on every alphabet.
 //!
 //! - `push_wtf8` sequences, from every starting form, with the piece's summary given or counted,
-//!   pieces that join the previous one (a high surrogate meeting a low one) included;
-//! - the formatting producers that compute their output's counts by formula (`inspect` quoting,
-//!   `JSON.stringify` escaping) through the builder.
+//!   pieces that join the previous one (a high surrogate meeting a low one) included.
 
 use super::utf16_model::{show, wtf8_encode};
 use super::utf16_props::{gen_string, run, to_rt, units, Rng, Rt, ALL_ALPHABETS};
 use crate::str::{wtf8, VeltStr};
-use crate::strbuf::velt_rt_strbuf_push_inspect_str;
 
 /// A starting string in a random form: empty, a builder with room, static, inline or heap.
 fn start(rng: &mut Rng, s: &[u16]) -> Rt {
@@ -52,24 +49,6 @@ fn push_wtf8_keeps_counts_and_layout() {
                 }
             }
         }
-        Ok(())
-    });
-}
-
-#[test]
-fn formatting_producers_count_what_they_write() {
-    run("inspect escaping", ALL_ALPHABETS, 4_000, |rng| {
-        let s = gen_string(rng, ALL_ALPHABETS);
-        let rs = to_rt(rng, &s);
-        // Appended to a builder that may already hold text (a join at the opening quote is
-        // impossible, but the counts add).
-        let prefix = gen_string(rng, ALL_ALPHABETS);
-        let mut b = start(rng, &prefix);
-        unsafe {
-            velt_rt_strbuf_push_inspect_str(&mut b.0, &rs.0);
-        }
-        // `units` checks the stored counts against the bytes.
-        units(&b.0);
         Ok(())
     });
 }

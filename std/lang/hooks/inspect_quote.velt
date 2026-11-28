@@ -1,0 +1,226 @@
+// velt/lang/hooks (internal): a string as Node's `util.inspect` quotes it inside a container,
+// for inspect.velt's `inspectStr` and `inspectKey`, which reach it by role (`hookCall`). It is
+// prebuilt (velt_common `std_hooks/prebuilt.rs`): where the build cache holds its object, a
+// program calls that and compiles none of the quoting.
+
+import { Ptr } from "velt/ffi/ptr";
+import {
+  addressLoad,
+  noInline,
+  ptrFromAddress,
+  strByteAt,
+  strByteLen,
+  strDataAddress,
+} from "velt/lang/intrinsics";
+
+declare function velt_rt_strbuf_new(cap: u64, out: string);
+declare function velt_rt_strbuf_finish(buf: string, out: string);
+declare function velt_rt_strbuf_push_byte(buf: string, b: u8);
+declare function velt_rt_strbuf_push_bytes(buf: string, bytes: Ptr<u8>, len: u64);
+
+/**
+ * `s` as Node's `util.inspect` writes a string inside a container (`console.log([s])`): in single
+ * quotes, or double quotes when it holds `'` but no `"`, or backticks when it holds both and no
+ * backtick or `${`; the quote, `\` and the control characters escaped (`\n`, `\t`, `\b`, `\f`,
+ * `\r`, else `\xHH` for C0, DEL and C1), and a lone surrogate as `\udxxx` (a top-level string
+ * prints it as U+FFFD instead, as every output does). The runs between escapes are copied from
+ * the string's own bytes. velt_vir's format glue quotes compile-time strings the same way.
+ */
+@noInline
+export function quotedText(s: string): string {
+  const n = strByteLen(s) as u64;
+  let buf = "";
+  // The quotes and a few escapes past the text: one allocation for most.
+  velt_rt_strbuf_new(n + 8, buf);
+  const data = strDataAddress(s) as u64;
+  const quote = quoteOf(s, data, n);
+  velt_rt_strbuf_push_byte(buf, quote);
+  let from: u64 = 0;
+  let i: u64 = 0;
+  while (i < n) {
+    i = nextSpecial(s, data, i, n);
+    if (i >= n) {
+      break;
+    }
+    const c = strByteAt(s, i);
+    // How many bytes the escape stands for, 0 when the byte is written as it is.
+    let len: u64 = 1;
+    if (c == 0xc2) {
+      // U+0080 to U+009F, the C1 controls, are `\x80` to `\x9F`; other characters stay.
+      const c1 = i + 1 < n ? strByteAt(s, i + 1) : 0;
+      len = c1 >= 0x80 && c1 <= 0x9f ? 2 : 0;
+    } else if (c == 0xed) {
+      // ED A0..BF: a surrogate code point (WTF-8), lone in a string.
+      const s1 = i + 1 < n ? strByteAt(s, i + 1) : 0;
+      len = s1 >= 0xa0 ? 3 : 0;
+    } else if (c >= 0x80 || (c != quote && (c == 0x27 || c == 0x22 || c == 0x60))) {
+      len = 0;
+    }
+    if (len == 0) {
+      i += 1;
+      continue;
+    }
+    pushRun(buf, data, from, i);
+    pushEscape(buf, s, c, i, len);
+    i += len;
+    from = i;
+  }
+  pushRun(buf, data, from, n);
+  velt_rt_strbuf_push_byte(buf, quote);
+  let out = "";
+  velt_rt_strbuf_finish(buf, out);
+  return out;
+}
+
+/** Node's quote for the `n` bytes of `s` at `data`. */
+function quoteOf(s: string, data: u64, n: u64): u8 {
+  let single = false;
+  let double = false;
+  let back = false;
+  let i: u64 = 0;
+  while (i < n) {
+    if (((data + i) & 7) == 0) {
+      // Eight bytes at a time while none is a quote or a `$`.
+      while (i + 8 <= n && !hasQuote(wordAt(data, i))) {
+        i += 8;
+      }
+      if (i >= n) {
+        break;
+      }
+    }
+    const c = strByteAt(s, i);
+    if (c == 0x27) {
+      single = true;
+    } else if (c == 0x22) {
+      double = true;
+    } else if (c == 0x60 || (c == 0x24 && i + 1 < n && strByteAt(s, i + 1) == 0x7b)) {
+      back = true;
+    }
+    i += 1;
+  }
+  if (!single) {
+    return 0x27;
+  }
+  if (!double) {
+    return 0x22;
+  }
+  return back ? 0x27 : 0x60;
+}
+
+/**
+ * The offset of the first byte in `i..n` of `s` (its bytes at `data`) that may need an escape: a
+ * control character, `\`, a quote or a byte of a character past ASCII; `n` when there is none.
+ */
+function nextSpecial(s: string, data: u64, i: u64, n: u64): u64 {
+  let j = i;
+  while (j < n) {
+    if (((data + j) & 7) == 0) {
+      while (j + 8 <= n && plainWord(wordAt(data, j))) {
+        j += 8;
+      }
+      if (j >= n) {
+        break;
+      }
+    }
+    const c = strByteAt(s, j);
+    if (c < 0x20 || c >= 0x7f || c == 0x5c || c == 0x27 || c == 0x22 || c == 0x60) {
+      return j;
+    }
+    j += 1;
+  }
+  return n;
+}
+
+/** The escape of the character of `len` bytes at offset `i` of `s`, whose first byte is `c`. */
+@noInline
+function pushEscape(buf: string, s: string, c: u8, i: u64, len: u64): void {
+  velt_rt_strbuf_push_byte(buf, 0x5c);
+  if (len == 3) {
+    // A lone surrogate, ED A0..BF 80..BF: U+D800 to U+DFFF, in lower case as Node writes it.
+    const code =
+      0xd000 | (((strByteAt(s, i + 1) & 0x3f) as u64) << 6) | ((strByteAt(s, i + 2) & 0x3f) as u64);
+    velt_rt_strbuf_push_byte(buf, 0x75);
+    let shift: u64 = 16;
+    while (shift > 0) {
+      shift -= 4;
+      // A local first: a call as the argument would append to a copy of the builder.
+      const digit = hexDigit(((code >> shift) & 0xf) as u8, 0x61);
+      velt_rt_strbuf_push_byte(buf, digit);
+    }
+    return;
+  }
+  // A C1 control (C2 80..9F) is the code point of its second byte.
+  const code = len == 2 ? strByteAt(s, i + 1) : c;
+  if (code == 0x0a) {
+    velt_rt_strbuf_push_byte(buf, 0x6e);
+  } else if (code == 0x09) {
+    velt_rt_strbuf_push_byte(buf, 0x74);
+  } else if (code == 0x08) {
+    velt_rt_strbuf_push_byte(buf, 0x62);
+  } else if (code == 0x0c) {
+    velt_rt_strbuf_push_byte(buf, 0x66);
+  } else if (code == 0x0d) {
+    velt_rt_strbuf_push_byte(buf, 0x72);
+  } else if (code < 0x20 || code >= 0x7f) {
+    velt_rt_strbuf_push_byte(buf, 0x78);
+    const hi = hexDigit(code >> 4, 0x41);
+    const lo = hexDigit(code & 0xf, 0x41);
+    velt_rt_strbuf_push_byte(buf, hi);
+    velt_rt_strbuf_push_byte(buf, lo);
+  } else {
+    // `\` or the quote.
+    velt_rt_strbuf_push_byte(buf, code);
+  }
+}
+
+/** The hex digit of `d` (below 16), its letters from `a` (0x41 for `A`, 0x61 for `a`). */
+function hexDigit(d: u8, a: u8): u8 {
+  return d < 10 ? 0x30 + d : a + (d - 10);
+}
+
+/** Appends bytes `a..b` of the text at `data` (whole characters) to the builder. */
+function pushRun(buf: string, data: u64, a: u64, b: u64): void {
+  if (b <= a) {
+    return;
+  }
+  // SAFETY: the string holds bytes `a..b` at `data` while the caller runs, they are whole
+  // characters, and the append only reads them, into this module's own builder.
+  const bytes = unsafe { ptrFromAddress<u8>((data + a) as usize) };
+  velt_rt_strbuf_push_bytes(buf, bytes, b - a);
+}
+
+/** The word of 8 bytes at offset `i` (8-aligned, 8 bytes or more before the end) of the text at `data`. */
+function wordAt(data: u64, i: u64): u64 {
+  // SAFETY: the callers pass a string's bytes, alive while they run, and an aligned offset at
+  // least 8 bytes before its end.
+  return unsafe { addressLoad<u64>((data + i) as usize) };
+}
+
+const HIGH: u64 = 0x8080808080808080;
+
+/** The high bit of each byte of `w` that is zero, exactly (no borrow between bytes). */
+function zeroBytes(w: u64): u64 {
+  const low = 0x7f7f7f7f7f7f7f7f;
+  return ~(((w & low) + low) | w) & HIGH;
+}
+
+function hasByte(w: u64, b: u8): bool {
+  return zeroBytes(w ^ ((b as u64) * 0x0101010101010101)) != 0;
+}
+
+/** Does `w` hold a quote (`'`, `"`, a backtick) or a `$`? */
+function hasQuote(w: u64): bool {
+  return hasByte(w, 0x27) || hasByte(w, 0x22) || hasByte(w, 0x60) || hasByte(w, 0x24);
+}
+
+/** Is each byte of `w` printable ASCII and none a quote or `\`, written as it is? */
+function plainWord(w: u64): bool {
+  // A byte below 0x20 has its top three bits clear; 0x7f is a zero byte once XORed with 0x7f;
+  // a byte past ASCII has its high bit.
+  const low = zeroBytes(w & 0xe0e0e0e0e0e0e0e0);
+  const del = zeroBytes(w ^ 0x7f7f7f7f7f7f7f7f);
+  if ((w & HIGH) != 0 || low != 0 || del != 0) {
+    return false;
+  }
+  return !hasByte(w, 0x5c) && !hasByte(w, 0x27) && !hasByte(w, 0x22) && !hasByte(w, 0x60);
+}
