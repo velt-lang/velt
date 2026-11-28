@@ -1,12 +1,14 @@
 // velt/net/http (tests): white-box tests, run by `velt test std/`.
 //
 // White-box test of which proxy `fetch` goes through (velt/net/http/fetch/client/proxy): the
-// environment's variables, used by default as in Bun, `NO_PROXY`, and proxy URLs.
-// tests/golden/std/http_server/fetch_env_proxy.velt runs the same rules end to end, beside Node.
+// environment's variables, used by default and read as Bun reads them, `NO_PROXY`
+// (velt/net/http/fetch/client/no_proxy), and proxy URLs. tests/golden/std/http_server/
+// fetch_env_proxy.velt and fetch_env_proxy_bun.velt run the same rules end to end.
 import { describe, expect, it } from "velt/test";
 import { platform } from "velt/os";
 import { removeEnv, setEnv } from "velt/process";
-import { fromEnv, noProxy, parseProxy, proxyFor } from "velt/net/http/fetch/client/proxy";
+import { fromEnv, parseProxy, proxyFor } from "velt/net/http/fetch/client/proxy";
+import { noProxy } from "velt/net/http/fetch/client/no_proxy";
 
 /**
  * Whether `http_proxy` and `HTTP_PROXY` are one variable: on Windows names ignore case (as
@@ -14,7 +16,7 @@ import { fromEnv, noProxy, parseProxy, proxyFor } from "velt/net/http/fetch/clie
  */
 const ONE_NAME = platform() == "win32";
 
-/** The variables `fromEnv` reads, and the ones it must not. */
+/** The variables `fromEnv` reads. */
 function proxyVars(): string[] {
   return [
     "https_proxy",
@@ -49,8 +51,7 @@ function direct(list: string, host: string, port: i64): string {
 }
 
 describe("the environment's proxy", () => {
-  // The only test here that reads the variables as `fetch` does (once per process).
-  it("is on by default, as in Bun, whatever NODE_USE_ENV_PROXY says", () => {
+  it("is on by default, whatever NODE_USE_ENV_PROXY says, read at each request", () => {
     for (const name of proxyVars()) {
       removeEnv(name);
     }
@@ -59,12 +60,13 @@ describe("the environment's proxy", () => {
     setEnv("https_proxy", "http://s:2");
     expect(proxyFor(false, "example.com", 80, null)?.addr).toBe("p:1");
     expect(proxyFor(true, "example.com", 443, null)?.addr).toBe("s:2");
-    // Read once: changing them later changes nothing.
+    // Read again at the next request, as in Bun.
+    setEnv("http_proxy", "http://q:3");
+    expect(proxyFor(false, "example.com", 80, null)?.addr).toBe("q:3");
     removeEnv("http_proxy");
-    expect(proxyFor(false, "example.com", 80, null)?.addr).toBe("p:1");
-    // `NO_PROXY` is read at each request.
-    setEnv("NO_PROXY", "*");
     expect(proxyFor(false, "example.com", 80, null)).toBe(null);
+    setEnv("NO_PROXY", "*");
+    expect(proxyFor(true, "example.com", 443, null)).toBe(null);
     removeEnv("NO_PROXY");
     removeEnv("NODE_USE_ENV_PROXY");
     removeEnv("https_proxy");
@@ -88,17 +90,46 @@ describe("the environment's proxy", () => {
     expect(pick(false, "example.com", ["HTTPS_PROXY", "http://s:1"])).toBe("");
   });
 
-  it("takes a set lowercase variable even when it is empty", () => {
-    // On Windows the later HTTP_PROXY is the one variable's value.
-    const want = ONE_NAME ? "u:1" : "";
-    expect(pick(false, "example.com", ["http_proxy", "", "HTTP_PROXY", "u:1"])).toBe(want);
-    expect(pick(true, "example.com", ["https_proxy", "", "HTTPS_PROXY", "u:1"])).toBe(want);
-    expect(pick(false, "example.com", ["HTTP_PROXY", "u:1", "http_proxy", ""])).toBe("");
+  it("reads the uppercase variable when the lowercase one is empty, as Bun", () => {
+    expect(pick(false, "example.com", ["http_proxy", "", "HTTP_PROXY", "u:1"])).toBe("u:1");
+    expect(pick(true, "example.com", ["https_proxy", "", "HTTPS_PROXY", "u:1"])).toBe("u:1");
+    expect(pick(false, "example.com", ["http_proxy", `""`, "HTTP_PROXY", "u:2"])).toBe("u:2");
+    expect(pick(false, "example.com", ["http_proxy", "''"])).toBe("");
+    // On Windows the two spellings are one variable, whose value is the later one ("").
+    const later = ["HTTP_PROXY", "u:1", "http_proxy", ""];
+    expect(pick(false, "example.com", later)).toBe(ONE_NAME ? "" : "u:1");
   });
 
-  it("ignores ALL_PROXY, as Node", () => {
-    expect(pick(false, "example.com", ["ALL_PROXY", "a:3", "all_proxy", "a:3"])).toBe("");
-    expect(pick(true, "example.com", ["ALL_PROXY", "a:3"])).toBe("");
+  it("takes ALL_PROXY when the scheme's variable is unset, as Bun", () => {
+    expect(pick(false, "example.com", ["ALL_PROXY", "a:3"])).toBe("a:3");
+    expect(pick(true, "example.com", ["ALL_PROXY", "a:3"])).toBe("a:3");
+    const both = ["all_proxy", "a:4", "ALL_PROXY", "a:3"];
+    expect(pick(true, "example.com", both)).toBe(ONE_NAME ? "a:3" : "a:4");
+    const scheme = ["http_proxy", "h:1", "ALL_PROXY", "a:3"];
+    expect(pick(false, "example.com", scheme)).toBe("h:1");
+    expect(pick(true, "example.com", scheme)).toBe("a:3");
+    expect(pick(true, "example.com", ["ALL_PROXY", "socks5://a:3"])).toBe("");
+  });
+
+  it("ignores a value naming a proxy this client does not speak (https:, socks)", () => {
+    expect(pick(true, "example.com", ["https_proxy", "https://s:1"])).toBe("");
+    expect(pick(false, "example.com", ["http_proxy", "socks5://s:1"])).toBe("");
+    expect(pick(false, "example.com", ["HTTP_PROXY", " SOCKS5h://s:1"])).toBe("");
+    // Ignored, the next variable is read.
+    const next = ["https_proxy", "socks5://s:1", "HTTPS_PROXY", "http://u:2"];
+    expect(pick(true, "example.com", next)).toBe("u:2");
+    expect(pick(true, "example.com", ["https_proxy", "https://s:1", "ALL_PROXY", "a:3"])).toBe(
+      "a:3",
+    );
+    expect(pick(false, "example.com", ["http_proxy", "HTTP://h:1"])).toBe("h:1");
+    // The `proxy` option still refuses them.
+    let message = "";
+    try {
+      proxyFor(true, "example.com", 443, "https://s:1");
+    } catch (e) {
+      message = e.code;
+    }
+    expect(message).toBe("EINVAL");
   });
 
   it("is used for this machine too, unless NO_PROXY lists it", () => {
@@ -107,13 +138,14 @@ describe("the environment's proxy", () => {
       expect(pick(true, host, p)).toBe("p:1");
     }
     expect(pick(true, "localhost", ["https_proxy", "p:1", "NO_PROXY", "localhost"])).toBe("");
-    // `no_proxy` wins over `NO_PROXY`, also when it is empty; on Windows they are one variable,
-    // whose value is the later one.
+    // `no_proxy` wins over `NO_PROXY`; on Windows they are one variable, whose value is the
+    // later one.
     const both = ["https_proxy", "p:1", "no_proxy", "example.com", "NO_PROXY", "example.org"];
     expect(pick(true, "example.com", both)).toBe(ONE_NAME ? "p:1" : "");
     expect(pick(true, "example.org", both)).toBe(ONE_NAME ? "" : "p:1");
+    // An empty `no_proxy` counts as unset, as in Bun.
     const empty = ["https_proxy", "p:1", "no_proxy", "", "NO_PROXY", "example.org"];
-    expect(pick(true, "example.org", empty)).toBe(ONE_NAME ? "" : "p:1");
+    expect(pick(true, "example.org", empty)).toBe("");
   });
 
   it("is replaced by the request's option", () => {
@@ -125,50 +157,83 @@ describe("the environment's proxy", () => {
 });
 
 describe("NO_PROXY", () => {
-  it("names a host alone, or with . or * every host ending in it", () => {
+  it("names a domain and its subdomains, written as name, .name or *.name", () => {
     const list = "b.test,.c.test,*.d.test,*e.test";
     const want: [string, bool][] = [
       ["b.test", true],
-      ["x.b.test", false],
+      ["x.b.test", true],
       ["xb.test", false],
-      ["c.test", false],
+      ["c.test", true],
       ["x.c.test", true],
-      ["d.test", false],
+      ["d.test", true],
       ["x.y.d.test", true],
-      ["e.test", true],
-      ["xe.test", true],
+      // `*` is no pattern but before a `.`.
+      ["e.test", false],
+      ["xe.test", false],
     ];
     for (const [host, bypass] of want) {
       expect(direct(list, host, 80)).toBe(`${host} 80 ${bypass}`);
     }
+    expect(direct("example.com.", "example.com", 80)).toBe("example.com 80 true");
+    expect(direct("example.com", "x.example.com.", 80)).toBe("x.example.com. 80 true");
   });
 
   it("splits on commas and any white space, and ignores case", () => {
-    const list = " a.test\tb.test\nc.test  d.test,,E.TEST f.test ";
+    const list = " a.test\tb.test\nc.test  d.test,,E.TEST f.test ";
     for (const host of ["a.test", "b.test", "c.test", "d.test", "e.test", "f.test", "D.TEST"]) {
       expect(direct(list, host, 443)).toBe(`${host} 443 true`);
     }
     expect(direct(list, "g.test", 443)).toBe("g.test 443 false");
   });
 
-  it("takes a port, which covers only that port, and 0 for any", () => {
+  it("takes a port, which covers only that port", () => {
     expect(direct("a.test:8080", "a.test", 8080)).toBe("a.test 8080 true");
     expect(direct("a.test:8080", "a.test", 80)).toBe("a.test 80 false");
     expect(direct("a.test:443", "a.test", 443)).toBe("a.test 443 true");
-    expect(direct("a.test:0", "a.test", 81)).toBe("a.test 81 true");
+    expect(direct("a.test:0", "a.test", 81)).toBe("a.test 81 false");
     expect(direct("a.test:99999999999", "a.test", 80)).toBe("a.test 80 false");
+    expect(direct("a.test:8_0", "a.test", 80)).toBe("a.test 80 false");
     expect(direct(".b.test:81", "x.b.test", 81)).toBe("x.b.test 81 true");
     expect(direct(".b.test:81", "x.b.test", 80)).toBe("x.b.test 80 false");
+    expect(direct("127.0.0.1:81", "127.0.0.1", 81)).toBe("127.0.0.1 81 true");
   });
 
-  it("writes IPv6 addresses in brackets", () => {
+  it("takes IP addresses, IPv6 with or without brackets", () => {
     expect(direct("[::1]", "[::1]", 80)).toBe("[::1] 80 true");
+    expect(direct("::1", "[::1]", 80)).toBe("[::1] 80 true");
     expect(direct("[::1]:8080", "[::1]", 8080)).toBe("[::1] 8080 true");
     expect(direct("[::1]:8080", "[::1]", 80)).toBe("[::1] 80 false");
-    // Without brackets it is no host a URL has (undici reads `::1` as host `:`, port 1).
-    expect(direct("::1", "[::1]", 1)).toBe("[::1] 1 false");
+    expect(direct("0:0:0:0:0:0:0:1", "[::1]", 80)).toBe("[::1] 80 true");
     expect(direct("[FD00::1]", "[fd00::1]", 80)).toBe("[fd00::1] 80 true");
+    expect(direct("fd00::2", "[fd00::1]", 80)).toBe("[fd00::1] 80 false");
     expect(direct("127.0.0.1", "127.0.0.1", 80)).toBe("127.0.0.1 80 true");
+    expect(direct("::ffff:127.0.0.1", "127.0.0.1", 80)).toBe("127.0.0.1 80 true");
+    expect(direct("127.0.0.1", "[::ffff:7f00:1]", 80)).toBe("[::ffff:7f00:1] 80 true");
+    // An address as the host is never a domain's subdomain.
+    expect(direct("0.0.1", "10.0.0.1", 80)).toBe("10.0.0.1 80 false");
+    expect(direct("127.000.0.1", "127.0.0.1", 80)).toBe("127.0.0.1 80 false");
+  });
+
+  it("takes CIDR blocks", () => {
+    const list = "10.0.0.0/8,172.16.0.0/12,fd00::/8,::ffff:192.168.0.0/112";
+    const want: [string, bool][] = [
+      ["10.1.2.3", true],
+      ["11.0.0.1", false],
+      ["172.31.255.255", true],
+      ["172.32.0.0", false],
+      ["[fd12::1]", true],
+      ["[fe00::1]", false],
+      ["192.168.4.5", true],
+      ["192.169.0.1", false],
+      ["example.com", false],
+    ];
+    for (const [host, bypass] of want) {
+      expect(direct(list, host, 80)).toBe(`${host} 80 ${bypass}`);
+    }
+    expect(direct("127.0.0.0/33", "127.0.0.1", 80)).toBe("127.0.0.1 80 false");
+    expect(direct("127.0.0.0/x", "127.0.0.1", 80)).toBe("127.0.0.1 80 false");
+    expect(direct("0.0.0.0/0", "8.8.8.8", 80)).toBe("8.8.8.8 80 true");
+    expect(direct("10.0.0.0/8", "[::1]", 80)).toBe("[::1] 80 false");
   });
 
   it("is everything for *, nothing when empty", () => {

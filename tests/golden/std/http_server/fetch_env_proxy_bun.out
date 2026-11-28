@@ -1,0 +1,33 @@
+== an empty http_proxy reads HTTP_PROXY
+http://g.test:<http>/ 200 http g.test:<http>/
+proxy: g.test:<http>
+== '' is empty; ALL_PROXY when the scheme's is unset
+http://al.test:<http>/ 200 http al.test:<http>/
+https://localhost:<https>/al 200 https localhost:<https>/al
+proxy: al.test:<http>
+proxy: localhost:<https>
+== ALL_PROXY naming a SOCKS proxy is ignored
+http://localhost:<http>/so 200 http localhost:<http>/so
+== https:// and socks5:// proxies are ignored
+http://localhost:<http>/x 200 http localhost:<http>/x
+https://localhost:<https>/y 200 https localhost:<https>/y
+== the variables read at each request
+http://o1.test:<http>/a 200 http o1.test:<http>/a
+env:http_proxy=
+http://o2.test:<http>/b failed
+env:http_proxy=http://127.0.0.1:<proxy>
+env:NO_PROXY=o3.test
+http://o3.test:<http>/c failed
+http://o4.test:<http>/d 200 http o4.test:<http>/d
+proxy: o1.test:<http>
+proxy: o4.test:<http>
+== NO_PROXY
+http://x.n1.test:<http>/ failed
+http://n2.test:<http>/ failed
+http://xn1.test:<http>/ 200 http xn1.test:<http>/
+http://[::1]:<http>/ failed
+http://127.0.0.1:<http>/block 200 http 127.0.0.1:<http>/block
+http://n3.test:<http>/ failed
+proxy: xn1.test:<http>
+== an empty no_proxy reads NO_PROXY
+http://h.test:<http>/ failed

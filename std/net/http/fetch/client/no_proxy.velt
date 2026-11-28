@@ -1,0 +1,314 @@
+// velt/net/http (internal): `NO_PROXY` matching for `fetch` (proxy.velt), as Bun's
+// (`src/dotenv/no_proxy.rs`). Entries are separated by commas or white space. An entry is `*`
+// (every host), a domain (`example.com`, `.example.com` and `*.example.com` alike: the name and
+// every subdomain), an IP address (`127.0.0.1`, `::1`, `[::1]`) or a CIDR block (`10.0.0.0/8`,
+// `fd00::/8`). A domain or address may carry `:port`, which must then be the request's port. An
+// IP address as the host matches only an address or block, never a domain suffix; `::ffff:a.b.c.d`
+// is `a.b.c.d`. Names are compared without case and without a trailing dot.
+
+/**
+ * Whether `list` sends a request to `hostname` (as the URL parser serializes it: IPv6 in
+ * brackets) on `port` directly.
+ */
+export function noProxy(list: string, hostname: string, port: i64): bool {
+  let host = hostname.toLowerCase();
+  if (host.startsWith("[") && host.endsWith("]")) {
+    host = host.slice(1, (host.length as i64) - 1);
+  }
+  host = withoutDot(host);
+  if (host.length == 0) {
+    return false;
+  }
+  const ip = ipOf(host);
+  const n = list.length as i64;
+  let start: i64 = 0;
+  for (let i: i64 = 0; i <= n; i++) {
+    if (i < n && !separator(list.charCodeAt(i))) {
+      continue;
+    }
+    if (i > start && listed(list.slice(start, i).toLowerCase(), host, ip, port)) {
+      return true;
+    }
+    start = i + 1;
+  }
+  return false;
+}
+
+/**
+ * Whether `entry` (lowercase) of a `NO_PROXY` list names `host` (lowercase, no brackets), whose
+ * address is `ip` (null for a name), on `port`.
+ */
+function listed(entry: string, host: string, ip: u8[] | null, port: i64): bool {
+  if (entry == "*") {
+    return true;
+  }
+  const slash = entry.indexOf("/");
+  if (slash >= 0) {
+    return ip != null && inBlock(entry, slash as i64, ip);
+  }
+  let name = entry;
+  let portText: string | null = null;
+  if (entry.startsWith("[")) {
+    const close = entry.indexOf("]") as i64;
+    if (close > 0) {
+      name = entry.slice(1, close);
+      const rest = entry.slice(close + 1);
+      if (rest.startsWith(":")) {
+        portText = rest.slice(1);
+      }
+    }
+  } else {
+    // `host:port` has one colon; a bare IPv6 address has more.
+    const colon = entry.indexOf(":") as i64;
+    if (colon >= 0 && (entry.lastIndexOf(":") as i64) == colon) {
+      name = entry.slice(0, colon);
+      portText = entry.slice(colon + 1);
+    }
+  }
+  if (portText != null) {
+    const want = digits(portText, 65535);
+    if (want < 0 || want != port) {
+      return false;
+    }
+  }
+  if (name.startsWith("*.")) {
+    name = name.slice(2);
+  } else if (name.startsWith(".")) {
+    name = name.slice(1);
+  }
+  name = withoutDot(name);
+  if (name.length == 0) {
+    return false;
+  }
+  if (ip != null) {
+    const want = ipOf(name);
+    return want != null && same(want, ip);
+  }
+  if (host.length == name.length) {
+    return host == name;
+  }
+  return host.length > name.length && host.endsWith(`.${name}`);
+}
+
+/** Whether CIDR block `entry` (its `/` at `slash`) holds address `ip`. */
+function inBlock(entry: string, slash: i64, ip: u8[]): bool {
+  let net = entry.slice(0, slash);
+  if (net.startsWith("[") && net.endsWith("]")) {
+    net = net.slice(1, (net.length as i64) - 1);
+  }
+  const written = parseIp(net);
+  let bits = digits(entry.slice(slash + 1), 255);
+  if (written == null || bits < 0) {
+    return false;
+  }
+  const block = canonical(written);
+  // `::ffff:10.0.0.0/104` is `10.0.0.0/8`.
+  if (written.length == 16 && block.length == 4) {
+    if (bits < 96) {
+      return false;
+    }
+    bits -= 96;
+  }
+  if (block.length != ip.length || bits > (block.length as i64) * 8) {
+    return false;
+  }
+  const whole = bits / 8;
+  const rest = bits % 8;
+  for (let i: i64 = 0; i < whole; i++) {
+    if (block[i] != ip[i]) {
+      return false;
+    }
+  }
+  if (rest == 0) {
+    return true;
+  }
+  const mask = (0xff << (8 - rest)) & 0xff;
+  return ((block[whole] as i64) & mask) == ((ip[whole] as i64) & mask);
+}
+
+/** `s` without one trailing `.`. */
+function withoutDot(s: string): string {
+  return s.endsWith(".") ? s.slice(0, (s.length as i64) - 1) : s;
+}
+
+/** Whether `a` and `b` hold the same bytes. */
+function same(a: u8[], b: u8[]): bool {
+  if (a.length != b.length) {
+    return false;
+  }
+  for (let i: i64 = 0; i < (a.length as i64); i++) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** The address `text` names, `::ffff:a.b.c.d` as `a.b.c.d`, or null for a name. */
+function ipOf(text: string): u8[] | null {
+  const ip = parseIp(text);
+  return ip == null ? null : canonical(ip);
+}
+
+/** `ip`, with an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) as its IPv4 address. */
+function canonical(ip: u8[]): u8[] {
+  if (ip.length != 16 || ip[10] != 0xff || ip[11] != 0xff) {
+    return ip;
+  }
+  for (let i: i64 = 0; i < 10; i++) {
+    if (ip[i] != 0) {
+      return ip;
+    }
+  }
+  return ip.slice(12, 16);
+}
+
+/**
+ * The 4 bytes of a dotted-quad IPv4 address or the 16 of an IPv6 one, or null. Strict, as Bun's:
+ * four decimal parts without leading zeros (not the resolver's `127.1` or `0x7f.0.0.1`), and no
+ * zone (`%eth0`).
+ */
+function parseIp(text: string): u8[] | null {
+  return text.indexOf(":") >= 0 ? parseIpv6(text) : parseIpv4(text);
+}
+
+function parseIpv4(text: string): u8[] | null {
+  const parts = text.split(".");
+  if (parts.length != 4) {
+    return null;
+  }
+  const out: u8[] = [];
+  for (const part of parts) {
+    if (part.length > 3 || (part.length > 1 && part.charCodeAt(0) == 48)) {
+      return null;
+    }
+    const v = digits(part, 255);
+    if (v < 0) {
+      return null;
+    }
+    out.push(v as u8);
+  }
+  return out;
+}
+
+function parseIpv6(text: string): u8[] | null {
+  const gap = text.indexOf("::") as i64;
+  let head: i64[] = [];
+  let tail: i64[] = [];
+  if (gap < 0) {
+    const all = groups(text, true);
+    if (all == null || all.length != 8) {
+      return null;
+    }
+    head = all;
+  } else {
+    const before = groups(text.slice(0, gap), false);
+    const after = groups(text.slice(gap + 2), true);
+    if (before == null || after == null || before.length + after.length > 7) {
+      return null;
+    }
+    head = before;
+    tail = after;
+  }
+  const out: u8[] = [];
+  for (const g of head) {
+    out.push((g >> 8) as u8);
+    out.push((g & 0xff) as u8);
+  }
+  for (let i: i64 = 0; i < 8 - (head.length as i64) - (tail.length as i64); i++) {
+    out.push(0);
+    out.push(0);
+  }
+  for (const g of tail) {
+    out.push((g >> 8) as u8);
+    out.push((g & 0xff) as u8);
+  }
+  return out;
+}
+
+/**
+ * The 16-bit groups of `text` (`a:b:c`, "" for none), the last one a dotted IPv4 address (two
+ * groups) when `v4Tail`; null when one is not 1 to 4 hex digits.
+ */
+function groups(text: string, v4Tail: bool): i64[] | null {
+  const out: i64[] = [];
+  if (text.length == 0) {
+    return out;
+  }
+  const parts = text.split(":");
+  for (let i: i64 = 0; i < (parts.length as i64); i++) {
+    const part = parts[i];
+    if (v4Tail && i == (parts.length as i64) - 1 && part.indexOf(".") >= 0) {
+      const v4 = parseIpv4(part);
+      if (v4 == null) {
+        return null;
+      }
+      out.push(((v4[0] as i64) << 8) | (v4[1] as i64));
+      out.push(((v4[2] as i64) << 8) | (v4[3] as i64));
+      continue;
+    }
+    if (part.length == 0 || part.length > 4) {
+      return null;
+    }
+    let g: i64 = 0;
+    for (let j: i64 = 0; j < (part.length as i64); j++) {
+      const h = hexValue(part.charCodeAt(j));
+      if (h < 0) {
+        return null;
+      }
+      g = g * 16 + h;
+    }
+    out.push(g);
+  }
+  return out;
+}
+
+function hexValue(c: i64): i64 {
+  if (c >= 48 && c <= 57) {
+    return c - 48;
+  }
+  if (c >= 97 && c <= 102) {
+    return c - 87;
+  }
+  if (c >= 65 && c <= 70) {
+    return c - 55;
+  }
+  return -1;
+}
+
+/** The decimal number `s` (ASCII digits only, at most `max`), or -1. */
+function digits(s: string, max: i64): i64 {
+  if (s.length == 0) {
+    return -1;
+  }
+  let n: i64 = 0;
+  for (let i: i64 = 0; i < (s.length as i64); i++) {
+    const c = s.charCodeAt(i) - 48;
+    if (c < 0 || c > 9) {
+      return -1;
+    }
+    n = n * 10 + c;
+    if (n > max) {
+      return -1;
+    }
+  }
+  return n;
+}
+
+/** A separator of `NO_PROXY` entries: a comma, or white space as a regex's `\s` is. */
+function separator(c: i64): bool {
+  return (
+    c == 44 ||
+    c == 32 ||
+    (c >= 9 && c <= 13) ||
+    c == 0xa0 ||
+    c == 0x1680 ||
+    (c >= 0x2000 && c <= 0x200a) ||
+    c == 0x2028 ||
+    c == 0x2029 ||
+    c == 0x202f ||
+    c == 0x205f ||
+    c == 0x3000 ||
+    c == 0xfeff
+  );
+}

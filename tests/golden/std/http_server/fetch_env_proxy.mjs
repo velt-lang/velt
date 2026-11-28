@@ -1,6 +1,7 @@
 // Node's twin of fetch_env_proxy.velt: the same servers, proxy and runs, so `node
-// fetch_env_proxy.mjs` prints fetch_env_proxy.out (Node 22.21+, which needs NODE_USE_ENV_PROXY=1
-// where Velt uses the environment's proxy by default: `run` sets it). The test certificate is read
+// fetch_env_proxy.mjs` prints fetch_env_proxy.out with Node 22 (22.21 or later; Node 26 prints
+// otherwise: it sends `http:` to the proxy without `CONNECT`). Node needs NODE_USE_ENV_PROXY=1
+// where Velt uses the environment's proxy by default: `run` sets it. The test certificate is read
 // from ../_tls.velt; Node's child trusts its CA through NODE_EXTRA_CA_CERTS, Velt's through `ca`.
 import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -165,13 +166,6 @@ async function main() {
   await run("a proxy URL with only a password", { http_proxy: `http://:pw@127.0.0.1:${proxy.address().port}` }, [
     `http://u2.test:${H}/`,
   ]);
-  await run("the proxy variables read once, NO_PROXY at each request", { http_proxy: P }, [
-    `http://o1.test:${H}/a`,
-    "env:http_proxy=",
-    `http://o2.test:${H}/b`,
-    "env:NO_PROXY=o3.test",
-    `http://o3.test:${H}/c`,
-  ]);
   await run("uppercase HTTP_PROXY", { HTTP_PROXY: P }, [`http://d.test:${H}/`]);
   await run("HTTPS_PROXY alone", { HTTPS_PROXY: P }, [
     `https://localhost:${S}/e`,
@@ -180,29 +174,23 @@ async function main() {
   await run("http_proxy over HTTP_PROXY", { http_proxy: P, HTTP_PROXY: "http://127.0.0.1:1" }, [
     `http://f.test:${H}/`,
   ]);
-  await run("an empty http_proxy over HTTP_PROXY", { http_proxy: "", HTTP_PROXY: P }, [
-    `http://g.test:${H}/`,
-  ]);
   await run(
     "NO_PROXY",
     {
       HTTP_PROXY: P,
-      NO_PROXY: `n1.test,.n2.test\t*.n3.test n4.test:1 n5.test:${H} [::1] ::5 N6.TEST`,
+      NO_PROXY: `n1.test,.n2.test\t*.n3.test n4.test:1 n5.test:${H} [::1] N6.TEST`,
     },
     [
       `http://n1.test:${H}/`,
-      `http://x.n1.test:${H}/`,
-      `http://n2.test:${H}/`,
       `http://x.n2.test:${H}/`,
       `http://x.n3.test:${H}/`,
       `http://n4.test:${H}/`,
       `http://n5.test:${H}/`,
       `http://[::1]:${H}/`,
-      `http://[::5]:${H}/`,
       `http://n6.test:${H}/`,
     ],
   );
-  await run("no_proxy over NO_PROXY, even empty", { HTTP_PROXY: P, no_proxy: "", NO_PROXY: "h.test" }, [
+  await run("no_proxy over NO_PROXY", { HTTP_PROXY: P, no_proxy: "h2.test", NO_PROXY: "h.test" }, [
     `http://h.test:${H}/`,
   ]);
   await run("NO_PROXY=*", { HTTP_PROXY: P, NO_PROXY: "*" }, [`http://i.test:${H}/`]);
