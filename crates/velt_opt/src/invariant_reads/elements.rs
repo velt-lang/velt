@@ -18,7 +18,7 @@ use velt_vir::vir::{
 };
 
 /// Per local of `func`: whether it only ever holds a pointer into an array's data buffer.
-pub(super) fn element_pointers(aggs: &[AggLayout], func: &Function, array: AggId) -> Vec<bool> {
+pub(crate) fn element_pointers(aggs: &[AggLayout], func: &Function, array: AggId) -> Vec<bool> {
     let n = func.locals.len();
     let mut elem: Vec<bool> = (0..n)
         .map(|i| i >= func.params.len() && func.locals[i].ty == Ty::Ptr)
@@ -65,7 +65,7 @@ pub(super) fn element_pointers(aggs: &[AggLayout], func: &Function, array: AggId
 }
 
 /// Whether `dest` is a store of a scalar through an element pointer.
-pub(super) fn is_element_store(elem: &[bool], dest: &Place) -> bool {
+pub(crate) fn is_element_store(elem: &[bool], dest: &Place) -> bool {
     matches!(dest.proj.as_slice(), [Proj::Deref(t)] if t.is_scalar() && *t != Ty::V128)
         && elem.get(dest.local.0 as usize) == Some(&true)
 }

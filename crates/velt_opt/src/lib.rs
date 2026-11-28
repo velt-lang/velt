@@ -83,6 +83,9 @@
 //!   nothing and tests only counters (no type test) is made once in front of the outermost such
 //!   loop, each pointer tested for null first, so LLVM sees the bound of an inner loop's check
 //!   defined outside every loop.
+//! - `check_spans`: then, a chain of range checks of one array at constant offsets from one
+//!   index (a node's words, `nd[cur]`, `nd[cur + 1]`, `nd[cur + 2]`) is tested once for its
+//!   whole span, and a copy of the code between the checks runs without them where it fits.
 //! - `cold_calls`: then, the calls of a function to one callee that never returns (the
 //!   out-of-bounds report, a throw helper) become one call that the call sites jump to, so a
 //!   small function with many checks stays cheap enough for LLVM to inline.
@@ -106,6 +109,7 @@ mod addr_forward;
 mod borrowed_copies;
 mod bounds;
 mod callgraph;
+mod check_spans;
 mod cold_calls;
 mod const_fields;
 mod constfold;
@@ -527,6 +531,15 @@ fn optimize_with(program: &mut vir::Program, level: OptLevel, t: &mut PassTiming
                     range_versions::run(aggs, &externs, func)
                 }) {
                     t.time("constfold", || constfold::run(&fold, func));
+                    t.time("copyprop", || copyprop::run(func));
+                    t.time("dce", || dce::run(aggs, func));
+                    t.time("simplify_cfg", || simplify_cfg::run(func));
+                }
+                false
+            });
+            let aggs = &program.aggs;
+            each_function(served.bodies(&mut program.funcs), t, |t, func| {
+                if t.time("check_spans", || check_spans::run(aggs, func)) {
                     t.time("copyprop", || copyprop::run(func));
                     t.time("dce", || dce::run(aggs, func));
                     t.time("simplify_cfg", || simplify_cfg::run(func));
