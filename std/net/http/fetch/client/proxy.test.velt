@@ -4,8 +4,15 @@
 // environment's variables as Node 22's `EnvHttpProxyAgent` reads them, `NO_PROXY`, and proxy URLs.
 // tests/golden/std/fetch_env_proxy.velt runs the same rules end to end, beside Node.
 import { describe, expect, it } from "velt/test";
+import { platform } from "velt/os";
 import { removeEnv, setEnv } from "velt/process";
 import { fromEnv, noProxy, parseProxy, proxyFor } from "velt/net/http/fetch/client/proxy";
+
+/**
+ * Whether `http_proxy` and `HTTP_PROXY` are one variable: on Windows names ignore case (as
+ * `process.env` in Node there), so of two spellings set the later one is the value.
+ */
+const ONE_NAME = platform() == "win32";
 
 /** The variables `fromEnv` reads, and the ones it must not. */
 function proxyVars(): string[] {
@@ -75,8 +82,11 @@ describe("the environment's proxy", () => {
   });
 
   it("takes a set lowercase variable even when it is empty", () => {
-    expect(pick(false, "example.com", ["http_proxy", "", "HTTP_PROXY", "u:1"])).toBe("");
-    expect(pick(true, "example.com", ["https_proxy", "", "HTTPS_PROXY", "u:1"])).toBe("");
+    // On Windows the later HTTP_PROXY is the one variable's value.
+    const want = ONE_NAME ? "u:1" : "";
+    expect(pick(false, "example.com", ["http_proxy", "", "HTTP_PROXY", "u:1"])).toBe(want);
+    expect(pick(true, "example.com", ["https_proxy", "", "HTTPS_PROXY", "u:1"])).toBe(want);
+    expect(pick(false, "example.com", ["HTTP_PROXY", "u:1", "http_proxy", ""])).toBe("");
   });
 
   it("ignores ALL_PROXY, as Node", () => {
@@ -90,12 +100,13 @@ describe("the environment's proxy", () => {
       expect(pick(true, host, p)).toBe("p:1");
     }
     expect(pick(true, "localhost", ["https_proxy", "p:1", "NO_PROXY", "localhost"])).toBe("");
-    // `no_proxy` wins over `NO_PROXY`, also when it is empty.
+    // `no_proxy` wins over `NO_PROXY`, also when it is empty; on Windows they are one variable,
+    // whose value is the later one.
     const both = ["https_proxy", "p:1", "no_proxy", "example.com", "NO_PROXY", "example.org"];
-    expect(pick(true, "example.com", both)).toBe("");
-    expect(pick(true, "example.org", both)).toBe("p:1");
+    expect(pick(true, "example.com", both)).toBe(ONE_NAME ? "p:1" : "");
+    expect(pick(true, "example.org", both)).toBe(ONE_NAME ? "" : "p:1");
     const empty = ["https_proxy", "p:1", "no_proxy", "", "NO_PROXY", "example.org"];
-    expect(pick(true, "example.org", empty)).toBe("p:1");
+    expect(pick(true, "example.org", empty)).toBe(ONE_NAME ? "" : "p:1");
   });
 
   it("is replaced by the request's option", () => {

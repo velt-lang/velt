@@ -11,10 +11,13 @@
 import { serve } from "http-server";
 import { connect, listen, TcpStream } from "velt/net";
 import { utf8DecodeLossy } from "velt/encoding";
+import { platform } from "velt/os";
 import { envAll, setEnv } from "velt/process";
 import { exec } from "velt/process/child";
 import { Channel, channel } from "velt/sync";
 import { TEST_CA, TEST_CERT, TEST_KEY } from "../_tls";
+
+const WINDOWS = platform() == "win32";
 
 const PROXY_VARS = [
   "NODE_USE_ENV_PROXY",
@@ -181,7 +184,10 @@ async function main() {
       }
     }
     for (const k of Object.keys(vars)) {
-      env.set(k, vars[k]);
+      // Windows has one variable for both spellings, as Node there: the lowercase one is set.
+      if (!WINDOWS || k == k.toLowerCase() || !Object.keys(vars).includes(k.toLowerCase())) {
+        env.set(k, vars[k]);
+      }
     }
     const r = await exec(process.argv[0], ["child", ...urls], { env, clearEnv: true });
     console.log(hide(r.stdout.trimEnd()));

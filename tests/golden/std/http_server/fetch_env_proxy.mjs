@@ -114,7 +114,12 @@ async function main() {
     for (const v of PROXY_VARS) {
       delete env[v];
     }
-    Object.assign(env, vars);
+    for (const k of Object.keys(vars)) {
+      // Windows has one variable for both spellings: the lowercase one is set.
+      if (process.platform != "win32" || k == k.toLowerCase() || !Object.keys(vars).includes(k.toLowerCase())) {
+        env[k] = vars[k];
+      }
+    }
     const out = await new Promise((resolve) => {
       const c = spawn(process.execPath, [process.argv[1], "child", ...urls], {
         env,
