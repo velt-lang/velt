@@ -222,7 +222,7 @@ impl FnCx<'_, '_> {
     /// the lowering's inspect calls it, as for a value inside a container: `%o`, `%O`).
     pub(super) fn print_value_with(
         &mut self,
-        a: &ast::Expr,
+        _a: &ast::Expr,
         h: hir::Expr,
         inspect_hook: bool,
     ) -> hir::Expr {
@@ -261,9 +261,6 @@ impl FnCx<'_, '_> {
         if !self.printable(h.ty) {
             let tn = self.cx.display(h.ty);
             let mut d = Diagnostic::error(format!("cannot print a value of type `{tn}`"), h.span);
-            if let Some(note) = self.in_place_note(a, &h) {
-                d = d.with_note(note);
-            }
             if matches!(self.cx.ty.kind(h.ty), TyKind::Simd(_)) {
                 d = d.with_note("print its lanes (`v.lane(0)`), or a mask's `bitmask()`");
             }

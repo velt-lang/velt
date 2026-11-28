@@ -21,14 +21,15 @@ use crate::hir::{
 /// Does method `def` hand back its receiver? A class method returning `this` (not a getter, an
 /// async method, a generator, a formatting hook (`crate::hooks`) or a method with type
 /// parameters of its own) whose overridden methods all return `this` too, so that every entry
-/// of its vtable slot returns nothing alike.
+/// of its vtable slot returns nothing alike; or such a method of an `extend` block (an array's
+/// `sort`, `reverse`, `fill`, #3760), which nothing overrides.
 pub(crate) fn hands_back(cx: &Ctx, def: DefId) -> bool {
     let f = cx.fn_info(def);
     if !f.returns_this() || f.is_getter || f.is_async || f.is_async_gen || f.is_generator {
         return false;
     }
     let Some(owner) = f.owner else {
-        return false;
+        return extension_hands_back(cx, def);
     };
     let Some(a) = cx.adt(owner).filter(|a| a.kind == AdtKind::Class) else {
         return false;
@@ -57,6 +58,24 @@ pub(crate) fn hands_back(cx: &Ctx, def: DefId) -> bool {
         base = ba.base;
     }
     true
+}
+
+/// Does extension method `def` (one of an `extend` block's, no owner) hand back its receiver:
+/// an instance method without type parameters of its own? Its calls are direct, never through a
+/// table, so no other method shares its result.
+fn extension_hands_back(cx: &Ctx, def: DefId) -> bool {
+    let f = cx.fn_info(def);
+    if f.kind != crate::defs::FnKind::Method {
+        return false;
+    }
+    cx.extensions.iter().any(|e| {
+        e.methods.iter().any(|(k, m)| {
+            m.def == def
+                && !m.is_static
+                && f.generics.len() == e.generics.len()
+                && !crate::hooks::NAMES.contains(&k.as_str())
+        })
+    })
 }
 
 /// Is interface `iface`'s method `name` declared with the result `this` (typed as the interface

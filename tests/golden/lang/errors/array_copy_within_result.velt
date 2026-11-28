@@ -1,7 +1,0 @@
-// The result of `copyWithin` on a variable used as a value is an error whose note says why and
-// what to write, as for `sort`, `reverse` and `fill` (array_sort_result.velt).
-function main() {
-  const xs = [1, 2, 3, 4];
-  const ys: number[] = xs.copyWithin(0, 2);
-  console.log(ys, xs.copyWithin(1, 0));
-}

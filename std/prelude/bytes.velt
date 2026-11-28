@@ -275,8 +275,9 @@ extend Array<u8> {
   }
 
   /** Copies the bytes in [start, end) to position `target` (JS `copyWithin`; overlap is fine). */
-  copyWithin(target: i64, start: i64 = 0, end: i64 = 9223372036854775807) {
+  copyWithin(target: i64, start: i64 = 0, end: i64 = 9223372036854775807): this {
     bytesCopyWithin(this, target, start, end);
+    return this;
   }
 
   /** The bytes in [start, end) as a new array (JS `slice`: negative positions count from the end). */
@@ -355,8 +356,9 @@ extend Array<u8> {
   }
 
   /** Sets the bytes in [start, end) to `byte`, a number converted as a `Uint8Array` converts it (`toUint8`). */
-  fill(byte: number, start: i64 = 0, end: i64 = 9223372036854775807) {
+  fill(byte: number, start: i64 = 0, end: i64 = 9223372036854775807): this {
     const n = this.length;
     fillBytes(this, toUint8(byte), relative(start, n), relative(end, n));
+    return this;
   }
 }

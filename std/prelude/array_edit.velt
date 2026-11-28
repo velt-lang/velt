@@ -62,23 +62,24 @@ extend<T> Array<T> {
     arrayReserve(this, extra);
   }
 
-  /** Reverses in place (JS also returns the array; here the result is `void`, see `fill`). */
-  reverse() {
+  /** Reverses in place and returns the array, as JS does (handed back, see `fill`). */
+  reverse(): this {
     reverseRange(this, 0, this.length);
+    return this;
   }
 
   /**
    * Copies the elements in [start, end) to position `target` and on, as far as the array
-   * reaches (positions as in `slice`; the ranges may overlap). The length stays. JS also returns
-   * the array; here the result is `void`, see `fill`.
+   * reaches (positions as in `slice`; the ranges may overlap). The length stays. Returns the array,
+   * as JS does (handed back, see `fill`).
    */
-  copyWithin(target: i64, start: i64 = 0, end: i64 = 9223372036854775807) {
+  copyWithin(target: i64, start: i64 = 0, end: i64 = 9223372036854775807): this {
     const len = this.length;
     const to = clampPosition(target, len);
     const from = clampPosition(start, len);
     const hi = clampPosition(end, len);
     if (hi <= from || to == from) {
-      return;
+      return this;
     }
     const count = hi - from < len - to ? hi - from : len - to;
     if (from < to && to < from + count) {
@@ -86,11 +87,12 @@ extend<T> Array<T> {
       for (let i = count; i > 0; i--) {
         this[to + i - 1] = share(this[from + i - 1]);
       }
-      return;
+      return this;
     }
     for (let i: usize = 0; i < count; i++) {
       this[to + i] = share(this[from + i]);
     }
+    return this;
   }
 
   /**

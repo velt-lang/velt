@@ -564,14 +564,10 @@ impl FnCx<'_, '_> {
             init => (ty, init),
         };
         if ty == self.cx.ty.unit {
-            let mut d = Diagnostic::error(
+            let d = Diagnostic::error(
                 format!("variable `{}` cannot have type `void`", name.name),
                 name.span,
             );
-            let note = v.init.as_ref().zip(init.as_ref());
-            if let Some(note) = note.and_then(|(e, h)| self.in_place_note(e, h)) {
-                d = d.with_note(note);
-            }
             self.cx.error(d);
         }
         let kind = match v.kind {

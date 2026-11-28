@@ -291,9 +291,6 @@ impl FnCx<'_, '_> {
             Some(h) => h,
             None => self.expr(e, Some(exp), want),
         };
-        if self.in_place_misuse(e, &h, exp) {
-            return self.error_expr(e.span);
-        }
         self.coerce(h, exp)
     }
 
@@ -318,8 +315,6 @@ impl FnCx<'_, '_> {
         let h = self.seeded_trap_value(h);
         let temps = std::mem::replace(&mut self.call_temps, outer);
         let h = self.with_lets(temps, h);
-        // `Object.keys(r).sort()`: the temporary array it sorted (`in_place_chain`).
-        let h = self.in_place_value(e, h);
         // `s.add(x)`: the receiver it hands back, read as `want` says (`hand_back`).
         let h = self.hand_back_want(h, want);
         // An integer from the standard library is a number in user code (`numbers`).

@@ -228,16 +228,18 @@ extend<T> Array<T> {
   }
 
   /**
-   * Sets the elements in [start, end) to `value` (positions as in `slice`). JS also returns
-   * the array; here the result is `void`, like `reverse` and `sort`: returning the array would
-   * share it, which makes every array of its type reference counted in the whole program.
+   * Sets the elements in [start, end) to `value` (positions as in `slice`) and returns the
+   * array, as JS does. Like `reverse` and `sort`, the call hands back its receiver (velt_sema
+   * `hand_back.rs`): a call on its own line shares nothing, a chain reads the array again, and
+   * only a kept result is another reference to it.
    * `new Array<T>(n).fill(v)` still works (the compiler builds the array in one step).
    */
-  fill(value: T, start: i64 = 0, end: i64 = 9223372036854775807) {
+  fill(value: T, start: i64 = 0, end: i64 = 9223372036854775807): this {
     const hi = clampPosition(end, this.length);
     for (let i = clampPosition(start, this.length); i < hi; i++) {
       this[i] = share(value);
     }
+    return this;
   }
 
   /**

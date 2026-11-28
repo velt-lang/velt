@@ -572,13 +572,6 @@ impl FnCx<'_, '_> {
                 },
             };
             self.set_target(outer_target);
-            // `f(xs.sort())` where `f` takes an array: the fix, not just a type mismatch.
-            let h = match self.cx.ty.array_elem(expected).is_some()
-                && self.in_place_misuse(&args[i], &h, expected)
-            {
-                true => self.error_expr(h.span),
-                false => h,
-            };
             self.std_callback = None;
             let h = match collect {
                 true => self.collected_arg(h, p.ty),

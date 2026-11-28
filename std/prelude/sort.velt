@@ -28,7 +28,7 @@ import { pdqsort } from "velt/lang/sort/pdq";
 
 extend Array<i64> {
   /**
-   * Sorts an array in place. Unlike JS, it returns nothing.
+   * Sorts an array in place and returns it, as JS does.
    * @param cmp - Function used to determine the order of the elements. It is expected to return
    * a negative value if the first argument is less than the second argument, zero if they're
    * equal, and a positive value otherwise; the sort is then stable. If omitted, the elements are
@@ -36,12 +36,13 @@ extend Array<i64> {
    * @example
    * xs.sort((a, b) => b - a); // descending
    */
-  sort(cmp: ((x: i64, y: i64) => i64) | null = null) {
+  sort(cmp: ((x: i64, y: i64) => i64) | null = null): this {
     if (cmp != null) {
       stableSort(this, cmp, (c) => c < 0);
-      return;
+      return this;
     }
     pdqsort(this, (a, b) => a < b);
+    return this;
   }
 
   /** A sorted copy (ES2023); the receiver is unchanged. */
@@ -54,7 +55,7 @@ extend Array<i64> {
 
 extend Array<i32> {
   /**
-   * Sorts an array in place. Unlike JS, it returns nothing.
+   * Sorts an array in place and returns it, as JS does.
    * @param cmp - Function used to determine the order of the elements. It is expected to return
    * a negative value if the first argument is less than the second argument, zero if they're
    * equal, and a positive value otherwise; the sort is then stable. If omitted, the elements are
@@ -62,12 +63,13 @@ extend Array<i32> {
    * @example
    * xs.sort((a, b) => b.compareTo(a)); // descending
    */
-  sort(cmp: ((x: i32, y: i32) => number) | null = null) {
+  sort(cmp: ((x: i32, y: i32) => number) | null = null): this {
     if (cmp != null) {
       stableSort(this, cmp, (c) => c < 0.0);
-      return;
+      return this;
     }
     pdqsort(this, (a, b) => a < b);
+    return this;
   }
 
   /** A sorted copy (ES2023); the receiver is unchanged. */
@@ -80,7 +82,7 @@ extend Array<i32> {
 
 extend Array<u64> {
   /**
-   * Sorts an array in place. Unlike JS, it returns nothing.
+   * Sorts an array in place and returns it, as JS does.
    * @param cmp - Function used to determine the order of the elements. It is expected to return
    * a negative value if the first argument is less than the second argument, zero if they're
    * equal, and a positive value otherwise; the sort is then stable. If omitted, the elements are
@@ -88,12 +90,13 @@ extend Array<u64> {
    * @example
    * xs.sort((a, b) => b.compareTo(a)); // descending
    */
-  sort(cmp: ((x: u64, y: u64) => i64) | null = null) {
+  sort(cmp: ((x: u64, y: u64) => i64) | null = null): this {
     if (cmp != null) {
       stableSort(this, cmp, (c) => c < 0);
-      return;
+      return this;
     }
     pdqsort(this, (a, b) => a < b);
+    return this;
   }
 
   /** A sorted copy (ES2023); the receiver is unchanged. */
@@ -106,7 +109,7 @@ extend Array<u64> {
 
 extend Array<usize> {
   /**
-   * Sorts an array in place. Unlike JS, it returns nothing.
+   * Sorts an array in place and returns it, as JS does.
    * @param cmp - Function used to determine the order of the elements. It is expected to return
    * a negative value if the first argument is less than the second argument, zero if they're
    * equal, and a positive value otherwise; the sort is then stable. If omitted, the elements are
@@ -114,12 +117,13 @@ extend Array<usize> {
    * @example
    * xs.sort((a, b) => b.compareTo(a)); // descending
    */
-  sort(cmp: ((x: usize, y: usize) => i64) | null = null) {
+  sort(cmp: ((x: usize, y: usize) => i64) | null = null): this {
     if (cmp != null) {
       stableSort(this, cmp, (c) => c < 0);
-      return;
+      return this;
     }
     pdqsort(this, (a, b) => a < b);
+    return this;
   }
 
   /** A sorted copy (ES2023); the receiver is unchanged. */
@@ -132,12 +136,13 @@ extend Array<usize> {
 
 extend Array<f64> {
   /** The comparator returns a float, so `(a, b) => a - b` works; a NaN result counts as 0. */
-  sort(cmp: ((x: f64, y: f64) => f64) | null = null) {
+  sort(cmp: ((x: f64, y: f64) => f64) | null = null): this {
     if (cmp != null) {
       stableSort(this, cmp, (c) => c < 0.0);
-      return;
+      return this;
     }
     pdqsort(this, (a, b) => a < b || (b != b && a == a));
+    return this;
   }
 
   /** A sorted copy (ES2023); the receiver is unchanged. */
@@ -150,12 +155,13 @@ extend Array<f64> {
 
 extend Array<f16> {
   /** By value (`-0` and `0` are equal: in either order), NaN last; or by `cmp`, stable. */
-  sort(cmp: ((x: f16, y: f16) => number) | null = null) {
+  sort(cmp: ((x: f16, y: f16) => number) | null = null): this {
     if (cmp != null) {
       stableSort(this, cmp, (c) => c < 0.0);
-      return;
+      return this;
     }
     pdqsort(this, (a, b) => a < b || (b != b && a == a));
+    return this;
   }
 
   /** A sorted copy (ES2023); the receiver is unchanged. */
@@ -168,12 +174,13 @@ extend Array<f16> {
 
 extend Array<bf16> {
   /** By value (`-0` and `0` are equal: in either order), NaN last; or by `cmp`, stable. */
-  sort(cmp: ((x: bf16, y: bf16) => number) | null = null) {
+  sort(cmp: ((x: bf16, y: bf16) => number) | null = null): this {
     if (cmp != null) {
       stableSort(this, cmp, (c) => c < 0.0);
-      return;
+      return this;
     }
     pdqsort(this, (a, b) => a < b || (b != b && a == a));
+    return this;
   }
 
   /** A sorted copy (ES2023); the receiver is unchanged. */
@@ -186,7 +193,7 @@ extend Array<bf16> {
 
 extend Array<string> {
   /**
-   * Sorts an array in place. Unlike JS, it returns nothing.
+   * Sorts an array in place and returns it, as JS does.
    * @param cmp - Function used to determine the order of the elements. It is expected to return
    * a negative value if the first argument is less than the second argument, zero if they're
    * equal, and a positive value otherwise; the sort is then stable. If omitted, the strings are
@@ -195,12 +202,13 @@ extend Array<string> {
    * @example
    * names.sort((a, b) => a.localeCompare(b));
    */
-  sort(cmp: ((x: string, y: string) => number) | null = null) {
+  sort(cmp: ((x: string, y: string) => number) | null = null): this {
     if (cmp != null) {
       stableSort(this, cmp, (c) => c < 0.0);
-      return;
+      return this;
     }
     pdqsort(this, (a, b) => a < b);
+    return this;
   }
 
   /** A sorted copy (ES2023); the receiver is unchanged. */
@@ -213,8 +221,9 @@ extend Array<string> {
 
 extend<T> Array<T> {
   /** Stable sort by `cmp` (JS `sort(compareFn)`; there is no default order for arbitrary `T`). */
-  sort(cmp: (x: T, y: T) => number) {
+  sort(cmp: (x: T, y: T) => number): this {
     stableSort(this, cmp, (c) => c < 0.0);
+    return this;
   }
 
   /** A copy sorted by `cmp` (ES2023); the receiver is unchanged. */
@@ -281,13 +290,14 @@ extend<T> Array<T | undefined> {
    * Stable sort by `cmp`, as in JS: an `undefined` element is never passed to `cmp`, and all
    * of them end up after the other elements.
    */
-  sort(cmp: (x: T | undefined, y: T | undefined) => number) {
+  sort(cmp: (x: T | undefined, y: T | undefined) => number): this {
     stableSort(
       this,
       (x, y) =>
         (x === undefined ? (y === undefined ? 0.0 : 1.0) : y === undefined ? -1.0 : cmp(x, y)),
       (c) => c < 0.0,
     );
+    return this;
   }
 
   /** A copy sorted by `cmp` (ES2023), `undefined` elements last; the receiver is unchanged. */

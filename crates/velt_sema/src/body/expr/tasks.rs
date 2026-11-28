@@ -101,9 +101,6 @@ impl FnCx<'_, '_> {
     /// returned at once, as `return 5` adds no steps in JS.
     pub(crate) fn async_returned(&mut self, e: &ast::Expr, ret: TyId) -> hir::Expr {
         let h = self.expr(e, Some(ret), Want::Move);
-        if self.in_place_misuse(e, &h, ret) {
-            return self.error_expr(e.span);
-        }
         let span = h.span;
         // The promise is awaited after the enclosing `try` statements are left: what it
         // rejects with is thrown from the function, not into their `catch` blocks.

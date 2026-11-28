@@ -360,3 +360,23 @@ fn chains_on_a_field_or_element_leave_set_and_map_uncounted() {
     let shared = |name: &str| c.iter().any(|t| t.ends_with(name));
     assert!(!shared("::Set") && !shared("::Map"), "{c:?}");
 }
+
+/// `sort`, `reverse`, `fill` and `copyWithin` return `this` (#3760) and hand back their array like
+/// a class's builder methods: on their own line or chained they share nothing, so the arrays'
+/// type stays uncounted, as it was when they returned nothing.
+#[test]
+fn in_place_array_methods_unused_or_chained_leave_arrays_uncounted() {
+    let c = counted(
+        "function main() {
+           const xs = [3, 1, 2];
+           xs.sort();
+           xs.reverse();
+           xs.fill(0, 2);
+           xs.copyWithin(0, 1);
+           const words = [\"b\", \"a\"];
+           words.sort((a, b) => a.localeCompare(b));
+           console.log(xs.sort().join(), words.reverse().length, xs.fill(1).length);
+         }",
+    );
+    assert!(!c.iter().any(|t| t.ends_with("[]")), "{c:?}");
+}
