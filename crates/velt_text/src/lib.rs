@@ -20,9 +20,6 @@ pub trait Out {
             self.push(b);
         }
     }
-    /// A hint: about `additional` more bytes follow.
-    #[inline]
-    fn reserve(&mut self, _additional: usize) {}
 }
 
 impl Out for Vec<u8> {
@@ -37,9 +34,5 @@ impl Out for Vec<u8> {
     #[inline]
     fn fill(&mut self, b: u8, n: usize) {
         self.resize(self.len() + n, b);
-    }
-    #[inline]
-    fn reserve(&mut self, additional: usize) {
-        Vec::reserve(self, additional);
     }
 }
