@@ -1,0 +1,18 @@
+// A `catch` handler calling two function values throws the union of the two parameters'
+// error-set variables, compared with the `never` the handler's type is written with. The
+// solved sets (both empty) make the two one type, so the check with variables takes as many
+// rounds as the one without (#3925).
+async function run(a: () => void, b: () => void): Promise<void> {
+  let p: Promise<void> = Promise.resolve();
+  p = p.catch(() => {
+    a();
+    b();
+  });
+  await p;
+  console.log("done");
+}
+
+await run(
+  () => console.log("a"),
+  () => console.log("b"),
+);

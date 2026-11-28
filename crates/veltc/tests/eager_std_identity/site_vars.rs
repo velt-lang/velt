@@ -43,11 +43,6 @@ const KNOWN: &[(&str, Kind)] = &[
     ),
     ("golden/lang/jsx_async_package_provider.velt", Kind::Rounds),
     (
-        "golden/lang/promise_settled_borrowed_values.velt",
-        Kind::Rounds,
-    ),
-    ("golden/lang/rethrow_never_thrown_catch.velt", Kind::Rounds),
-    (
         "golden/lang/throws_fn_type_rethrow_chain.velt",
         Kind::Builds(true),
     ),

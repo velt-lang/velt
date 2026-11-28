@@ -40,6 +40,8 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return Some(self.error_expr(span));
         };
+        // Its `resolve` and `reject` are the prelude's (`throws::std_values`).
+        self.note_executor_params(&args[0]);
         let hint = self.hint(exp);
         let mut type_args = self.promise_type_args(class.span, targs, hint);
         // Without a written error type it rejects with what `reject` is called with.

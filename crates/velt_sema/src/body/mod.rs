@@ -284,6 +284,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// (`numbers::is_js_api`): per parameter, whether the signature declares it an integer (an
     /// index), which makes it a number in the arrow's body when unannotated.
     pub std_callback: Option<Vec<bool>>,
+    /// The parameters (by name span) of `new Promise` executors holding the prelude's `resolve`
+    /// and `reject`, and the `const`s holding them (`throws::std_values`).
+    pub executor_params: rustc_hash::FxHashSet<Span>,
     /// An arrow whose parameters without a type are `any` (`dynamic_member.rs`).
     pub any_callback: Option<Span>,
     /// Operands of reflective operations (`Object.keys`, `in`, `Object.hasOwn`, spreads, ...),
@@ -515,6 +518,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             f: frame,
             outer: vec![],
             std_callback: None,
+            executor_params: Default::default(),
             any_callback: None,
             instance_args: Default::default(),
             promise_callback: false,
