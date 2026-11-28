@@ -1,0 +1,13 @@
+// #3893: a promise rejecting with an error-set variable stored into a Promise<number> written without one (assign): as many rounds with variables as without.
+function later(n: number): Promise<number> {
+  return new Promise((r) => setTimeout(() => r(n), 1));
+}
+
+async function main(): Promise<void> {
+  let m: Promise<number> | null = null;
+  m = later(1);
+  if (m != null) {
+    console.log(await m);
+  }
+}
+main();

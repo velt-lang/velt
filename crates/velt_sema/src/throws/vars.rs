@@ -393,11 +393,19 @@ impl Ctx<'_> {
             }
             (None, None) => {}
         }
-        // Error types are compared as sets: a union holding a variable is matched member-wise
-        // in `plain_type`'s order only when it holds just one.
+        // Error types are compared as sets. Two unions of the same written members with one
+        // variable each (`IoError | V` and `IoError | W`: a `() => Promise<string, IoError>`
+        // site's rejection with the site's variable, stored as another such site's) are one
+        // type when the variables are one set, as two variables alone are (#3893). Any other
+        // union holding variables: the program is checked again with the solved sets.
         if self.union_members(a).is_some() || self.union_members(b).is_some() {
             let va: Vec<u32> = self.vars_of(a);
             let vb: Vec<u32> = self.vars_of(b);
+            if let ([x], [y]) = (va.as_slice(), vb.as_slice()) {
+                if self.plain_type(a) == self.plain_type(b) {
+                    return self.fn_sites.var_sets.union(*x, *y);
+                }
+            }
             if va.len() + vb.len() > 0 {
                 self.fn_sites.var_sets.unsupported = true;
             }

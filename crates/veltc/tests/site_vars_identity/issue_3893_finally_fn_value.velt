@@ -1,0 +1,15 @@
+// A `finally` callback calling a function value whose set is empty: `promiseFinally`, as
+// without error-set variables.
+let done: () => void = () => {};
+
+async function main(): Promise<void> {
+  const p = new Promise<void>((r) => {
+    done = r;
+  });
+  const q = Promise.resolve(1).finally(() => done());
+  console.log(await q);
+  await p;
+  console.log("done");
+}
+
+main();

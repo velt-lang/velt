@@ -91,8 +91,9 @@ impl FnCx<'_, '_> {
         // A promise that rejects, stored into a field or record value whose `Promise<T>` is
         // written without an error type: that site takes its errors (`throws::promise_sites`).
         // The literal converts its values to the expected types after the site is no longer
-        // the target, so the value seeds it here.
-        if let Some(exp) = exp {
+        // the target, so the value seeds it here; one rejecting with error-set variables is
+        // converted as written instead (`Ctx::promise_store_of_vars`).
+        if let Some(exp) = exp.filter(|&e| !self.cx.promise_store_of_vars(h.ty, e)) {
             self.cx.seed_promise_site(h.ty, exp);
         }
         h

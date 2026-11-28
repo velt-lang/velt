@@ -1,0 +1,26 @@
+// A `() => Promise<string, IoFailure | Aborted>` parameter passed on as another one: each
+// site's rejection is the written union with the site's variable, and the two are one set, so
+// the check with variables takes as many rounds as the one without (#3893).
+class IoFailure extends Error {}
+class Aborted extends Error {}
+
+async function second(label: string, read: () => Promise<string, IoFailure | Aborted>) {
+  try {
+    console.log(label, await read());
+  } catch (e) {
+    console.log(label, "threw:", e.message);
+  }
+}
+
+async function pass(label: string, text: () => Promise<string, IoFailure | Aborted>) {
+  await second(label, text);
+}
+
+async function main() {
+  await pass("ok", async () => "text");
+  await pass("fails", async () => {
+    throw new Aborted("stopped");
+  });
+}
+
+await main();

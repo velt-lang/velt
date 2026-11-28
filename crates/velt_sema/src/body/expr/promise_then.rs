@@ -364,6 +364,12 @@ impl FnCx<'_, '_> {
         // callback throws: one type (the error types are type parameters of their own), their
         // union, to which the promise and the callback convert (`any` when either is `any`).
         let joined = |s: &mut Self, x: Option<TyId>| -> Result<(TyId, bool), ()> {
+            // The callback's error-set variables (a call through a function value) as their
+            // sets are known now, which the check assumes (`assume_vars_known`): the function
+            // chosen (`promiseThen` or `promiseThenThrows`) is the one a check without
+            // variables chooses, which finds those sets so far. When a set grows later, the
+            // program is checked again with the solved sets.
+            let x = s.cx.assume_vars_known(x);
             match x {
                 None => Ok((e, false)),
                 Some(x) if e == never || e == x => Ok((x, true)),
