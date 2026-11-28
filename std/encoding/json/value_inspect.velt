@@ -57,6 +57,9 @@ function inspectAt(buf: string, v: JsonValue, depth: u32): void {
   if (n != null) {
     if (n != n || n == Infinity || n == -Infinity) {
       velt_rt_strbuf_push_str(buf, "null");
+    } else if (n == 0 && 1 / n < 0) {
+      // Node's inspect keeps the sign of zero (`String(-0)` is `0`).
+      velt_rt_strbuf_push_str(buf, "-0");
     } else {
       const text: string = hookCall("number_shortest", n);
       velt_rt_strbuf_push_str(buf, text);
