@@ -104,8 +104,9 @@ pub(super) fn lower_program_kept<'h>(
         cx.drain(false);
         cx.build_iface_glues();
         cx.seed_c_exports();
-        // `velt_main` last: whether it selects the per-core scheduler depends on everything else;
-        // then module state's accesses and the static atomics' release (`Cx::drain`).
+        // `velt_main` last: what it sets up depends on everything else, module state's slots,
+        // whether the program reaches tasks (`reaches_tasks`) and the static atomics' release
+        // (`Cx::drain`).
         cx.func(Work::Main);
         cx.drain(true);
         cx.build_iface_glues();

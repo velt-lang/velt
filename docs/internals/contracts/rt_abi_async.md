@@ -372,7 +372,6 @@ the runtime's Rust glue (child processes on Windows, file streams).
 | `velt_rt_spawn_target` | `(i64 worker)` | WebAssembly only (velt_rt_wasm); native programs run on the executor in Velt (#2196). `spawn(p, { worker })` (#211): the next spawn on this thread pins its task to `worker`. Called right after the task's arguments are evaluated, immediately before `velt_rt_spawn` / `_transfer` / `_detached` / `_fut`. Out of range (`worker < 0` or `≥ velt_rt_worker_count()`): panic `spawn: worker <w> is out of range (the runtime has <n> workers)`. In range, velt_rt spawns the task as usual (its host has one worker). |
 | `velt_rt_worker_count` | `() -> u64` | WebAssembly only (velt_rt_wasm): 1, `workerCount()` there (std/task/worker_index.velt) and std/net's listener worker count (std/net/rt.velt). On native targets the executor in Velt answers both (std/lang/hooks/sched.velt `schedWorkerCount`, std/net/tcp_sched.velt). |
 | `velt_rt_current_worker` | `() -> u64` | WebAssembly only (velt_rt_wasm): 0, `currentWorker()` there; on native targets std/lang/hooks/sched.velt `schedCurrentWorker`. |
-| `velt_rt_set_scheduler` | `(u32 kind)` | WebAssembly only (velt_rt_wasm): a no-op that nothing calls any more (velt_rt's went with its host, #2196). |
 
 velt_rt has no async runtime of its own: it starts no threads and runs no tasks. Its remaining
 leaves (`velt_rt_tcp_listen`, velt dev's listener handover) are polled by the executor in Velt

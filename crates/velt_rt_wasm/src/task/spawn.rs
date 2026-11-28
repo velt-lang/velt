@@ -132,10 +132,6 @@ pub unsafe extern "C" fn velt_rt_spawn_detached(
     executor::spawn_task(f, 0, None);
 }
 
-/// WebAssembly has one thread: one worker. The scheduler request is ignored.
-#[no_mangle]
-pub extern "C" fn velt_rt_set_scheduler(_kind: u32) {}
-
 /// `workerCount()`: 1 (one thread).
 #[no_mangle]
 pub extern "C" fn velt_rt_worker_count() -> u64 {

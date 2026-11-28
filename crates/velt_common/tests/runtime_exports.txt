@@ -224,7 +224,6 @@ velt_rt_wasm velt_rt_rwlock_read
 velt_rt_wasm velt_rt_rwlock_read_unlock
 velt_rt_wasm velt_rt_rwlock_write
 velt_rt_wasm velt_rt_rwlock_write_unlock
-velt_rt_wasm velt_rt_set_scheduler
 velt_rt_wasm velt_rt_set_throw_loc
 velt_rt_wasm velt_rt_signal_abort
 velt_rt_wasm velt_rt_signal_aborted
