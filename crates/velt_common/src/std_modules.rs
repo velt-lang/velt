@@ -135,6 +135,7 @@ table! {
     lang_hooks_sched_all => "lang/hooks/sched_all",
     lang_hooks_sched_blocking => "lang/hooks/sched_blocking",
     lang_hooks_sched_cells => "lang/hooks/sched_cells",
+    lang_hooks_sched_host => "lang/hooks/sched_host",
     lang_hooks_sched_io => "lang/hooks/sched_io",
     lang_hooks_sched_node_transfer => "lang/hooks/sched_node_transfer",
     lang_hooks_sched_race => "lang/hooks/sched_race",

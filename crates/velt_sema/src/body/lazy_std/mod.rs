@@ -130,6 +130,7 @@ pub(crate) fn is_helper(qualified: &str) -> bool {
             !h.fallback
                 && h.constructs.is_empty()
                 && !SCHED_HOOKS.contains(&qualified)
+                && !HOST_HOOKS.contains(&qualified)
                 && !MODULE_HOOKS.contains(&qualified)
         }))
         || HELPER_NAMES.contains(&name)
@@ -521,6 +522,13 @@ pub(super) fn units_restart(cx: &mut Ctx) {
     (cx.lazy.record_hooks, cx.lazy.sched_hooks) = (false, false);
 }
 
+/// A JS host's turns on the executor in Velt (sched_host.velt), checked with [`SCHED_HOOKS`] on
+/// wasm32 only: lowering calls them only for a JS host.
+pub(crate) const HOST_HOOKS: &[&str] = &[
+    velt_common::std_hook!(sched_host_main),
+    velt_common::std_hook!(sched_host_promise),
+];
+
 /// Adds [`SCHED_HOOKS`] to `found` the first time, on a native target (`Lazy::native_executor`)
 /// when live code runs on it (`live::Live::tasks`: async code, or an extern the executor serves). A
 /// program without such code doesn't load the executor; lowering then calls module_blocks.velt's
@@ -540,7 +548,14 @@ fn sched_hooks(cx: &mut Ctx, found: &mut Vec<DefId>) {
     cx.demand_std(velt_common::std_module!(lang_hooks_sched));
     cx.demand_std(velt_common::std_module!(lang_hooks_program_thread));
     cx.demand_std(velt_common::std_module!(lang_hooks_sched_spawn));
+    if cx.wasm32 {
+        // A JS host's turns: lowering calls them only there (WASI loads them unused).
+        cx.demand_std(velt_common::std_module!(lang_hooks_sched_host));
+    }
     demanded::hooks(cx, SCHED_HOOKS, found);
+    if cx.wasm32 {
+        demanded::hooks(cx, HOST_HOOKS, found);
+    }
     if cfg!(debug_assertions) {
         cx.demand_std(velt_common::std_module!(lang_hooks_sched_cells));
         demanded::hooks(cx, SCHED_CELL_HOOKS, found);

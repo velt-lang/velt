@@ -6,11 +6,14 @@
 #
 #   bench/wasm_exec_rows.sh <base velt> <base std> <head velt> <head std> [program.velt ...]
 #
-# Needs wasmtime and valgrind on PATH, and the wasm32-wasip1 Rust target. Prints a Markdown table.
+# A `velt` links the runtime library of its own profile (a debug `velt`, a debug one): BASE_RT_LIB
+# and HEAD_RT_LIB name each side's `libvelt_rt_wasm.a` instead (`$VELT_RT_LIB`; a release one,
+# cargo's `wasm32-wasip1/release/`). Needs wasmtime and valgrind on PATH, and the wasm32-wasip1
+# Rust target. Prints a Markdown table.
 set -euo pipefail
 
 if [ $# -lt 4 ]; then
-  sed -n '2,9p' "$0"
+  sed -n '2,12p' "$0"
   exit 2
 fi
 base_velt=$1 base_std=$2 head_velt=$3 head_std=$4
@@ -24,11 +27,11 @@ if [ $# -eq 0 ]; then
 fi
 work=$(mktemp -d)
 
-# build <velt> <std> <program> <out dir>: the module's path.
+# build <velt> <std> <program> <out dir> <runtime library or "">: the module's path.
 build() {
   local out="$4/$(basename "$3" .velt).wasm"
   mkdir -p "$4"
-  (cd "$root" && VELT_STD="$2" "$1" build --release --target wasm32-wasip1 "$3" -o "$out" >/dev/null)
+  (cd "$root" && VELT_RT_LIB="$5" VELT_STD="$2" "$1" build --release --target wasm32-wasip1 "$3" -o "$out" >/dev/null)
   echo "$out"
 }
 
@@ -46,8 +49,8 @@ instructions() {
 echo "| program | size base | size head | Δ | instructions base | instructions head | Δ |"
 echo "|---|---:|---:|---:|---:|---:|---:|"
 for p in "$@"; do
-  b=$(build "$base_velt" "$base_std" "$p" "$work/base")
-  h=$(build "$head_velt" "$head_std" "$p" "$work/head")
+  b=$(build "$base_velt" "$base_std" "$p" "$work/base" "${BASE_RT_LIB:-}")
+  h=$(build "$head_velt" "$head_std" "$p" "$work/head" "${HEAD_RT_LIB:-}")
   bs=$(stat -c %s "$b") hs=$(stat -c %s "$h")
   bi=$(cd "$work" && instructions "$b") hi=$(cd "$work" && instructions "$h")
   awk -v n="$(basename "$p")" -v bs="$bs" -v hs="$hs" -v bi="$bi" -v hi="$hi" 'BEGIN {

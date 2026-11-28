@@ -1,19 +1,23 @@
 // JS glue for Velt programs built with `--target wasm32-unknown-unknown`.
 //
 // The module imports its host services from `velt` (crates/velt_rt_wasm/src/platform.rs,
-// host.rs, host_turn.rs and host_promise.rs):
+// host.rs and host_turn.rs):
 //   write(stream, ptr, len)  bytes for stdout (1) / stderr (2)
 //   exit(code)               stop the program at once (thrown as VeltExit: `process.exit`, a panic)
-//   done(code)               the program ended with `code`
+//   done(code)               `main` returned `code` (the end, unless the program is hosted)
 //   now_ms()                 performance.now()
 //   host_release(slot)       forget a HostRef's value (HostRefs below)
 //   host_clone(slot)         a second slot for a HostRef's value
+// and, for a program that runs tasks, the host functions of `velt:turns` (the executor in Velt's
+// turns, std/lang/hooks/sched_host.velt):
+//   hosted()                 the root was handed to the turns: their `done` is the end
 //   set_timer(ms)            call velt_turn() in `ms` milliseconds, replacing the last request
 //                            (none when `ms` is negative)
-//   host_take(id, out)       write how host promise `id` settled to `out`, and forget it
-//   host_forget(id)          forget host promise `id`
-// and exports `memory`, `velt_start()` (runs `main`'s first turn), `velt_turn()` and
-// `velt_settle(id)`. Each call returns normally; the program runs in turns of the host's event
+//   done(code)               the program ended with `code`
+//   take(id, out)            write how host promise `id` settled to `out`, and forget it
+//   forget(id)               forget host promise `id`
+// It exports `memory`, `velt_start()` (runs `main`'s first turn), and with tasks `velt_turn()`
+// and `velt_settle(id)`. Each call returns normally; the program runs in turns of the host's event
 // loop, while a timer (`setTimeout`) calls `velt_turn` and a settled host promise `velt_settle`,
 // until it reports its end through `done`.
 //
@@ -85,6 +89,8 @@ export async function loadVelt(source, host = {}) {
     host,
     refs,
     ended: false,
+    // The program handed its root to the turns (`velt:turns.hosted`).
+    hosted: false,
     // Calls into the module in progress (a settle during one waits for it to return).
     depth: 0,
     promises: new Map(),
@@ -119,6 +125,35 @@ export async function loadVelt(source, host = {}) {
       }
     },
   };
+  // The turns of a program that runs tasks (std/lang/hooks/sched_host.velt): host functions of
+  // the module `velt:turns`, which it calls once it hands its root to them (`hosted`).
+  const turns = {
+    hosted() {
+      rt.hosted = true;
+    },
+    set_timer(ms) {
+      clearTimeout(timer);
+      // Rounded up: hosts round a delay down to whole milliseconds. Hosts fire a delay longer
+      // than 2^31 - 1 ms at once; a turn that comes early asks again.
+      const delay = ms < 0 ? -1 : Math.min(Math.ceil(ms), 0x7fffffff);
+      const fire = () => rt.enter(() => rt.exports.velt_turn());
+      if (host.setTimer) host.setTimer(delay, fire);
+      else if (delay >= 0) timer = setTimeout(fire, delay);
+    },
+    done: (code) => rt.end(code),
+    take(id, out) {
+      const p = rt.promises.get(id);
+      rt.promises.delete(id);
+      host.released?.(p.owner);
+      p.take(out);
+    },
+    forget(id) {
+      const p = rt.promises.get(id);
+      rt.promises.delete(id);
+      host.released?.(p?.owner);
+      p?.deferred?.forgotten();
+    },
+  };
   const imports = {
     velt: {
       write(stream, ptr, len) {
@@ -127,31 +162,11 @@ export async function loadVelt(source, host = {}) {
       exit(code) {
         throw new VeltExit(code);
       },
-      done: (code) => rt.end(code),
+      // `main` returned: the end, unless it handed its root to the turns, which tell theirs.
+      done: (code) => rt.hosted || rt.end(code),
       now_ms: () => performance.now(),
       host_release: (slot) => refs.release(slot >>> 0),
       host_clone: (slot) => refs.add(refs.get(slot >>> 0)),
-      set_timer(ms) {
-        clearTimeout(timer);
-        // Rounded up: hosts round a delay down to whole milliseconds. Hosts fire a delay longer
-        // than 2^31 - 1 ms at once; a turn that comes early asks again.
-        const delay = ms < 0 ? -1 : Math.min(Math.ceil(ms), 0x7fffffff);
-        const fire = () => rt.enter(() => rt.exports.velt_turn());
-        if (host.setTimer) host.setTimer(delay, fire);
-        else if (delay >= 0) timer = setTimeout(fire, delay);
-      },
-      host_take(id, out) {
-        const p = rt.promises.get(id >>> 0);
-        rt.promises.delete(id >>> 0);
-        host.released?.(p.owner);
-        p.take(out >>> 0);
-      },
-      host_forget(id) {
-        const p = rt.promises.get(id >>> 0);
-        rt.promises.delete(id >>> 0);
-        host.released?.(p?.owner);
-        p?.deferred?.forgotten();
-      },
     },
   };
   const module = await compile(await source);
@@ -160,6 +175,7 @@ export async function loadVelt(source, host = {}) {
     "velt:fetch": fetchHost(undefined, contexts),
     "velt:random": randomHost(),
     "velt:clock": clockHost(),
+    "velt:turns": turns,
     ...host.imports,
   };
   Object.assign(imports, hostImports(module, provided, rt));

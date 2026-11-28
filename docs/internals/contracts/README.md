@@ -187,12 +187,13 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   `ExternFnDef::is_async` with `host` (`HostImport::ret` is what `T` crosses as) and `ret`
   `Promise<T, IoError>`; `vir::HostImport::is_async` (additive) marks its import, which returns
   the `u32` id of the JS promise (manifest result `async:<type>`). Its call is the import, the
-  leaf `velt_rt_host_promise` and std's hook awaiting it (rt_abi_async.md §1.4), whose
+  leaf `velt_rt_host_promise` (std's `schedHostPromise` on the executor in Velt) and std's hook
+  awaiting it (rt_abi_async.md §1.4), whose
   `HostSettled<W>`, `hostAwait<T>`, `hostAwaitVoid`, `hostAwaitRef` and `hostAwaitRefOrNull`
   (std/host/promise.velt) are `std_hooks` entries; the global std/prelude/global/host_async.velt
   loads them for a module declaring one. On JS hosts `velt_main` hands `main`'s root to
-  `velt_rt_host_main` with the code after it (VIR `Work::MainFinish`) instead of calling
-  `velt_rt_block_on` (rt_abi_async.md §2.5).
+  `velt_rt_host_main` (std's `schedHostMain`, std/lang/hooks/sched_host.velt) with the code
+  after it (VIR `Work::MainFinish`) instead of blocking on it (rt_abi_async.md §2.5).
 - C pointers (#3094, docs/internals/design/c-ffi.md "As built" 11): `hir::TyKind::Ptr(T)` is
   velt/ffi's `Ptr<T>`, resolved from std's declaration through the `std_hooks` entry kind
   `type_kind` (`ffi_ptr_type`); it lowers to `Ty::Ptr` with the null niche, so `Ptr<T> | null`

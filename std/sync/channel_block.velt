@@ -30,7 +30,7 @@ import {
   rawFree,
 } from "velt/lang/intrinsics";
 import { Backoff } from "velt/sync/backoff";
-import { wakeOwned } from "#sync-chan-word";
+import { wakeOwned } from "./channel_word";
 import { publishOutput } from "#sync-output";
 
 // The block.

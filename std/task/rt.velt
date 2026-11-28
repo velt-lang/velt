@@ -1,5 +1,5 @@
-// velt/task (internal): the runtime functions velt/task calls: workers (the signals' are
-// signal_rt.velt's, the catches' catch_rt.velt's).
+// velt/task (internal): the runtime functions velt/task calls: workers (the catches' are
+// catch_rt.velt's).
 
 export declare function velt_rt_worker_count(): u64;
 

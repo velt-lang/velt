@@ -29,9 +29,8 @@ pub(super) use velt_common::std_hooks::SCHED_EXTERNS as EXTERNS;
 pub(super) use velt_common::std_hooks::SCHED_UNREF_DUE as UNREF_DUE;
 
 impl FnLower<'_, '_> {
-    /// Does this program run on the executor in Velt? On a native target and on WASI, which runs
-    /// it on its one thread (#3905). A JS host drives its turns itself (entry.rs) and keeps the
-    /// runtime's executor until those turns are the executor in Velt's.
+    /// Does this program run on the executor in Velt? On every target (#3905): WASI runs it on its
+    /// one thread, and a JS host in the turns the host drives (entry.rs, sched_host.velt).
     pub(super) fn std_sched(&self) -> bool {
         velt_common::std_hooks::std_scheduler() && self.cx.runs_std_executor()
     }
@@ -246,7 +245,8 @@ impl FnLower<'_, '_> {
     /// The end of `velt_main` with exit code `code`: when it is 0, the tasks still alive run to
     /// completion.
     pub(super) fn sched_finish(&mut self, code: &Operand) {
-        if self.std_sched() {
+        // A JS host's turns end the program themselves (sched_host.velt).
+        if self.std_sched() && !super::host::js_host(&self.cx.target) {
             let code = self.rvalue_temp(Ty::I32, Rvalue::Use(code.clone()));
             hooks::sched_finish(self, ty::I32::arg(code)).emit(self);
         }
@@ -312,6 +312,8 @@ impl FnLower<'_, '_> {
                 | Rt::CellGive
                 | Rt::CellCopy
                 | Rt::CellFree
+                | Rt::HostMain
+                | Rt::HostPromise
         ) || !self.std_sched()
         {
             return Err((args, dest));
@@ -512,6 +514,27 @@ impl FnLower<'_, '_> {
                     );
                     Some(c.emit(self).op())
                 }
+                // A JS host's turns and host promises on the executor in Velt (sched_host.velt).
+                (Rt::HostMain, [poll, state, size, _align, finish]) => {
+                    let [poll, state, finish] =
+                        [poll, state, finish].map(|o| self.as_usize(o.clone()));
+                    let stay = cint(i128::from(self.cx.boxing.fn_props), Ty::U64);
+                    hooks::sched_host_main(
+                        self,
+                        ty::USize::arg(poll),
+                        ty::USize::arg(state),
+                        ty::U64::arg(size.clone()),
+                        ty::USize::arg(finish),
+                        ty::U64::arg(stay),
+                    )
+                    .emit(self);
+                    None
+                }
+                (Rt::HostPromise, [id]) => Some(
+                    hooks::sched_host_promise(self, ty::U32::arg(id.clone()))
+                        .emit(self)
+                        .op(),
+                ),
                 (Rt::AwaitReady, [ticket, cx]) => {
                     let (ticket, cx) = (ticket.clone(), self.as_usize(cx.clone()));
                     let c =

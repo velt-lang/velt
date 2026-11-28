@@ -1,7 +1,7 @@
 // velt/sync (internal): the C functions of a channel wait's heap future (rt_abi_async.md §1:
 // `uint32_t poll(void* f, void* cx)` and `void drop(void* f)`) where a pointer takes 8 bytes, and
-// their addresses (`fnAddress`, a stand-in for `exportedAddress`, #2203 step 5). std/imports.velt
-// picks channel_entry_wasm.velt on WebAssembly, whose pointers take 4.
+// their addresses (`fnAddress`, a stand-in for `exportedAddress`, #2203 step 5), on every target:
+// on wasm32 `fnAddress` gives their machine-word form (#3905).
 
 import { fnAddress } from "velt/lang/intrinsics";
 import { dropCell, pollCell } from "velt/sync/channel_wait";

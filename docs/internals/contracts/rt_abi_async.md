@@ -22,11 +22,12 @@ executor's workers use the runtime's leaves (§5, §6, §14) through the C waker
 targets velt_rt keeps only the promise functions a program without the executor still calls
 (`velt_rt_fut_share`, `velt_rt_fut_id`); a promise shared outside any task (a
 C library's thread) is refused (#3782).
-A JS host's program (`wasm32-unknown-unknown`) calls the functions of §1 and §2 directly
-(velt_rt_wasm's executor). A `wasm32-wasip1` program runs on the executor in Velt, on its one
-thread, as a native one does (#3905); velt_rt_wasm's leaves take its own `cx` (4-byte words), so
-std's WASI variants run file operations as blocking-pool jobs (std/fs/rt_wasi.velt) and await no
-runtime leaf.
+Both WebAssembly targets run on the executor in Velt, on their one thread, as a native program
+does (#3905): `wasm32-wasip1` from `velt_main` to its end, `wasm32-unknown-unknown` (a JS host) in
+the turns the host drives (§2.5). velt_rt_wasm's leaves take its own `cx` (4-byte words), so std's
+WebAssembly variants run file operations as blocking-pool jobs (std/fs/rt_wasi.velt), answer
+sockets without the runtime (std/net/rt_none.velt) and await no runtime leaf; velt_rt_wasm's own
+executor (`task/`) runs no program any more.
 
 ## 1. Awaitable protocol
 
@@ -296,19 +297,20 @@ the holder of a node that drives it, whose hub keeps it allocated while any hold
 The call of an async host function (`declare host("m") async function f(…): Promise<T>`,
 https://veltlang.com/docs/reference/host-functions/) is the import `m.f`, which calls the JS
 function and returns a `u32` id under which the glue keeps its JS promise, then a promise leaf over
-that id (velt_rt_wasm `host_promise.rs`), and the promise of a std hook awaiting the leaf (velt_vir
+that id (std's `schedHostPromise`, std/lang/hooks/sched_host.velt), and the promise of a std hook awaiting the leaf (velt_vir
 `lower/host.rs`). The leaf's result is std's `HostSettled<W>` (std/host/promise.velt) in its foreign
 layout, `{ VeltStr code; VeltStr message; W value; }` (offsets 0, 24, 48): `W` is `T`, `u32` (a
 `HostRef` slot, 0 for `null`) for `HostRef` and `HostRef | null`, and `bool` (unused) for `void`.
 The hook throws `IoError(code, message)` when `code` is not empty, else makes the `T` of `value`;
 the call's promise is a `Promise<T, IoError>`, started like a compiled async function's call (§1.1).
 
-`VeltFut* velt_rt_host_promise(u32 id)` (velt_rt_wasm only, wasm32-unknown-unknown): the leaf of
-host promise `id`; result `HostSettled<W>`. Pending until the host settles the promise
-(`velt_settle`, §2.5); polled then, it calls the import `velt.host_take(id, slot)`, which writes
-the outcome to the zeroed slot (the value as the import's result convention writes a result of
-its type, or the rejection's name and message as strings) and forgets the promise. Dropped before
-that, it calls `velt.host_forget(id)`.
+`VeltFut* velt_rt_host_promise(u32 id)` (a JS host; std's `schedHostPromise`, a leaf of the
+executor in Velt, std/lang/hooks/sched_host.velt): the leaf of host promise `id`; result
+`HostSettled<W>`. Pending until the host settles the promise (`velt_settle`, §2.5); polled then,
+it calls the host function `velt:turns.take(id, slot)`, which writes the outcome to the zeroed
+slot (the value as the import's result convention writes a result of its type, or the
+rejection's name and message as strings) and forgets the promise. Dropped before that, it calls
+`velt:turns.forget(id)`. A pending one holds a keep-alive reference.
 
 ### 1.5 Promises that catch panics (`catchPanic`)
 
@@ -374,7 +376,7 @@ the runtime's Rust glue (child processes on Windows, file streams).
 | `velt_rt_timer_unref_due` | `() -> VeltFut*` (result `bool`) | WebAssembly only (velt_rt_wasm): ready at once with false, as its one thread runs the timers and decides the end. On native targets lowering calls the executor in Velt's hook (std/lang/hooks/sched_end.velt `unrefDue`): a due `unref()`'d timer asks whether to drop its callback, true once the process was seen with nothing left that can happen, as Node exits without running it (std/prelude/timers.velt). |
 | `velt_rt_spawn_fut` | `(VeltFut* f, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | WebAssembly only (velt_rt_wasm); native programs run on the executor in Velt (#2196). `spawn(p)` where `p` is already a heap future (boxed promise, leaf); takes ownership of `f`; `result_drop` as for `velt_rt_spawn` |
 | `velt_rt_spawn_target` | `(i64 worker)` | WebAssembly only (velt_rt_wasm); native programs run on the executor in Velt (#2196). `spawn(p, { worker })` (#211): the next spawn on this thread pins its task to `worker`. Called right after the task's arguments are evaluated, immediately before `velt_rt_spawn` / `_transfer` / `_detached` / `_fut`. Out of range (`worker < 0` or `≥ velt_rt_worker_count()`): panic `spawn: worker <w> is out of range (the runtime has <n> workers)`. In range, velt_rt spawns the task as usual (its host has one worker). |
-| `velt_rt_worker_count` | `() -> u64` | the configured workers, `VELT_THREADS` (a positive integer) or one per core, fixed for the process (1 on WebAssembly): `workerCount()` on WebAssembly (std/task/worker_index.velt; on native targets the executor in Velt answers), and std/net's listener worker count (std/net/rt.velt). |
+| `velt_rt_worker_count` | `() -> u64` | the configured workers, `VELT_THREADS` (a positive integer) or one per core, fixed for the process (1 on WebAssembly): std/net's listener worker count (std/net/rt.velt). |
 | `velt_rt_current_worker` | `() -> u64` | an index for this thread, always below `velt_rt_worker_count()`: `currentWorker()` on WebAssembly. |
 | `velt_rt_set_scheduler` | `(u32 kind)` | `1`: what `velt_main` calls first when the program pins a task (`spawn(p, { worker })`); a no-op. `2`: each thread of the executor in Velt calls it before it polls its first task (std/lang/hooks/sched_workers.velt, spare workers too): the thread enters the host's tokio context for the rest of the process, so the leaves it polls find the host's timers and I/O, and the runtime takes the process's tasks for the executor's (they have no runtime task). |
 
@@ -434,9 +436,10 @@ aborts it with a message carrying the delay, and std passes `timed` to a wait fo
 by `any` holds references to its sources until it is aborted (they reach it only through links it
 owns).
 
-Natively the signals are std's (`#task-signal`: std/task/signal_sched.velt over signal_core.velt,
-in raw memory; a wait is a heap future linked into its signal, woken in the order the waits
-began). WebAssembly's runtime keeps its own:
+The signals are std's on every target (std/task/signal_sched.velt over signal_core.velt, in raw
+memory; a wait is a heap future linked into its signal, woken in the order the waits began).
+velt_rt_wasm still defines its own, which no program calls since WebAssembly runs the executor in
+Velt (#3905); they go with its executor:
 
 | Symbol (velt_rt_wasm) | Signature | Notes |
 |---|---|---|
@@ -456,41 +459,41 @@ atomic word and a channel the last child closes); the runtime has no functions f
 
 ### 2.5 Turns a JS host drives (wasm32-unknown-unknown)
 
-A JS host's thread belongs to its event loop, so nothing waits on it (velt_rt_wasm
-`host_turn.rs`), and nothing unwinds through the module: every call from the host returns
-normally, with the executor's state on the heap. On `wasm32-unknown-unknown`, `velt_main` does not
-call `velt_rt_block_on`: it hands `main`'s root task to the runtime and returns.
-On both wasm targets `cx` is the same `VeltCx` with 32-bit pointers (the word at offset 0, the
-waker at 4; a header's table at its offset 0); velt_rt_wasm compiles velt_rt's `task/waker.rs`.
+A JS host's thread belongs to its event loop, so nothing waits on it, and nothing unwinds through
+the module: every call from the host returns normally, with the executor's state on the heap.
+The turns are the executor in Velt's (std/lang/hooks/sched_host.velt, #3905): on
+`wasm32-unknown-unknown`, `velt_main` hands `main`'s root task to them instead of blocking on it,
+and returns. On both wasm targets `cx` is the executor in Velt's `VeltCx`, its words 8 bytes wide
+(the waker at offset 8); a function whose address crosses takes machine words (#3905's P).
 
 - `velt_rt_host_main(PollFn poll, const void* state, u64 size, u64 align, int32_t (*finish)(void*
-  state))`: moves the root's unpolled state (`size` bytes, `align`) to the heap and runs the first
-  turn. `finish` is the code `velt_main` runs after `velt_rt_block_on` on other targets (the
-  uncaught error, the exit code), which the runtime calls with the heap state once the root is
-  done; then it frees the state.
-- `void velt_turn(void)` (export): a turn: run the microtasks, the ready tasks and the due timers
-  until none is left, as `velt_rt_block_on` does between its sleeps, so Velt's own order is the
-  native one; then ask for a wake-up at the earliest timer (every turn asks again: a host may
-  call early, as hosts round delays). The end follows native programs (velt_rt `entry.rs`
-  `finish`): once the root is done and the microtasks it queued ran, the runtime runs `finish`
-  at once (an uncaught error is reported then, whatever is still pending). A code other than 0
-  ends the program; with 0 the turns go on until no task `spawn` started and no started promise
-  is running and no keep-alive reference is held. When no timer or unsettled host promise can
-  wake a task any more, the program ends too (exit code 13 when the root waits at a top-level
-  `await` nothing can settle). Then the import `velt.done(code)`. No-op once the program ended.
-  WASI and the unit tests' `velt_rt_block_on` return to `velt_main` at the same point, and the
-  runtime runs the tasks on after a `main` that returned 0, sleeping between turns.
-- `void velt_settle(u32 id)` (export): host promise `id` settled: wake the task its leaf
-  registered (none if the leaf is gone), then `velt_turn()`.
-- `velt_start` (export) runs `velt_main`; a `main` that hands no root over ends at once, with
-  `velt.done(code)`.
+  state))` (std's `schedHostMain`): moves the root's unpolled state (`size` bytes, aligned to 16)
+  to the heap, tells the glue the program is hosted (`velt:turns.hosted()`) and runs the first
+  turn. `finish` is the code `velt_main` runs after the root on other targets (the uncaught
+  error, the exit code), which the turns call with the heap state once the root is done; then
+  they free the state.
+- `void velt_turn(void)` (export, std's): a turn: the worker's steps, as worker 0's loop takes
+  them (`schedBlockOn`, `schedFinish`), until it would wait in its reactor; then ask for a
+  wake-up at the earliest timer (`velt:turns.set_timer(ms)`, -1: none; every turn asks again: a
+  host may call early, as hosts round delays). The end follows native programs: once the root is
+  done, `finish` runs at once (an uncaught error is reported then, whatever is still pending). A
+  code other than 0 ends the program; with 0 the turns go on until no task is live. When nothing
+  can wake a task any more (no timer, no keep-alive reference, no unsettled host promise), the
+  program ends too (sched_end.velt; exit code 13 when the root waits at a top-level `await`
+  nothing can settle). Then `velt:turns.done(code)`. No-op once the program ended.
+- `void velt_settle(u32 id)` (export, std's): host promise `id` settled: wake the task its leaf
+  registered (none if the leaf is gone), then a turn.
+- `velt_start` (export, velt_rt_wasm) runs `velt_main` and reports its code with
+  `velt.done(code)`, which the glue takes as the end only for a program that is not hosted.
 
-Imports from module `velt` (the glue, crates/velt_rt_wasm/js/velt_web.mjs): `set_timer(f64 ms)`
-(call `velt_turn` in `ms` milliseconds, replacing the previous request; a negative `ms` cancels
-it), `done(i32 code)` (the program ended), `host_take(u32 id, void* out)` and
-`host_forget(u32 id)` (§1.4). `velt.exit(code)` throws (`process.exit`, a panic): the
-instance is done then. velt_link exports `velt_turn`, `velt_settle` and `__stack_pointer` (so a
-host can check that turns leave it where it was) from every browser module.
+Imports from module `velt` (the glue, crates/velt_rt_wasm/js/velt_web.mjs): `done(i32 code)`
+(`main` returned), and the host services. The turns call the glue's host functions of
+`velt:turns`: `hosted()`, `set_timer(f64 ms)` (call `velt_turn` in `ms` milliseconds, replacing
+the previous request; a negative `ms` cancels it), `done(i32 code)` (the program ended),
+`take(u32 id, u32 out)` and `forget(u32 id)` (§1.4). `velt.exit(code)` throws (`process.exit`, a
+panic): the instance is done then. velt_link exports `__stack_pointer` (so a host can check that
+turns leave it where it was) from every browser module, and `velt_turn` and `velt_settle` from
+one that runs tasks (the glue calls them only for such a program).
 A host that keeps the instance after `main` (a Worker) holds the program open with a started
 promise or a keep-alive reference while it calls entries of its own that spawn tasks, and drives
 them with the same `velt_turn` / `velt_settle`.
