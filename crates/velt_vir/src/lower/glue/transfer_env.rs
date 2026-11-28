@@ -93,15 +93,20 @@ impl<'c, 'h> FnLower<'c, 'h> {
         caps: &[(u32, PassMode, TyId)],
         copy: bool,
     ) {
-        let counted: Vec<TyId> = (caps.iter())
-            .filter(|(_, mode, ty)| *mode == PassMode::Owned && self.cx.holds_counted(*ty))
+        let owned: Vec<TyId> = (caps.iter())
+            .filter(|(_, mode, _)| *mode == PassMode::Owned)
             .map(|c| c.2)
+            .collect();
+        let counted: Vec<TyId> = (owned.iter().copied())
+            .filter(|&ty| self.cx.holds_counted(ty))
             .collect();
         let copier = cfunc(self.cx.func(Work::EnvClone(def, targs.to_vec())));
         self.answer_asked(here, ASK_CALL_COPY, |lw, e| {
             let copy = match copy {
                 true => {
-                    for t in &counted {
+                    // Each owned capture is a transfer root, whether this pass counts its
+                    // parts or not (`Cx::root_transfers`).
+                    for t in &owned {
                         lw.cx.note_transfer(*t);
                     }
                     if !counted.is_empty() {

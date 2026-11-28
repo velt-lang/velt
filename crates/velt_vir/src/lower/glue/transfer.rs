@@ -748,7 +748,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.when(nn, done);
         let unclaimed = self.unclaimed_drop_fn(ty);
         self.call_rt(Rt::FutStart, vec![f.clone(), unclaimed], None);
-        let g = match self.cx.holds_counted(slot) {
+        let g = match self.cx.root_holds_counted(slot) {
             true => cfunc(self.cx.func(Work::Glue(Glue::TransferRoot, slot))),
             false => cint(0, Ty::Ptr),
         };

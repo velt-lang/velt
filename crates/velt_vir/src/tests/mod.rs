@@ -54,6 +54,7 @@ mod srclocs;
 mod start_up_allocs;
 mod std_defs;
 mod std_src;
+mod transfer_passes;
 mod transfer_sites;
 mod verifier;
 mod vir_ext;
