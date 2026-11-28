@@ -1,7 +1,8 @@
 // velt/net/http (internal): the proxy a `fetch` goes through (#3693). The request's `proxy`
 // option, when it has one, decides: a proxy URL, or "" for none. Otherwise the environment's
-// proxy is used, always, read as Bun reads it (`fromEnv`), at every request and redirect hop (a
-// program that never fetches reads none of the variables):
+// proxy is used, always, read as Bun reads it (`fromEnv`), as it is at each request and redirect
+// hop: read again after `setEnv` or `removeEnv` changed the environment, else kept (a program
+// that never fetches reads none of the variables):
 // - `http_proxy`, else `HTTP_PROXY`, for `http:`; `https_proxy`, else `HTTPS_PROXY`, for `https:`
 //   (never the `http:` one); `all_proxy`, else `ALL_PROXY`, for both when the scheme's is unset.
 //   A lowercase variable that is empty counts as unset, so the uppercase one is read (CI
@@ -29,6 +30,7 @@ import { base64Encode, utf8Encode } from "velt/encoding";
 import { URL } from "velt/net/url";
 import { decodeLenient } from "velt/net/url/encode";
 import { getEnv } from "#env-sys";
+import { envChanges } from "velt/process/env_changes";
 import { noProxy } from "velt/net/http/fetch/client/no_proxy";
 
 /** A proxy to send requests through. */
@@ -63,35 +65,82 @@ export function proxyFor(
 }
 
 /**
- * The environment's proxy for a request to `hostname` on `port`, its variables read now (module
- * comment).
+ * The environment's proxy for a request to `hostname` on `port`, its variables as they are now
+ * (module comment).
  */
 export function fromEnv(https: bool, hostname: string, port: i64): Via | null throws IoError {
-  let name = https ? "https_proxy" : "http_proxy";
-  let value = usable(variable(name));
-  if (value == null) {
-    name = https ? "HTTPS_PROXY" : "HTTP_PROXY";
-    value = usable(variable(name));
-  }
-  if (value == null) {
-    name = "all_proxy";
-    value = usable(variable(name));
-  }
-  if (value == null) {
-    name = "ALL_PROXY";
-    value = usable(variable(name));
-  }
+  const vars = envProxy();
+  const value = https ? vars.https : vars.http;
   if (value == null) {
     return null;
   }
-  let list = variable("no_proxy");
-  if (list == null) {
-    list = variable("NO_PROXY");
-  }
+  const list = vars.list;
   if (list != null && noProxy(list, hostname, port)) {
     return null;
   }
-  return parseProxy(value, `$${name}`);
+  return parseProxy(value, `$${https ? vars.httpsName : vars.httpName}`);
+}
+
+/** What the proxy variables say, as the environment's `changes`-th version has them. */
+class EnvProxy {
+  changes: u64;
+  /** The proxy of `http:` requests, and the variable it is from; null for none. */
+  http: string | null;
+  httpName: string;
+  /** The proxy of `https:` requests, and the variable it is from; null for none. */
+  https: string | null;
+  httpsName: string;
+  /** `no_proxy`, else `NO_PROXY`; null when neither is set. */
+  list: string | null;
+
+  constructor(changes: u64) {
+    this.changes = changes;
+    this.http = null;
+    this.httpName = "";
+    this.https = null;
+    this.httpsName = "";
+    this.list = null;
+  }
+}
+
+/** What the proxy variables said when last read. */
+let known: EnvProxy | null = null;
+
+/**
+ * What the proxy variables say now: read again only after `setEnv` or `removeEnv` changed the
+ * environment (std/process/env_changes.velt), so a request reads none of them otherwise.
+ */
+function envProxy(): EnvProxy {
+  const changes = envChanges();
+  const last = known;
+  if (last != null && last.changes == changes) {
+    return last;
+  }
+  const vars = new EnvProxy(changes);
+  const all = usable(variable("all_proxy")) ?? usable(variable("ALL_PROXY"));
+  vars.http = usable(variable("http_proxy"));
+  vars.httpName = "http_proxy";
+  if (vars.http == null) {
+    vars.http = usable(variable("HTTP_PROXY"));
+    vars.httpName = "HTTP_PROXY";
+  }
+  if (vars.http == null && all != null) {
+    vars.http = all;
+    vars.httpName = usable(variable("all_proxy")) != null ? "all_proxy" : "ALL_PROXY";
+  }
+  vars.https = usable(variable("https_proxy"));
+  vars.httpsName = "https_proxy";
+  if (vars.https == null) {
+    vars.https = usable(variable("HTTPS_PROXY"));
+    vars.httpsName = "HTTPS_PROXY";
+  }
+  if (vars.https == null && all != null) {
+    vars.https = all;
+    vars.httpsName = usable(variable("all_proxy")) != null ? "all_proxy" : "ALL_PROXY";
+  }
+  vars.list = variable("no_proxy") ?? variable("NO_PROXY");
+  known = vars;
+  return vars;
 }
 
 /** Variable `name`, or null when it is unset, empty, `""` or `''` (as Bun's `is_emptyish`). */
