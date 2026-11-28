@@ -36,7 +36,9 @@ VELT=target/release/velt python3 bench/vs-csharp/run.py cachegrind WORK --scale 
 
 `setup` downloads the C# sources (the original solutions and drivers from ben-chmarks.com, the
 optimized solutions from the page's repository) and builds them as the page does: NativeAOT,
-`-c Release -p:OptimizationPreference=Speed -p:IlcInstructionSet=native`. `run` builds the Velt
+`-c Release -p:OptimizationPreference=Speed -p:IlcInstructionSet=native`. It needs network access to
+ben-chmarks.com and github.com: the C# code is fetched when the suite is set up, not kept here.
+`run` and `cachegrind` need only `velt` (and valgrind for `cachegrind`). `run` builds the Velt
 ports with `velt build --release --cpu native` (the counterpart of `IlcInstructionSet=native`),
 runs the three programs interleaved, pinned to one CPU, with one warm-up and one timed
 repetition of every case per process (the page's `--repetitions 1`), checks that all print the
