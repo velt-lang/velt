@@ -1,0 +1,16 @@
+// Global (loaded when a module names one of these in code, `performance` for more than
+// `performance.now()`, which the compiler reads itself): Node's `performance` and its user timing
+// (https://veltlang.com/docs/reference/globals/).
+export {
+  performance,
+  Performance,
+  PerformanceEntry,
+  PerformanceMark,
+  PerformanceMarkOptions,
+  PerformanceMeasure,
+  PerformanceMeasureOptions,
+  PerformanceObserver,
+  PerformanceObserverInit,
+  PerformanceObserverCallback,
+  PerformanceObserverEntryList,
+} from "velt/lang/performance";

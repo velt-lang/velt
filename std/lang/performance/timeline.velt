@@ -1,0 +1,69 @@
+// velt/lang/performance (internal): the timeline's buffers of marks and measures, and the time of
+// the last mark of each name, which `performance.measure` reads. Module state: only programs
+// that use the user timing load it (`performance.now()` alone is the compiler's).
+
+import { PerformanceEntry } from "./entry";
+
+let marks: PerformanceEntry[] = [];
+let measures: PerformanceEntry[] = [];
+let markTimes = new Map<string, number>();
+
+/** Records `e`, a mark or a measure. */
+export function buffer(e: PerformanceEntry) {
+  if (e.entryType == "mark") {
+    marks.push(e);
+    markTimes.set(e.name, e.startTime);
+  } else {
+    measures.push(e);
+  }
+}
+
+/** The time of the last mark named `name`, if one is recorded. */
+export function markTime(name: string): number | undefined {
+  return markTimes.get(name);
+}
+
+/**
+ * The recorded entries (of `type`, `"mark"`, `"measure"` or `"resource"`, when given; named
+ * `name` when given), in order of `startTime`, those of the same time in the order they were
+ * recorded, marks before measures, as Node lists them.
+ */
+export function entries(name: string | undefined, type: string | undefined): PerformanceEntry[] {
+  let all: PerformanceEntry[] = [];
+  if (type === undefined || type == "mark") {
+    all = all.concat(marks);
+  }
+  if (type === undefined || type == "measure") {
+    all = all.concat(measures);
+  }
+  if (name !== undefined) {
+    all = all.filter((e) => e.name == name);
+  }
+  return byStart(all);
+}
+
+/** `list` in order of `startTime`, keeping the order of entries of the same time. */
+export function byStart(list: PerformanceEntry[]): PerformanceEntry[] {
+  list.sort((a, b) => a.startTime - b.startTime);
+  return list;
+}
+
+/** Drops the recorded marks (named `name` when given). */
+export function clearMarks(name: string | undefined) {
+  if (name === undefined) {
+    marks = [];
+    markTimes.clear();
+    return;
+  }
+  markTimes.delete(name);
+  marks = marks.filter((e) => e.name != name);
+}
+
+/** Drops the recorded measures (named `name` when given). */
+export function clearMeasures(name: string | undefined) {
+  if (name === undefined) {
+    measures = [];
+    return;
+  }
+  measures = measures.filter((e) => e.name != name);
+}

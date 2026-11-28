@@ -1,0 +1,12 @@
+// velt/lang/performance: Node's `performance` global and its user timing: marks, measures and
+// their observers (internal; std/prelude/global/performance.velt).
+export { PerformanceEntry } from "./entry";
+export { PerformanceMark, PerformanceMarkOptions } from "./mark";
+export { PerformanceMeasure, PerformanceMeasureOptions } from "./measure";
+export {
+  PerformanceObserver,
+  PerformanceObserverInit,
+  PerformanceObserverCallback,
+} from "./observer";
+export { PerformanceObserverEntryList } from "./entry_list";
+export { Performance, performance } from "./performance";

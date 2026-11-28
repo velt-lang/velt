@@ -1,0 +1,31 @@
+// velt/lang/performance (internal): `PerformanceObserverEntryList`, what an observer's callback
+// is given.
+
+import { PerformanceEntry } from "./entry";
+import { byStart } from "./timeline";
+
+/** The entries an observer gathered since its last callback, in order of `startTime`. */
+export class PerformanceObserverEntryList {
+  #entries: PerformanceEntry[];
+
+  constructor(entries: PerformanceEntry[]) {
+    this.#entries = byStart(entries);
+  }
+
+  /** All of them. */
+  getEntries(): PerformanceEntry[] {
+    return this.#entries.slice();
+  }
+
+  /** Those of `type` (`"mark"`, `"measure"`). */
+  getEntriesByType(type: string): PerformanceEntry[] {
+    return this.#entries.filter((e) => e.entryType == type);
+  }
+
+  /** Those named `name` (and of `type`, when given). */
+  getEntriesByName(name: string, type?: string): PerformanceEntry[] {
+    return this.#entries.filter(
+      (e) => e.name == name && (type === undefined || e.entryType == type),
+    );
+  }
+}

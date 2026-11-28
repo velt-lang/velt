@@ -1,0 +1,166 @@
+// velt/lang/performance (internal): `PerformanceObserver`, which is called back with the
+// entries of the types it observes, after the code that records them is done (Node's
+// `setImmediate`), and the list of observers connected.
+
+import { PerformanceEntry } from "./entry";
+import { PerformanceObserverEntryList } from "./entry_list";
+import { CodedTypeError } from "./errors";
+import { entries } from "./timeline";
+import { DOMException } from "velt/lang/dom_exception";
+
+/** What an observer is called with: the entries gathered, and the observer. */
+export type PerformanceObserverCallback = (entries: PerformanceObserverEntryList, observer: PerformanceObserver) => void;
+
+/**
+ * What `observe` takes: one entry type (`type`, with `buffered` to start with the entries
+ * already recorded) or several (`entryTypes`).
+ */
+export type PerformanceObserverInit = { entryTypes?: string[]; type?: string; buffered?: boolean };
+
+/** The entry types Node supports (`PerformanceObserver.supportedEntryTypes`). */
+function supported(): string[] {
+  return ["dns", "function", "gc", "http", "http2", "mark", "measure", "net", "resource"];
+}
+
+// The observers connected, and those with entries to be called back with.
+let observers: PerformanceObserver[] = [];
+let pending: PerformanceObserver[] = [];
+let queued = false;
+
+/** Gives `e`, just recorded, to the observers of its type. */
+export function enqueue(e: PerformanceEntry) {
+  for (const o of observers) {
+    o.offer(e);
+  }
+}
+
+/** Calls the observers back with what they gathered, once the code running is done. */
+function queuePending() {
+  if (queued) {
+    return;
+  }
+  queued = true;
+  setImmediate(async () => {
+    queued = false;
+    const due = pending;
+    pending = [];
+    for (const o of due) {
+      o.dispatch();
+    }
+  });
+}
+
+/** Observes the timeline: `new PerformanceObserver((list) => …).observe({ type: "mark" })`. */
+export class PerformanceObserver {
+  #callback: PerformanceObserverCallback;
+  #types: string[] = [];
+  // 0: not observing, 1: one type (`type`), 2: several (`entryTypes`).
+  #mode: number = 0;
+  #buffer: PerformanceEntry[] = [];
+
+  constructor(callback: PerformanceObserverCallback) {
+    this.#callback = callback;
+  }
+
+  /**
+   * Starts observing `options.type` (and the entries of it recorded already, with `buffered`)
+   * or `options.entryTypes` (in place of those observed so far); unsupported types are left
+   * out. One observer observes one way: changing it throws `InvalidModificationError`.
+   */
+  observe(options: PerformanceObserverInit = {}) {
+    const types = options.entryTypes;
+    const type = options.type;
+    if (types === undefined && type === undefined) {
+      throw new CodedTypeError(
+        "ERR_MISSING_ARGS",
+        'The "options.entryTypes" and "options.type" arguments must be specified',
+      );
+    }
+    if (types !== undefined && type !== undefined) {
+      throw new CodedTypeError(
+        "ERR_INVALID_ARG_VALUE",
+        `The property 'options.entryTypes' options.entryTypes can not set with options.type together. Received ${listText(types)}`,
+      );
+    }
+    if (this.#mode == 0) {
+      this.#mode = types !== undefined ? 2 : 1;
+    } else if (this.#mode == 1 && types !== undefined) {
+      throw new DOMException(
+        "PerformanceObserver can not change to multiple observations",
+        "InvalidModificationError",
+      );
+    } else if (this.#mode == 2 && type !== undefined) {
+      throw new DOMException(
+        "PerformanceObserver can not change to single observation",
+        "InvalidModificationError",
+      );
+    }
+    if (types !== undefined) {
+      const known = supported();
+      this.#types = types.filter((t) => known.includes(t));
+    } else if (type !== undefined) {
+      if (!supported().includes(type)) {
+        return;
+      }
+      if (!this.#types.includes(type)) {
+        this.#types.push(type);
+      }
+      if (options.buffered == true) {
+        for (const e of entries(undefined, type)) {
+          this.#buffer.push(e);
+        }
+        this.#pend();
+      }
+    }
+    if (this.#types.length == 0) {
+      this.disconnect();
+    } else if (!observers.includes(this)) {
+      observers.push(this);
+    }
+  }
+
+  /** Stops observing and drops the entries not yet given to the callback. */
+  disconnect() {
+    observers = observers.filter((o) => o !== this);
+    pending = pending.filter((o) => o !== this);
+    this.#buffer = [];
+    this.#types = [];
+    this.#mode = 0;
+  }
+
+  /** The entries gathered and not yet given to the callback, which then won't get them. */
+  takeRecords(): PerformanceEntry[] {
+    const list = this.#buffer;
+    this.#buffer = [];
+    return list;
+  }
+
+  /** Gathers `e` when it is of a type observed (`enqueue`). */
+  offer(e: PerformanceEntry) {
+    if (!this.#types.includes(e.entryType)) {
+      return;
+    }
+    this.#buffer.push(e);
+    this.#pend();
+  }
+
+  /** Calls the callback with the entries gathered (`queuePending`). */
+  dispatch() {
+    const list = new PerformanceObserverEntryList(this.#buffer);
+    this.#buffer = [];
+    const callback = this.#callback;
+    callback(list, this);
+  }
+
+  #pend() {
+    if (!pending.includes(this)) {
+      pending.push(this);
+    }
+    queuePending();
+  }
+}
+
+/** `[ 'a', 'b' ]`, as Node's message shows the array. */
+function listText(xs: string[]): string {
+  return xs.length == 0 ? "[]" : `[ ${xs.map((x) => `'${x}'`).join(", ")} ]`;
+}

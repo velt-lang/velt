@@ -1,0 +1,11 @@
+sync [ 'early', 'm1', 'm2' ]
+micro
+cb [ 'm3' ] 1 1 true
+next turn
+o2 [ 'measure:me', 'mark:m6' ]
+TypeError: The "options.entryTypes" and "options.type" arguments must be specified
+TypeError: The property 'options.entryTypes' options.entryTypes can not set with options.type together. Received [ 'mark' ]
+bogus ok
+InvalidModificationError: PerformanceObserver can not change to multiple observations
+InvalidModificationError: PerformanceObserver can not change to single observation
+end
