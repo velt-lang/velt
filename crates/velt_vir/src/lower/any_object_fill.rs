@@ -159,3 +159,18 @@ impl FnLower<'_, '_> {
         self.switch_to(no);
     }
 }
+
+impl FnLower<'_, '_> {
+    /// A pattern binds member `i` of the object type `ty`, a `never` (#3121): no value is one,
+    /// so the program stops with sema's `TypeError` for a read of it (`never_field_read`).
+    pub(super) fn never_member_bound(&mut self, ty: TyId, i: u32) {
+        let name = match self.plain_adt(ty) {
+            Some((d, _)) => self.cx.adt_def(d).fields[i as usize].name.clone(),
+            None => format!("{i}"),
+        };
+        let on = self.any_target_name(ty);
+        self.panic_msg(&format!(
+            "TypeError: `{name}` of a `{on}` is `never`: no value is one to read"
+        ));
+    }
+}

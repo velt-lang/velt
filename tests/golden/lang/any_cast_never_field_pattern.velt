@@ -1,0 +1,17 @@
+// Taking apart an object converted from `any` with a pattern that binds its `never` member
+// (#3121): it stops with the `TypeError` of a read of the member (any_cast_never_field_read.velt);
+// a pattern that leaves the member out binds the others (any_cast_never_field.velt).
+interface W {
+  tag: string;
+  n: never;
+}
+
+function show({ tag, n }: W): void {
+  console.log("unreached", tag, n);
+}
+
+const w = { tag: "t", n: 1 } as any as W;
+const { tag } = w;
+console.log(tag);
+show(w);
+console.log("unreached");

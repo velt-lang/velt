@@ -249,6 +249,11 @@ impl FnLower<'_, '_> {
             PatKind::Adt { fields } => {
                 for (i, p) in fields {
                     let fty = self.cx.adt_field_tys(ty)[*i as usize];
+                    if self.cx.is_never(fty) && !matches!(p.kind, PatKind::Wildcard) {
+                        // A `never` member of an object converted from `any` holds nothing
+                        // (any_object_fill.rs, #3121): binding it stops, as reading it does.
+                        return self.never_member_bound(ty, *i);
+                    }
                     let fp = self.pat_field(place, ty, *i);
                     self.bind_pat(p, &fp, fty, register);
                 }
