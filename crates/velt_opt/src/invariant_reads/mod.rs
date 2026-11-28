@@ -1,5 +1,5 @@
 //! Reads through object and array header pointers that no iteration can change are made once,
-//! before the outermost loop around them that writes no memory.
+//! before the outermost loop around them that writes no memory but scalar array elements.
 //!
 //! A typed array's `length` is computed from its buffer's bytes (`(*(*(*v).buf).bytes).len`)
 //! at every `xs[i]`. LLVM keeps the chain inside a loop nest when the inner loop may run no
@@ -11,11 +11,14 @@
 //! every loop.
 //!
 //! A read `(*p as A).f…` qualifies when, for the loop it leaves (and every loop between):
-//! - **nothing in the loop writes memory**: no store through a pointer, into a local whose
-//!   address is taken, or by `memcpy`/`memset`, and no call but SIMD operations that only
-//!   compute or load (no store, no optimistic load of atomic words). A free is a call, so no
-//!   object is freed either, and no other thread changes a plain field (sema's exclusivity; an
-//!   `Atomic`'s word, which may change, is never read here);
+//! - **nothing in the loop writes memory but array elements**: no store through a pointer other
+//!   than a scalar element's ([`elements`]: element memory holds no header and no object, so
+//!   such a store changes none of the reads moved here; a copy loop `dst[d + i] = src[s + i]`
+//!   keeps both headers in registers), no store into a local whose address is taken, or by
+//!   `memcpy`/`memset`, and no call but SIMD operations that only compute or load (no store, no
+//!   optimistic load of atomic words). A free is a call, so no object is freed either, and no
+//!   other thread changes a plain field (sema's exclusivity; an `Atomic`'s word, which may
+//!   change, is never read here);
 //! - **the pointers are object or header pointers**: `p` is a pointer local the loop does not
 //!   assign (or assigns only copies of one such local, a copy that dominates the read), every
 //!   `Deref` reads a class object's or the array header's aggregate, every pointer followed after the first
@@ -61,6 +64,8 @@
 //! load it moves to where the load may not run, and the next load of the chain then cannot
 //! move either; and an object field may be null (the zero fill) where LLVM would assume not.
 
+mod elements;
+
 use std::collections::HashMap;
 
 use velt_vir::simd::{Op, SimdCall};
@@ -78,7 +83,7 @@ use crate::visit::{
 
 /// Hoist the qualifying reads of `func`'s loops; returns whether anything changed.
 pub(crate) fn run(aggs: &[AggLayout], kinds: &Kinds, func: &mut Function) -> bool {
-    let Some(reads) = chain_reads(aggs, kinds, func) else {
+    let Some((reads, elem)) = chain_reads(aggs, kinds, func) else {
         return false;
     };
     let preds = predecessors(func);
@@ -96,7 +101,7 @@ pub(crate) fn run(aggs: &[AggLayout], kinds: &Kinds, func: &mut Function) -> boo
         .map(|lp| {
             let relevant = lp.body.iter().zip(&reads).any(|(b, r)| *b && *r);
             if relevant {
-                LoopFacts::of(aggs, kinds, func, &usage, lp)
+                LoopFacts::of(aggs, kinds, func, &usage, &elem, lp)
             } else {
                 LoopFacts {
                     quiet: false,
@@ -200,6 +205,8 @@ pub(crate) struct Kinds {
     aggs: Vec<Kind>,
     /// Per extern: whether a call only computes values ([`computes_only`]).
     computes: Vec<bool>,
+    /// The array header aggregate, if the program has arrays.
+    array: Option<AggId>,
 }
 
 impl Kinds {
@@ -215,6 +222,10 @@ impl Kinds {
                 })
                 .collect(),
             computes: externs.iter().map(computes_only).collect(),
+            array: aggs
+                .iter()
+                .position(|a| a.name == velt_vir::ARRAY_AGG_NAME)
+                .map(|i| AggId(i as u32)),
         }
     }
 
@@ -228,10 +239,15 @@ impl Kinds {
     }
 }
 
-/// Per block, whether it reads a chain; `None` when no block that may be on a loop writing no
-/// memory does: most functions have no such loop, and the dominators and loops are not worth
-/// computing for them.
-fn chain_reads(aggs: &[AggLayout], kinds: &Kinds, func: &Function) -> Option<Vec<bool>> {
+/// Per block, whether it reads a chain, and per local, whether it is an element pointer
+/// ([`elements::element_pointers`]); `None` when no block that may be on a loop writing no
+/// memory but elements does: most functions have no such loop, and the dominators and loops are
+/// not worth computing for them.
+fn chain_reads(
+    aggs: &[AggLayout],
+    kinds: &Kinds,
+    func: &Function,
+) -> Option<(Vec<bool>, Vec<bool>)> {
     // A cycle has an edge to a block numbered no higher than its source.
     let backwards = func.blocks.iter().enumerate().any(|(bi, b)| {
         let mut back = false;
@@ -241,11 +257,15 @@ fn chain_reads(aggs: &[AggLayout], kinds: &Kinds, func: &Function) -> Option<Vec
     if !backwards {
         return None;
     }
+    let elem = match kinds.array {
+        Some(array) => elements::element_pointers(aggs, func, array),
+        None => vec![false; func.locals.len()],
+    };
     // The blocks that may be on a cycle of blocks writing no memory (address-taken locals
     // aside, which `LoopFacts` checks): drop the blocks without an edge in or out among the
     // rest until none is left to drop; every such cycle stays.
     let n = func.blocks.len();
-    let mut alive: Vec<bool> = func.blocks.iter().map(|b| calm(kinds, b)).collect();
+    let mut alive: Vec<bool> = func.blocks.iter().map(|b| calm(kinds, &elem, b)).collect();
     let (mut ins, mut outs) = (vec![0u32; n], vec![0u32; n]);
     for (u, b) in func.blocks.iter().enumerate().filter(|(u, _)| alive[*u]) {
         for_each_target(&b.term, |v| {
@@ -309,15 +329,15 @@ fn chain_reads(aggs: &[AggLayout], kinds: &Kinds, func: &Function) -> Option<Vec
         alive[b] = found;
         any |= found;
     }
-    any.then_some(alive)
+    any.then_some((alive, elem))
 }
 
-/// Whether a block writes no memory through a pointer and calls only computing SIMD
-/// operations.
-fn calm(kinds: &Kinds, b: &BasicBlock) -> bool {
+/// Whether a block writes no memory through a pointer but scalar elements and calls only
+/// computing SIMD operations.
+fn calm(kinds: &Kinds, elem: &[bool], b: &BasicBlock) -> bool {
     let deref = |p: &Place| p.proj.iter().any(|x| matches!(x, Proj::Deref(_)));
     b.stmts.iter().all(|s| match s {
-        Stmt::Assign(dest, _) => !deref(dest),
+        Stmt::Assign(dest, _) => !deref(dest) || elements::is_element_store(elem, dest),
         Stmt::MemCopy { .. } | Stmt::MemCopyDyn { .. } | Stmt::MemSet { .. } => false,
         Stmt::Nop => true,
     }) && match &b.term {
@@ -443,7 +463,8 @@ type Defs = HashMap<u32, Option<(Local, Vec<(usize, usize)>)>>;
 
 /// What one loop writes.
 struct LoopFacts {
-    /// Nothing in the loop writes memory or calls anything but a computing SIMD operation.
+    /// Nothing in the loop writes memory but scalar elements or calls anything but a computing
+    /// SIMD operation.
     quiet: bool,
     /// Every test in the loop is a counter's ([`counters::counted`]).
     counted: bool,
@@ -457,12 +478,15 @@ impl LoopFacts {
         kinds: &Kinds,
         func: &Function,
         usage: &Usage,
+        elem: &[bool],
         lp: &Loop,
     ) -> LoopFacts {
         let mut quiet = true;
         let mut defs = Defs::new();
         let writes_memory = |p: &Place| {
-            p.proj.iter().any(|x| matches!(x, Proj::Deref(_))) || usage.get(p.local).address_taken
+            (p.proj.iter().any(|x| matches!(x, Proj::Deref(_)))
+                && !elements::is_element_store(elem, p))
+                || usage.get(p.local).address_taken
         };
         for (bi, block) in func.blocks.iter().enumerate() {
             if !lp.body[bi] {
@@ -491,12 +515,12 @@ impl LoopFacts {
             if let Terminator::Call { callee, dest, .. } = &block.term {
                 quiet &= kinds.computes(callee);
                 if let Some(d) = dest {
-                    quiet &= !writes_memory(d);
+                    quiet &= !writes_memory(d) && !elements::is_element_store(elem, d);
                     note_def(&mut defs, d, None, (bi, block.stmts.len()));
                 }
             }
         }
-        // Only a loop that writes nothing is worth the walk.
+        // Only a loop that writes nothing but elements is worth the walk.
         let counted = quiet && counters::counted(aggs, func, lp);
         LoopFacts {
             quiet,
