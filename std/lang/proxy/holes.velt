@@ -1,0 +1,263 @@
+// velt/lang/proxy (internal): the state of the array methods a proxy runs (velt/lang/proxy/array,
+// issue #823): the methods running on this thread and their targets, the target whose trap call
+// is running, and the holes the methods made in their targets. Node leaves a hole where `pop`,
+// `shift` and `splice` delete an element before they write the shorter length, and before an
+// element `unshift` and `splice` write past the end; Velt's arrays have none, so the element
+// stays (a gap is filled) and `Reflect` (velt/lang/proxy/reflect) reads these records instead.
+//
+// A target is identified by its identity (`identity`, its address), which cannot be reused while
+// a method on it runs: its proxy keeps it alive. The state is this thread's: the methods are
+// synchronous (a trap or callback that awaits gets a promise back, it cannot suspend the method),
+// so a method starts and ends on one thread with no other code of that thread in between.
+// `proxyArrayInvoke` and the trap calls end what they start in `finally`, so a trap that throws
+// leaves nothing behind; the blocks are given back when the outermost method ends.
+//
+// Two blocks of words, each `[capacity, length, word × capacity]` from `rawAlloc`, or 0:
+// - the frames, innermost last: a method on target `t` is `t | 1`, a trap call of a method on
+//   `t` is `t` (identities are addresses, so even: a target is an array, never a tagged pointer
+//   such as a typed proxy's held in an `any`);
+// - the holes, as pairs (target, index).
+
+import {
+  addressLoad,
+  addressStore,
+  identity,
+  noInline,
+  rawAlloc,
+  rawFree,
+} from "velt/lang/intrinsics";
+
+/** The frames' block (0: no method runs). */
+const FRAMES = new ThreadLocal<u64>(0);
+
+/** The holes' block (0: none recorded yet). */
+const HOLES = new ThreadLocal<u64>(0);
+
+function load(a: usize): u64 {
+  // SAFETY: `a` is a word of a block of this module's, not yet freed.
+  return unsafe { addressLoad<u64>(a) };
+}
+
+function store(a: usize, v: u64): void {
+  // SAFETY: as `load`.
+  unsafe {
+    addressStore<u64>(a, v);
+  }
+}
+
+/** How many words the block `p` (not 0) holds. */
+function lengthOf(p: usize): u64 {
+  return load(p + 8);
+}
+
+/** Word `i` of the block `p`. */
+function wordAt(p: usize, i: u64): u64 {
+  return load(p + 16 + (i as usize) * 8);
+}
+
+/** Gives back the block `p` (0: none). */
+function release(p: usize): void {
+  if (p == 0) {
+    return;
+  }
+  const bytes = ((load(p) + 2) * 8) as usize;
+  // SAFETY: `p` came from `rawAlloc(bytes)` in `push` and is dropped from its thread-local.
+  unsafe {
+    rawFree(p, bytes);
+  }
+}
+
+/** The block `p` (0: none yet) with `w` appended: `p`, or a new block when it had no room. */
+function pushed(p0: usize, w: u64): usize {
+  let p = p0;
+  let cap: u64 = 0;
+  let len: u64 = 0;
+  if (p != 0) {
+    cap = load(p);
+    len = lengthOf(p);
+  }
+  if (len == cap) {
+    const next: u64 = cap == 0 ? 8 : cap * 2;
+    const q = rawAlloc(((next + 2) * 8) as usize);
+    store(q, next);
+    for (let i: u64 = 0; i < len; i++) {
+      store(q + 16 + (i as usize) * 8, wordAt(p, i));
+    }
+    release(p);
+    p = q;
+  }
+  store(p + 16 + (len as usize) * 8, w);
+  store(p + 8, len + 1);
+  return p;
+}
+
+/** Drops the last frame. */
+function popFrame(): void {
+  const p = FRAMES.get() as usize;
+  if (p == 0 || lengthOf(p) == 0) {
+    panic("ICE: a proxy's array method ended a frame it did not start");
+  }
+  store(p + 8, lengthOf(p) - 1);
+}
+
+/** Is a method on the target `t` running? */
+function running(t: u64): bool {
+  const p = FRAMES.get() as usize;
+  if (p == 0) {
+    return false;
+  }
+  const n = lengthOf(p);
+  for (let i: u64 = 0; i < n; i++) {
+    if (wordAt(p, i) == (t | 1)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** The position of the hole (`t`, `index`), or -1. */
+function holeAt(t: u64, index: i64): i64 {
+  const p = HOLES.get() as usize;
+  if (p == 0) {
+    return -1;
+  }
+  const n = lengthOf(p);
+  for (let i: u64 = 0; i < n; i += 2) {
+    if (wordAt(p, i) == t && (wordAt(p, i + 1) as i64) == index) {
+      return i as i64;
+    }
+  }
+  return -1;
+}
+
+/** The smallest index below `below` of a hole in `t`, or -1. */
+function firstHole(t: u64, below: i64): i64 {
+  const p = HOLES.get() as usize;
+  if (p == 0) {
+    return -1;
+  }
+  let first: i64 = -1;
+  const n = lengthOf(p);
+  for (let i: u64 = 0; i < n; i += 2) {
+    const at = wordAt(p, i + 1) as i64;
+    if (wordAt(p, i) == t && at < below && (first < 0 || at < first)) {
+      first = at;
+    }
+  }
+  return first;
+}
+
+/** Forgets the holes in `t` at `from` and above (keeping the others in order). */
+function forgetFrom(t: u64, from: i64): void {
+  const p = HOLES.get() as usize;
+  if (p == 0) {
+    return;
+  }
+  const n = lengthOf(p);
+  let kept: u64 = 0;
+  for (let i: u64 = 0; i < n; i += 2) {
+    const x = wordAt(p, i);
+    const at = wordAt(p, i + 1);
+    if (x != t || (at as i64) < from) {
+      store(p + 16 + (kept as usize) * 8, x);
+      store(p + 24 + (kept as usize) * 8, at);
+      kept += 2;
+    }
+  }
+  store(p + 8, kept);
+}
+
+/** The lowest index any hole may have: `forgetFrom(t, ALL)` forgets all of `t`'s. */
+const ALL: i64 = -9223372036854775807;
+
+/**
+ * Starts an array method on a proxy of the array `target` (its trap calls are `trapBegin` and
+ * `trapEnd`). End it with `methodEnd`, in `finally`.
+ */
+@noInline
+export function methodBegin(target: any): void {
+  FRAMES.set(pushed(FRAMES.get() as usize, identity(target) | 1) as u64);
+}
+
+/**
+ * Ends the method `methodBegin(target)` started: the first hole it leaves in `target` (forgotten
+ * then), or -1 for none. While another method on `target` runs, the holes stay its own (-1).
+ */
+@noInline
+export function methodEnd(target: any): i64 {
+  const t = identity(target);
+  const p = FRAMES.get() as usize;
+  if (p != 0 && lengthOf(p) != 0 && wordAt(p, lengthOf(p) - 1) != (t | 1)) {
+    panic("ICE: a proxy's array method ended while another frame was innermost");
+  }
+  popFrame();
+  let first: i64 = -1;
+  if (!running(t)) {
+    first = firstHole(t, 9223372036854775807);
+    forgetFrom(t, ALL);
+  }
+  if (lengthOf(FRAMES.get() as usize) == 0) {
+    // The outermost method ended: every hole was its targets', and is forgotten.
+    release(FRAMES.get() as usize);
+    FRAMES.set(0);
+    release(HOLES.get() as usize);
+    HOLES.set(0);
+  }
+  return first;
+}
+
+/** Starts a trap call of the method on `target` (`methodBegin`); end it with `trapEnd`. */
+@noInline
+export function trapBegin(target: any): void {
+  FRAMES.set(pushed(FRAMES.get() as usize, identity(target)) as u64);
+}
+
+/** Ends the trap call `trapBegin` started. */
+@noInline
+export function trapEnd(): void {
+  popFrame();
+}
+
+/** Is element `index` of `array` a hole a method on a proxy of it made? */
+export function isHole(array: any, index: i64): bool {
+  return holeAt(identity(array), index) >= 0;
+}
+
+/**
+ * Records element `index` of `array` as a hole: only in a trap call of a method on that array
+ * (answers -1 and records nothing elsewhere), then whether it was one already (1, else 0).
+ */
+export function recordHole(array: any, index: i64): i64 {
+  const a = identity(array);
+  const p = FRAMES.get() as usize;
+  if (a == 0 || p == 0 || lengthOf(p) == 0 || wordAt(p, lengthOf(p) - 1) != a) {
+    return -1;
+  }
+  if (holeAt(a, index) >= 0) {
+    return 1;
+  }
+  HOLES.set(pushed(HOLES.get() as usize, a) as u64);
+  HOLES.set(pushed(HOLES.get() as usize, index as u64) as u64);
+  return 0;
+}
+
+/** Forgets the hole at element `index` of `array` (an element was written): whether it was one. */
+export function forgetHole(array: any, index: i64): bool {
+  const a = identity(array);
+  const at = holeAt(a, index);
+  if (at < 0) {
+    return false;
+  }
+  // The last pair takes its place.
+  const p = HOLES.get() as usize;
+  const n = lengthOf(p);
+  store(p + 16 + (at as usize) * 8, wordAt(p, n - 2));
+  store(p + 24 + (at as usize) * 8, wordAt(p, n - 1));
+  store(p + 8, n - 2);
+  return true;
+}
+
+/** Forgets the holes of `array` at `length` and above (it got shorter). */
+export function cutHoles(array: any, length: i64): void {
+  forgetFrom(identity(array), length);
+}

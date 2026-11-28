@@ -63,8 +63,6 @@ velt_rt velt_rt_mutex_unlock_slow
 velt_rt velt_rt_panic
 velt_rt velt_rt_process_args
 velt_rt velt_rt_process_node_argv
-velt_rt velt_rt_proxy_array_call
-velt_rt velt_rt_proxy_array_hole
 velt_rt velt_rt_rc_dec
 velt_rt velt_rt_rc_inc
 velt_rt velt_rt_realloc

@@ -74,20 +74,3 @@ export declare function noteStdUse(name: string): void;
  */
 @intrinsic
 export declare function stdUsed(name: string): bool;
-
-/**
- * An array method running on a proxy of the array `array` holds (identified by its data
- * pointer): `op` 1 starts it, -1 ends it and answers the first hole it leaves (or -1), 2 and -2
- * start and end a trap call of it (`velt_rt_proxy_array_call`).
- */
-@intrinsic
-export declare function proxyArrayCall(array: any, op: i64): i64;
-
-/**
- * The holes those methods made in the array `array` holds (identified by its data pointer): `op`
- * 0 tests element `index`, 1 records it (only in a trap call of a method on it, else -1), 2
- * forgets it, 3 forgets those from `index` on, 4 gives the first below `index` (or -1)
- * (`velt_rt_proxy_array_hole`).
- */
-@intrinsic
-export declare function proxyArrayHole(array: any, index: i64, op: i64): i64;
