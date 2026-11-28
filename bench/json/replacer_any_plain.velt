@@ -1,0 +1,21 @@
+// An `any` replacer whose results hold no `toJSON`, over 2000 rows (replacer_any_ab.sh).
+class Row {
+  id: i64;
+  constructor(id: i64) {
+    this.id = id;
+  }
+}
+function swap(k: string, v: any): any {
+  if (k === "r") {
+    return { p: 7, n: 2, q: [1, 2] };
+  }
+  return v;
+}
+function main(): void {
+  let total = 0;
+  for (let i: i64 = 0; i < 2000; i++) {
+    total += JSON.stringify({ r: new Row(i), i: i }, swap).length;
+  }
+  console.log(total);
+}
+main();
