@@ -3,7 +3,8 @@
 // source is ready for what they wait for, or their deadline passed. A pending wait is linked into
 // its source (any number per source; dropped, it leaves in constant time) and, with a deadline,
 // into the I/O block's timer list, sorted by deadline, which the worker's wait looks at. The
-// block counts the linked waits: pending I/O keeps the process alive (sched_end.velt).
+// block counts the linked waits: pending I/O keeps the process alive (sched_end.velt), but for an
+// idle wait (`waitIdle`), as an unref'd Node socket.
 //
 // Workers (#2649 step 3): a wait's links into its source and its waker belong to the source's
 // lock (the source's events may be delivered on another worker than the one polling the wait);
@@ -45,7 +46,12 @@ const W_SRC: usize = 112;
  * none; the waiter owns it.
  */
 const W_ALSO: usize = 120;
-const W_SIZE: usize = 128;
+/**
+ * 1: an idle wait (`waitIdle`), not counted with the linked waits, so it keeps the process alive no
+ * more than an `unref()`'d Node socket does; 0: counted.
+ */
+const W_IDLE: usize = 128;
+const W_SIZE: usize = 136;
 
 /**
  * Wakes every waiter of source `s` (locked); each polls again and waits again when it must. The
@@ -64,7 +70,9 @@ export function wakeAll(s: usize): void {
   let n: isize = 0;
   while (w !== 0) {
     const next = m.ld(w + W_NEXT);
-    n++;
+    if (m.ld(w + W_IDLE) === 0) {
+      n++;
+    }
     m.st(w + W_LINKED, 0);
     m.st(w + W_PREV, 0);
     m.st(w + W_NEXT, 0);
@@ -109,7 +117,44 @@ export function waitFor(handle: u64, kind: u32, arg: u64, deadline: u64): usize 
   m.st(f + W_EXPIRED, 0);
   m.st(f + W_SRC, 0);
   m.st(f + W_ALSO, 0);
+  m.st(f + W_IDLE, 0);
   return f;
+}
+
+/** The idle waits (`waitIdle`) not yet dropped, process-wide. */
+const IDLE_WAITS = new Atomic<u64>(0);
+/** 1 once a counted run ended (`endIdle`): every idle wait's deadline has passed then. */
+const IDLE_END = new Atomic<u64>(0);
+
+/**
+ * `waitFor` that does not keep the process alive (it is not counted: sched_end.velt `ioWaits`):
+ * an idle connection's wait for what its server sends unasked (an HTTP/2 client session without
+ * streams, which Node unrefs), given up with the tasks left when nothing else can happen. It has
+ * a deadline (not 0), by which a counted run's end completes it (`endIdle`).
+ */
+export function waitIdle(handle: u64, kind: u32, arg: u64, deadline: u64): usize {
+  if (deadline === 0) {
+    panic("ICE: an idle wait without a deadline");
+  }
+  const f = waitFor(handle, kind, arg, deadline);
+  m.st(f + W_IDLE, 1);
+  IDLE_WAITS.add(1);
+  return f;
+}
+
+/**
+ * A counted run (the debug runtime's block counters, sched_wake.velt `counting`) found nothing
+ * that keeps it alive, as sched_order_give.velt's timers: from now on every idle wait expires at
+ * its worker's next look at its deadlines (`expire`), so its task ends and gives back what it
+ * holds before the counters are read. True while there are idle waits: the end is looked for
+ * again once their tasks are done. Without the counters the program just ends.
+ */
+export function endIdle(): bool {
+  if (IDLE_WAITS.load("acquire") === 0) {
+    return false;
+  }
+  IDLE_END.store(1, "release");
+  return true;
 }
 
 /**
@@ -194,7 +239,9 @@ export function waitPoll(f: usize, cx: usize): u32 {
     m.st(s + io.S_WAITERS, f);
     m.st(f + W_LINKED, s);
     m.st(f + W_SRC, s);
-    waiting(1);
+    if (m.ld(f + W_IDLE) === 0) {
+      waiting(1);
+    }
   }
   tb.leave(s);
   const also = m.ld(f + W_ALSO);
@@ -229,7 +276,10 @@ function unlinkLocked(f: usize): void {
   }
 }
 
-/** `unlinkLocked` without the count: whether `f` was linked (the caller counts it out). */
+/**
+ * `unlinkLocked` without the count: whether `f` was linked and counted (the caller counts it out;
+ * an idle wait is not counted).
+ */
 function detach(f: usize): bool {
   const s = m.ld(f + W_LINKED);
   if (s === 0) {
@@ -246,7 +296,7 @@ function detach(f: usize): bool {
     m.st(next + W_PREV, prev);
   }
   m.st(f + W_LINKED, 0);
-  return true;
+  return m.ld(f + W_IDLE) === 0;
 }
 
 /**
@@ -268,6 +318,9 @@ export function waitDrop(f: usize): void {
     m.wakerDrop(k);
   }
   dropAlso(f);
+  if (m.ld(f + W_IDLE) !== 0) {
+    IDLE_WAITS.sub(1);
+  }
   m.release(f, W_SIZE);
 }
 
@@ -285,7 +338,9 @@ function expired(f: usize): bool {
   if (d === 0) {
     return false;
   }
-  return m.ld(f + W_EXPIRED) !== 0 || now() >= (d as u64);
+  return m.ld(f + W_EXPIRED) !== 0 ||
+    now() >= (d as u64) ||
+    (m.ld(f + W_IDLE) !== 0 && IDLE_END.load("acquire") !== 0);
 }
 
 /** Puts waiter `f` in the timer list, sorted by deadline (the first is the soonest). */
@@ -341,6 +396,13 @@ export function expire(b: usize): i64 {
   if (f === 0) {
     return -1;
   }
+  if (IDLE_END.load("acquire") !== 0) {
+    expireIdle(b);
+    f = m.ld(b + io.IO_TIMERS);
+    if (f === 0) {
+      return -1;
+    }
+  }
   const t = now();
   while (f !== 0 && (m.ld(f + W_DEADLINE) as u64) <= t) {
     const next = m.ld(f + W_TNEXT);
@@ -367,4 +429,30 @@ export function expire(b: usize): i64 {
     return -1;
   }
   return ((((m.ld(f + W_DEADLINE) as u64) - t) + 999999) / 1000000) as i64;
+}
+
+/**
+ * A counted run ended (`endIdle`): the idle waits in I/O block `b`'s timer list expire now, their
+ * tasks woken (not counted: nothing to count out).
+ */
+@noInline
+function expireIdle(b: usize): void {
+  let f = m.ld(b + io.IO_TIMERS);
+  while (f !== 0) {
+    const next = m.ld(f + W_TNEXT);
+    if (m.ld(f + W_IDLE) !== 0) {
+      untime(f);
+      m.st(f + W_EXPIRED, 1);
+      const src = m.ld(f + W_SRC);
+      tb.lock(src);
+      detach(f);
+      const waker = m.ld(f + W_WAKER);
+      m.st(f + W_WAKER, 0);
+      tb.unlock(src);
+      if (waker !== 0) {
+        m.wakeOwned(waker);
+      }
+    }
+    f = next;
+  }
 }

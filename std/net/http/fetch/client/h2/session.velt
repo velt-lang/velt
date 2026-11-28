@@ -5,6 +5,10 @@
 // reads frames into its own buffer and parses them in place (h2/frames.velt), and the frames it
 // writes while handling one read or one call leave in one write (`writeBytesLater`). It closes
 // after `IDLE_MS` without streams, after a GOAWAY once its streams are done, or on an error.
+// As Node's, a session keeps the process alive only while it has streams (or requests waiting):
+// it holds one of the runtime's keep-alive references then (`hold`), and its wait while idle is
+// one that keeps nothing alive (`idleReadable`), so a program whose last `fetch` is done ends at
+// once rather than after `IDLE_MS`.
 
 import { TcpStream } from "velt/net";
 import { Channel } from "velt/sync";
@@ -35,9 +39,13 @@ import { ClientStream } from "velt/net/http/fetch/client/h2/stream";
 import { frames } from "velt/net/http/fetch/client/h2/frames";
 import { startCall } from "velt/net/http/fetch/client/h2/outbound";
 import { copyBytes, writeUtf8 } from "velt/lang/bytes/copy";
+import { idleReadable } from "#fetch-dial";
+
+declare function velt_rt_keep_alive_acquire();
+declare function velt_rt_keep_alive_release();
 
 /// A session without streams for this long closes (undici's keep-alive default is 4 s).
-const IDLE_MS: number = 4000;
+const IDLE_MS: i64 = 4000;
 /// The windows the session gives the server: 1 MiB a stream, 4 MiB for the connection.
 export const STREAM_WINDOW: i64 = 1048576;
 export const CONNECTION_WINDOW: i64 = 4194304;
@@ -77,6 +85,8 @@ export class ClientSession {
   goingAway: bool = false;
   done: bool = false;
   inBatch: bool = false;
+  /// The session holds a keep-alive reference (`hold`).
+  held: bool = false;
   /// Called once when the session stops taking requests (its registry entry goes).
   onClose: (() => void) | null = null;
 
@@ -110,12 +120,15 @@ export class ClientSession {
         }
         if (n == 0) {
           this.flush();
-          const idle = this.streams.size == 0 && this.waiting.length == 0;
+          const idle = !this.hold();
           if (idle && this.goingAway) {
             break;
           }
-          if (!(await this.conn.readableWithin(idle ? IDLE_MS : 3600000))) {
-            if (this.streams.size == 0 && this.waiting.length == 0) {
+          // Idle, the wait keeps the process alive no more than Node's unref'd socket does.
+          const ready =
+            idle ? await idleReadable(this.conn, IDLE_MS) : await this.conn.readableWithin(3600000);
+          if (!ready) {
+            if (!this.hold()) {
               this.out.goaway(0, NO_ERROR, "idle");
               break;
             }
@@ -132,6 +145,7 @@ export class ClientSession {
       // The connection failed.
     }
     this.finish("the connection closed");
+    this.hold();
     try {
       this.flush();
       this.conn.shutdown();
@@ -165,7 +179,29 @@ export class ClientSession {
       if (!this.inBatch) {
         this.flush();
       }
+      // A request started on an idle session: the process stays alive for it from now on, while
+      // the session's idle wait goes on until its response arrives.
+      this.hold();
     }
+  }
+
+  /**
+   * Whether the session has streams or requests waiting, taking a keep-alive reference when it
+   * now has and giving it back when it no longer has. Called wherever they may have changed:
+   * after each call (`receive`) and before each wait (`run`, which handles the frames that end
+   * streams).
+   */
+  hold(): bool {
+    const busy = this.streams.size > 0 || this.waiting.length > 0;
+    if (busy != this.held) {
+      this.held = busy;
+      if (busy) {
+        velt_rt_keep_alive_acquire();
+      } else {
+        velt_rt_keep_alive_release();
+      }
+    }
+    return busy;
   }
 
   /// Stops taking requests: the registry forgets the session, the channel is closed, and the

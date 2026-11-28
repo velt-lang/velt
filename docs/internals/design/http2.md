@@ -285,6 +285,12 @@ the HTTP/1.1 `Head` does, as bytes plus offsets).
   makes the session take no new requests and close once its streams are done; 4 s without
   streams closes it too. Aborts and abandoned bodies send RST_STREAM CANCEL. Server push is
   disabled (SETTINGS_ENABLE_PUSH 0; a PUSH_PROMISE is a connection error).
+- **Process lifetime.** As undici's sockets, a session keeps the process alive only while it has
+  streams or requests waiting (it holds a keep-alive reference then). Without streams its wait for
+  the server is an idle one (`waitIdle` in std/lang/hooks/sched_io_wait.velt), which the end of
+  the program does not wait for: a program whose last `fetch` is done ends at once, not at the
+  session's idle close. A counted run (`VELT_RC_STATS=1`) completes the idle waits at its end, so
+  the session closes and its memory is freed before the counts are read.
 - **Fetch's API is unchanged.** The response head becomes the HTTP/1.1 parser's `Head` (bytes
   plus offsets), so `Response`, headers, redirects and `content-encoding` decoding are shared;
   only where the body comes from differs (`H2Body` instead of the HTTP/1.1 `BodyReader`).

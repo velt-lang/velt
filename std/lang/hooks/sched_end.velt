@@ -6,7 +6,8 @@
 //   no pending `sleep` (a worker that parks while worker 0 sleeps wakes it to look again:
 //   sched_run.velt `parkable`);
 // - no keep-alive reference (a ref'd timer: std/prelude/timers.velt's externs route here);
-// - no wait linked into a source of the Velt reactor (a socket read, an accept, a deadline);
+// - no wait linked into a source of the Velt reactor (a socket read, an accept, a deadline) but
+//   an idle one (sched_io_wait.velt `waitIdle`, as Node's unref'd sockets);
 // - no pending `sleep` (sched_sleep.velt; Node's timers count through their keep-alive
 //   references, so an `unref()`'d one does not);
 // - no runtime leaf outstanding: a Rust leaf polled `PENDING` that waits for a timer or I/O
@@ -268,6 +269,16 @@ export function mayPark(e: usize): bool {
       if (askAgain(e) !== 0 || gave) {
         return false;
       }
+    }
+    // And its idle waits (sched_io_wait.velt `endIdle`): this worker's expire now, another's
+    // once it wakes, so their tasks end and give back what they hold.
+    if (wk.counting() && wt.endIdle()) {
+      wt.expire(m.ld(e + t.E_IO));
+      const n = m.load(e + t.E_STARTED);
+      for (let i: usize = 1; i < n; i++) {
+        wk.unpark(t.worker(i));
+      }
+      return false;
     }
     if (root !== 0) {
       // The root is done, its task not (promises it started after the root's end wait for
