@@ -83,17 +83,6 @@ int32_t velt_main(void) {
 }
 "#;
 
-/// A worker of the executor in Velt in a program compiled before the runtime's host went starts
-/// with `velt_rt_set_scheduler(2)`, which still links and does nothing.
-const HOST: &str = r#"
-void velt_rt_set_scheduler(uint32_t);
-int32_t velt_main(void) {
-    velt_rt_set_scheduler(2);
-    write_i64(1, 1); velt_rt_write_byte(1, '\n');
-    return 5;
-}
-"#;
-
 fn target_dir() -> PathBuf {
     // <target>/<profile>/deps/link_check-<hash>.exe
     let exe = std::env::current_exe().unwrap();
@@ -272,12 +261,6 @@ fn staticlib_links_and_runs() {
     let expected: String = (0..20000).map(|i| format!("{i}\n")).collect();
     assert_eq!(text(&out.stdout), expected);
     assert_eq!(out.status.code(), Some(7));
-
-    // A worker's first call links and changes nothing.
-    let exe = build("host", HOST).unwrap();
-    let out = run(&exe);
-    assert_eq!(text(&out.stdout), "1\n");
-    assert_eq!(out.status.code(), Some(5));
 
     let exe = build("json", JSON).unwrap();
     let out = run(&exe);

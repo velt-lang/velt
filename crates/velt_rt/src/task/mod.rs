@@ -1,6 +1,6 @@
 //! Async executor ABI (docs/internals/contracts/rt_abi_async.md): the awaitable protocol shared by compiled
 //! state machines and runtime leaf futures. Programs spawn, join and run `main` on the executor in
-//! Velt (std/lang/hooks/sched.velt); the runtime keeps only its own tasks (runtime/).
+//! Velt (std/lang/hooks/sched.velt); the runtime runs no tasks of its own.
 //!
 //! * A compiled `async function` is a state machine: `poll(state, cx) -> u32` (0 = Pending,
 //!   1 = Ready, result at offset 0 of the state) and `drop(state)`. Awaiting a compiled child whose
@@ -15,7 +15,6 @@
 pub mod identity;
 pub mod latch;
 pub mod leaf;
-pub mod runtime;
 pub mod shared;
 pub mod waker;
 
