@@ -48,18 +48,22 @@ export function deepEqEnter(a: u64, b: u64): u8 {
   let len: usize = 0;
   if (p != 0) {
     len = load(p + 8) as usize;
-    let i = len;
-    while (i > 0) {
-      i -= 1;
-      const at = p + 16 + 16 * i;
-      const x = load(at);
-      const y = load(at + 8);
-      if (x == a) {
-        return y == b ? 1 : 2;
-      }
-      if (y == b) {
-        return 2;
-      }
+    // From the innermost pair out, by its offset in the block, counted down to 0 (one test of
+    // the offset per pair).
+    if (len > 0) {
+      const first = p + 16;
+      let off = 16 * len;
+      do {
+        off -= 16;
+        const x = load(first + off);
+        const y = load(first + off + 8);
+        if (x == a) {
+          return y == b ? 1 : 2;
+        }
+        if (y == b) {
+          return 2;
+        }
+      } while (off != 0);
     }
   }
   if (p == 0 || len == (load(p) as usize)) {
