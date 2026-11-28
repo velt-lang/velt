@@ -24,8 +24,6 @@ pub mod handle;
 pub mod hash;
 pub mod hazard;
 pub mod inspect;
-mod inspect_cycles;
-mod inspect_layout;
 pub mod io;
 pub mod math;
 pub mod mem;

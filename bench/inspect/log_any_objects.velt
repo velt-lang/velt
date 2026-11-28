@@ -1,0 +1,13 @@
+// `console.log` of the values bench/inspect/run_format_s.velt prints with `%s`: the same layout,
+// reached from lowering, for comparing the two paths.
+class Point {
+  constructor(public x: number, public y: number, public label: string, public extra: string) {}
+}
+
+function main() {
+  const p: any = new Point(1, 2, "a label that is fairly long", "and another string to break it");
+  const o: any = { alpha: "aaaaaaaaaaaaaaaaaaaa", beta: "bbbbbbbbbbbbbbbbbbbb", n: [1, 2, 3] };
+  for (let i = 0; i < 2000; i++) {
+    console.log(i % 2 == 0 ? p : o);
+  }
+}

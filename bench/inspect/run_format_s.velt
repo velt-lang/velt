@@ -1,0 +1,13 @@
+// `console.log("%s", v)` of objects too long for one line (std/prelude/console_format.velt
+// `consoleString`): written at Node's depth 0, then broken across lines.
+class Point {
+  constructor(public x: number, public y: number, public label: string, public extra: string) {}
+}
+
+function main() {
+  const p: any = new Point(1, 2, "a label that is fairly long", "and another string to break it");
+  const o: any = { alpha: "aaaaaaaaaaaaaaaaaaaa", beta: "bbbbbbbbbbbbbbbbbbbb", n: [1, 2, 3] };
+  for (let i = 0; i < 2000; i++) {
+    console.log("%s", i % 2 == 0 ? p : o);
+  }
+}
