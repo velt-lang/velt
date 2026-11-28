@@ -8,7 +8,7 @@
 //! | `AnyGet` / `AnyIndex` | `[PROXY_GET](key, receiver)` (a number key as its string) |
 //! | `AnyCall` | `[PROXY_GET](key, receiver)`, then the function value it returns (`AnyApply` slot); an array method (`ArrayMethod`) is `[PROXY_ARRAY_CALL](method, args, receiver)` |
 //! | `AnySet` / `AnySetIndex` | `[PROXY_SET](key, value, receiver)`; `false` is Node's `TypeError` |
-//! | `AnyApply` | not a function (a proxy of a function comes later) |
+//! | `AnyApply` | a proxy of a function: its `apply` trap, or the call of the target (proxy_apply.rs); else not a function |
 //!
 //! The receiver is the proxy itself: the `Proxy` object again, with its own table.
 
@@ -169,6 +169,8 @@ impl FnLower<'_, '_> {
         (data, key, argv, argc, out): (vir::Local, vir::Local, vir::Local, vir::Local, vir::Local),
         ty: TyId,
     ) {
+        // `p.call(...)` & co. of a proxy whose call runs an `apply` trap (proxy_apply.rs).
+        self.proxy_fn_keys((data, key, argv, argc, out), ty);
         let any = self.cx.any_ty();
         let avt = self.cx.ty(any);
         // A handler without traps: the call on the target itself.

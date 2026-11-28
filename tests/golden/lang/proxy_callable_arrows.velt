@@ -1,0 +1,33 @@
+// A proxy of a function called through `any` in a program without functions taking `this`
+// (#3978): the `apply` trap gets the object a member call reads it from as `thisArg`, and a
+// proxy without one calls its target. The Node twin is proxy_callable_arrows.mjs.
+const log: string[] = [];
+const add = (a: number, b: number): number => a + b;
+const traced: any = new Proxy(add, {
+  apply(target: any, thisArg: any, args: any[]): any {
+    log.push(`${thisArg === undefined ? "undefined" : thisArg.name}(${args.join(",")})`);
+    return target(args[0], args[1]) * 10;
+  },
+});
+const o: any = { name: "o", t: traced };
+console.log(traced(1, 2), o.t(3, 4));
+console.log(log.join(" "));
+const plain: any = new Proxy(add, {});
+const arr: any[] = [plain, traced];
+console.log(plain(2, 3), arr[0](4, 5), arr[1](1, 1), typeof plain, typeof traced);
+const typed = new Proxy(add, {});
+console.log(typed(10, 20));
+const r: any = { name: "r" };
+const viaGet: any = new Proxy(r, {
+  get(t: any, k: string | symbol, recv: any): any {
+    return k === "run" ? traced : Reflect.get(t, k, recv);
+  },
+});
+console.log(viaGet.run(2, 2), log[log.length - 1]);
+let n = 0;
+const counter: any = new Proxy(() => ++n, {});
+counter();
+counter();
+console.log(n, [1, 2, 3].map((x) => plain(x, x)).join(","));
+const sum: any = new Proxy((...xs: number[]) => xs.reduce((s, x) => s + x, 0), {});
+console.log(sum(), sum(1, 2, 3, 4));

@@ -111,6 +111,10 @@ pub(crate) const HELPER_NAMES: &[&str] = &[
     velt_common::std_key!(proxy_set),
     velt_common::std_key!(proxy_has),
     velt_common::std_key!(proxy_delete),
+    velt_common::std_key!(proxy_callee),
+    velt_common::std_key!(proxy_apply),
+    velt_common::std_key!(proxy_is_function),
+    velt_common::std_key!(proxy_fn_method),
     velt_common::std_key!(map_value_at),
 ];
 

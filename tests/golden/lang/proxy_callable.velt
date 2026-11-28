@@ -1,0 +1,68 @@
+// A proxy of a function is a function, as in Node (#3978): `typeof` is "function", a call runs
+// the handler's `apply` trap with the target, `this` and the arguments, or without one calls the
+// target with the same `this`; `call`, `apply` and `bind` call the proxy too. A proxy of anything
+// else is no function. The Node twin is proxy_callable.mjs.
+const m = function (this: any, x: number) {
+  return this?.name + ":" + x;
+};
+const pm: any = new Proxy(m, {});
+const o: any = { name: "o", k: pm };
+console.log(typeof pm, pm(2), o.k(1), o["k"](3));
+const log: string[] = [];
+const add = (a: number, b: number) => a + b;
+const traced: any = new Proxy(add, {
+  apply(target: any, thisArg: any, args: any[]): any {
+    log.push(`${thisArg === undefined ? "undefined" : thisArg.name}(${args.join(",")})`);
+    return target(args[0], args[1]) * 10;
+  },
+});
+const ot: any = { name: "ot", t: traced };
+const key = "t";
+console.log(traced(1, 2), ot.t(3, 4), ot[key](5, 6));
+console.log(log.join(" "));
+const inner: any = new Proxy(m, {
+  apply(t: any, th: any, a: any[]): any {
+    return "inner " + th?.name + " " + a[0];
+  },
+});
+const nested: any = new Proxy(inner, {});
+const o2: any = { name: "o2", n: nested };
+console.log(nested(1), o2.n(2), typeof nested);
+const outer: any = new Proxy(nested, {
+  apply(t: any, th: any, a: any[]): any {
+    return "outer " + t(a[0]);
+  },
+});
+console.log(outer(3));
+const trapped: any = new Proxy(m, {
+  apply(t: any, th: any, a: any[]): any {
+    return "trap " + th?.name + " " + a.join(",");
+  },
+});
+const self = { name: "self" };
+console.log(trapped.call(self, 3), trapped.apply(self, [4, 5]), trapped.apply(self));
+const b = trapped.bind(self, 6);
+console.log(b(7), b());
+console.log(pm.call(self, 8), pm.apply(self, [9]));
+const obj: any = new Proxy({}, {});
+try {
+  obj(1);
+} catch (e) {
+  console.log(e instanceof TypeError, (e as Error).message);
+}
+const objTrap: any = new Proxy({ a: 1 }, {
+  apply(t: any, th: any, a: any[]): any {
+    return 1;
+  },
+});
+try {
+  objTrap(1);
+} catch (e) {
+  console.log(e instanceof TypeError, (e as Error).message);
+}
+console.log(typeof obj, typeof objTrap, typeof outer, typeof trapped);
+function named(x: number): number {
+  return x;
+}
+const pn: any = new Proxy(named, {});
+console.log(pn, [pn], pn(4));

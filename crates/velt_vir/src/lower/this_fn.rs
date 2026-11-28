@@ -164,6 +164,8 @@ impl FnLower<'_, '_> {
         (data, argv, argc, out): (vir::Local, vir::Local, vir::Local, vir::Local),
         pty: TyId,
     ) {
+        // A proxy (of a function): its call with the object as `this` too.
+        self.proxy_method_call((f, fty, fd, fdesc), (data, argv, argc, out), pty);
         let Some(t) = self.this_fn_ty() else {
             return;
         };
@@ -217,6 +219,7 @@ impl FnLower<'_, '_> {
         let st = self.this_fn_invoke(data, ty, r, (argv, argc, out));
         self.ret_status(st);
         self.switch_to(no);
+        self.proxy_apply_this((data, d.clone(), this), (argv, argc, out));
         let a = [data, argv, argc, out].map(|l| Operand::Copy(Place::local(l)));
         let p = vec![Ty::Ptr, Ty::Ptr, Ty::U64, Ty::Ptr];
         let st = self.any_slot(d, super::any_member::SLOT_APPLY, a.to_vec(), p);

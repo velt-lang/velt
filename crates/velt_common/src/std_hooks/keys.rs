@@ -131,6 +131,11 @@ keys! {
     proxy_json => "PROXY_JSON", "proxyJson";
     proxy_array_call => "PROXY_ARRAY_CALL", "proxyArrayCall";
     proxy_has_own => "PROXY_HAS_OWN", "proxyHasOwn";
+    // A call of a proxy (`velt_vir` `proxy_apply.rs`).
+    proxy_callee => "PROXY_CALLEE", "proxyCallee";
+    proxy_apply => "PROXY_APPLY", "proxyApply";
+    proxy_is_function => "PROXY_IS_FUNCTION", "proxyIsFunction";
+    proxy_fn_method => "PROXY_FN_METHOD", "proxyFnMethod";
     // Error: `Error.prototype.message`, which a program's `get message()` on a class extending
     // `Error` overrides (`velt_sema` `error_message.rs`).
     error_message => "ERROR_MESSAGE", "errorMessage";

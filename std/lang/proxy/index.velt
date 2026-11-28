@@ -14,12 +14,16 @@
 // test for a proxy (velt/lang/hooks/proxy).
 
 import { ArrayMethod, proxyArrayInvoke } from "velt/lang/proxy/array";
+import { proxyApply, proxyCallee, proxyFnMethod, proxyIsFunction } from "velt/lang/proxy/calls";
 import {
+  PROXY_APPLY,
   PROXY_ARRAY_CALL,
+  PROXY_CALLEE,
   PROXY_DEFINE_PROPERTY,
   PROXY_DEFINES,
   PROXY_DELETE,
   PROXY_DELETE_PROPERTY,
+  PROXY_FN_METHOD,
   PROXY_GET,
   PROXY_GET_GETTER,
   PROXY_GET_OWN_PROPERTY_DESCRIPTOR,
@@ -27,6 +31,7 @@ import {
   PROXY_HAS_GET,
   PROXY_HAS_OWN,
   PROXY_IS_ARRAY,
+  PROXY_IS_FUNCTION,
   PROXY_IS_VIEW,
   PROXY_JSON,
   PROXY_KEYS,
@@ -188,6 +193,26 @@ export class Proxy {
   /** The target. */
   [PROXY_TARGET](): any {
     return this.#target;
+  }
+
+  /** `typeof p` is `"function"`: whether the target, through proxies of proxies, is one. */
+  [PROXY_IS_FUNCTION](): boolean {
+    return proxyIsFunction(this);
+  }
+
+  /** What a call of this proxy runs (velt/lang/proxy/calls `proxyCallee`). */
+  [PROXY_CALLEE](): any {
+    return proxyCallee(this);
+  }
+
+  /** The call of this proxy with `this` = `thisArg` through its first `apply` trap. */
+  [PROXY_APPLY](thisArg: any, args: any[]): any {
+    return proxyApply(this, thisArg, args);
+  }
+
+  /** `p.call(…)`, `p.apply(…)` and `p.bind(…)` (`key`) of a proxy with an `apply` trap. */
+  [PROXY_FN_METHOD](key: any, args: any[]): any {
+    return proxyFnMethod(this, key, args);
   }
 
   // The traps (std only: the trap bodies in traps.velt read them).

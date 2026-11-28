@@ -1,0 +1,12 @@
+function undefined:2 o:1 o:3
+30 70 110
+undefined(1,2) ot(3,4) ot(5,6)
+inner undefined 1 inner o2 2 function
+outer inner undefined 3
+trap self 3 trap self 4,5 trap self 
+trap self 6,7 trap self 6
+self:8 self:9
+true obj is not a function
+true objTrap is not a function
+object object function function
+[Function: named] [ [Function: named] ] 4
