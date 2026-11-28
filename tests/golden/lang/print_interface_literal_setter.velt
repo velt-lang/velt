@@ -1,6 +1,5 @@
-// An object literal filling an interface field with `get v()` and `set v(x)`: Node prints the
-// property `[Getter/Setter]`, which Velt can't show through the interface yet, so printing it is
-// refused rather than printed differently.
+// An object literal filling an interface field with `get v()` and `set v(x)`: printed through
+// the interface, the property is `[Getter/Setter]`, as Node prints it (#2739).
 interface Settable {
   v: number;
   describe(): string;

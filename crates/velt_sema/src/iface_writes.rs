@@ -620,6 +620,34 @@ impl Ctx<'_> {
         self.impls[index as usize].methods.extend(defs);
     }
 
+    /// The setter slot of field `k` of implementation `index` when the object literal it is
+    /// fills that field with `set f(v)`: the implementation's own slot once the interface is
+    /// written through, else one made for a read through `any` to list (`any::literal_accessors`).
+    pub(crate) fn literal_field_setter(&mut self, index: u32, k: usize) -> Option<DefId> {
+        let src = self.iface_writes.sources.get(&index)?.get(k)?.clone();
+        let SetterSrc::Call {
+            d,
+            self_ty,
+            index: field,
+            fn_ty,
+            param,
+            this,
+        } = src
+        else {
+            return None;
+        };
+        let imp = &self.impls[index as usize];
+        let base = self
+            .iface(imp.iface)
+            .map(|i| i.methods.len() + i.fields.len())?;
+        if self.iface_written(imp.iface) && !self.method_writes_placeholder(index) {
+            if let Some(&def) = imp.methods.get(base + k) {
+                return Some(def);
+            }
+        }
+        Some(self.literal_setter(d, self_ty, (field, fn_ty), param, this))
+    }
+
     /// The setter slot of an object literal's `set f(v)`: calls the function value it stores.
     fn literal_setter(
         &mut self,

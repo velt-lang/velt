@@ -113,13 +113,27 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// A read, where `instanceof` narrowed it to `target`, of a variable narrowed by such a
-    /// test: the code never runs (the test threw or was `false`), so the read throws too.
+    /// The type a variable has where one of two `instanceof` tests of `lib.dom` classes held
+    /// (`el instanceof HTMLElement || el instanceof SVGElement`), narrowed to `a` by one and to
+    /// `b` by the other: the union of the two, as under `tsc`.
+    pub(crate) fn dom_join(&mut self, a: TyId, b: TyId) -> Option<TyId> {
+        self.dom_members(a)?;
+        self.dom_members(b)?;
+        Some(self.cx.union_of(&[a, b], false, Span::default()))
+    }
+
+    /// The `lib.dom` types `t` is: itself, or each member of a union of them.
+    fn dom_members(&mut self, t: TyId) -> Option<Vec<TyId>> {
+        let members = self.cx.union_members(t).unwrap_or_else(|| vec![t]);
+        members.iter().all(|m| self.dom_type(*m)).then_some(members)
+    }
+
+    /// A read, where `instanceof` narrowed it to `target` (or to a union of such types), of a
+    /// variable narrowed by such a test: the code never runs (the test threw or was `false`),
+    /// so the read throws too.
     pub(crate) fn dom_narrowed_read(&mut self, target: TyId, span: Span) -> Option<hir::Expr> {
-        if !self.dom_type(target) {
-            return None;
-        }
-        let name = self.dom_type_name(target)?;
+        let first = *self.dom_members(target)?.first()?;
+        let name = self.dom_type_name(first)?;
         let mut e = self.not_defined(&name, span);
         e.ty = target;
         Some(e)

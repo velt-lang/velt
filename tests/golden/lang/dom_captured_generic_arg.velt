@@ -1,0 +1,36 @@
+// A variable of the enclosing function, captured by a closure and narrowed there, is narrowed
+// for a generic argument as for a receiver (`removeChild<T extends Node>(child: T)`, sigx's
+// Portal, #2739), as under `tsc`: on a server the DOM is never reached, as on Node.
+function on(cb: () => void): void {
+  cb();
+}
+
+function portal(target: HTMLElement | null): string {
+  let pc: HTMLDivElement | null = null;
+  const mount = (): void => {
+    pc = document.createElement("div");
+    document.body.appendChild(pc);
+  };
+  on(() => {
+    if (pc && pc.parentNode) {
+      pc.parentNode.removeChild(pc);
+    }
+  });
+  on(function () {
+    if (pc !== null && pc.parentNode !== null) {
+      pc.parentNode.insertBefore(pc, null);
+    }
+    if (pc && target) {
+      target.appendChild(pc);
+    }
+    pc = null;
+  });
+  try {
+    mount();
+  } catch (e) {
+    return (e as Error).name + ": " + (e as Error).message;
+  }
+  return "mounted";
+}
+
+console.log(portal(null));
