@@ -58,6 +58,7 @@ class Failing {
 
 // A `toJSON` that counts its calls: each runs once.
 let calls = 0;
+
 class Counted {
   toJSON(key: string): any {
     calls = calls + 1;
