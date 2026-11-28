@@ -3,7 +3,7 @@
 //! standard-input reads and name lookups; UDP sockets are non-blocking sockets on the executor's
 //! reactor; child processes start with `posix_spawn`, with their exit and pipes on the reactor
 //! (std/process/child/child_sched.velt). A blocking job keeps the process alive until it is
-//! done, even when its waiter is gone (as the runtime's exit waits for tokio's blocking threads),
+//! done, even when its waiter is gone (as the runtime's exit waited for tokio's blocking threads),
 //! and so does a running child. Each program is built with the variable, runs with
 //! `VELT_THREADS=4` and must print what Node prints.
 

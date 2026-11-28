@@ -13,7 +13,7 @@ use crate::{linker_override, native, shared, LinkRequest, TargetOs};
 /// How the error starts when there is no MSVC linker (see [`crate::with_bundled_reason`]).
 pub(crate) const NO_MSVC_LINKER: &str = "could not find the MSVC linker";
 
-/// Per-platform link settings. Native libraries are what the Rust `std` (and later tokio) inside the
+/// Per-platform link settings. Native libraries are what the Rust `std` inside the
 /// velt_rt staticlib needs — cross-checked with
 /// `cargo rustc -p velt_rt --crate-type staticlib -- --print native-static-libs`.
 pub(crate) struct Platform {

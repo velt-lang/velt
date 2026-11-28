@@ -1,6 +1,6 @@
 //! The executor in Velt (std/lang/hooks/sched.velt, #2649 step 3.1): a program compiled with
 //! `VELT_SCHEDULER=std` runs its root, its spawned tasks and `yieldNow` there, and the runtime's
-//! leaves (a sleep on the runtime's tokio thread, channels) wake its tasks through their C
+//! leaves (channels) wake its tasks through their C
 //! waker. Each program is built, run with `VELT_THREADS=1`, and must print what Node prints, with
 //! the executor's code in its binary. A few programs run with more workers, or against a copy of
 //! std with a module added, and check one thing (the worker count's bound, a latch's buffer of
