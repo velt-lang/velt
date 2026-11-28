@@ -1,0 +1,55 @@
+// `%s` of an object too long for one line: broken across lines as Node breaks it (std's
+// `inspect_layout`, called by `consoleString`), at depth 0 (`[Object]`, `[Array]`), with text
+// before and after it on the line. Expected output: node of console_format_layout.mjs.
+class Point {
+  constructor(public x: number, public y: number, public label: string, public extra: string) {}
+}
+
+const p: any = new Point(1, 2, "a label that is fairly long", "and another string to break it");
+console.log("%s", p);
+const o: any = {
+  alpha: "aaaaaaaaaaaaaaaaaaaa",
+  beta: "bbbbbbbbbbbbbbbbbbbb",
+  gamma: "cccccccccccccccc",
+  n: [1, 2, 3],
+};
+console.log("[%s]", o);
+const arr: any = [
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9,
+  10,
+  11,
+  12,
+  13,
+  14,
+  15,
+  16,
+  17,
+  18,
+  19,
+  20,
+  21,
+  22,
+  23,
+  24,
+  25,
+  26,
+  27,
+  28,
+  29,
+  30,
+];
+console.log("%s|", arr);
+const nested: any = {
+  a: { b: 1 },
+  list: [[1], [2]],
+  s: "some string that is long enough to wrap the line for sure",
+};
+console.log("x %s y", nested);

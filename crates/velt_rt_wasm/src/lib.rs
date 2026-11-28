@@ -45,10 +45,6 @@ pub mod host_promise;
 pub mod host_turn;
 #[path = "../../velt_rt/src/inspect.rs"]
 pub mod inspect;
-#[path = "../../velt_rt/src/inspect_cycles.rs"]
-mod inspect_cycles;
-#[path = "../../velt_rt/src/inspect_layout/mod.rs"]
-mod inspect_layout;
 pub mod io;
 #[path = "../../velt_rt/src/math.rs"]
 pub mod math;

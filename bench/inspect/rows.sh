@@ -76,7 +76,8 @@ for p in hello "${COMPILE[@]}"; do
   done
 done
 
-for p in run_string run_number run_object run_array run_class run_map run_layout_short run_layout_nested; do
+for p in run_string run_number run_object run_array run_class run_map run_layout_short run_layout_nested \
+  run_json_value run_format_s; do
   for side in "${SIDES[@]}"; do
     IFS='=' read -r label tree velt <<< "$side"
     exe="$WORK/$label-$p"
