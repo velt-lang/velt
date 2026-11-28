@@ -7,12 +7,15 @@
 #
 #   bench/wasm_js_rows.sh <base velt> <base std> <base glue> <head velt> <head std> <head glue> [program.velt ...]
 #
-# A glue is crates/velt_rt_wasm/js/velt_web.mjs of that tree. Needs node and the
-# wasm32-unknown-unknown Rust target. RUNS (default 5) sets N. Prints a Markdown table.
+# A glue is crates/velt_rt_wasm/js/velt_web.mjs of that tree. A `velt` links the runtime library
+# of its own profile (a debug `velt`, a debug one): BASE_RT_LIB and HEAD_RT_LIB name each side's
+# `libvelt_rt_wasm.a` instead (`$VELT_RT_LIB`; a release one, cargo's
+# `wasm32-unknown-unknown/release/`). Needs node and the wasm32-unknown-unknown Rust target. RUNS
+# (default 5) sets N. Prints a Markdown table.
 set -euo pipefail
 
 if [ $# -lt 6 ]; then
-  sed -n '2,11p' "$0"
+  sed -n '2,14p' "$0"
   exit 2
 fi
 base_velt=$1 base_std=$2 base_glue=$3 head_velt=$4 head_std=$5 head_glue=$6
@@ -26,11 +29,11 @@ if [ $# -eq 0 ]; then
 fi
 work=$(mktemp -d)
 
-# build <velt> <std> <program> <out dir>: the module's path.
+# build <velt> <std> <program> <out dir> <runtime library or "">: the module's path.
 build() {
   local out="$4/$(basename "$3" .velt).wasm"
   mkdir -p "$4"
-  (cd "$root" && VELT_STD="$2" "$1" build --release --target wasm32-unknown-unknown "$3" -o "$out" >/dev/null)
+  (cd "$root" && VELT_RT_LIB="$5" VELT_STD="$2" "$1" build --release --target wasm32-unknown-unknown "$3" -o "$out" >/dev/null)
   echo "$out"
 }
 
@@ -46,8 +49,8 @@ ms() {
 echo "| program | size base | size head | Δ | ms base | ms head |"
 echo "|---|---:|---:|---:|---:|---:|"
 for p in "$@"; do
-  b=$(build "$base_velt" "$base_std" "$p" "$work/base")
-  h=$(build "$head_velt" "$head_std" "$p" "$work/head")
+  b=$(build "$base_velt" "$base_std" "$p" "$work/base" "${BASE_RT_LIB:-}")
+  h=$(build "$head_velt" "$head_std" "$p" "$work/head" "${HEAD_RT_LIB:-}")
   bs=$(stat -c %s "$b") hs=$(stat -c %s "$h")
   bt=999999999 ht=999999999
   for _ in $(seq "$runs"); do
