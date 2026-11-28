@@ -1,6 +1,6 @@
 //! Values of a type parameter used as their bound's type (issue #1212): a function-type bound
-//! as that function; an array-type bound, and a union bound (#379), through an `any`, checked
-//! at run time (an array bound only of one primitive element type where it may be written,
+//! as that function; a string, number, boolean or interface bound (#2788), an array-type bound,
+//! and a union bound (#379), through an `any`, checked at run time (an array bound only of one primitive element type where it may be written,
 //! #3062; a union bound with no array member).
 
 use crate::body::FnCx;
@@ -42,6 +42,71 @@ impl FnCx<'_, '_> {
         }
         let span = h.span;
         let boxed = self.generic_as_any(h)?;
+        Ok(self.intrinsic(hir::Intrinsic::AnyTo, vec![boxed], exp, span))
+    }
+
+    /// A value of a type parameter bounded by a number or boolean type (`n: N`, with `N extends
+    /// number`, `N extends 1 | 2` or `B extends boolean`), where that `number` or `boolean` is
+    /// expected (a function's result widened to it, `(): N => n` as a `() => number`, #2788): the
+    /// value through an `any`, as [`Self::string_bound_value`] converts a string bound's.
+    pub(super) fn prim_bound_value(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let TyKind::Param(p) = *self.cx.ty.kind(h.ty) else {
+            return Err(h);
+        };
+        let interface_bound = self.bounds.get(p as usize).is_some_and(|b| !b.is_empty());
+        let Some(b) = self.cx.constraint_of(p).filter(|_| !interface_bound) else {
+            return Err(h);
+        };
+        let of = |cx: &crate::ctx::Ctx, m: TyId| match (cx.ty.kind(m), cx.ty.kind(exp)) {
+            (TyKind::Float(a), TyKind::Float(e)) => a == e,
+            (TyKind::Bool, TyKind::Bool) => true,
+            (TyKind::Literal(hir::LitValue::Float(a, _)), TyKind::Float(e)) => a == e,
+            (TyKind::Literal(hir::LitValue::Int(..)), TyKind::Float(_)) => true,
+            (TyKind::Literal(hir::LitValue::Bool(_)), TyKind::Bool) => true,
+            _ => false,
+        };
+        let members = self.cx.union_members(b).unwrap_or_else(|| vec![b]);
+        if !members.iter().all(|&m| of(self.cx, m)) {
+            return Err(h);
+        }
+        let span = h.span;
+        let boxed = self.generic_as_any(h)?;
+        Ok(self.intrinsic(hir::Intrinsic::AnyTo, vec![boxed], exp, span))
+    }
+
+    /// A value of a type parameter bounded by an interface (`v: T`, `T extends Shape`) where that
+    /// interface is expected (`(): T => v` as a `() => Shape`, #2788): the value through an
+    /// `any`, converted to the interface through the implementation of the type each
+    /// instantiation gives it (velt_vir `any_iface.rs`), as Node keeps the object.
+    pub(super) fn iface_bound_value(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let TyKind::Param(p) = *self.cx.ty.kind(h.ty) else {
+            return Err(h);
+        };
+        let TyKind::Dyn(want, args) = self.cx.ty.kind(exp).clone() else {
+            return Err(h);
+        };
+        if self.cx.dynamic(exp).is_some() || args.iter().any(|&a| self.cx.has_type_params(a)) {
+            return Err(h);
+        }
+        let bounds = self.bounds.get(p as usize).cloned().unwrap_or_default();
+        let bounded = (bounds.iter()).any(|b| b.iface == want && b.args == args)
+            || self.cx.constraint_of(p) == Some(exp);
+        if !bounded {
+            return Err(h);
+        }
+        let span = h.span;
+        let boxed = self.generic_as_any(h)?;
+        self.note_dynamic_iface(exp, span);
+        self.cx.note_dyn_object_target(exp);
+        self.cx.note_extension_upcasts(want, &args);
         Ok(self.intrinsic(hir::Intrinsic::AnyTo, vec![boxed], exp, span))
     }
 

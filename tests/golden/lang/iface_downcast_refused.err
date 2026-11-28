@@ -1,8 +1,6 @@
-27:11: error: cannot cast `Shape` as `Named | Sided`
-28:11: error: cannot cast `Shape` as `Named | undefined`
-31:10: error: cannot cast `Shape | undefined` as `Named`
+29:10: error: cannot cast `Shape | undefined` as `Named`
 a `Shape | undefined` may be `undefined`, which is no `Named`
-35:10: error: cannot cast `Source<f64>` as `Labeled<string>`
+33:10: error: cannot cast `Source<f64>` as `Labeled<string>`
 a `Labeled<string>` is not a `Source<f64>` (their type arguments differ)
-39:10: error: cannot cast `Source<f64>` as `Labeled<any>`
+37:10: error: cannot cast `Source<f64>` as `Labeled<any>`
 a `Labeled<any>` is not a `Source<f64>` (their type arguments differ)

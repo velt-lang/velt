@@ -127,6 +127,10 @@ impl FnCx<'_, '_> {
             Ok(u) => return Ok(u),
             Err(h) => h,
         };
+        let h = match (self.prim_bound_value(h, exp)).or_else(|h| self.iface_bound_value(h, exp)) {
+            Ok(v) => return Ok(v),
+            Err(h) => h,
+        };
         let h = match self.record_view_value(h, exp) {
             Ok(r) => return Ok(r),
             Err(h) => h,

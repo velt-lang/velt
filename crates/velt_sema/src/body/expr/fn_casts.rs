@@ -311,6 +311,49 @@ impl FnCx<'_, '_> {
 }
 
 /// `e` without parentheses.
+impl FnCx<'_, '_> {
+    /// `f as F` where `f` is an arrow or a named function taking a rest parameter and `F` a
+    /// function type (or callable object type) without one whose parameters the rest parameter
+    /// would take none of (`((...args) => …) as { (): T }`): reported, true. TypeScript keeps the
+    /// function, so the arguments of a later call through a type with more parameters still
+    /// reach it in Node; Velt's function of type `F` would be called without them (#2787).
+    pub(super) fn dropped_rest_cast(&mut self, expr: &ast::Expr, target: TyId, span: Span) -> bool {
+        let x = strip_parens(expr);
+        let (own_fixed, own_rest) = match &x.kind {
+            ast::ExprKind::Arrow { params, .. } => {
+                let rest = params.last().is_some_and(|p| p.rest);
+                (params.len() - usize::from(rest), rest)
+            }
+            ast::ExprKind::Ident(_) => match self.named_fn_sig(x, false) {
+                Some(sig) => (sig.params.len() - usize::from(sig.rest), sig.rest),
+                None => return false,
+            },
+            _ => return false,
+        };
+        if !own_rest || self.cx.ty.has_error(target) {
+            return false;
+        }
+        let Some(f) = self.call_type(target) else {
+            return false;
+        };
+        let TyKind::FnPtr { params, rest, .. } = self.cx.ty.kind(f) else {
+            return false;
+        };
+        if *rest || params.len() > own_fixed {
+            return false;
+        }
+        let shown = self.cx.display(target);
+        let d = velt_common::Diagnostic::error(
+            format!("cannot cast a function with a rest parameter as `{shown}`, which passes it no arguments"),
+            span,
+        )
+        .with_note("TypeScript keeps the function, so a later call through a function type with more parameters passes them on in Node; a Velt function of this type is called without them")
+        .with_note("declare the call with a rest parameter (`(...args: unknown[]) => T`, or `{ (...args: unknown[]): T }`)");
+        self.cx.error(d);
+        true
+    }
+}
+
 fn strip_parens(e: &ast::Expr) -> &ast::Expr {
     match &e.kind {
         ast::ExprKind::Paren(x) => strip_parens(x),

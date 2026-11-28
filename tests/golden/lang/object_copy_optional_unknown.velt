@@ -1,0 +1,20 @@
+// An object missing an optional field of the expected type, whose other optional field converts
+// to a wider type (`input?: string` into `input?: unknown`): the copy boxes the present value,
+// keeps an absent field absent, and a present `undefined` present (#3115).
+function take(o: { input?: unknown; args?: unknown[] }): string {
+  return String(o.input) + ":" + String(o.args) + ":" + ("input" in o) + ":" + ("args" in o);
+}
+
+function any(o: { input?: any; n?: number }): string {
+  return typeof o.input + ":" + ("input" in o);
+}
+
+const x: { input?: string } = { input: "a" };
+console.log(take(x));
+const y: { input?: string } = {};
+console.log(take(y));
+const z: { input?: string } = { input: undefined };
+console.log(take(z));
+const w: { input?: number } = { input: 2 };
+console.log(any(w));
+console.log(any(y));

@@ -41,6 +41,10 @@ impl FnCx<'_, '_> {
                 cx.record_call(h, velt_common::std_key!(record_symbol_bag), &[source], span)
             });
         }
+        if self.dropped_rest_cast(expr, target, span) {
+            self.expr(expr, None, Want::Borrow);
+            return self.error_expr(span);
+        }
         let nothing = self.nothing_cast(expr, target, span);
         if let Some(h) = nothing.or_else(|| self.callable_cast(expr, target, span)) {
             return h;

@@ -1,0 +1,19 @@
+// A function with a rest parameter cast to a function type (or callable object type) whose
+// calls pass the rest parameter nothing (#2787): refused. TypeScript keeps the function, so a
+// later call through a type with more parameters passes the arguments on in Node (`k(5)` gives
+// 1 there); Velt's function of the cast type would be called without them. Declaring the call
+// with a rest parameter (`{ (...args: unknown[]): T }`) converts as Node runs it.
+interface Injectable<T> {
+  (): T;
+}
+
+function count(...args: unknown[]): number {
+  return args.length;
+}
+
+const h = ((...args: unknown[]) => args.length) as () => number;
+const k: (n: number) => number = h;
+const i = ((...args: unknown[]) => args.length) as Injectable<number>;
+const j = count as () => number;
+const one = ((a: number, ...rest: number[]) => a + rest.length) as (a: number) => number;
+console.log(h(), k(5), i(), j(), one(1));

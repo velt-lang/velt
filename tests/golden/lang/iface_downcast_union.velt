@@ -1,0 +1,43 @@
+// An interface value cast to a union of interfaces extending its own, or to one with
+// `undefined` (#3073): the value is the member it implements, in the members' order.
+interface Shape {
+  area(): number;
+}
+
+interface Named extends Shape {
+  name(): string;
+}
+
+interface Sided extends Shape {
+  sides: number;
+}
+
+function describe(s: Shape): string {
+  const u = s as Named | Sided;
+  if ("name" in u) {
+    return "named " + u.name() + " " + u.area();
+  }
+  return "sided " + u.sides + " " + u.area();
+}
+
+function maybe(s: Shape | undefined): string {
+  const m = s as Named | undefined;
+  return m === undefined ? "none" : m.name();
+}
+
+const n: Named = { area: () => 1, name: () => "n" };
+const q: Sided = { area: () => 4, sides: 4 };
+console.log(describe(n));
+console.log(describe(q));
+console.log(maybe(n));
+console.log(maybe(undefined));
+const s: Shape = n;
+const m = s as Named | undefined;
+console.log(m?.name());
+
+// A value made as an interface extending both, seen as a `Shape`: the first member.
+interface Both extends Named, Sided {}
+const both: Both = { area: () => 2, name: () => "b", sides: 3 };
+console.log(describe(both));
+const b: Shape = both;
+console.log((b as Sided).sides);

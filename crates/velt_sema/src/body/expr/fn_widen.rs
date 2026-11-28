@@ -444,7 +444,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `t` itself when it is a function type, or the function of a callable object type.
-    fn call_type(&mut self, t: TyId) -> Option<TyId> {
+    pub(super) fn call_type(&mut self, t: TyId) -> Option<TyId> {
         if matches!(self.cx.ty.kind(t), TyKind::FnPtr { .. }) {
             return Some(t);
         }
