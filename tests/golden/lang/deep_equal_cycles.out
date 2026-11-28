@@ -1,16 +1,16 @@
 rings 1 1 true
-rings 1 2 false
-rings 2 1 false
+rings 1 2 true
+rings 2 1 true
 rings 2 2 true
-rings 2 4 false
-rings 3 6 false
-rings 2 3 false
+rings 2 4 true
+rings 3 6 true
+rings 2 3 true
 rings 3 3 true
-values false
+values true
 values swapped false
-tail false false
+tail true true
 lists true false
 assertEq rings
-arrays true false
+arrays true true
 maps true false
 unions true false

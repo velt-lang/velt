@@ -130,6 +130,18 @@ with_any_hooks! {
     /// don't settle, from its bytes `start` to `end`.
     number_parse_long => lang_hooks_number_parse, "longDecimalValue", sig((&string, usize, usize) -> f64),
         replaces("velt_rt_parse_float"), prebuilt;
+    /// `Number(s)` of a string held as `any` (`any` to number, a numeric key of an `any`'s
+    /// array): velt/lang/number/parse's `toNumber`, which the prelude's `Number` calls too.
+    str_to_number => lang_hooks_string_number, "stringNumber", sig((&string) -> f64), lowered,
+        constructs(DynamicNumber), replaces("velt_rt_str_to_number"), bench("parse_float");
+    /// The cycle guard of deep equality (std/lang/hooks/deep_eq.velt): lowering's `==` on an
+    /// aggregate that can hold itself starts comparing a pair of objects with it (Vitest's rule,
+    /// `node` false; `deepEqual`'s generated code passes true for Node's).
+    deep_eq_enter => lang_hooks_deep_eq, "deepEqEnter", sig((u64, u64, bool) -> u8), lowered,
+        constructs(DeepEq), replaces("velt_rt_deep_eq_enter"), bench("deep_equal");
+    /// Ends the comparison `deep_eq_enter` last started.
+    deep_eq_leave => lang_hooks_deep_eq, "deepEqLeave", sig((bool) -> void), lowered,
+        constructs(DeepEq), replaces("velt_rt_deep_eq_leave"), bench("deep_equal");
     /// `String(x)` of any float by std's float printing (velt/lang/number/format), for code that
     /// doesn't load it: std's own (the JSON writers, `StringBuilder`, the digits of
     /// `toExponential()`) and the float hooks of velt/lang/hooks/number_text and number_write.

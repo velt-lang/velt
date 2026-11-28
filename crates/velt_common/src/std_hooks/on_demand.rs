@@ -61,6 +61,12 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/prebuilt_probe",
     "std/lang/hooks/number_digits",
     "std/lang/hooks/number_parse",
+    // `Number(s)` of a string held as `any` (#2196), demanded by the glue of an `any`
+    // (`Construct::DynamicNumber`).
+    "std/lang/hooks/string_number",
+    // Deep equality's cycle guard (#2196): `==` on what may be an aggregate
+    // (`Construct::DeepEq`), and `deepEqual` / `toEqual` through std's generated code by role.
+    "std/lang/hooks/deep_eq",
     // A `number` stored into an integer array's element (#3182), demanded where sema finds one.
     "std/lang/hooks/int_store",
     "std/lang/hooks/number_shortest",

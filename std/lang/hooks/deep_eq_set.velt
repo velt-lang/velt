@@ -1,0 +1,132 @@
+// velt/lang/hooks (internal): the set of objects on the way of deep equality's Node rule
+// (deep_eq.velt): object addresses (never 0) in a block of words `[capacity, used, keys…]` from
+// `rawAlloc`, open addressing with linear probing (0: an empty slot). A removal shifts the keys
+// after it back, so no slot is ever marked removed and a lookup stops at the first empty slot.
+// At most half full, so probes stay short; the set is made with room for 32 objects and doubles.
+
+import { addressLoad, addressStore, noInline, rawAlloc, rawFree } from "velt/lang/intrinsics";
+
+/** The slots a new set has (a power of two). */
+const FIRST_CAP: usize = 64;
+
+function load(a: usize): u64 {
+  // SAFETY: `a` is a word of a set block this module made and has not freed.
+  return unsafe { addressLoad<u64>(a) };
+}
+
+function store(a: usize, v: u64): void {
+  // SAFETY: as `load`.
+  unsafe {
+    addressStore<u64>(a, v);
+  }
+}
+
+/** The bytes of a set of `cap` slots. */
+function bytesOf(cap: usize): usize {
+  return (2 + cap) * 8;
+}
+
+/** The home slot of `x` in a set of `cap` slots: Fibonacci hashing of the address. */
+function home(x: u64, cap: usize): usize {
+  const h = ((x >> 3) * 0x9e3779b97f4a7c15) >> 40;
+  return (h as usize) & (cap - 1);
+}
+
+/** A new, empty set. */
+export function setNew(): usize {
+  return made(FIRST_CAP);
+}
+
+/** An empty set of `cap` slots. */
+function made(cap: usize): usize {
+  const s = rawAlloc(bytesOf(cap));
+  store(s, cap as u64);
+  store(s + 8, 0);
+  for (let i: usize = 0; i < cap; i++) {
+    store(s + 16 + 8 * i, 0);
+  }
+  return s;
+}
+
+/** Gives back set `s`. */
+export function setFree(s: usize): void {
+  // SAFETY: `s` came from `rawAlloc` with its capacity's bytes, and nothing uses it after.
+  unsafe {
+    rawFree(s, bytesOf(load(s) as usize));
+  }
+}
+
+/** Adds `x` to set `s` (which may move: the set is the result): whether `x` was not in it, in
+ * bit 0, and the set's address above it (`s` is 8-aligned). */
+export function setAdd(s: usize, x: u64): usize {
+  const cap = load(s) as usize;
+  const mask = cap - 1;
+  let i = home(x, cap);
+  while (true) {
+    const at = s + 16 + 8 * i;
+    const k = load(at);
+    if (k == x) {
+      return s;
+    }
+    if (k == 0) {
+      store(at, x);
+      const used = load(s + 8) + 1;
+      store(s + 8, used);
+      if (used * 2 > (cap as u64)) {
+        return grown(s) | 1;
+      }
+      return s | 1;
+    }
+    i = (i + 1) & mask;
+  }
+}
+
+/** Set `s` with twice the slots, its keys moved over; `s` is freed. */
+@noInline
+function grown(s: usize): usize {
+  const cap = load(s) as usize;
+  const t = made(cap * 2);
+  for (let i: usize = 0; i < cap; i++) {
+    const k = load(s + 16 + 8 * i);
+    if (k != 0) {
+      setAdd(t, k);
+    }
+  }
+  setFree(s);
+  return t;
+}
+
+/** Removes `x` from set `s`, if it is there. */
+export function setRemove(s: usize, x: u64): void {
+  const cap = load(s) as usize;
+  const mask = cap - 1;
+  let hole = home(x, cap);
+  while (true) {
+    const k = load(s + 16 + 8 * hole);
+    if (k == 0) {
+      return;
+    }
+    if (k == x) {
+      break;
+    }
+    hole = (hole + 1) & mask;
+  }
+  // Each key after the hole, up to an empty slot, moves into it unless its home slot lies after
+  // the hole (cyclically) and up to where it is: a lookup from its home would not pass the hole.
+  let j = hole;
+  while (true) {
+    j = (j + 1) & mask;
+    const k = load(s + 16 + 8 * j);
+    if (k == 0) {
+      break;
+    }
+    const h = home(k, cap);
+    const stays = hole <= j ? h > hole && h <= j : h > hole || h <= j;
+    if (!stays) {
+      store(s + 16 + 8 * hole, k);
+      hole = j;
+    }
+  }
+  store(s + 16 + 8 * hole, 0);
+  store(s + 8, load(s + 8) - 1);
+}

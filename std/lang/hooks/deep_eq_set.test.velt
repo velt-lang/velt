@@ -1,0 +1,38 @@
+// velt/lang/hooks (tests): tests of deep_eq_set.velt, run by `velt test std/`: 4,000 addresses
+// added (the set grows from 64 slots, keys collide), every third one removed, and each found or
+// not afterwards, so a removal that left a key behind or broke a probe sequence is seen.
+import { describe, expect, it } from "velt/test";
+import { setAdd, setFree, setNew, setRemove } from "velt/lang/hooks/deep_eq_set";
+
+/** The `i`th test address (8-aligned, never 0). */
+function key(i: u64): u64 {
+  return 4096 + i * 24;
+}
+
+describe("the set of deep equality's Node rule", () => {
+  it("adds, removes and finds addresses through growth and collisions", () => {
+    const n: u64 = 4000;
+    let s = setNew();
+    for (let i: u64 = 0; i < n; i++) {
+      const r = setAdd(s, key(i));
+      expect(r & 1).toBe(1);
+      s = r & ~1;
+    }
+    for (let i: u64 = 0; i < n; i++) {
+      const r = setAdd(s, key(i));
+      expect(r & 1).toBe(0);
+      s = r & ~1;
+    }
+    for (let i: u64 = 1; i < n; i += 3) {
+      setRemove(s, key(i));
+    }
+    // A key not in the set is not removed twice, and removing it changes nothing.
+    setRemove(s, key(n + 1));
+    for (let i: u64 = 0; i < n; i++) {
+      const r = setAdd(s, key(i));
+      expect(r & 1).toBe(i % 3 == 1 ? 1 : 0);
+      s = r & ~1;
+    }
+    setFree(s);
+  });
+});

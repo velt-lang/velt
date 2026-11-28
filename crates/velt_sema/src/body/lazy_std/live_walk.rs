@@ -285,7 +285,7 @@ pub(super) fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
         {
             w.constructs |= Construct::FnProps.bit()
         }
-        kind => w.constructs |= constructs::pow_bit(ty, kind),
+        kind => w.constructs |= constructs::pow_bit(ty, kind) | constructs::eq_bit(ty, kind),
     }
 }
 

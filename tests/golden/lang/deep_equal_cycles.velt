@@ -1,6 +1,9 @@
-// `deepEqual` and `assertEq` on values that hold themselves (#1881) stop at a cycle, as Node's
-// `util.isDeepStrictEqual` does: two rings of one length are equal, rings of two lengths are
-// not, and a cycle on one side only differs. Cycles through object values, arrays and `Map`s.
+// `deepEqual` and `assertEq` on values that hold themselves (#1881) stop at a cycle, as Node 22's
+// `util.isDeepStrictEqual` does (`handleCycles`): a pair whose two objects are both being
+// compared already counts as equal, so rings of one length and rings of two lengths with the same
+// values are equal, and so is a chain that ends in a cycle against a ring. Cycles through object
+// values, arrays and `Map`s. Expected output from node 22 (`deepEqual` as `isDeepStrictEqual`,
+// `assertEq` as `assert.deepStrictEqual`).
 type L = { v: number; next: L | null };
 
 function ring(n: number, v: (i: number) => number): L {

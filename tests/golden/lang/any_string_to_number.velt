@@ -1,0 +1,23 @@
+// `Number(s)` of a string held as `any` (std's `toNumber`, velt/lang/number/parse, the
+// `str_to_number` hook, #2196): arithmetic on an `any` holding a string, its `==` with a number,
+// and a string key `in` an array held as `any` (a numeric key below the length). The inputs are
+// the runtime's former test vectors of `Number(s)`: signs, exponents, `Infinity`, `0x`/`0o`/`0b`,
+// whitespace of every kind JavaScript trims, digits of other scripts, separators, subnormals and
+// values past 64 bits. Expected output from node 22.
+
+const inputs: string[] = ["3.14", "  3.14abc", "-.5", ".5", "5.", ".", "-", "+", "1e", "1e+", "1e5x", "1E-3", "Infinity",
+  "-Infinityx", "+Infinity", "infinity", "0x10", "", "  ", "1.7976931348623159e308", "2e-324", "-0", "0.1e-5",
+  "1.2.3", "  4", "12_3", "NaN", "1e1000", "00.5", "0x1F", "0o17", "0b101", "0b", "-0x10", " 12 ", "12 px",
+  "\n", "-Infinity", " +Infinity ", "+.5", "0X1f", "1_0", "١", "0.0000001", "1e-7",
+  "    42 ﻿", "0x" + "f".repeat(30), "0b" + "1".repeat(60), "0o777", "0o8", "1e+5", "-1e-5",
+  "123456789012345678901234567890", "0.1", "9007199254740993", ".e1", "1.e1", "Infinityx", "  -  5",
+  "4.9406564584124654e-324", "2.4703282292062327e-324", "\u0085 1"];
+
+const arr: any = [10, 20, 30];
+for (const s of inputs) {
+  const v: any = s;
+  console.log(JSON.stringify(s), v * 1, v - 0, v == 0, v == 16, s in arr);
+}
+for (const k of ["0", "1", "2", "3", "01", "1.0", "2 ", " 1", "-0", "1e0"]) {
+  console.log(JSON.stringify(k), k in arr);
+}

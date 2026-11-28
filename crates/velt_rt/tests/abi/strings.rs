@@ -4,7 +4,6 @@
 use super::js_table as js;
 use crate::str::{velt_rt_str_drop, VeltStr};
 use crate::str_ops::case::*;
-use crate::str_ops::number::*;
 use crate::str_ops::search::*;
 use crate::str_ops::slice::*;
 use std::mem::MaybeUninit;
@@ -55,26 +54,6 @@ fn both(s: &'static str, f: impl Fn(&VeltStr) -> String) -> String {
     let b = f(&heap(s));
     assert_eq!(a, b, "static vs heap input {s:?}");
     a
-}
-
-fn same_f64(got: f64, want_bits: u64) -> bool {
-    if want_bits == js::NAN {
-        got.is_nan()
-    } else {
-        got.to_bits() == want_bits
-    }
-}
-
-#[test]
-fn number_matches_js() {
-    for &(s, want) in js::TO_NUMBER {
-        let got = unsafe { velt_rt_str_to_number(&lit(s)) };
-        assert!(
-            same_f64(got, want),
-            "Number({s:?}) = {got:e}, want {:e}",
-            f64::from_bits(want)
-        );
-    }
 }
 
 #[test]

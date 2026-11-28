@@ -547,7 +547,9 @@ fn live_types_of(cx: &mut Ctx, mut todo: Vec<TyId>, mut adts: Vec<DefId>) {
             }
             let bit = match &kind {
                 TyKind::Array(_) => Construct::IndexCheck.bit(),
-                TyKind::Dyn(..) if cx.dynamic(t).is_some() => Construct::Dynamic.bit(),
+                TyKind::Dyn(..) if cx.dynamic(t).is_some() => {
+                    Construct::Dynamic.bit() | Construct::DynamicNumber.bit()
+                }
                 // The `format` slot of its table (`velt_vir` `glue/vtable.rs`). A class's is
                 // left out of a program that formats nothing (`Cx::format_demanded`).
                 TyKind::Dyn(..) => format_bit(cx, t),

@@ -548,7 +548,9 @@ pub(super) fn demanded_for(present: ConstructSet) -> ConstructSet {
         | Construct::Transfer.bit()
         | Construct::FnProps.bit()
         | Construct::ErrorMessage.bit()
-        | Construct::CharCode.bit();
+        | Construct::CharCode.bit()
+        | Construct::DynamicNumber.bit()
+        | Construct::DeepEq.bit();
     let (text, write) = (Construct::TextFloat.bit(), Construct::WriteFloat.bit());
     let own = alone | text | write;
     let integer = match present & !own {
@@ -579,6 +581,34 @@ pub(super) fn pow_bit(ty: &crate::types::Types, e: &hir::ExprKind) -> ConstructS
         TyKind::Float(_) => Construct::PowFloat.bit(),
         _ if ty.is_int(x.ty) => Construct::PowInt.bit(),
         _ => 0,
+    }
+}
+
+/// [`Construct::DeepEq`] if `e` is `==` or `!=` on operands that may be aggregates (anything but
+/// a number, a boolean or a string; a type parameter may be one): a `Binary` that lowering
+/// compares by content, or the `Intrinsic::Same` sema makes of `==` on other types (body/expr
+/// `ops.rs`), whose parts lowering may compare by content too, under deep equality's cycle guard
+/// where a value can hold itself (velt_vir `glue/eq_cycles.rs`). Else nothing.
+pub(super) fn eq_bit(ty: &crate::types::Types, e: &hir::ExprKind) -> ConstructSet {
+    use hir::{BinOp, ExprKind as E};
+    let operand = match e {
+        E::Binary {
+            op: BinOp::Eq | BinOp::NotEq,
+            lhs,
+            ..
+        } => lhs.ty,
+        E::Call {
+            callee: hir::Callee::Intrinsic(hir::Intrinsic::Same),
+            args,
+        } => match args.first() {
+            Some(a) => a.ty,
+            None => return 0,
+        },
+        _ => return 0,
+    };
+    match ty.kind(operand) {
+        TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str => 0,
+        _ => Construct::DeepEq.bit(),
     }
 }
 

@@ -109,11 +109,22 @@ pub enum Construct {
     /// `codePointAt`): past its inline ASCII read, lowering calls std's translation of the
     /// position (std/lang/string/positions.velt, #2816), which only a program that reads one loads.
     CharCode,
+    /// A value held as `any` (as [`Construct::Dynamic`]) that may be a string converted to a
+    /// number: the `ToNumber` slot of a string's `any` table (`==` with a number, an operator on
+    /// `any`, a numeric key `in` an array held as `any`), which calls std's `Number(s)`
+    /// (std/lang/hooks/string_number.velt, #2196). Demanded on its own, so that a program that
+    /// prints an integer and holds nothing as `any` loads none of number parsing.
+    DynamicNumber,
+    /// `==` or `!=` on operands that may be aggregates (a struct, a tuple, an object value, an
+    /// array, a type parameter's value): lowering compares them by content, under deep
+    /// equality's cycle guard (std/lang/hooks/deep_eq.velt) where a value can hold itself.
+    /// `deepEqual` and `toEqual` reach the guard through std's generated code (`hookCall`).
+    DeepEq,
 }
 
 impl Construct {
     /// Every construct, in bit order ([`ConstructSet`]).
-    pub const ALL: [Construct; 18] = [
+    pub const ALL: [Construct; 20] = [
         Construct::TextInt,
         Construct::TextUint,
         Construct::Format,
@@ -132,6 +143,8 @@ impl Construct {
         Construct::FnProps,
         Construct::ErrorMessage,
         Construct::CharCode,
+        Construct::DynamicNumber,
+        Construct::DeepEq,
     ];
 
     /// The construct as the ICE names it.
@@ -157,6 +170,8 @@ impl Construct {
             Construct::FnProps => "FnProps (a write through any: function properties)",
             Construct::ErrorMessage => "ErrorMessage (a get message() on a class extending Error)",
             Construct::CharCode => "CharCode (strCharCodeAt: a code unit of a string)",
+            Construct::DynamicNumber => "DynamicNumber (Number(s) of a string held as any)",
+            Construct::DeepEq => "DeepEq (== on operands that may be aggregates)",
         }
     }
 

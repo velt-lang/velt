@@ -28,8 +28,6 @@
 #[path = "../../velt_rt/src/bytes.rs"]
 pub mod bytes;
 pub mod cell_owner;
-#[path = "../../velt_rt/src/deep_eq.rs"]
-pub mod deep_eq;
 pub mod entry;
 #[path = "../../velt_rt/src/freed.rs"]
 pub mod freed;

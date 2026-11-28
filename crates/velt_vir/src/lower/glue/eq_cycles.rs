@@ -1,13 +1,14 @@
 //! Equality of values that may be reached again through their own fields: object values whose
 //! type can hold itself, compared by `==` on an aggregate holding them (`Glue::Eq`, #1881). Such a comparison keeps the pairs of objects
-//! being compared on a per-thread stack (`velt_rt_deep_eq_enter` / `_leave`), with Vitest's
+//! being compared on a per-thread stack (std's `deepEqEnter` / `deepEqLeave`,
+//! std/lang/hooks/deep_eq.velt), with Vitest's
 //! rule: the same pair met again is equal (the same cycle on both sides), an object met again
 //! with another partner differs (a cycle on one side, rings of two lengths). Node's
 //! `isDeepStrictEqual` answers the same (`lang/deep_equal_cycles`).
 
 use velt_sema::hir::{TyId, TyKind};
 
-use crate::lower::rt::Rt;
+use crate::lower::hook_calls::{self as hooks, ty, Construct, HookTy};
 use crate::lower::{cint, FnLower};
 use crate::vir::{self, BinOp, Const, Operand, Place, Rvalue, Terminator, Ty};
 
@@ -31,11 +32,16 @@ impl FnLower<'_, '_> {
         self.branch(same, yes, enter);
         self.switch_to(enter);
         let seen = self.temp(Ty::U8);
-        let ids = vec![
+        let ids = [
             self.cast_to(ptr_a, Ty::Ptr, Ty::U64),
             self.cast_to(ptr_b, Ty::Ptr, Ty::U64),
         ];
-        self.call_rt(Rt::DeepEqEnter, ids, Some(Place::local(seen)));
+        let [x, y] = ids;
+        let (x, y) = (ty::U64::arg(x), ty::U64::arg(y));
+        // `==` keeps Vitest's rule (`node` false).
+        let vitest = ty::Bool::arg(Operand::Const(Const::Bool(false), Ty::Bool));
+        hooks::deep_eq_enter(self, Construct::DeepEq, x, y, vitest)
+            .emit_to(self, Place::local(seen));
         let seen = Operand::Copy(Place::local(seen));
         let fresh = self.rvalue_temp(
             Ty::Bool,
@@ -62,10 +68,12 @@ impl FnLower<'_, '_> {
                 }
             }
         }
-        self.call_rt(Rt::DeepEqLeave, vec![], None);
+        let vitest = ty::Bool::arg(Operand::Const(Const::Bool(false), Ty::Bool));
+        _ = hooks::deep_eq_leave(self, Construct::DeepEq, vitest).emit(self);
         self.goto(yes);
         self.switch_to(differ);
-        self.call_rt(Rt::DeepEqLeave, vec![], None);
+        let vitest = ty::Bool::arg(Operand::Const(Const::Bool(false), Ty::Bool));
+        _ = hooks::deep_eq_leave(self, Construct::DeepEq, vitest).emit(self);
         self.goto(no);
         self.return_bool(yes, true);
         self.return_bool(no, false);
