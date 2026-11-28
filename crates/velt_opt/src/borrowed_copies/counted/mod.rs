@@ -67,13 +67,15 @@ use crate::locals::Usage;
 /// code reads (`velt_vir::math::effects`): allocation, and the string functions, which free
 /// only string buffers (never a counted object) and run no code of the program (an error's
 /// message built for a throw: `corrupt(\`page ${n}\`)`).
-const NO_FREE: [&str; 16] = [
+const NO_FREE: [&str; 17] = [
     "velt_rt_alloc",
     "velt_rt_realloc",
     "velt_rt_str_clone",
     "velt_rt_str_drop",
     "velt_rt_str_concat",
-    "velt_rt_str_slice",
+    "velt_rt_str_byte_slice",
+    // A lone surrogate of a slice cut inside a pair (std/lang/string/positions.velt `cutWide`).
+    "velt_rt_str_from_char_code",
     "velt_rt_set_throw_loc",
     "velt_rt_throw_loc",
     "velt_rt_strbuf_new",
@@ -131,6 +133,9 @@ impl Frees {
 
 /// Borrow the families of every function, callees first; returns which functions changed.
 pub(crate) fn run(program: &mut Program) -> Vec<bool> {
+    // std's `slice` of non-ASCII text in its module's object (`super::slice_entry`): it cuts with
+    // the functions above.
+    let slice_entry = super::slice_entry();
     let externs = program
         .externs
         .iter()
@@ -138,6 +143,7 @@ pub(crate) fn run(program: &mut Program) -> Vec<bool> {
             let s = e.symbol.as_str();
             let safe = e.noreturn
                 || NO_FREE.contains(&s)
+                || s == slice_entry
                 || velt_vir::math::effects(s).writes_nothing_visible()
                 || s.starts_with("velt_simd_")
                 || s.starts_with("velt_atomic_");

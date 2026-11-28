@@ -78,14 +78,6 @@ fn number_matches_js() {
 }
 
 #[test]
-fn slice_matches_js() {
-    for &(s, a, b, want) in js::SLICE {
-        let got = both(s, |v| take(|o| unsafe { velt_rt_str_slice(v, a, b, o) }));
-        assert_eq!(got, want, "{s:?}.slice({a}, {b})");
-    }
-}
-
-#[test]
 fn case_matches_js() {
     for &(s, upper, lower) in js::CASE {
         assert_eq!(
@@ -115,30 +107,7 @@ fn char_codes_match_js() {
     }
 }
 
-/// Run an out-param ABI function, return the code units of the result and free it.
-fn take_units(f: impl FnOnce(*mut VeltStr)) -> Vec<u16> {
-    let mut out = MaybeUninit::<VeltStr>::uninit();
-    f(out.as_mut_ptr());
-    let mut s = unsafe { out.assume_init() };
-    let units = super::utf16_model::wtf8_decode(unsafe { s.as_bytes() });
-    unsafe { velt_rt_str_drop(&mut s) };
-    units
-}
-
-/// The code units of `text` with `\u{D800}`-style lone surrogates spliced in at the `~` marks.
-fn u(text: &str, lone: &[u16]) -> Vec<u16> {
-    let mut out = Vec::new();
-    let mut lone = lone.iter();
-    for (k, part) in text.split('~').enumerate() {
-        if k > 0 {
-            out.push(*lone.next().expect("a lone surrogate per mark"));
-        }
-        out.extend(part.encode_utf16());
-    }
-    out
-}
-
-/// The code units of `s` as a static string (`"😀"` is given as text, its halves as `u`).
+/// The code units of `s` as a static string.
 fn wtf8(units: &[u16]) -> VeltStr {
     let bytes = super::utf16_model::wtf8_encode(units);
     VeltStr::from_static(Box::leak(bytes.into_boxed_slice()))
@@ -148,13 +117,22 @@ fn wtf8(units: &[u16]) -> VeltStr {
 fn code_unit_positions() {
     // Expected values from node 22. "héllo": é is one unit.
     let s = lit("héllo");
-    let slice = |a, b| take(|o| unsafe { velt_rt_str_slice(&s, a, b, o) });
-    assert_eq!(slice(1, 3), "él");
-    assert_eq!(slice(2, i64::MAX), "llo");
-    assert_eq!(slice(0, 2), "hé");
-    assert_eq!(slice(-4, -1), "éll");
     unsafe {
         assert_eq!(char_code_at(&s, 1), 233);
+    }
+    // `slice(1, 3)` as std cuts it: bytes 1..4, two units (no count of the piece).
+    let mut t = MaybeUninit::<VeltStr>::uninit();
+    unsafe { velt_rt_str_byte_slice(&s, 1, 4, 2, t.as_mut_ptr()) };
+    let t = unsafe { t.assume_init() };
+    assert!(t.is_static());
+    assert_eq!((unsafe { t.as_bytes() }, t.units()), ("él".as_bytes(), 2));
+    let h = heap("héllo, wörld");
+    for units in [UNCOUNTED, 3] {
+        let mut t = MaybeUninit::<VeltStr>::uninit();
+        unsafe { velt_rt_str_byte_slice(&*h, 1, 5, units, t.as_mut_ptr()) };
+        let mut t = unsafe { t.assume_init() };
+        assert_eq!((unsafe { t.as_bytes() }, t.units()), ("éll".as_bytes(), 3));
+        unsafe { velt_rt_str_drop(&mut t) };
     }
 }
 
@@ -168,10 +146,6 @@ fn half_pair_paths_match_js() {
         assert_eq!(char_code_at(&emoji, 1), 0xDE00);
         assert_eq!(char_code_at(&emoji, 2), -1);
     }
-    let slice = |s: &VeltStr, a, b| take_units(|o| unsafe { velt_rt_str_slice(s, a, b, o) });
-    assert_eq!(slice(&emoji, 0, 1), vec![0xD83D]);
-    assert_eq!(slice(&lit("x😀y"), 2, i64::MAX), u("~y", &[0xDE00]));
-    assert_eq!(slice(&lit("😀😀"), 1, 3), vec![0xDE00, 0xD83D]);
     // Gluing the halves back together gives the pair (canonical: its 4-byte sequence).
     let mut glued = MaybeUninit::<VeltStr>::uninit();
     unsafe { crate::str::velt_rt_str_concat(&hi, &lo, glued.as_mut_ptr()) };
@@ -185,13 +159,13 @@ fn static_inputs_give_borrowed_results() {
     let s = lit("  hello world  ");
     let mut t = MaybeUninit::<VeltStr>::uninit();
     // The piece std's `trim` cuts (std/lang/string/trim.velt): bytes 2..13.
-    unsafe { velt_rt_str_byte_slice(&s, 2, 13, t.as_mut_ptr()) };
+    unsafe { velt_rt_str_byte_slice(&s, 2, 13, UNCOUNTED, t.as_mut_ptr()) };
     let t = unsafe { t.assume_init() };
     let at = |x: &VeltStr| unsafe { x.as_bytes() }.as_ptr();
     assert!(t.is_static() && at(&t) == unsafe { at(&s).add(2) });
     let h = heap("  hello  ");
     let mut t = MaybeUninit::<VeltStr>::uninit();
-    unsafe { velt_rt_str_byte_slice(&*h, 2, 7, t.as_mut_ptr()) };
+    unsafe { velt_rt_str_byte_slice(&*h, 2, 7, UNCOUNTED, t.as_mut_ptr()) };
     let mut t = unsafe { t.assume_init() };
     assert!(!t.is_static() && at(&t) != unsafe { at(&h).add(2) });
     drop(h);

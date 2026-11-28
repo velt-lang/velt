@@ -62,15 +62,21 @@ const STR_CLONE: &str = "velt_rt_str_clone";
 const STR_DROP: &str = "velt_rt_str_drop";
 /// `velt_rt_alloc(size, align)`: fresh memory, nothing else written.
 const ALLOC: &str = "velt_rt_alloc";
-/// `velt_rt_str_slice(s, start, end, out)`: a slice of the string at `s` in `*out` (`views.rs`).
-const STR_SLICE: &str = "velt_rt_str_slice";
+/// `velt_rt_str_byte_slice(s, start, end, units, out)`: bytes of the string at `s` in `*out`,
+/// the cut of an ASCII string's `slice` (std's `sliceOf`, inline) and of std's others (`views.rs`).
+const STR_BYTE_SLICE: &str = "velt_rt_str_byte_slice";
 
 /// The runtime functions this pass knows, by id in one program.
 pub(crate) struct Runtime {
     clone: Option<ExternId>,
     drop: Option<ExternId>,
     alloc: Option<ExternId>,
-    slice: Option<ExternId>,
+    byte_slice: Option<ExternId>,
+    /// `slice` of a string that is not ASCII, `sliceWide(s, start, end, out)`: the `string_slice`
+    /// hook (std/lang/string/positions.velt, #2816), its instances or the entry point of its
+    /// object (`views.rs`).
+    slice_fns: FxHashSet<FuncId>,
+    slice_entry: Option<ExternId>,
     read_only: FxHashSet<ExternId>,
     /// Velt functions that write nothing their callers can see (`read_only.rs`).
     read_only_fns: FxHashSet<FuncId>,
@@ -79,32 +85,46 @@ pub(crate) struct Runtime {
     code_units: FxHashSet<FuncId>,
 }
 
+/// The name of the function of std/lang/string/positions.velt that `symbol` is (an instance
+/// of), if it is one.
+fn positions_item(symbol: &str) -> Option<&str> {
+    let entry = velt_vir::mangle::mangle(velt_common::std_hook!(string_char_code_at));
+    let item = velt_common::std_hook_name!(string_char_code_at);
+    let module = entry.strip_suffix(&format!("N{}{item}", item.len()))?;
+    let rest = symbol.strip_prefix(module)?.strip_prefix('N')?;
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    let n = rest[..digits].parse::<usize>().ok()?;
+    let name = rest.get(digits..digits + n)?;
+    let tail = &rest[digits + n..];
+    (tail.is_empty() || tail.starts_with("_L")).then_some(name)
+}
+
+/// The functions of positions.velt that cut a slice of non-ASCII text (the `string_slice` hook
+/// and its noinline part), which return a string through their out-pointer.
+const SLICE_ITEMS: [&str; 2] = [velt_common::std_hook_name!(string_slice), "cutWide"];
+
 /// Is `symbol` (an instance of) a function of std/lang/string/positions.velt that returns a
 /// position, a code unit or nothing: the translation `charCodeAt` of non-ASCII text calls in
 /// place of the runtime's read (#2816)? They write only the translation's per-thread cache and
 /// the string's breadcrumbs, which compiled code never reads, as that runtime function did
-/// (`Effects::ReadCaching`), and return no address. Not `key1`, which returns a data word.
+/// (`Effects::ReadCaching`), and return no address. Not `key1`, which returns a data word, nor
+/// the slice ([`slices`]).
 fn translates(symbol: &str) -> bool {
-    let entry = velt_vir::mangle::mangle(velt_common::std_hook!(string_char_code_at));
-    let item = velt_common::std_hook_name!(string_char_code_at);
-    let Some(module) = entry.strip_suffix(&format!("N{}{item}", item.len())) else {
-        return false;
-    };
-    let Some(rest) = symbol
-        .strip_prefix(module)
-        .and_then(|r| r.strip_prefix('N'))
-    else {
-        return false;
-    };
-    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-    let Ok(n) = rest[..digits].parse::<usize>() else {
-        return false;
-    };
-    let Some(name) = rest.get(digits..digits + n) else {
-        return false;
-    };
-    let tail = &rest[digits + n..];
-    name != "key1" && (tail.is_empty() || tail.starts_with("_L"))
+    positions_item(symbol).is_some_and(|name| name != "key1" && !SLICE_ITEMS.contains(&name))
+}
+
+/// Is `symbol` (an instance of) std's `slice` of non-ASCII text: the `string_slice` hook, or
+/// the part of it that cuts, `(s, start, end, out)` both?
+fn slices(symbol: &str) -> bool {
+    positions_item(symbol).is_some_and(|name| SLICE_ITEMS.contains(&name))
+}
+
+/// The symbol of the `string_slice` hook's entry point in its module's object (velt_common
+/// `prebuilt.rs`).
+fn slice_entry() -> String {
+    let hook = velt_common::std_hooks::find(velt_common::std_hook!(string_slice))
+        .expect("ICE: the hook table lacks `string_slice`");
+    velt_common::std_hooks::prebuilt::symbol(hook)
 }
 
 impl Runtime {
@@ -126,11 +146,17 @@ impl Runtime {
             .map(|(i, _)| FuncId(i as u32))
             .collect();
         let read_only_fns = read_only::read_only_functions(program, &read_only, &code_units);
+        let slice_fns = (program.funcs.iter().enumerate())
+            .filter(|(_, f)| slices(&f.symbol))
+            .map(|(i, _)| FuncId(i as u32))
+            .collect();
         Runtime {
             clone: ext(STR_CLONE),
             drop: ext(STR_DROP),
             alloc: ext(ALLOC),
-            slice: ext(STR_SLICE),
+            byte_slice: ext(STR_BYTE_SLICE),
+            slice_fns,
+            slice_entry: ext(&slice_entry()),
             read_only_fns,
             read_only,
             code_units,
@@ -139,6 +165,23 @@ impl Runtime {
 
     fn is(&self, callee: &Callee, id: Option<ExternId>) -> bool {
         matches!(callee, Callee::Extern(e) if Some(*e) == id)
+    }
+
+    /// When `callee` with `args` is a slice (`views.rs`): the index of its out-pointer, after
+    /// the string and its positions (numbers).
+    fn slice_out(&self, callee: &Callee, args: &[Operand]) -> Option<usize> {
+        let is = match callee {
+            Callee::Extern(e) if Some(*e) == self.byte_slice => args.len() == 5,
+            Callee::Extern(e) => Some(*e) == self.slice_entry && args.len() == 4,
+            Callee::Func(f) => self.slice_fns.contains(f) && args.len() == 4,
+            Callee::Ptr { .. } => false,
+        };
+        is.then(|| args.len() - 1)
+    }
+
+    /// Does the program have a slice to call?
+    fn has_slices(&self) -> bool {
+        self.byte_slice.is_some() || self.slice_entry.is_some() || !self.slice_fns.is_empty()
     }
 
     fn reads_only(&self, callee: &Callee) -> bool {
@@ -169,11 +212,11 @@ pub(crate) fn run(aggs: &[AggLayout], rt: &Runtime, func: &mut Function) -> bool
 /// Make the families of `func` that allow it string views (`views.rs`); returns whether
 /// anything changed.
 /// A view only pays where a family slices, and every slice of a string that is not static calls
-/// the runtime's slice: a function with no such call has nothing for this mode that the copy
-/// mode, run before it, did not take.
+/// the runtime's byte slice or std's `slice` of non-ASCII text: a function with no such call has
+/// nothing for this mode that the copy mode, run before it, did not take.
 pub(crate) fn run_views(aggs: &[AggLayout], rt: &Runtime, func: &mut Function) -> bool {
-    let slices = |b: &velt_vir::vir::BasicBlock| matches!(&b.term, Terminator::Call { callee, .. } if rt.is(callee, rt.slice));
-    rt.slice.is_some() && func.blocks.iter().any(slices) && run_mode(aggs, rt, func, true)
+    let slices = |b: &velt_vir::vir::BasicBlock| matches!(&b.term, Terminator::Call { callee, args, .. } if rt.slice_out(callee, args).is_some());
+    rt.has_slices() && func.blocks.iter().any(slices) && run_mode(aggs, rt, func, true)
 }
 
 fn run_mode(aggs: &[AggLayout], rt: &Runtime, func: &mut Function, views: bool) -> bool {
@@ -589,13 +632,13 @@ impl Cx<'_> {
                     }
                     return;
                 }
-                if self.views && self.rt.is(callee, self.rt.slice) && args.len() == 4 {
+                if let Some(out) = self.rt.slice_out(callee, args).filter(|_| self.views) {
                     // A slice of a family value may be a view of the same bytes: it joins. Its
-                    // positions are numbers, never family values.
+                    // positions (and a byte slice's unit count) are numbers, never family values.
                     if marked[0] {
-                        self.join_out(f, &args[3]);
+                        self.join_out(f, &args[out]);
                     }
-                    f.bail |= marked[1] || marked[2];
+                    f.bail |= marked[1..out].contains(&true);
                     return;
                 }
                 if marked.contains(&true) && !self.rt.reads_only(callee) {

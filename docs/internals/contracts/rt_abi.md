@@ -86,13 +86,13 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 
   For every heap string the buffer's first byte is `ptr - ((w2 >> 31) & (2^30 - 1))` (0 for a
   plain one, whose capacity is below 2^31), and its count is the 8 bytes before that.
-- **Which pieces share.** Exactly these runtime functions return a slice of a heap string:
-  `velt_rt_str_slice` (`slice`, `substring`, `charAt`, `at`, `s[i]`) and `velt_rt_str_byte_slice`,
-  with which std cuts the results of `trim`, `trimStart`, `trimEnd`, and of `split` when its
-  separator is not empty and cannot match half of a surrogate pair (std/lang/string/). They return
-  a slice when the piece is too
+- **Which pieces share.** Exactly one runtime function returns a slice of a heap string:
+  `velt_rt_str_byte_slice`, with which std cuts the results of `slice`, `substring`, `charAt`,
+  `at` and `s[i]` (std/prelude/string.velt, std/lang/string/positions.velt, #2816), of `trim`,
+  `trimStart`, `trimEnd`, and of `split` when its separator is not empty and cannot match half of
+  a surrogate pair (std/lang/string/). It returns a slice when the piece is too
   long to be inline, at least a quarter of the buffer's capacity, and the buffer is below 1 GiB
-  (2^30 bytes); otherwise they copy (inline when short). Every other function copies the pieces it
+  (2^30 bytes); otherwise it copies (inline when short). Every other function copies the pieces it
   returns: `split("")` and the characters of `for (const c of s)` (pieces of one character, always
   inline), a split by a lone surrogate. In every function the whole string is shared as it is (count
   +1, same value), a piece of a static string borrows it, and a piece that ends between the halves

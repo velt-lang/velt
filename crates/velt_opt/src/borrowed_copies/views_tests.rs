@@ -24,6 +24,9 @@ enum Case {
     ClonedThenRead,
     /// A slice of `rest` stored into the object.
     SliceStored,
+    /// A slice of `rest` by std's `sliceWide` in its object (non-ASCII text), only read, then
+    /// dropped: it joins the family as the runtime's byte slice does.
+    WideSliceRead,
     /// `rest`'s address passed to a runtime function that may keep it.
     UnknownCall,
     /// A read-only Velt function's `u64` result of `rest` (its first word, as `strWord0` gives
@@ -54,6 +57,8 @@ struct Kit {
     clone: ExternId,
     drop: ExternId,
     slice: ExternId,
+    /// std's `slice` of non-ASCII text in its object (`slice_entry`).
+    wide: ExternId,
     hash: ExternId,
     word_of: FuncId,
     other: ExternId,
@@ -70,7 +75,13 @@ fn kit() -> Kit {
     let clone = pb.ext(STR_CLONE, &[Ty::Ptr, Ty::Ptr], Ty::Unit, false);
     let drop = pb.ext(STR_DROP, &[Ty::Ptr], Ty::Unit, false);
     let slice = pb.ext(
-        STR_SLICE,
+        STR_BYTE_SLICE,
+        &[Ty::Ptr, Ty::U64, Ty::U64, Ty::U64, Ty::Ptr],
+        Ty::Unit,
+        false,
+    );
+    let wide = pb.ext(
+        &slice_entry(),
         &[Ty::Ptr, Ty::I64, Ty::I64, Ty::Ptr],
         Ty::Unit,
         false,
@@ -94,6 +105,7 @@ fn kit() -> Kit {
         clone,
         drop,
         slice,
+        wide,
         hash,
         word_of,
         other,
@@ -214,8 +226,9 @@ fn program(case: Case) -> Program {
         Callee::Extern(k.slice),
         vec![
             copy_local(p_rest),
-            int(1, Ty::I64),
-            int(i128::from(i64::MAX), Ty::I64),
+            int(1, Ty::U64),
+            copy_local(len),
+            int(i128::from(u64::MAX), Ty::U64),
             copy_local(p_tmp),
         ],
         None,
@@ -263,7 +276,7 @@ fn program(case: Case) -> Program {
         Case::SliceStored => {
             at = fb.call(
                 at,
-                Callee::Extern(k.slice),
+                Callee::Extern(k.wide),
                 vec![
                     copy_local(p_rest),
                     int(0, Ty::I64),
@@ -276,6 +289,21 @@ fn program(case: Case) -> Program {
                 at,
                 Stmt::Assign(field_of(o, k.obj, 1), Rvalue::Use(copy_local(tmp))),
             );
+        }
+        Case::WideSliceRead => {
+            at = fb.call(
+                at,
+                Callee::Extern(k.wide),
+                vec![
+                    copy_local(p_rest),
+                    int(0, Ty::I64),
+                    int(3, Ty::I64),
+                    copy_local(p_tmp),
+                ],
+                None,
+            );
+            fb.assign(at, w0, Rvalue::Use(copy_place(field(tmp, 0))));
+            at = fb.call(at, Callee::Extern(k.drop), vec![copy_local(p_tmp)], None);
         }
         Case::UnknownCall => {
             at = fb.call(
@@ -335,7 +363,7 @@ fn views(mut p: Program) -> bool {
             .filter(|b| matches!(&b.term, Terminator::Call { callee, .. } if rt.is(callee, id)))
             .count()
     };
-    assert!(calls(rt.drop) >= 2 && calls(rt.slice) >= 1 && calls(rt.clone) >= 1);
+    assert!(calls(rt.drop) >= 2 && calls(rt.byte_slice) >= 1 && calls(rt.clone) >= 1);
     changed
 }
 
@@ -352,6 +380,8 @@ fn assert_kept(case: Case) {
 #[test]
 fn a_family_that_only_slices_and_reads_is_demoted() {
     assert_demoted(Case::Nothing);
+    // Also when it slices with std's `slice` of non-ASCII text (the object's entry point).
+    assert_demoted(Case::WideSliceRead);
 }
 
 #[test]

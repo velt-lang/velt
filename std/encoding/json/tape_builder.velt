@@ -5,7 +5,10 @@
 import { strByteAt, strByteLen } from "velt/lang/intrinsics";
 import { ESCAPED, Tape } from "velt/encoding/json/tape";
 
-declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64, units: u64): string;
+
+/** The piece's unit count, unknown: `velt_rt_str_byte_slice` counts it. */
+const UNCOUNTED: u64 = 0xffffffffffffffff;
 
 /** A tape being parsed: `Tape`'s fields (tape.velt says what each holds), still growing. */
 export class TapeBuilder {
@@ -34,7 +37,7 @@ export class TapeBuilder {
       return this.decoded[p as usize];
     }
     // A range between a string's quotes: whole characters.
-    return velt_rt_str_byte_slice(this.src, p & 0xffffffff, p >> 32);
+    return velt_rt_str_byte_slice(this.src, p & 0xffffffff, p >> 32, UNCOUNTED);
   }
 
   /** Whether keys `a` and `b` have the same text, compared in place. */

@@ -27,7 +27,7 @@ import {
   strWord2,
 } from "velt/lang/intrinsics";
 
-declare function velt_rt_str_slice(s: string, start: i64, end: i64): string;
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64, units: u64): string;
 declare function velt_rt_str_from_char_code(code: i64): string;
 
 /**
@@ -54,10 +54,11 @@ function asciiLen(s: string): u64 {
  * - any slice of a static ASCII string (a literal, or a view the runtime handed out as static):
  *   the static string of its sub-range, as the runtime would return it (#3469), so slicing one
  *   costs no call, no count and no copy.
- * Anything else is one call of the runtime, which clamps the bounds and translates positions,
- * precompiled: in Velt (std/lang/string/positions.velt) that would be checked in every program,
- * as nearly every program slices (+13 to +21 % on `velt check` of hello), until std objects make
- * it free (#1728).
+ * Any other slice of an ASCII string (heap or inline) clamps its positions here and is one call
+ * of the runtime's byte slice, given the piece's unit count. A string that is not ASCII (or is
+ * empty) goes to std's translation of its positions (`sliceWide`, std/lang/string/positions.velt,
+ * the `string_slice` hook, #2816), prebuilt: a program checks and compiles none of it where the
+ * build cache or the toolchain holds its object.
  */
 @inline("always")
 function sliceOf(s: string, start: i64, end: i64): string {
@@ -76,7 +77,12 @@ function sliceOf(s: string, start: i64, end: i64): string {
       return staticAsciiSlice(strWord0(s), len, start, end);
     }
   }
-  return velt_rt_str_slice(s, start, end);
+  if (n != 0) {
+    const a = relativePos(start, n);
+    const b = relativePos(end, n);
+    return a < b ? velt_rt_str_byte_slice(s, a, b, b - a) : strBorrowedWords(0, 0);
+  }
+  return hookCall("string_slice", s, start, end);
 }
 
 /**
@@ -316,15 +322,17 @@ extend string {
    * The code unit at position `i` as a one-unit string (a surrogate pair gives one half), or ""
    * out of range, as JS's `charAt`. `s[i]` is the same. In range, the one-unit slice is that unit
    * (a lone half inside a pair). Compiled into the caller: in an ASCII string, the inline string of
-   * the byte at `i`, the string's words read once (`asciiLen`); any other string calls the runtime.
+   * the byte at `i`, the string's words read once (`asciiLen`); any other string calls std's
+   * translation of the position.
    */
   charAt(i: i64 = 0): string {
     const n = asciiLen(this);
     if (i >= 0 && (i as u64) < n) {
       return strAsciiWords(strByteAt(this, i as u64) as u64, 0, 0, 1);
     }
-    // Out of range in an ASCII string, or a string that is not ASCII (or is empty).
-    return n != 0 || i < 0 || i == END ? "" : velt_rt_str_slice(this, i, i + 1);
+    // Out of range in an ASCII string, or a string that is not ASCII (or is empty): std's
+    // translation (`sliceWide`).
+    return n != 0 || i < 0 || i == END ? "" : hookCall("string_slice", this, i, i + 1);
   }
 
   /**

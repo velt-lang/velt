@@ -194,6 +194,7 @@ impl VeltStr {
     ///
     /// # Safety
     /// As for [`Self::substring`]; `units` must be the piece's UTF-16 length.
+    #[inline(never)]
     pub(crate) unsafe fn substring_units(&self, start: usize, end: usize, units: usize) -> VeltStr {
         if start >= end {
             return VeltStr::empty();

@@ -12,7 +12,8 @@
 //! What the mode changes in the analysis (`Cx::views`):
 //! - **Members may hold views, owned strings and anything else**: their drops stay (a drop of a
 //!   static string does nothing), and `check_member_defs` only asks for a demotion.
-//! - **What may hold a view joins the family**: the output of `velt_rt_str_slice` of a member,
+//! - **What may hold a view joins the family**: the output of a slice of a member (the runtime's
+//!   byte slice, or std's `sliceWide` of non-ASCII text, `Runtime::slice_out`),
 //!   and the copy a clone of a member makes (a bitwise copy of a view is a view). A read-only
 //!   call cannot return a string (VIR has no aggregate results, and a call that only reads has no
 //!   out-pointer to write one through), but its 64-bit integer result could be a data word, which

@@ -4,7 +4,10 @@
 import { noInline, strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
 
 declare function velt_rt_str_is_well_formed(s: string): bool;
-declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64, units: u64): string;
+
+/** The piece's unit count, unknown: `velt_rt_str_byte_slice` counts it. */
+const UNCOUNTED: u64 = 0xffffffffffffffff;
 
 /**
  * A `string` passed to a C function as its UTF-8 bytes, borrowed for the call and without a
@@ -49,7 +52,7 @@ function wellFormedCopy(s: string): string {
   let i: usize = 0;
   while (i < n) {
     if (strByteAt(s, i as u64) == 0xed && strByteAt(s, (i + 1) as u64) >= 0xa0) {
-      const kept = velt_rt_str_byte_slice(s, from as u64, i as u64);
+      const kept = velt_rt_str_byte_slice(s, from as u64, i as u64, UNCOUNTED);
       out += kept;
       out += "\u{fffd}";
       i += 3;
@@ -58,7 +61,7 @@ function wellFormedCopy(s: string): string {
       i++;
     }
   }
-  const rest = velt_rt_str_byte_slice(s, from as u64, n as u64);
+  const rest = velt_rt_str_byte_slice(s, from as u64, n as u64, UNCOUNTED);
   out += rest;
   return out;
 }

@@ -4,7 +4,7 @@
 import { Ptr } from "velt/ffi/ptr";
 
 /** The text of bytes `start..end` of `s`, both at the start of a character or the end. */
-export declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+export declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64, units: u64): string;
 
 /** Makes `out` an empty builder with room for `cap` bytes. */
 export declare function velt_rt_strbuf_new(cap: u64, out: string);

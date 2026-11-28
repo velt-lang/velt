@@ -25,7 +25,10 @@
 
 import { inline, strByteAt, strByteLen } from "velt/lang/intrinsics";
 
-declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64, units: u64): string;
+
+/** The piece's unit count, unknown: `velt_rt_str_byte_slice` counts it. */
+const UNCOUNTED: u64 = 0xffffffffffffffff;
 
 /** Objects with more keys than this get a hash index (`TapeRef.find`), made on first lookup. */
 export const INDEX_THRESHOLD: usize = 16;
@@ -193,7 +196,7 @@ export function wordText(src: string, decoded: string[], w: u64, p: u64): string
     return decoded[p as usize];
   }
   // A range between a string's quotes: whole characters, no check needed.
-  return velt_rt_str_byte_slice(src, p & 0xffffffff, p >> 32);
+  return velt_rt_str_byte_slice(src, p & 0xffffffff, p >> 32, UNCOUNTED);
 }
 
 /** Key `i` of object `v` (`i` below its `wordRawCount`), as written. */

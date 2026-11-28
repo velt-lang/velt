@@ -21,6 +21,10 @@ import {
   velt_rt_strbuf_push_bytes,
   velt_rt_strbuf_push_str,
 } from "velt/text/regex/rt";
+
+/** The piece's unit count, unknown: `velt_rt_str_byte_slice` counts it. */
+const UNCOUNTED: u64 = 0xffffffffffffffff;
+
 import { Search } from "velt/text/regex/search";
 
 /** The text of capture group `g` of the match whose slots start at `slots[at]`, `""` when it
@@ -57,7 +61,7 @@ function parts(replacement: string, names: string[], kinds: i64[], texts: string
     if (c == 0x24) {
       // `$$`: one `$`, which ends the text before it.
       kinds.push(TEXT);
-      texts.push(velt_rt_str_byte_slice(replacement, from as u64, (i + 1) as u64));
+      texts.push(velt_rt_str_byte_slice(replacement, from as u64, (i + 1) as u64, UNCOUNTED));
       i += 2;
       from = i;
       continue;
@@ -82,7 +86,7 @@ function parts(replacement: string, names: string[], kinds: i64[], texts: string
     } else if (c == 0x3c && named) {
       const close = findByte(replacement, 0x3e, i + 2, n);
       if (close >= 0) {
-        const name = velt_rt_str_byte_slice(replacement, (i + 2) as u64, close as u64);
+        const name = velt_rt_str_byte_slice(replacement, (i + 2) as u64, close as u64, UNCOUNTED);
         // A name no group has stands for nothing.
         const g = names.indexOf(name) + 1;
         kind = g > 0 ? g as i64 : TEXT;
@@ -96,7 +100,7 @@ function parts(replacement: string, names: string[], kinds: i64[], texts: string
     // The text before it, when there is some.
     if (i > from) {
       kinds.push(TEXT);
-      texts.push(velt_rt_str_byte_slice(replacement, from as u64, i as u64));
+      texts.push(velt_rt_str_byte_slice(replacement, from as u64, i as u64, UNCOUNTED));
     }
     if (kind != TEXT) {
       kinds.push(kind);
@@ -107,7 +111,7 @@ function parts(replacement: string, names: string[], kinds: i64[], texts: string
   }
   if (n > from) {
     kinds.push(TEXT);
-    texts.push(velt_rt_str_byte_slice(replacement, from as u64, n as u64));
+    texts.push(velt_rt_str_byte_slice(replacement, from as u64, n as u64, UNCOUNTED));
   }
 }
 
@@ -285,7 +289,7 @@ export function escapePattern(s: string): string {
       (c >= 0x5b && c <= 0x5e) ||
       (c >= 0x7b && c <= 0x7d);
     if (meta) {
-      out += velt_rt_str_byte_slice(s, from as u64, i as u64);
+      out += velt_rt_str_byte_slice(s, from as u64, i as u64, UNCOUNTED);
       out += "\\";
       from = i;
     }
@@ -293,6 +297,6 @@ export function escapePattern(s: string): string {
   if (from == 0 && out == "") {
     return s.clone();
   }
-  out += velt_rt_str_byte_slice(s, from as u64, n as u64);
+  out += velt_rt_str_byte_slice(s, from as u64, n as u64, UNCOUNTED);
   return out;
 }

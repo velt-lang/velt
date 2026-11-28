@@ -1,0 +1,128 @@
+// Node twin of string_slice_units.velt: the same program without its types.
+
+/** The code units of `s`, as numbers joined by spaces (lone surrogates printed as numbers). */
+function units(s) {
+  const out = [];
+  for (let i = 0; i < s.length; i++) {
+    out.push(`${s.charCodeAt(i)}`);
+  }
+  return out.join(" ");
+}
+
+/** A short hash of `s`'s code units and its length, so long results print as one line. */
+function digest(s) {
+  let h = 17;
+  for (let i = 0; i < s.length; i++) {
+    h = (h * 31 + s.charCodeAt(i)) % 1000000007;
+  }
+  return `${s.length}:${h}`;
+}
+
+/** Every slice of `s` from positions `-n - 2` to `n + 2`, folded into one digest line. */
+function allSlices(name, s) {
+  const n = s.length;
+  let h = 0;
+  let count = 0;
+  for (let a = -n - 2; a <= n + 2; a++) {
+    for (let b = -n - 2; b <= n + 2; b++) {
+      const piece = s.slice(a, b);
+      const sub = s.substring(a, b);
+      h = (h * 7 + piece.length * 3 + sub.length) % 1000000007;
+      for (let i = 0; i < piece.length; i++) {
+        h = (h * 31 + piece.charCodeAt(i)) % 1000000007;
+      }
+      for (let i = 0; i < sub.length; i++) {
+        h = (h * 37 + sub.charCodeAt(i)) % 1000000007;
+      }
+      count++;
+    }
+    const c = s.charAt(a);
+    const at = s.at(a);
+    h = (h * 41 + c.length + (at === undefined ? 7 : at.length * 11)) % 1000000007;
+    for (let i = 0; i < c.length; i++) {
+      h = (h * 43 + c.charCodeAt(i)) % 1000000007;
+    }
+  }
+  console.log(`${name}: ${count} slices, ${h}`);
+}
+
+/** `s` built at run time from its pieces (a heap string, not a literal). */
+function built(parts, times) {
+  const out = [];
+  for (let i = 0; i < times; i++) {
+    for (const p of parts) {
+      out.push(p);
+    }
+  }
+  return out.join("");
+}
+
+const hi = String.fromCharCode(0xd83d);
+const lo = String.fromCharCode(0xde00);
+const texts = ["", "a", "é", "😀", "x😀y", "😀😀", "héllo", "日本語テキスト", "a😀b😀c"];
+texts.push(hi, lo + "x", "x" + hi + "é" + lo, lo + hi);
+for (const t of texts) {
+  allSlices(JSON.stringify(t), t);
+}
+
+// Lone surrogates at the cut, by hand.
+console.log(units("😀".slice(0, 1)), units("😀".slice(1)), units("x😀y".slice(2)));
+console.log(units("😀😀".slice(1, 3)), units("😀😀".substring(3, 1)), units("a😀".charAt(2)));
+console.log(units("😀".at(-1) ?? ""), units("😀".at(0) ?? ""), "😀".at(2) === undefined);
+// Halves cut apart and glued back are the pair again.
+const glued = "😀".slice(0, 1) + "😀".slice(1);
+console.log(glued === "😀", glued.length, units(glued));
+
+// Negative, out-of-range, NaN and fractional positions.
+const word = "naïve café";
+console.log(word.slice(-4), word.slice(-100, 3), word.slice(3, -100), word.slice(100));
+console.log(word.substring(-3, 4), word.substring(7, 2), word.substring(NaN, 3));
+console.log(word.slice(NaN, 2.9), word.slice(1.5, 4.7), word.charAt(2.9), word.charAt(NaN));
+console.log(word.slice(-Infinity, Infinity), word.slice(Infinity), word.at(-1), word.at(-11));
+console.log(JSON.stringify(word.charAt(-1)), JSON.stringify(word.charAt(10)), word.at(10));
+
+// Long heap strings (breadcrumbs), slices of slices (views of one buffer), short and long pieces.
+const long = built(["ab", "ü", "日本", "😀", "c"], 300);
+console.log(digest(long), digest(long.slice(5)), digest(long.slice(1000, 1003)));
+console.log(digest(long.slice(-700, -3)), units(long.slice(4, 7)), units(long.slice(5, 8)));
+const view = long.slice(9);
+const inner = view.slice(100);
+console.log(digest(view), digest(inner), digest(inner.slice(50, 900)), units(inner.slice(3, 5)));
+let rest = long;
+let steps = 0;
+while (rest.length > 0) {
+  rest = rest.slice(3);
+  steps++;
+}
+console.log(steps, JSON.stringify(rest));
+let pieces = 0;
+let acc = 0;
+for (let i = 0; i < long.length; i += 7) {
+  const p = long.substring(i, i + 5);
+  acc = (acc * 13 + p.length + (p.length > 0 ? p.charCodeAt(p.length - 1) : 0)) % 1000000007;
+  pieces++;
+}
+console.log(pieces, acc);
+let chars = 0;
+for (let i = 0; i < long.length; i++) {
+  chars = (chars * 3 + long.charAt(i).charCodeAt(0) + (long.at(-1 - i) ?? "").length) % 1000000007;
+}
+console.log(chars);
+// An ASCII heap string, inline and empty pieces.
+const ascii = built(["hello ", "world "], 50);
+console.log(ascii.slice(6, 11), ascii.slice(-6), JSON.stringify(ascii.slice(5, 5)), ascii.charAt(4));
+console.log(ascii.slice(3, 40).length, ascii.substring(590, 3).length, ascii.at(-2));
+// The characters of `for (const c of s)` and of the string's iterator know their units.
+function lengths(xs) {
+  const out = [];
+  for (const c of xs) {
+    out.push(`${c.length}:${units(c)}`);
+  }
+  return out.join(",");
+}
+const mixed = "a😀é" + hi + "日" + built(["😀"], 2);
+const direct = [];
+for (const c of mixed) {
+  direct.push(`${c.length}:${c.slice(0, 1).length}:${c.at(-1)?.length}`);
+}
+console.log(direct.join(","), lengths(mixed));

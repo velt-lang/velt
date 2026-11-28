@@ -83,9 +83,9 @@ impl Cx<'_> {
                     }
                 }
                 self.gen_operand(index, &args[0], live);
-            } else if self.views && self.rt.is(callee, self.rt.slice) && args.len() == 4 {
+            } else if let Some(out) = self.rt.slice_out(callee, args).filter(|_| self.views) {
                 // A slice into a member defines it and reads its input's text (`views.rs`).
-                if let Some(m) = self.addr_of_local(&args[3]) {
+                if let Some(m) = self.addr_of_local(&args[out]) {
                     if let Some(&i) = index.get(&m) {
                         live[i] = false;
                     }
@@ -271,8 +271,8 @@ impl Cx<'_> {
                         return !local_arg(0);
                     }
                     // A slice allocates or shares, and writes only its output (`views.rs`).
-                    if self.views && rt.is(callee, rt.slice) && args.len() == 4 {
-                        return !local_arg(3);
+                    if let Some(out) = rt.slice_out(callee, args).filter(|_| self.views) {
+                        return !local_arg(out);
                     }
                     // A string the caller holds stays put during this call (semantics.md "Borrows
                     // through counted objects": a borrowed argument is stabilized), so a call can

@@ -4,6 +4,7 @@
 // own. One machine word: `Ptr<T> | null` is the same word, with 0 as `null`.
 
 import { ptrFromAddress, ptrRead, ptrToAddress, ptrWrite } from "velt/lang/intrinsics/address";
+import { strAsciiWords } from "velt/lang/intrinsics/string";
 
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
 
@@ -66,9 +67,6 @@ export struct Ptr<T> {
   }
 }
 
-/** The hexadecimal digits of `ptrPush`. */
-const HEX_DIGITS: string = "0123456789abcdef";
-
 /**
  * Appends `Ptr(0x…)` of a pointer at `address` to the builder `buf`: how `console.log` and
  * `inspect` show one (lowering calls it, velt_vir `glue/format.rs`). The address in lowercase
@@ -83,8 +81,10 @@ export function ptrPush(buf: string, address: u64): void {
     shift -= 4;
   }
   while (true) {
-    const digit = ((address >> shift) & 15) as i64;
-    text += HEX_DIGITS[digit];
+    // The digit's one-byte inline string: no `charAt`, whose translation of non-ASCII positions
+    // a program that prints nothing but text would load otherwise (#2816).
+    const digit = (address >> shift) & 15;
+    text += strAsciiWords(digit < 10 ? 48 + digit : 87 + digit, 0, 0, 1);
     if (shift == 0) {
       break;
     }

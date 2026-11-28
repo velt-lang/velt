@@ -2,7 +2,7 @@
 
 import { strAsciiWords, strByteAt, strByteLen } from "velt/lang/intrinsics";
 
-declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64, units: u64): string;
 
 /**
  * The iterator of a string (TS's `StringIterator<string>`): one character (code point) per
@@ -36,7 +36,9 @@ export class StringIterator implements IterableIterator<string>, IteratorObject<
     }
     const n: u64 = b < 0xe0 ? 2 : b < 0xf0 ? 3 : 4;
     this.pos = at + n;
-    return { value: velt_rt_str_byte_slice(this.text, at, at + n), done: false };
+    // One code point: two units for four bytes (a pair), else one; the runtime counts nothing.
+    const units: u64 = n == 4 ? 2 : 1;
+    return { value: velt_rt_str_byte_slice(this.text, at, at + n, units), done: false };
   }
 
   /** The iterator itself. */

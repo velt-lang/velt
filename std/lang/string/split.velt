@@ -27,7 +27,11 @@ import { isHalfNeedle, nextUnit, NO_START } from "velt/lang/string/code_units";
 import { halfFindPos, unitsAfter, unitsText, unitText } from "velt/lang/string/half_pos";
 import { findBytes } from "velt/lang/string/needle_scan";
 
-declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64, units: u64): string;
+
+/** The piece's unit count, unknown: `velt_rt_str_byte_slice` counts it. */
+const UNCOUNTED: u64 = 0xffffffffffffffff;
+
 declare function velt_simd_u8x16_splat(x: u8): u8x16;
 declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
 declare function velt_simd_mask8x16_bitmask(m: mask8x16): u64;
@@ -40,7 +44,7 @@ function piece(s: string, a: usize, b: usize): string {
       return strAsciiWords(c as u64, 0, 0, 1);
     }
   }
-  return velt_rt_str_byte_slice(s, a as u64, b as u64);
+  return velt_rt_str_byte_slice(s, a as u64, b as u64, UNCOUNTED);
 }
 
 /** The lanes of the 16 bytes of `s` at `at` that hold `v`'s byte, as bits. */

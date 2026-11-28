@@ -15,6 +15,10 @@
 //   one it was taken under: the runtime bumps it when a buffer with a table, or marked
 //   remembered, is freed or moved (a slice marks its buffer, as the runtime's slices do); a
 //   static string's entry never expires.
+//
+// `charCodeAt` and `slice` (with `substring`, `charAt` and `at`) of non-ASCII text are the
+// translation's callers here (#2816): a slice cuts a byte range, which the runtime shares or
+// copies knowing the piece's unit count.
 
 import {
   noInline,
@@ -39,6 +43,8 @@ import {
 } from "velt/lang/string/crumbs";
 import { unitAt } from "velt/lang/string/code_units";
 
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64, units: u64): string;
+declare function velt_rt_str_from_char_code(code: i64): string;
 declare function velt_simd_u8x16_splat(x: u8): u8x16;
 declare function velt_simd_u8x16_and(a: u8x16, b: u8x16): u8x16;
 declare function velt_simd_u8x16_eq(a: u8x16, b: u8x16): mask8x16;
@@ -278,4 +284,61 @@ export function charCodeAtWide(s: string, i: i64): i64 {
     return -1;
   }
   return unitAt(s, unitToByte(s, i as usize)) as i64;
+}
+
+/**
+ * A JS relative position in a string of `n` units (the prelude's `relativePos`): a negative `i`
+ * counts from the end; the result is clamped to `[0, n]`.
+ */
+function relativePos(i: i64, n: u64): u64 {
+  if (i < 0) {
+    const k = (n as i64) + i;
+    return k < 0 ? 0 : k as u64;
+  }
+  return (i as u64) < n ? i as u64 : n;
+}
+
+/**
+ * `s.slice(start, end)` past the prelude's inline paths (`sliceOf`, `charAt`: one ASCII unit, a
+ * static or heap ASCII string), the `string_slice` hook (#2816): JS rules (negative positions
+ * count from the end, clamped, "" when `start >= end`; `i64::MAX` for an omitted `end`).
+ */
+export function sliceWide(s: string, start: i64, end: i64): string {
+  const units = strLen(s) as u64;
+  const a = relativePos(start, units);
+  const b = relativePos(end, units);
+  if (a >= b) {
+    return "";
+  }
+  if (units == (strByteLen(s) as u64)) {
+    return velt_rt_str_byte_slice(s, a, b, b - a);
+  }
+  return cutWide(s, a as usize, b as usize);
+}
+
+/**
+ * Units `a..b` of the non-ASCII `s` (`a < b <= its length`): a range of its bytes, which the
+ * runtime shares or copies knowing its unit count, unless an end falls between the halves of a
+ * pair, whose half is then a lone surrogate of its own (a copy). The second end is a forward
+ * scan from the first when it is near: a short piece of a long string costs one translation.
+ */
+@noInline
+function cutWide(s: string, a: usize, b: usize): string {
+  const pa = unitToByte(s, a);
+  const pb =
+    b - a < STRIDE
+      ? scanForward(s, (pa >> 1) as usize, a - ((pa & 1) as usize), b)
+      : unitToByte(s, b);
+  const ba = pa >> 1;
+  const bb = pb >> 1;
+  if (((pa | pb) & 1) == 0) {
+    return velt_rt_str_byte_slice(s, ba, bb, (b - a) as u64);
+  }
+  // A pair's low half first, its high half last: the pieces join to no pair (a high half would
+  // have to come before a low one).
+  const low = (pa & 1) != 0;
+  const from = low ? ba + 4 : ba;
+  const middle = velt_rt_str_byte_slice(s, from, bb, ((b - a) as u64) - (pa & 1) - (pb & 1));
+  const head = low ? velt_rt_str_from_char_code(unitAt(s, pa) as i64) + middle : middle;
+  return (pb & 1) != 0 ? head + velt_rt_str_from_char_code(unitAt(s, pb - 1) as i64) : head;
 }

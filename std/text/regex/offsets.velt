@@ -5,6 +5,9 @@ import { strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
 import { byteToUnit, unitToByte } from "velt/lang/string/positions";
 import { velt_rt_str_byte_slice } from "velt/text/regex/rt";
 
+/** The piece's unit count, unknown: `velt_rt_str_byte_slice` counts it. */
+const UNCOUNTED: u64 = 0xffffffffffffffff;
+
 /** The code unit of the position at byte `at` of `s`: between the halves of a pair, the one
  * after the pair's first. */
 export function unitOf(s: string, at: usize): usize {
@@ -51,5 +54,5 @@ export function textOf(s: string, from: usize, to: usize): string {
   if (inPair(s, from, n) || inPair(s, to, n)) {
     return s.slice(unitOf(s, from) as i64, unitOf(s, to) as i64);
   }
-  return velt_rt_str_byte_slice(s, from as u64, to as u64);
+  return velt_rt_str_byte_slice(s, from as u64, to as u64, UNCOUNTED);
 }

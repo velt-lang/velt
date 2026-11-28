@@ -11,7 +11,10 @@ import { strByteAt, strByteLen, strDataAddress } from "velt/lang/intrinsics";
 declare function velt_rt_strbuf_push_byte(buf: string, b: u8);
 declare function velt_rt_strbuf_push_inspect_str(buf: string, s: string);
 declare function velt_rt_strbuf_push_u8s(buf: string, bytes: u8[], len: u64, units: u64);
-declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64, units: u64): string;
+
+/** The piece's unit count, unknown: `velt_rt_str_byte_slice` counts it. */
+const UNCOUNTED: u64 = 0xffffffffffffffff;
 
 /** Node's `breakLength`. */
 const BREAK_LENGTH: u64 = 80;
@@ -43,7 +46,7 @@ export function splitString(src: string, a: u64, b: u64, indent: u64): string {
   let from: u64 = 0;
   for (let k = 0; k < breaks.length; k++) {
     const to = breaks[k] + 1;
-    const piece = velt_rt_str_byte_slice(raw, from, to);
+    const piece = velt_rt_str_byte_slice(raw, from, to, UNCOUNTED);
     if (from > 0) {
       velt_rt_strbuf_push_byte(out, 0x20);
       velt_rt_strbuf_push_byte(out, 0x2b);
