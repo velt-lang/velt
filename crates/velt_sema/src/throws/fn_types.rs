@@ -81,6 +81,9 @@ pub(crate) struct FnTypeSeeds {
     no_vars: bool,
     /// The sites of std/proxy's `ProxyHandler` traps the previous check met.
     pub(super) proxy_sites: FxHashSet<Span>,
+    /// The functions (by name span) whose calls through `any` leave the `TypeError` out of
+    /// their errors, found by the previous check (`throws::not_fn`).
+    pub(super) not_fn_closed: FxHashSet<Span>,
     /// Check without any variable, also for the traps (`FnSites::doubted`).
     exact: bool,
     /// The program converts to `any` a function that throws (`throws::any_calls`): a call

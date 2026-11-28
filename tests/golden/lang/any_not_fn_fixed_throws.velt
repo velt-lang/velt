@@ -2,8 +2,18 @@
 // written without `TypeError`, still stops the program with Node's message (#3955): the clause
 // keeps the error out of the function's promise, and counting it would break a clause that
 // held. Node's `catch` runs here (`caught o.ob is not a function`); add `TypeError` to the
-// clause, or leave the clause out, to get that (any_not_fn_async.velt).
-const o: any = { ob: 5 };
+// clause, or leave the clause out, to get that (any_not_fn_async.velt). An async function such
+// a function awaits leaves it out too (`helper`), so the clause still holds: it compiles, as
+// before.
+const o: any = { ob: 5, f: (x: number): number => x + 1 };
+
+async function helper(): Promise<number> {
+  return o.f(2);
+}
+
+async function viaClause(): Promise<number> throws RangeError {
+  return await helper();
+}
 
 async function fixed(): Promise<void> throws RangeError {
   if (o.ob === 6) {
@@ -13,7 +23,7 @@ async function fixed(): Promise<void> throws RangeError {
 }
 
 async function main(): Promise<void> {
-  console.log("before");
+  console.log("before", await viaClause());
   try {
     await fixed();
   } catch (e) {

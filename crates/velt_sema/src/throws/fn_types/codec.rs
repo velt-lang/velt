@@ -16,6 +16,7 @@ crate::units::codec::structs! {
     FnTypeSeeds {
         sites, hints, slots, no_vars, proxy_sites, exact, closure_targets, methods,
         any_calls_throw, any_sorts,
+        not_fn_closed,
     }
 }
 crate::units::codec::enums! {

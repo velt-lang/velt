@@ -653,6 +653,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
     info.local_kinds = frame.kinds;
     info.throw_srcs = frame.uncaught;
     info.soft_moves = frame.soft_moves;
+    crate::throws::drop_closed_not_fn(cx, def);
     hir::FnDef {
         name: f.name.clone(),
         generics: f.generics.len() as u32,

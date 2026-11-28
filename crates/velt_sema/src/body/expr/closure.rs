@@ -348,7 +348,8 @@ impl FnCx<'_, '_> {
         let body_ret = self.f.ret.unwrap_or(self.cx.ty.unit);
         let parent = self.outer.pop().expect("ICE: closure frame");
         self.finish_using_shares();
-        let frame = std::mem::replace(&mut self.f, parent);
+        let mut frame = std::mem::replace(&mut self.f, parent);
+        crate::throws::drop_closed_not_fn_in(self.cx, def, &mut frame.uncaught);
         if frame.widening_result > 0 {
             (self.cx.widening_values).insert(span, frame.widening_result.saturating_add(1));
         }
