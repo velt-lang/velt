@@ -66,7 +66,10 @@ impl super::Cx<'_> {
     /// The hooks a prebuilt object may call in the program that links it (velt_common
     /// `prebuilt::calls_out`: the writer's entries), lowered on a native target whatever the
     /// program itself calls, so that a program linking an object defines them (`veltc` exports
-    /// them then); the optimizer drops each one nothing calls.
+    /// them then); the optimizer drops each one nothing calls. Each is the plain version, the
+    /// symbol an object calls: in a program with a lock set, `func` would make the version whose
+    /// address may be taken (`_K`), and the plain one only where the program's own code outside
+    /// a `read` callback calls the hook.
     pub(super) fn seed_calls_out(&mut self) {
         if super::c_call::wasm32(&self.target) {
             return;
@@ -75,7 +78,7 @@ impl super::Cx<'_> {
             let def =
                 (self.prelude_def(&h.qualified())).filter(|d| !self.hir.unchecked.contains(d));
             if let Some(d) = def {
-                self.func(super::Work::Fn(d, vec![]));
+                self.func_in_mode(super::Work::Fn(d, vec![]), super::LkMode::Plain);
             }
         }
     }
