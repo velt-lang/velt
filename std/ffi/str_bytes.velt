@@ -1,9 +1,10 @@
 // velt/ffi (internal): `StrBytes`, a string a C function takes as its UTF-8 bytes, and the
 // function lowering calls for each such argument (crates/velt_vir/src/lower/c_call.rs).
 
-import { noInline, strByteLen, strLen } from "velt/lang/intrinsics";
+import { noInline, strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
 
 declare function velt_rt_str_is_well_formed(s: string): bool;
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
 
 /**
  * A `string` passed to a C function as its UTF-8 bytes, borrowed for the call and without a
@@ -35,22 +36,29 @@ export function strBytesOf(s: string): string {
   return wellFormedCopy(s);
 }
 
-/** `s` with U+FFFD for each lone surrogate (the same byte length). */
+/**
+ * `s` with U+FFFD for each lone surrogate (the same byte length). On bytes, with no position to
+ * translate (#2816): in canonical WTF-8 a lone surrogate is `ED A0..BF xx` (a pair is one 4-byte
+ * sequence), and `ED` is never a continuation byte.
+ */
 @noInline
 function wellFormedCopy(s: string): string {
   let out = "";
-  const n = s.length as i64;
-  let i: i64 = 0;
+  const n = strByteLen(s);
+  let from: usize = 0;
+  let i: usize = 0;
   while (i < n) {
-    const c = s.charCodeAt(i);
-    const next = i + 1 < n ? s.charCodeAt(i + 1) : 0;
-    if (c >= 0xd800 && c <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
-      out += s.slice(i, i + 2);
-      i += 2;
+    if (strByteAt(s, i as u64) == 0xed && strByteAt(s, (i + 1) as u64) >= 0xa0) {
+      const kept = velt_rt_str_byte_slice(s, from as u64, i as u64);
+      out += kept;
+      out += "\u{fffd}";
+      i += 3;
+      from = i;
     } else {
-      out += c >= 0xd800 && c <= 0xdfff ? "\u{fffd}" : s.slice(i, i + 1);
-      i += 1;
+      i++;
     }
   }
+  const rest = velt_rt_str_byte_slice(s, from as u64, n as u64);
+  out += rest;
   return out;
 }

@@ -4,7 +4,7 @@
 // in all (else the online cores).
 
 import { Ptr, export as cExport } from "velt/ffi";
-import { exportedAddress, inline, noInline } from "velt/lang/intrinsics";
+import { exportedAddress, inline, noInline, strByteAt } from "velt/lang/intrinsics";
 import * as r from "#reactor";
 import * as th from "#sched-thread";
 import { processEnv, setLazyWorker } from "./process";
@@ -159,7 +159,7 @@ function workerCount(): usize {
         digits = 0;
         break;
       }
-      n = n * 10 + ((c.charCodeAt(0) - 48) as usize);
+      n = n * 10 + ((strByteAt(c, 0) - 48) as usize);
       digits++;
       if (n > MAX_WORKERS) {
         digits = 0;
