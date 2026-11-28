@@ -352,7 +352,10 @@ impl FnLower<'_, '_> {
             let vp = proj(out, vir::Proj::Cast(self.cx.view(ty, v)));
             let tag = Operand::Const(Const::Int(v as i128), Ty::U32);
             self.assign(proj(&vp, vir::Proj::Field(0)), Rvalue::Use(tag));
-            self.assign(proj(&vp, vir::Proj::Field(1)), Rvalue::Use(Operand::Copy(val)));
+            self.assign(
+                proj(&vp, vir::Proj::Field(1)),
+                Rvalue::Use(Operand::Copy(val)),
+            );
             self.goto(done);
             self.switch_to(other);
         }

@@ -59,7 +59,8 @@ impl Ctx<'_> {
         let found: Vec<DefId> = (0..self.info.len() as u32)
             .map(DefId)
             .filter(|&d| {
-                self.iface(d).is_some_and(|i| i.generics.names.is_empty() && d != want)
+                self.iface(d)
+                    .is_some_and(|i| i.generics.names.is_empty() && d != want)
                     && extends(self, d)
             })
             .collect();
