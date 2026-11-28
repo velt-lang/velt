@@ -17,6 +17,10 @@
 //! name (a module the loader named as std's, `std/../…`, whose path ends in `/` and the canonical
 //! module) is an internal error naming both, in each of the three, and not a feature switched
 //! off (#3745). A program's own module under a `std` directory is not such a name.
+//!
+//! The built-in methods of an `any` are the hook table's `method(…)` rows, found as above. A std
+//! function named by a receiver's prefix without a row (`anyStr_trimLeft`), which lowering would
+//! never call, is an internal error in any program that loads its module (`unlisted_method`).
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use velt_sema::hir::{self, DefId};
@@ -47,6 +51,19 @@ fn canonical_std_module(module: &str) -> Option<&str> {
     Some(&module[at + 1..])
 }
 
+/// std function `name` (its item `item`) named as a built-in method of an `any` (`anyStr_trim`)
+/// without a row of the hook table: an internal error, since lowering takes a receiver's methods
+/// from its rows only and would leave this one silently not there. Only std's modules are asked:
+/// a program's own function may have any name (the loader reserves `std/…` for std).
+fn unlisted_method(name: &str, item: &str) {
+    if let Some(r) = velt_common::std_hooks::any_methods::unlisted(item) {
+        ice(format_args!(
+            "std function `{name}` is named as a built-in method of an `any` ({r:?}) but is no \
+             `method({r:?})` row of the hook table (velt_common std_hooks/any_methods.rs)"
+        ));
+    }
+}
+
 impl<'h> Cx<'h> {
     fn std_defs(&self) -> &StdDefs<'h> {
         let hir: &'h hir::Program = self.hir;
@@ -59,7 +76,14 @@ impl<'h> Cx<'h> {
                     _ => continue,
                 };
                 defs.by_name.entry(name).or_insert(DefId(i as u32));
-                if let Some((module, _)) = name.split_once("::") {
+                if let Some((module, item)) = name.split_once("::") {
+                    // A module's own functions only: not a closure in one (`anyArr_sort::{closure#0}`).
+                    if matches!(d, hir::Def::Fn(_))
+                        && module.starts_with("std/")
+                        && !item.contains("::")
+                    {
+                        unlisted_method(name, item);
+                    }
                     if defs.modules.insert(module) {
                         if let Some(canonical) = canonical_std_module(module) {
                             defs.second_names.entry(canonical).or_insert(module);

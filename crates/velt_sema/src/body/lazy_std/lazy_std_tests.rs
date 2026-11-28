@@ -181,8 +181,12 @@ fn every_std_definition_lowering_names_is_a_root() {
 #[test]
 fn helpers_by_name_and_by_family() {
     assert!(is_helper(velt_common::std_hook!(any_loose_eq)));
-    assert!(is_helper("anyRec_get"));
-    assert!(is_helper("anyMap_set"));
+    assert!(is_helper("anyRec_symGet"));
+    assert!(is_helper(
+        "std/lang/hooks/any_array_methods::anyMap_forEach"
+    ));
+    // Only the table's rows: a std function named like one is no helper.
+    assert!(!is_helper("anyMap_set"));
     assert!(!is_helper(velt_common::std_hook!(any_member)));
     assert!(!is_helper("Number"));
     // A hook whose entry lists constructs is checked where live code has one (`live.rs`).

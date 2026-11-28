@@ -312,8 +312,9 @@ export function anyArr_toString<T>(a: T[], args: any[]): any {
 }
 
 // `Map` and `Set` methods whose own signature glue cannot call (a callback with a `throws` type
-// parameter): `__any<Class>_<name><type arguments>(value, args)` (velt_vir any_builtin.rs,
-// `any_class_call`); those of `Set` are in std/collections/set.velt.
+// parameter): `any<Class>_<name><type arguments>(value, args, whole)`, rows of the hook table
+// (velt_common std_hooks/any_methods.rs; velt_vir any_builtin.rs, `any_class_call`); those of
+// `Set` are in std/collections/set.velt.
 
 /**
  * `m.forEach(f)` through `any`: `f(value, key, whole)` per entry, in insertion order; `whole` is

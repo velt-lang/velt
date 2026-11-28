@@ -3,10 +3,11 @@
 // is one call through the descriptor of the value held (`AnyCall`); for a string it runs
 // `anyStr_<name>(s, args)`, for an array of `T` `anyArr_<name><T>(a, args)`, for a number
 // `anyNum_<name>(n, args)`, for a boolean `anyBool_<name>(b, args)` and for a promise
-// `anyPromise_<name><T, E>(p, args)` (velt_vir any_builtin.rs finds them by name). The
-// arguments come as an `any[]` and are converted as JavaScript converts them (`ToString`,
-// `ToIntegerOrInfinity`); the result goes back as an `any`. A name without a function here is a
-// `TypeError` naming #924. Arrays' and maps' are in any_array_methods.velt.
+// `anyPromise_<name><T, E>(p, args)`: each a row of the compiler's hook table (velt_common
+// std_hooks/any_methods.rs, which velt_vir any_builtin.rs calls them by), so renaming one fails
+// the table's test. The arguments come as an `any[]` and are converted as JavaScript converts
+// them (`ToString`, `ToIntegerOrInfinity`); the result goes back as an `any`. A name without a
+// function here is a `TypeError` naming #924. Arrays' and maps' are in any_array_methods.velt.
 
 import { hookCall } from "velt/lang/intrinsics";
 import { anyString, anyText } from "./any_text";
