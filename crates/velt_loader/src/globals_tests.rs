@@ -361,3 +361,48 @@ fn an_area_import_loads_only_the_files_of_the_names_it_imports() {
     let loaded = std_modules(simd, &["std/simd/"]);
     assert!(loaded.contains(&"std/simd/words".to_string()), "{loaded:?}");
 }
+
+#[test]
+fn performance_now_alone_does_not_load_the_performance_global() {
+    let t = Tree::new();
+    let std = t.path("std");
+    t.write("std/prelude/index.velt", "import \"./core\";\n");
+    t.write(
+        "std/prelude/core.velt",
+        "export function id(): i64 { return 0; }\n",
+    );
+    t.write(
+        "std/prelude/global/performance.velt",
+        "export { performance, Performance } from \"velt/perf\";\n",
+    );
+    t.write(
+        "std/perf.velt",
+        "export class Performance {}\nexport let performance: Performance = new Performance();\n",
+    );
+    let opts = || LoadOptions {
+        std_root: Some(std.clone()),
+        ..Default::default()
+    };
+    // The compiler reads the clock itself: the global's module state stays out.
+    let now = t.write(
+        "p/now.velt",
+        "function main() { const t = performance.now(); console.log(performance.now() - t); }\n",
+    );
+    let (l, diags, _) = load(&now, opts());
+    assert!(diags.is_empty(), "{:?}", messages(&diags));
+    assert_eq!(paths(&l), ["std/prelude/core", "main"]);
+
+    let mark = t.write(
+        "p/mark.velt",
+        "function main() { performance.now(); performance.mark(\"a\"); }\n",
+    );
+    let (l, diags, _) = load(&mark, opts());
+    assert!(diags.is_empty(), "{:?}", messages(&diags));
+    let want = [
+        "std/prelude/core",
+        "main",
+        "std/prelude/global/performance",
+        "std/perf",
+    ];
+    assert_eq!(paths(&l), want);
+}

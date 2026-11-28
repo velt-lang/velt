@@ -1,0 +1,37 @@
+// velt/lang/performance (internal): `PerformanceMeasure`, what `performance.measure` makes.
+
+import { PerformanceEntry } from "./entry";
+
+/**
+ * The options of `performance.measure`: where it starts and ends (a mark's name or a time),
+ * or one of them and its `duration`, and its `detail`.
+ */
+export type PerformanceMeasureOptions = {
+  detail?: any;
+  start?: string | number;
+  end?: string | number;
+  duration?: number;
+};
+
+/** The time between two points of the timeline (`performance.measure("load", "a", "b")`). */
+export class PerformanceMeasure extends PerformanceEntry {
+  /** What the options gave as `detail`, or `null`. */
+  readonly detail: any;
+
+  /** A measure from `startTime` lasting `duration`; `performance.measure` makes and records one. */
+  constructor(name: string, startTime: number, duration: number, detail: any = null) {
+    super(name, "measure", startTime, duration);
+    this.detail = detail;
+  }
+
+  /** The measure as `JSON.stringify` writes it, with its `detail`. */
+  override toJSON(): any {
+    return {
+      name: this.name,
+      entryType: this.entryType,
+      startTime: this.startTime,
+      duration: this.duration,
+      detail: this.detail,
+    };
+  }
+}

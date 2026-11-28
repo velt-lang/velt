@@ -1,0 +1,63 @@
+PerformanceMark {
+  name: 'a',
+  entryType: 'mark',
+  startTime: 5,
+  duration: 0,
+  detail: { x: 1 }
+}
+{"name":"a","entryType":"mark","startTime":5,"duration":0,"detail":{"x":1}} true true
+null 0
+PerformanceMeasure {
+  name: 'ab',
+  entryType: 'measure',
+  startTime: 5,
+  duration: 5,
+  detail: null
+}
+PerformanceMeasure {
+  name: 'o',
+  entryType: 'measure',
+  startTime: 2,
+  duration: 7,
+  detail: 'd'
+}
+PerformanceMeasure {
+  name: 'o2',
+  entryType: 'measure',
+  startTime: 5,
+  duration: 3,
+  detail: null
+}
+20 true
+6
+5
+0
+[
+  'o6:measure:0',
+  'o:measure:2',
+  'a:mark:5',
+  'ab:measure:5',
+  'o2:measure:5',
+  'o5:measure:5',
+  'o4:measure:6',
+  'b:mark:10',
+  'o3:measure:20'
+]
+2 1 0
+[] []
+[ 'b' ]
+SyntaxError: The "a" performance mark has not been set
+[ 'o6', 'o', 'o2', 'o5', 'o4', 'o3' ]
+0
+SyntaxError: The "nope" performance mark has not been set
+TypeError: -1 is not a valid timestamp
+TypeError: Must not have options.start, options.end, and options.duration specified
+TypeError: endMark must not be specified
+TypeError: -2 is not a valid timestamp
+0
+number true true
+true
+null null
+true number
+[object Performance]
+own 1 0

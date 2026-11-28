@@ -29,6 +29,7 @@
 
 mod console_json;
 mod in_code;
+mod perf_now;
 
 pub(super) use in_code::in_code;
 
@@ -210,7 +211,8 @@ pub(super) fn bound_names(module: &ast::Module) -> HashSet<&str> {
 
 /// Whether module `module` (its source's `words`) names global `name`: as a whole word of its
 /// source that is in its code (`in_code`, asked only then: [`in_code`]), for `RegExp` also by a
-/// regular expression literal, and for `Proxy` by a literal nothing put where its type may have
+/// regular expression literal (`performance` only for more than `performance.now`:
+/// [`perf_now`]), and for `Proxy` by a literal nothing put where its type may have
 /// none (`null!`, `null as any`), which a view of the nothing holds (velt_vir
 /// `lower/any_view.rs`).
 pub(super) fn names_global(
@@ -219,7 +221,7 @@ pub(super) fn names_global(
     name: &str,
     in_code: impl FnOnce() -> bool,
 ) -> bool {
-    (words.has(name) && in_code())
+    (words.has(name) && in_code() && (name != "performance" || perf_now::beyond_now(module)))
         || (name == "RegExp" && words.src.contains('/') && has_regex(module))
         || (name == "Proxy"
             && (words.has("null") || words.has("undefined"))

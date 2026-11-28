@@ -1,0 +1,160 @@
+// velt/lang/performance (internal): `Performance` and the `performance` global: the clock
+// (`now`, which the compiler calls directly where `performance.now()` is written, and
+// `timeOrigin`) and the user timing of Node's perf_hooks (`mark`, `measure`, the entries).
+
+import { PerformanceEntry } from "./entry";
+import { CodedTypeError } from "./errors";
+import { PerformanceMark, PerformanceMarkOptions } from "./mark";
+import { PerformanceMeasure, PerformanceMeasureOptions } from "./measure";
+import { enqueue } from "./observer";
+import * as timeline from "./timeline";
+import { perfNow } from "velt/lang/hooks/clock";
+import { DOMException } from "velt/lang/dom_exception";
+
+// `timeOrigin`, once read: the wall-clock time `performance.now()` counts from.
+let origin = -1.0;
+
+/**
+ * Node's `Performance`: milliseconds since the time origin (`now()`), and the timeline of marks
+ * and measures. `performance` is the one instance. No resource entries are recorded (yet):
+ * `getEntriesByType("resource")` is empty.
+ */
+export class Performance {
+  /** Milliseconds since the time origin, with their fraction. */
+  now(): number {
+    return perfNow();
+  }
+
+  /** The time origin as milliseconds since the Unix epoch, with their fraction. */
+  get timeOrigin(): number {
+    if (origin < 0) {
+      origin = (Date.now() as number) - perfNow();
+    }
+    return origin;
+  }
+
+  /** Records a mark named `name` (at `options.startTime`, default now) and returns it. */
+  mark(name: string, options: PerformanceMarkOptions = {}): PerformanceMark {
+    const m = new PerformanceMark(name, options);
+    enqueue(m);
+    timeline.buffer(m);
+    return m;
+  }
+
+  /**
+   * Records the measure named `name` between two marks (their names: `measure("m", "a", "b")`)
+   * or as the options say (`{ start, end, duration, detail }`, a start or end a mark's name or a
+   * time), and returns it. Without a start (or an end and a duration) it starts at the time
+   * origin, without an end (or a start and a duration) it ends now. A mark not recorded throws a
+   * `SyntaxError` `DOMException`, as on Node.
+   */
+  measure(
+    name: string,
+    startOrOptions?: string | PerformanceMeasureOptions,
+    endMark?: string,
+  ): PerformanceMeasure {
+    let opts: PerformanceMeasureOptions | undefined = undefined;
+    let startMark: string | undefined = undefined;
+    if (typeof startOrOptions === "string") {
+      startMark = startOrOptions;
+    } else if (startOrOptions !== undefined && hasOptions(startOrOptions)) {
+      opts = startOrOptions;
+    }
+    if (opts !== undefined) {
+      if (endMark !== undefined) {
+        throw measureOptions("endMark must not be specified");
+      }
+      if (opts.start !== undefined && opts.end !== undefined && opts.duration !== undefined) {
+        throw measureOptions(
+          "Must not have options.start, options.end, and options.duration specified",
+        );
+      }
+    }
+    let end = 0.0;
+    if (endMark !== undefined) {
+      end = timeOf(endMark);
+    } else if (opts !== undefined && opts.end !== undefined) {
+      end = timeOf(opts.end);
+    } else if (opts !== undefined && opts.start !== undefined && opts.duration !== undefined) {
+      end = timeOf(opts.start) + timeOf(opts.duration);
+    } else {
+      end = perfNow();
+    }
+    let start = 0.0;
+    if (startMark !== undefined) {
+      start = timeOf(startMark);
+    } else if (opts !== undefined && opts.start !== undefined) {
+      start = timeOf(opts.start);
+    } else if (opts !== undefined && opts.end !== undefined && opts.duration !== undefined) {
+      start = end - timeOf(opts.duration);
+    }
+    const detail: any = opts === undefined ? null : (opts.detail ?? null);
+    const m = new PerformanceMeasure(name, start, end - start, detail);
+    enqueue(m);
+    timeline.buffer(m);
+    return m;
+  }
+
+  /** The marks and measures recorded, in order of `startTime`. */
+  getEntries(): PerformanceEntry[] {
+    return timeline.entries(undefined, undefined);
+  }
+
+  /** Those named `name` (and of `type`, when given). */
+  getEntriesByName(name: string, type?: string): PerformanceEntry[] {
+    return timeline.entries(name, type);
+  }
+
+  /** Those of `type`: `"mark"`, `"measure"` (or `"resource"`, none yet). */
+  getEntriesByType(type: string): PerformanceEntry[] {
+    return timeline.entries(undefined, type);
+  }
+
+  /** Drops the marks recorded (those named `name`, when given). */
+  clearMarks(name?: string) {
+    timeline.clearMarks(name);
+  }
+
+  /** Drops the measures recorded (those named `name`, when given). */
+  clearMeasures(name?: string) {
+    timeline.clearMeasures(name);
+  }
+
+  /** `"[object Performance]"`, as Node's `String(performance)` gives. */
+  toString(): string {
+    return "[object Performance]";
+  }
+}
+
+/** Does `o` give any option (Node reads an empty object as none)? */
+function hasOptions(o: PerformanceMeasureOptions): bool {
+  return o.start !== undefined ||
+    o.end !== undefined ||
+    o.duration !== undefined ||
+    o.detail !== undefined;
+}
+
+/** The time a measure's start or end names: a time (0 or more), or the last mark's of a name. */
+function timeOf(at: string | number): number {
+  if (typeof at === "number") {
+    if (at < 0) {
+      throw new CodedTypeError(
+        "ERR_PERFORMANCE_INVALID_TIMESTAMP",
+        `${at} is not a valid timestamp`,
+      );
+    }
+    return at;
+  }
+  const t = timeline.markTime(at);
+  if (t === undefined) {
+    throw new DOMException(`The "${at}" performance mark has not been set`, "SyntaxError");
+  }
+  return t;
+}
+
+function measureOptions(message: string): CodedTypeError {
+  return new CodedTypeError("ERR_PERFORMANCE_MEASURE_INVALID_OPTIONS", message);
+}
+
+/** Node's `performance`. */
+export let performance: Performance = new Performance();
