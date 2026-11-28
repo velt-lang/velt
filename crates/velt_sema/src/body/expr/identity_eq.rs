@@ -128,6 +128,14 @@ impl FnCx<'_, '_> {
             let h = self.related_iface_cast(h, first, span)?;
             return self.try_coerce(h, target);
         }
+        if self.checked_union_downcast(h.ty, target, span) {
+            let Some(any) = self.any_ty() else {
+                return Err(h);
+            };
+            let a = self.compared_operand(h, any);
+            let text = self.str_lit("type assertion failed", span);
+            return Ok(self.intrinsic(hir::Intrinsic::AnyTo, vec![a, text], target, span));
+        }
         if !self.related_ifaces(h.ty, target) || self.cx.ty.opt_payload(target).is_some() {
             return Err(h);
         }
@@ -193,7 +201,46 @@ impl FnCx<'_, '_> {
         self.note_fn_views(to, span);
         self.cx.note_dyn_object_target(to);
         self.cx.note_iface_downcast(have);
+        if let TyKind::Dyn(want, args) = self.cx.ty.kind(to).clone() {
+            self.cx.note_extension_upcasts(want, &args);
+        }
         true
+    }
+
+    /// Is `from as to` a cast to a union of interfaces each checked as [`Self::checked_downcast`]
+    /// checks one (`s as Named | Sided`), or to one or such a union with `undefined` (`s as Named
+    /// | undefined`, also from a `Shape | undefined`, whose `undefined` passes through), outside
+    /// std's `lib.dom` (#3073)? The value converts to the first member it implements, in the
+    /// union type's member order, not the order written (velt_vir `union_iface`), and one
+    /// implementing none stops the program with a `TypeError`. Narrowing it by `in` on a member
+    /// another implementation declares is refused (`other_holder_declaring`), as Node keeps the
+    /// object.
+    fn checked_union_downcast(&mut self, from: TyId, to: TyId, span: velt_common::Span) -> bool {
+        let (payload, optional) = match self.cx.ty.opt_payload(to) {
+            Some(p) => (p, true),
+            None => (to, false),
+        };
+        let src = self.cx.ty.opt_payload(from);
+        if src.is_some() && !optional {
+            return false;
+        }
+        let from = src.unwrap_or(from);
+        let members = match self.cx.union_members(payload) {
+            Some(ms) => ms,
+            None if optional => vec![payload],
+            None => return false,
+        };
+        // Every member checked before any is recorded.
+        for &m in &members {
+            let fits = self.related_ifaces(from, m)
+                && !self.both_std_dom(from, m)
+                && self.cx.assigns(m, from, self.module) == Some(true)
+                && (self.adds_required(from, m) || self.added_optional_fields(from, m).is_some());
+            if !fits {
+                return false;
+            }
+        }
+        (members.iter()).all(|&m| self.checked_downcast(from, m, span))
     }
 
     /// For `from as to`, where `from` is an interface with methods and `to` an object type whose

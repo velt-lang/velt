@@ -1579,7 +1579,9 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   the interface value; lowering keeps its data pointer and takes the `any` table of the concrete
   type from the interface table. Into a union or literal type, `AnyTo` is applied per member behind
   a test (`AnyTypeof` for primitives, `PatKind::InstanceOf` for classes, `AnyStrictEq` for
-  literals), with `Intrinsic::Panic` (`TypeError`) when none passes. `console.log` and the format
+  literals), with `Intrinsic::Panic` (`TypeError`) when none passes. A union of interfaces sema
+  checks as a cast (`x as J | K`, `x as J | undefined`) is one `AnyTo` of the union: lowering
+  converts to the first interface member the object implements, and panics when none fits. `console.log` and the format
   glue print the value the table formats; a string at the top level prints without quotes.
 - Member reads and calls: `x.f` / `x["f"]` / `x[k]` with a `string` or
   `any` key is `AnyGet(x, key)`, `x[i]` with a number key `AnyIndex(x, i as f64)`, `x.m(a...)`

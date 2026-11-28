@@ -1,0 +1,2 @@
+22:7: error: cannot tell whether a `Named` has "sides" while compiling: it may hold a `Both`, which declares it
+declare "sides" in the interface

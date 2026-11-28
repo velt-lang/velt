@@ -320,6 +320,48 @@ impl FnLower<'_, '_> {
         self.switch_to(no);
     }
 
+    /// The `any` at `p` as the first member of the union `ty` (of `n` variants) that is an
+    /// interface its value implements ([`Self::any_to_iface`]), in the union type's order of its
+    /// variants (not the order written in the source): `s as Named | Sided` for a `Shape` value
+    /// (#3073). On a match the variant goes into `out` and on to `done`; otherwise the code goes
+    /// on in the current block.
+    pub(super) fn union_iface(
+        &mut self,
+        p: &Place,
+        ty: TyId,
+        n: u32,
+        out: &Place,
+        done: vir::BlockId,
+    ) {
+        for v in 0..n {
+            let [pt] = self.cx.variant_tys(ty, v)[..] else {
+                continue;
+            };
+            if !matches!(self.cx.kind(pt), TyKind::Dyn(..))
+                || self.cx.is_dynamic(pt)
+                || self.cx.is_narrow_dynamic(pt)
+            {
+                continue;
+            }
+            let vt = self.cx.ty(pt);
+            let val = Place::local(self.temp(vt));
+            let made = self.new_block();
+            self.any_to_iface(p, pt, &val, made);
+            let other = self.new_block();
+            self.goto(other);
+            self.switch_to(made);
+            let vp = proj(out, vir::Proj::Cast(self.cx.view(ty, v)));
+            let tag = Operand::Const(Const::Int(v as i128), Ty::U32);
+            self.assign(proj(&vp, vir::Proj::Field(0)), Rvalue::Use(tag));
+            self.assign(
+                proj(&vp, vir::Proj::Field(1)),
+                Rvalue::Use(Operand::Copy(val)),
+            );
+            self.goto(done);
+            self.switch_to(other);
+        }
+    }
+
     /// `Glue::AnyIface` of the interface type `ty`: the `any` of data `data` and descriptor
     /// `desc` as a `ty` written to `out` (taking the data) and `true`, or `false` (module docs).
     pub(super) fn any_iface_body(

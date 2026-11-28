@@ -313,11 +313,22 @@ impl FnCx<'_, '_> {
     }
 
     /// Does an optional field of type `from` (`T | undefined`) convert to one of type `to` for
-    /// a copy, as its value would (`oldValue?: any` into `oldValue?: number`, #2145)?
+    /// a copy, as its value would (`oldValue?: any` into `oldValue?: number`, #2145, or `input?:
+    /// string` into `input?: unknown`, #3115)?
     fn optional_converts(&mut self, from: TyId, to: TyId, depth: u32) -> bool {
         match (self.cx.ty.kind(from).clone(), self.cx.ty.kind(to).clone()) {
             (TyKind::Option(f, n), TyKind::Option(t, m)) if n == m => {
                 self.field_converts(f, t, false, depth)
+            }
+            // `input?: string` into `input?: unknown` (or `any`): the present value boxed, as a
+            // required field's is (#3115).
+            (TyKind::Option(..), _)
+                if matches!(
+                    self.cx.dynamic(to),
+                    Some(crate::any::Dynamic::Any | crate::any::Dynamic::Unknown)
+                ) =>
+            {
+                self.field_converts(from, to, false, depth)
             }
             _ => false,
         }

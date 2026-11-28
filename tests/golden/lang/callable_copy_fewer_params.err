@@ -1,1 +1,1 @@
-mismatched types
+11:11: error: cannot cast a function with a rest parameter as `Thunk`, which passes it no arguments

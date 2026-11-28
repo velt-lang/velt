@@ -26,6 +26,49 @@ impl Ctx<'_> {
         true
     }
 
+    /// An `any` converted to interface `want<to>` (outside std) where the value may be an object
+    /// made as an interface extending it (`T extends Shape` given a `Named`, or a `Both` seen as a
+    /// `Shape` and cast to `Named`; #2788, #3073): each such interface (not generic) is recorded as
+    /// converting to `want` for the tables ([`Self::bound_upcast`]), so every type implementing
+    /// one implements `want` too, which the conversion finds (velt_vir `any_iface.rs`).
+    pub(crate) fn note_extension_upcasts(&mut self, want: DefId, to: &[TyId]) {
+        let std = self
+            .iface(want)
+            .is_none_or(|i| self.scopes[i.module].is_std);
+        if std {
+            return;
+        }
+        let extends = |cx: &Self, d: DefId| {
+            let mut todo = vec![d];
+            let mut steps = 0;
+            while let Some(x) = todo.pop() {
+                steps += 1;
+                let Some(i) = cx.iface(x) else { continue };
+                if steps > 256 {
+                    return false;
+                }
+                for b in &i.parents {
+                    if b.iface == want {
+                        return true;
+                    }
+                    todo.push(b.iface);
+                }
+            }
+            false
+        };
+        let found: Vec<DefId> = (0..self.info.len() as u32)
+            .map(DefId)
+            .filter(|&d| {
+                self.iface(d)
+                    .is_some_and(|i| i.generics.names.is_empty() && d != want)
+                    && extends(self, d)
+            })
+            .collect();
+        for d in found {
+            self.bound_upcast((d, &[]), (want, to));
+        }
+    }
+
     /// May an interface value of `have<from>` be used as a `want<to>`: does it have every
     /// member of `want`, with the same type (module docs)? Records the conversion.
     pub(crate) fn iface_upcast(

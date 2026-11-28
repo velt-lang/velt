@@ -1,0 +1,7 @@
+14:11: error: cannot cast a function with a rest parameter as `() => f64`, which passes it no arguments
+16:11: error: cannot cast a function with a rest parameter as `() => f64`, which passes it no arguments
+17:11: error: cannot cast a function with a rest parameter as `() => f64`, which passes it no arguments
+18:13: error: cannot cast a function with a rest parameter as `(f64) => f64`, which passes it no arguments
+21:15: error: cannot cast a function with a rest parameter as `() => f64`, which passes it no arguments
+25:14: error: cannot cast a function with a rest parameter as `() => f64`, which passes it no arguments
+declare the call with a rest parameter

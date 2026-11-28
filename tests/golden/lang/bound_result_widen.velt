@@ -1,0 +1,48 @@
+// A value of a type parameter as its bound, and a function's result widened from the type
+// parameter to the bound (`(): N => n` as a `() => number`; #2788): a number, number literal,
+// boolean or interface bound, as a string or union bound already converts.
+interface Shape {
+  area(): number;
+}
+
+interface Named extends Shape {
+  name(): string;
+}
+
+class Square implements Shape {
+  area(): number {
+    return 4;
+  }
+}
+
+function asShape<T extends Shape>(v: T): () => Shape {
+  return (): T => v;
+}
+
+function shapeArea<T extends Shape>(v: T): number {
+  const s: Shape = v;
+  return s.area();
+}
+
+function counter<N extends number>(n: N): (k: number) => number {
+  const f = (k: number): N => n;
+  return f;
+}
+
+function flag<B extends boolean>(b: B): () => boolean {
+  const f = (): B => b;
+  return f;
+}
+
+function next<N extends 1 | 2>(n: N): number {
+  const x: number = n;
+  return x + 1;
+}
+
+const named: Named = { area: () => 7, name: () => "n" };
+const sq = new Square();
+console.log(asShape(sq)().area(), asShape(named)().area(), shapeArea(named));
+console.log(asShape(sq)() === sq);
+console.log(counter(3)(0), counter(4 as const)(1));
+console.log(flag(true)(), flag(false as const)());
+console.log(next(2));

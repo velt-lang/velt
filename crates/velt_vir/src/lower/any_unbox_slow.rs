@@ -3,8 +3,9 @@
 //! a function of another type, an interface, a proxy or a view, a record of an object's
 //! entries, an array view, a copy of an object's members, a number of another numeric type)
 //! and stops with the `TypeError` when none applies. For a union target it is what follows the
-//! comparisons with its members' descriptors (any_set.rs `any_unbox_union`): a view of an
-//! object or array of another type as a member, or the `TypeError`.
+//! comparisons with its members' descriptors (any_set.rs `any_unbox_union`): an object
+//! implementing an interface member, a view of an object or array of another type as a member,
+//! or the `TypeError`.
 //!
 //! Each of those is a sequence of tests, and a conversion to an object type converts each of
 //! its members the same way, so written out at every site the slow path made one `as VNode`
@@ -124,6 +125,8 @@ impl FnLower<'_, '_> {
                 _ => 0,
             };
             self.union_array_view(p, desc.clone(), ty, n, out, done);
+            // An object implementing an interface member (`s as Named | Sided`, #3073).
+            self.union_iface(p, ty, n, out, done);
             self.union_object_view(p, desc.clone(), ty, n, out, done);
             self.any_type_error(desc, ty);
             return;
