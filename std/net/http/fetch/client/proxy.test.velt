@@ -1,8 +1,8 @@
 // velt/net/http (tests): white-box tests, run by `velt test std/`.
 //
 // White-box test of which proxy `fetch` goes through (velt/net/http/fetch/client/proxy): the
-// environment's variables as Node 22's `EnvHttpProxyAgent` reads them, `NO_PROXY`, and proxy URLs.
-// tests/golden/std/fetch_env_proxy.velt runs the same rules end to end, beside Node.
+// environment's variables, used by default as in Bun, `NO_PROXY`, and proxy URLs.
+// tests/golden/std/http_server/fetch_env_proxy.velt runs the same rules end to end, beside Node.
 import { describe, expect, it } from "velt/test";
 import { platform } from "velt/os";
 import { removeEnv, setEnv } from "velt/process";
@@ -49,17 +49,24 @@ function direct(list: string, host: string, port: i64): string {
 }
 
 describe("the environment's proxy", () => {
-  it("is off without NODE_USE_ENV_PROXY=1, as in Node", () => {
-    removeEnv("NODE_USE_ENV_PROXY");
+  // The only test here that reads the variables as `fetch` does (once per process).
+  it("is on by default, as in Bun, whatever NODE_USE_ENV_PROXY says", () => {
+    for (const name of proxyVars()) {
+      removeEnv(name);
+    }
+    setEnv("NODE_USE_ENV_PROXY", "0");
     setEnv("http_proxy", "http://p:1");
-    setEnv("https_proxy", "http://p:1");
-    expect(proxyFor(false, "example.com", 80, null)).toBe(null);
-    expect(proxyFor(true, "example.com", 443, null)).toBe(null);
-    // Read once: setting it later changes nothing, as Node reads it when it starts.
-    setEnv("NODE_USE_ENV_PROXY", "1");
-    expect(proxyFor(true, "example.com", 443, null)).toBe(null);
-    removeEnv("NODE_USE_ENV_PROXY");
+    setEnv("https_proxy", "http://s:2");
+    expect(proxyFor(false, "example.com", 80, null)?.addr).toBe("p:1");
+    expect(proxyFor(true, "example.com", 443, null)?.addr).toBe("s:2");
+    // Read once: changing them later changes nothing.
     removeEnv("http_proxy");
+    expect(proxyFor(false, "example.com", 80, null)?.addr).toBe("p:1");
+    // `NO_PROXY` is read at each request.
+    setEnv("NO_PROXY", "*");
+    expect(proxyFor(false, "example.com", 80, null)).toBe(null);
+    removeEnv("NO_PROXY");
+    removeEnv("NODE_USE_ENV_PROXY");
     removeEnv("https_proxy");
   });
 
@@ -74,10 +81,10 @@ describe("the environment's proxy", () => {
     expect(pick(true, "example.com", [])).toBe("");
   });
 
-  it("for https: is the http: one when no https: one is set", () => {
-    expect(pick(true, "example.com", ["HTTP_PROXY", "http://h:1"])).toBe("h:1");
-    expect(pick(true, "example.com", ["http_proxy", "h:1", "https_proxy", ""])).toBe("h:1");
-    // And not the other way round.
+  it("for https: is never the http: one, as in Bun", () => {
+    expect(pick(true, "example.com", ["HTTP_PROXY", "http://h:1"])).toBe("");
+    expect(pick(true, "example.com", ["http_proxy", "h:1", "https_proxy", ""])).toBe("");
+    // Nor the other way round.
     expect(pick(false, "example.com", ["HTTPS_PROXY", "http://s:1"])).toBe("");
   });
 

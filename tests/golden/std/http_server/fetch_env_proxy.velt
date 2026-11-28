@@ -1,6 +1,6 @@
-// `fetch` and the environment's proxy (#3693), as in Node 22.21+: used only with
-// `NODE_USE_ENV_PROXY=1`; `http_proxy` before `HTTP_PROXY` (even when empty), `https_proxy` /
-// `HTTPS_PROXY` for `https:` with the `http:` one as its fallback; the proxy's credentials as
+// `fetch` and the environment's proxy (#3693): used by default, as in Bun (`NODE_USE_ENV_PROXY`
+// is not read); `http_proxy` before `HTTP_PROXY` (even when empty), `https_proxy` /
+// `HTTPS_PROXY` for `https:` (never the `http:` one, as in Bun); the proxy's credentials as
 // `proxy-authorization` (only with both a user and a password); the proxy variables read once and
 // `NO_PROXY` at each request; `NO_PROXY` hosts, `.`/`*` suffixes, ports, IPv6 in brackets, white
 // space as a separator, `no_proxy` first, `*`; every request through a `CONNECT` tunnel, `http:`
@@ -100,9 +100,10 @@ async function proxyOne(conn: TcpStream, log: Channel<string>) {
     return;
   }
   // Not 200: undici takes no other answer, 2xx neither, and the tunnel would work.
-  const answer = target.startsWith("nocontent.test:")
-    ? "HTTP/1.1 204 No Content\r\n\r\n"
-    : "HTTP/1.1 200 Connection established\r\n\r\n";
+  const answer =
+    target.startsWith("nocontent.test:")
+      ? "HTTP/1.1 204 No Content\r\n\r\n"
+      : "HTTP/1.1 200 Connection established\r\n\r\n";
   let origin: TcpStream;
   try {
     origin = await connect(`127.0.0.1:${target.slice(target.lastIndexOf(":") + 1)}`);
@@ -197,63 +198,52 @@ async function main() {
   }
 
   const both: Record<string, string> = { http_proxy: P, https_proxy: P };
-  await run("NODE_USE_ENV_PROXY unset: direct", both, [
+  await run("by default, for this machine too", both, [
     `http://localhost:${H}/a`,
     `http://a.test:${H}/`,
   ]);
-  await run(
-    "NODE_USE_ENV_PROXY=true: direct",
-    { NODE_USE_ENV_PROXY: "true", http_proxy: P, https_proxy: P },
-    [`http://b.test:${H}/`],
-  );
+  await run("NODE_USE_ENV_PROXY=0 changes nothing", { NODE_USE_ENV_PROXY: "0", http_proxy: P }, [
+    `http://b.test:${H}/`,
+  ]);
   const withAuth = `http://u:p%40ss@127.0.0.1:${proxyPort}`;
-  await run(
-    "http_proxy with credentials, for https: too",
-    { NODE_USE_ENV_PROXY: "1", http_proxy: withAuth },
-    [`http://c.test:${H}/c`, `http://127.0.0.1:${H}/loopback`, `https://localhost:${S}/s`],
-  );
-  await run(
-    "a proxy URL with only a user",
-    { NODE_USE_ENV_PROXY: "1", http_proxy: `http://u@127.0.0.1:${proxyPort}` },
-    [`http://u1.test:${H}/`],
-  );
+  await run("a proxy with credentials", { http_proxy: withAuth, https_proxy: withAuth }, [
+    `http://c.test:${H}/c`,
+    `http://127.0.0.1:${H}/loopback`,
+    `https://localhost:${S}/s`,
+  ]);
+  await run("http_proxy alone: https: direct", { http_proxy: P }, [
+    `https://localhost:${S}/s1`,
+    `http://s1.test:${H}/`,
+  ]);
+  await run("a proxy URL with only a user", { http_proxy: `http://u@127.0.0.1:${proxyPort}` }, [
+    `http://u1.test:${H}/`,
+  ]);
   await run(
     "a proxy URL with only a password",
-    { NODE_USE_ENV_PROXY: "1", http_proxy: `http://:pw@127.0.0.1:${proxyPort}` },
+    { http_proxy: `http://:pw@127.0.0.1:${proxyPort}` },
     [`http://u2.test:${H}/`],
   );
-  await run(
-    "the proxy variables read once, NO_PROXY at each request",
-    { NODE_USE_ENV_PROXY: "1", http_proxy: P },
-    [
-      `http://o1.test:${H}/a`,
-      "env:http_proxy=",
-      `http://o2.test:${H}/b`,
-      "env:NO_PROXY=o3.test",
-      `http://o3.test:${H}/c`,
-    ],
-  );
-  await run("uppercase HTTP_PROXY", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P }, [
-    `http://d.test:${H}/`,
+  await run("the proxy variables read once, NO_PROXY at each request", { http_proxy: P }, [
+    `http://o1.test:${H}/a`,
+    "env:http_proxy=",
+    `http://o2.test:${H}/b`,
+    "env:NO_PROXY=o3.test",
+    `http://o3.test:${H}/c`,
   ]);
-  await run("HTTPS_PROXY alone", { NODE_USE_ENV_PROXY: "1", HTTPS_PROXY: P }, [
+  await run("uppercase HTTP_PROXY", { HTTP_PROXY: P }, [`http://d.test:${H}/`]);
+  await run("HTTPS_PROXY alone", { HTTPS_PROXY: P }, [
     `https://localhost:${S}/e`,
     `http://e.test:${H}/`,
   ]);
-  await run(
-    "http_proxy over HTTP_PROXY",
-    { NODE_USE_ENV_PROXY: "1", http_proxy: P, HTTP_PROXY: "http://127.0.0.1:1" },
-    [`http://f.test:${H}/`],
-  );
-  await run(
-    "an empty http_proxy over HTTP_PROXY",
-    { NODE_USE_ENV_PROXY: "1", http_proxy: "", HTTP_PROXY: P },
-    [`http://g.test:${H}/`],
-  );
+  await run("http_proxy over HTTP_PROXY", { http_proxy: P, HTTP_PROXY: "http://127.0.0.1:1" }, [
+    `http://f.test:${H}/`,
+  ]);
+  await run("an empty http_proxy over HTTP_PROXY", { http_proxy: "", HTTP_PROXY: P }, [
+    `http://g.test:${H}/`,
+  ]);
   await run(
     "NO_PROXY",
     {
-      NODE_USE_ENV_PROXY: "1",
       HTTP_PROXY: P,
       NO_PROXY: `n1.test,.n2.test\t*.n3.test n4.test:1 n5.test:${H} [::1] ::5 N6.TEST`,
     },
@@ -272,26 +262,18 @@ async function main() {
   );
   await run(
     "no_proxy over NO_PROXY, even empty",
-    { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P, no_proxy: "", NO_PROXY: "h.test" },
+    { HTTP_PROXY: P, no_proxy: "", NO_PROXY: "h.test" },
     [`http://h.test:${H}/`],
   );
-  await run("NO_PROXY=*", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P, NO_PROXY: "*" }, [
-    `http://i.test:${H}/`,
-  ]);
+  await run("NO_PROXY=*", { HTTP_PROXY: P, NO_PROXY: "*" }, [`http://i.test:${H}/`]);
   await run(
     "redirects between http: and https:",
-    { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P, HTTPS_PROXY: P, NO_PROXY: "localhost" },
+    { HTTP_PROXY: P, HTTPS_PROXY: P, NO_PROXY: "localhost" },
     [`http://r1.test:${H}/to-https?to=${S}`, `https://127.0.0.1:${S}/to-http?to=${H}`],
   );
-  await run("a proxy that refuses", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P }, [
-    `http://refuse.test:${H}/`,
-  ]);
-  await run("a proxy that answers 204", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P }, [
-    `http://nocontent.test:${H}/`,
-  ]);
-  await run("no proxy there", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: "http://127.0.0.1:1" }, [
-    `http://k.test:${H}/`,
-  ]);
+  await run("a proxy that refuses", { HTTP_PROXY: P }, [`http://refuse.test:${H}/`]);
+  await run("a proxy that answers 204", { HTTP_PROXY: P }, [`http://nocontent.test:${H}/`]);
+  await run("no proxy there", { HTTP_PROXY: "http://127.0.0.1:1" }, [`http://k.test:${H}/`]);
   listener.close();
   await plain.shutdown();
   await secure.shutdown();

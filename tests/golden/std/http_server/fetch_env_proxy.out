@@ -1,15 +1,22 @@
-== NODE_USE_ENV_PROXY unset: direct
+== by default, for this machine too
 http://localhost:<http>/a 200 http localhost:<http>/a
-http://a.test:<http>/ failed
-== NODE_USE_ENV_PROXY=true: direct
-http://b.test:<http>/ failed
-== http_proxy with credentials, for https: too
+http://a.test:<http>/ 200 http a.test:<http>/
+proxy: CONNECT localhost:<http> auth=-
+proxy: CONNECT a.test:<http> auth=-
+== NODE_USE_ENV_PROXY=0 changes nothing
+http://b.test:<http>/ 200 http b.test:<http>/
+proxy: CONNECT b.test:<http> auth=-
+== a proxy with credentials
 http://c.test:<http>/c 200 http c.test:<http>/c
 http://127.0.0.1:<http>/loopback 200 http 127.0.0.1:<http>/loopback
 https://localhost:<https>/s 200 https localhost:<https>/s
 proxy: CONNECT c.test:<http> auth=Basic dTpwQHNz
 proxy: CONNECT 127.0.0.1:<http> auth=Basic dTpwQHNz
 proxy: CONNECT localhost:<https> auth=Basic dTpwQHNz
+== http_proxy alone: https: direct
+https://localhost:<https>/s1 200 https localhost:<https>/s1
+http://s1.test:<http>/ 200 http s1.test:<http>/
+proxy: CONNECT s1.test:<http> auth=-
 == a proxy URL with only a user
 http://u1.test:<http>/ 200 http u1.test:<http>/
 proxy: CONNECT u1.test:<http> auth=-
