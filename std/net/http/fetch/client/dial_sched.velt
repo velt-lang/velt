@@ -11,7 +11,7 @@
 // (std/lang/hooks/reactor_none.velt) has no sockets: a dial fails with `ENOTSUP`.
 
 import { IoError } from "velt/io/error";
-import { hookCall } from "velt/lang/intrinsics";
+import { hookCall, promiseAt, stdUsed } from "velt/lang/intrinsics";
 import { errorCodeName } from "velt/native/error";
 import { unwrapIo } from "velt/native/result";
 import { TcpStream } from "velt/net";
@@ -22,6 +22,9 @@ import * as m from "velt/lang/hooks/sched_mem";
 import * as wt from "velt/lang/hooks/sched_io_wait";
 import * as fio from "velt/net/fd_io";
 import * as fs from "velt/net/fd_socket";
+import { readReady } from "velt/net/fd_ready";
+import * as tb from "velt/lang/hooks/sched_io_table";
+import * as tls from "velt/net/tls/fd_hook";
 
 /** How long connecting may take (milliseconds) before `ETIMEDOUT`, as conn.velt's `CONNECT_MS`. */
 const CONNECT_MS: u64 = 10000;
@@ -131,4 +134,62 @@ async function dialSocket(
       ? e
       : new IoError(e.code, `fetch failed: ${e.message}`);
   }
+}
+
+/**
+ * `c.readableWithin(ms)` for an idle connection (an HTTP/2 session without streams): true once a
+ * `tryRead` may find something, false when `ms` milliseconds passed first. Its wait does not keep
+ * the process alive (sched_io_wait.velt `waitIdle`), as Node's idle sockets are unref'd: a program
+ * whose last `fetch` is done ends at once, the session given up with it.
+ */
+export async function idleReadable(c: TcpStream, ms: i64): Promise<bool> {
+  const deadline = wt.now() + (ms as u64) * 1000000;
+  const h = c.handle;
+  if (!(stdUsed("reactorTls") && tls.isTls(h))) {
+    return await idleSocket(h, deadline);
+  }
+  // A readable socket may hold part of a record: the stream is asked again after each wait, as
+  // tcp_sched.velt's `tlsReadableWithin` does.
+  while (true) {
+    const fd = tls.readyOrFd(h);
+    if (fd.code !== 0 || fd.value == 0) {
+      return true;
+    }
+    if (!(await idleSocket(fd.value, deadline))) {
+      return false;
+    }
+  }
+}
+
+/**
+ * Whether the program is ending and gave the idle waits back (a counted run, sched_io_wait.velt
+ * `endIdle`): an idle session closes then rather than wait again.
+ */
+export function idleEnding(): bool {
+  return wt.idleEnded();
+}
+
+/** `idleReadable` of socket `h` on the reactor, until `deadline` (`wt.now()`). */
+async function idleSocket(h: u64, deadline: u64): Promise<bool> {
+  const s = tb.enter(h);
+  if (s === 0) {
+    return true;
+  }
+  const has = readReady(s);
+  tb.leave(s);
+  if (has) {
+    return true;
+  }
+  if (wt.now() >= deadline) {
+    return false;
+  }
+  // SAFETY: `waitIdle` makes a heap future, given up to the promise.
+  await unsafe { promiseAt<void>(wt.waitIdle(h, io.K_READ, 0, deadline)) };
+  const again = tb.enter(h);
+  if (again === 0) {
+    return true;
+  }
+  const now = wt.satisfied(again, io.K_READ, 0);
+  tb.leave(again);
+  return now;
 }
