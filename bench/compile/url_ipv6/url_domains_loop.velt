@@ -1,0 +1,17 @@
+// Parses URLs with domain and IPv4 hosts only in a loop (bench/compile/url_ipv6_instr.sh): the
+// IPv6 parser is not on its path.
+import { URL } from "velt/net/url";
+
+const inputs: string[] = [
+  "https://example.com/a/b?q=1#f",
+  "http://user:pw@Sub.Example.ORG:8080/x/../y",
+  "http://127.1/",
+  "ws://h/chat",
+  "http://localhost:3000/api",
+];
+let total = 0;
+for (let i = 0; i < 20000; i++) {
+  const u = new URL(inputs[i % inputs.length]);
+  total += u.href.length + u.host.length;
+}
+console.log(total);

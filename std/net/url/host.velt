@@ -2,11 +2,12 @@
 //
 // Supported: ASCII domains (percent-decoded, lowercased, checked for forbidden code points), IPv4
 // in every WHATWG spelling (`127.1`, `0x7f.0.0.1`, `2130706433`) normalized to dotted decimal,
-// bracketed IPv6 literals (validated and lowercased but not compressed), and the opaque hosts of
+// bracketed IPv6 literals in their canonical form (velt/net/url/ipv6), and the opaque hosts of
 // non-special schemes. Not supported: IDNA / punycode — a host that is not ASCII after decoding
 // is rejected. Every parser returns null where the URL is invalid.
 
 import { C0, encodeSet, decodeLenient, bytesOf, isAscii } from "velt/net/url/encode";
+import { parseIpv6 } from "velt/net/url/ipv6";
 
 /** The serialized host for `input` (the text between the userinfo and the port), or null. */
 export function parseHost(input: string, special: bool): string | null {
@@ -120,28 +121,6 @@ function parseOpaqueHost(input: string): string | null {
     }
   }
   return encodeSet(input, C0);
-}
-
-// `[...]` with hex digits, `:` and `.` inside (validated loosely: at least one `:`).
-function parseIpv6(input: string): string | null {
-  const b = bytesOf(input);
-  if (b.length < 4 || b[b.length - 1] != (93 as u8)) {
-    return null;
-  }
-  let colons = 0;
-  for (let i: usize = 1; i + 1 < b.length; i++) {
-    const c = b[i] as i64;
-    if (c == 58) {
-      colons++;
-    } else if (!isHex(c) && c != 46) {
-      return null;
-    }
-  }
-  return colons >= 2 ? input.toLowerCase() : null;
-}
-
-function isHex(c: i64): bool {
-  return (c >= 48 && c <= 57) || (c >= 65 && c <= 70) || (c >= 97 && c <= 102);
 }
 
 // The dot-separated labels of `host`, without one trailing empty label.
