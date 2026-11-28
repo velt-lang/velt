@@ -257,6 +257,8 @@ async function main() {
 
 if (process.argv.length > 2 && process.argv[2] == "child") {
   await child(process.argv.slice(3));
+  // Done: a pooled TLS connection would keep the program waiting for a while.
+  process.exit(0);
 } else {
   await main();
 }
