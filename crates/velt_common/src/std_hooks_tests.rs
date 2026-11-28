@@ -68,6 +68,94 @@ fn each_module_loaded_on_demand_holds_a_hook() {
     }
 }
 
+/// The functions std's sources declare (`function <name>`) whose name a receiver's prefix names
+/// (`anyStr_trim`), each with its module (`std/lang/hooks/any_methods`).
+fn std_functions_named_as_methods() -> Vec<(String, String)> {
+    fn walk(dir: &std::path::Path, std: &std::path::Path, out: &mut Vec<(String, String)>) {
+        let mut entries: Vec<_> = std::fs::read_dir(dir)
+            .expect("a std directory")
+            .map(|e| e.expect("a std entry").path())
+            .collect();
+        entries.sort();
+        for path in entries {
+            if path.is_dir() {
+                walk(&path, std, out);
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "velt") {
+                continue;
+            }
+            let rel = path.strip_prefix(std).expect("under std");
+            let rel = rel.with_extension("").to_string_lossy().replace('\\', "/");
+            let module = match rel.strip_suffix("/index") {
+                Some(dir) => format!("std/{dir}"),
+                None => format!("std/{rel}"),
+            };
+            let src = std::fs::read_to_string(&path).expect("a std file");
+            for (at, _) in src.match_indices("function ") {
+                let name: String = src[at + "function ".len()..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '$')
+                    .collect();
+                if Receiver::ALL
+                    .into_iter()
+                    .any(|r| any_methods::named_by(&name, r))
+                {
+                    out.push((name, module.clone()));
+                }
+            }
+        }
+    }
+    let std = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    let mut out = Vec::new();
+    walk(&std, &std, &mut out);
+    out
+}
+
+#[test]
+fn every_std_function_named_as_a_method_of_an_any_is_a_row() {
+    // Lowering calls a receiver's methods by their rows only: a std function under the prefix
+    // without one would be a method silently not there (`velt_vir` `std_defs.rs` stops lowering
+    // a program that loads one with an internal error; this finds it in all of std).
+    let found = std_functions_named_as_methods();
+    assert!(
+        found.iter().any(|(n, _)| n == "anyStr_trim"),
+        "the scan finds no method: {found:?}"
+    );
+    for (name, module) in &found {
+        let row = HOOKS
+            .iter()
+            .find(|h| h.method.is_some() && h.item == name.as_str());
+        let Some(h) = row else {
+            panic!(
+                "std function `{module}::{name}` is named as a built-in method of an `any` \
+                 but is no `method(…)` row of the hook table (std_hooks/any_methods.rs)"
+            );
+        };
+        assert_eq!(h.module(), module.as_str(), "{}: the row's module", h.name);
+        assert!(
+            any_methods::named_by(name, h.method.expect("a method row")),
+            "{}: its receiver's prefix doesn't name it",
+            h.name
+        );
+        assert_eq!(any_methods::unlisted(name), None, "{name}");
+    }
+    // Each row is found once: none is left that std doesn't declare.
+    let rows = HOOKS.iter().filter(|h| h.method.is_some()).count();
+    assert_eq!(
+        found.len(),
+        rows,
+        "std's methods and the rows differ in number"
+    );
+    assert_eq!(
+        any_methods::unlisted("anyStr_trimLeft"),
+        Some(Receiver::Str)
+    );
+    assert_eq!(any_methods::unlisted("anyFn_call"), Some(Receiver::Fn));
+    assert_eq!(any_methods::unlisted("anyText"), None);
+    assert_eq!(any_methods::unlisted("anyStr_"), None);
+}
+
 #[test]
 fn every_built_in_method_of_an_any_is_a_row() {
     use any_methods::{is_any_method, methods, record_key};

@@ -6,7 +6,10 @@
 //! method's name (`anyStr_trim`: [`Receiver::prefix`]). Lowering finds a receiver's methods here
 //! ([`methods`]), each through its row, so a method renamed or missing in std fails
 //! `velt_sema`'s test of the table, and a module loaded without one of its rows is an internal
-//! error (`velt_vir` `std_defs.rs`), not a call that silently isn't there.
+//! error (`velt_vir` `std_defs.rs`), not a call that silently isn't there. The other way round, a
+//! std function named by a receiver's prefix that is no row of it ([`unlisted`]) is an internal
+//! error in a program that loads it, and a test walks std's sources for one
+//! (`std_hooks_tests.rs`).
 //!
 //! Kept apart from the rest of the table ([`super`]), which [`with_any_method_hooks`] gives to
 //! `hooks!` with these rows after it.
@@ -55,6 +58,19 @@ impl Receiver {
         }
     }
 
+    /// Every receiver.
+    pub const ALL: [Receiver; 9] = [
+        Receiver::Str,
+        Receiver::Arr,
+        Receiver::Num,
+        Receiver::Bool,
+        Receiver::Fn,
+        Receiver::Promise,
+        Receiver::Rec,
+        Receiver::Map,
+        Receiver::Set,
+    ];
+
     /// The receiver of a std class's methods (`Map`, `Set`), by the class's name.
     pub fn of_class(class: &str) -> Option<Receiver> {
         match class {
@@ -102,6 +118,18 @@ pub fn is_any_method(item: &str) -> bool {
     item.starts_with("any")
         && item.contains('_')
         && HOOKS.iter().any(|h| h.method.is_some() && h.item == item)
+}
+
+/// The receiver whose prefix names `item` (a std function's last name segment) where no row of
+/// that receiver is `item`: a std function named as a built-in method of an `any` that lowering
+/// would never call, an internal error (`velt_vir` `std_defs.rs`).
+pub fn unlisted(item: &str) -> Option<Receiver> {
+    if !item.starts_with("any") || !item.contains('_') {
+        return None;
+    }
+    let r = Receiver::ALL.into_iter().find(|&r| named_by(item, r))?;
+    let listed = HOOKS.iter().any(|h| h.method == Some(r) && h.item == item);
+    (!listed).then_some(r)
 }
 
 /// The member name of std's symbol `record<Name>` (std/lang/hooks/keys.velt: `RECORD_SYM_GET` for
