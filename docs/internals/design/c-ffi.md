@@ -474,8 +474,10 @@ function onRow(n: i32, row: Ptr<u8> | null): i32 { … }
 - **Panics never unwind into C**: one that reaches the export ends the process. The function is
   `vir::Function::stops_unwind`. In LLVM every call in it is an `invoke` whose landing pad
   aborts, as clang does for `noexcept` and Rust for `extern "C"` (`landingpad … cleanup` with
-  `rust_eh_personality` on Linux and macOS, a `cleanuppad` under `__C_specific_handler` on
-  Windows); an `invoke` is never a tail call, so the frame always exists to stop at. Cranelift on
+  the C library's `__gcc_personality_v0` against glibc and macOS, whose shared runtime of debug
+  builds exports no `rust_eh_personality`, and with `rust_eh_personality` against musl, whose
+  programs link the static runtime and whose kit has no libgcc; a `cleanuppad` under
+  `__C_specific_handler` on Windows); an `invoke` is never a tail call, so the frame always exists to stop at. Cranelift on
   Linux and macOS emits no unwind information for it, so the unwinder cannot pass it; Cranelift
   on Windows x64 names a language handler (`velt_eh_stop`, `crates/velt_codegen_cl/src/eh_seh.rs`)
   that ends the process when a Velt panic's search phase reaches the frame
