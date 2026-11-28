@@ -48,18 +48,18 @@ function dynamicOf<T>(v: T): any {
 }
 
 /**
- * Starts comparing the objects with identities `a` and `b` (velt/reflect `identity`): 0 when the
- * pair is new (end it with `endPair`), 1 when this pair is being compared already (the same
- * cycle on both sides: equal), 2 when either object is being compared with another one (a cycle
- * on one side only: different).
+ * Starts comparing the objects with identities `a` and `b` (velt/reflect `identity`), by Node's
+ * rule for `deepEqual` (`node`) or Vitest's for `toEqual` (std/lang/hooks/deep_eq.velt): 0 when
+ * the pair is to be compared (end it with `endPair(node)`), 1 when a cycle makes it equal, 2 when
+ * a cycle on one side only makes it different (Vitest's rule).
  */
-function beginPair(a: u64, b: u64): u8 {
-  return hookCall("deep_eq_enter", a, b);
+function beginPair(a: u64, b: u64, node: bool): u8 {
+  return hookCall("deep_eq_enter", a, b, node);
 }
 
-/** Ends the comparison `beginPair` last started. */
-function endPair(): void {
-  hookCall("deep_eq_leave");
+/** Ends the comparison `beginPair(_, _, node)` last started. */
+function endPair(node: bool): void {
+  hookCall("deep_eq_leave", node);
 }
 
 /** SameValueZero of two dynamic values (`any`, `unknown`): `===`, with `NaN` equal to itself. */
@@ -147,7 +147,7 @@ function equalDynamic(a: any, b: any, deep: bool): bool {
   const ib = identity(b);
   const guarded = ia != 0 && ib != 0;
   if (guarded) {
-    const seen = beginPair(ia, ib);
+    const seen = beginPair(ia, ib, !deep);
     if (seen != 0) {
       return seen == 1;
     }
@@ -161,7 +161,7 @@ function equalDynamic(a: any, b: any, deep: bool): bool {
     }
   }
   if (guarded) {
-    endPair();
+    endPair(!deep);
   }
   return r;
 }

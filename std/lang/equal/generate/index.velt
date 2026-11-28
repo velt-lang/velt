@@ -15,8 +15,10 @@
 // class (an `instanceof` chain, most derived first: objects of two classes differ), a `Set` by
 // its members, a `Date` by its time, and an interface value or a std type whose state is
 // private by what its dynamic type lists (`equalDynamic`). A type whose values can hold
-// themselves is compared under the cycle guard (`beginPair`): the same pair met again is equal,
-// an object met again with another partner is not.
+// themselves is compared under the cycle guard (`beginPair`, std/lang/hooks/deep_eq.velt): for
+// `deepEqual` by Node 22's rule (a pair whose objects are both on the way already is equal, so
+// rings of two lengths are), for `toEqual` by Vitest's (the same pair met again is equal, an
+// object met again with another partner is not).
 
 import { InstanceRequest, Model, Output, Type } from "velt/generate";
 import {
@@ -374,10 +376,12 @@ function body(req: InstanceRequest, out: Output, deep: bool): void {
       w.line(`const ib = identity(${b});`);
       w.line(`if (ia == 0 || ib == 0) { return ${cmp}; }`);
       w.line(`if (ia == ib) { return true; }`);
-      w.line(`const seen = beginPair(ia, ib);`);
+      // `deepEqual` by Node's rule, `toEqual` by Vitest's (std/lang/hooks/deep_eq.velt).
+      const node = deep ? "false" : "true";
+      w.line(`const seen = beginPair(ia, ib, ${node});`);
       w.line(`if (seen != 0) { return seen == 1; }`);
       w.line(`const r = ${cmp};`);
-      w.line(`endPair();`);
+      w.line(`endPair(${node});`);
       w.line(`return r;`);
     }
   }

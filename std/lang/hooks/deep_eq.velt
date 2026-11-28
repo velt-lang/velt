@@ -1,20 +1,30 @@
 // velt/lang/hooks (internal): the cycle guard of deep equality (std-layout.md §10b): `deepEqual`,
 // `assertEq` and `toEqual` (the code std/lang/equal generates, through generated.velt's
 // `beginPair` and `endPair`), and lowering's `==` on aggregates that can hold themselves
-// (`velt_vir` `lower/glue/eq_cycles.rs`). It keeps the pairs of objects being compared field by
-// field on this thread, by identity (address), with Vitest's `aStack`/`bStack` rule: a pair met
-// again while it is being compared (the same cycle on both sides: a parent pointer, rings of one
-// length) counts as equal, an object met again with another partner (a cycle on one side, rings
-// of two lengths) as different. The comparison is synchronous, so it stays on one thread.
+// (`velt_vir` `lower/glue/eq_cycles.rs`). It keeps the objects being compared field by field on
+// this thread, by identity (address); the comparison is synchronous, so it stays on one thread.
+// Two rules, by the caller's `node`:
 //
-// The pairs are a block of words `[capacity, length, a0, b0, a1, b1, …]` from `rawAlloc`, kept in
-// a thread-local: the first pair allocates it, and it is given back when the last pair ends, so a
-// thread keeps nothing between comparisons.
+// - Node 22's (`deepEqual`, `assertEq`: `util.isDeepStrictEqual`'s `handleCycles`): the first
+//   pair is remembered, then the second (a pair met again as the first is equal); from the third
+//   on, every object on the way, of both sides, is in one set, and a pair whose two objects are
+//   both in it already is equal. A pair compared takes its two objects out of the set again, as
+//   Node's does (one that was in it before included). Rings of two lengths are equal.
+// - Vitest's (`toEqual`, and `==`): the pairs on the way, from the innermost out: a pair met again
+//   is equal, an object met again with another partner (a cycle on one side, rings of two
+//   lengths) is different.
+//
+// Vitest's pairs are a block of words `[capacity, length, a0, b0, a1, b1, …]` from `rawAlloc`,
+// kept in a thread-local; Node's state is a block `[set, a, b, c, d, flags, capacity, length,
+// entries…]`, its set (deep_eq_set.velt) in the first word, its entries what
+// each `deepEqLeave` undoes. The first pair allocates each block and the last one gives it back,
+// so a thread keeps nothing between comparisons.
 //
 // Only a program that compares deeply loads this module (velt_common `ON_DEMAND_MODULES`):
 // generated.velt calls it by role, and lowering's `==` is demanded by `Construct::DeepEq`.
 
 import { addressLoad, addressStore, noInline, rawAlloc, rawFree } from "velt/lang/intrinsics";
+import { setAdd, setFree, setNew, setRemove } from "velt/lang/hooks/deep_eq_set";
 
 /** This thread's block of pairs being compared: 0 when none is. */
 const PAIRS = new ThreadLocal<u64>(0);
@@ -41,12 +51,27 @@ function bytesOf(cap: usize): usize {
 }
 
 /**
- * Starts comparing the objects with identities `a` and `b`, as Vitest's `equals` checks them
- * (from the innermost pair out): 1 when `a` is being compared with `b` already (a cycle at the
- * same depth: equal), 2 when `a` or `b` is being compared with another object (a cycle on one
- * side only: they differ); else 0, and the pair is being compared until `deepEqLeave`.
+ * Starts comparing the objects with identities `a` and `b` (distinct, not 0) by Node's rule
+ * (`node`) or Vitest's (module docs): 1 when they count as equal without a comparison (a cycle
+ * met), 2 when they differ (Vitest's rule: a cycle on one side only); else 0, and the pair is
+ * being compared until `deepEqLeave(node)`.
  */
-export function deepEqEnter(a: u64, b: u64): u8 {
+export function deepEqEnter(a: u64, b: u64, node: bool): u8 {
+  return node ? nodeEnter(a, b) : pairEnter(a, b);
+}
+
+/** Ends the comparison `deepEqEnter(_, _, node)` last started. */
+export function deepEqLeave(node: bool): void {
+  if (node) {
+    nodeLeave();
+  } else {
+    pairLeave();
+  }
+}
+
+/** Vitest's rule (from the innermost pair out): 1 when `a` is being compared with `b` already,
+ * 2 when `a` or `b` is being compared with another object; else 0, the pair pushed. */
+function pairEnter(a: u64, b: u64): u8 {
   let p = PAIRS.get() as usize;
   let len: usize = 0;
   if (p != 0) {
@@ -79,13 +104,14 @@ export function deepEqEnter(a: u64, b: u64): u8 {
   return 0;
 }
 
-/** This thread's block of pairs, 0 when no comparison is open (for deep_eq.test.velt). */
-export function pairsBlock(): u64 {
-  return PAIRS.get();
+/** This thread's blocks of Vitest's pairs and of Node's state, 0 when no comparison of that rule
+ * is open (for deep_eq.test.velt). */
+export function pairsBlock(node: bool): u64 {
+  return node ? NODE.get() : PAIRS.get();
 }
 
-/** Ends the comparison `deepEqEnter` last started. */
-export function deepEqLeave(): void {
+/** Vitest's rule: the last pair pushed is compared. */
+function pairLeave(): void {
   const p = PAIRS.get() as usize;
   const len = load(p + 8) - 1;
   if (len == 0) {
@@ -116,5 +142,134 @@ function grown(p: usize, len: usize): usize {
     }
   }
   PAIRS.set(q as u64);
+  return q;
+}
+
+/** This thread's state of Node's rule (module docs): 0 when no comparison is open. */
+const NODE = new ThreadLocal<u64>(0);
+
+// The words of Node's state block.
+const N_SET: usize = 0;
+const N_A: usize = 8;
+const N_B: usize = 16;
+const N_C: usize = 24;
+const N_D: usize = 32;
+const N_FLAGS: usize = 40;
+const N_CAP: usize = 48;
+const N_LEN: usize = 56;
+const N_ENTRIES: usize = 64;
+/** `N_FLAGS`: a second pair is being compared (`memos.deep`). */
+const DEEP: u64 = 1;
+/** `N_FLAGS`: the set was made (`memos.set` defined), whether or not it has objects left. */
+const SET_MADE: u64 = 2;
+/** An entry that ends the comparison (the first pair), and one that ends the second pair; any
+ * other entry is the pair whose objects leave the set. */
+const END_TOP: u64 = 0;
+const END_SECOND: u64 = 1;
+
+/** Node's rule (`handleCycles`): 1 when the pair counts as equal, else 0 and the pair is being
+ * compared. */
+function nodeEnter(a: u64, b: u64): u8 {
+  let p = NODE.get() as usize;
+  if (p == 0) {
+    p = nodeGrown(0);
+    store(p + N_A, a);
+    store(p + N_B, b);
+    nodePush(p, 0, END_TOP);
+    return 0;
+  }
+  const flags = load(p + N_FLAGS);
+  if ((flags & SET_MADE) == 0) {
+    if ((flags & DEEP) == 0) {
+      if (load(p + N_A) == a && load(p + N_B) == b) {
+        return 1;
+      }
+      store(p + N_C, a);
+      store(p + N_D, b);
+      store(p + N_FLAGS, flags | DEEP);
+      nodePush(p, 0, END_SECOND);
+      return 0;
+    }
+    store(p + N_FLAGS, flags | SET_MADE);
+    let made = setNew();
+    made = setAdd(made, load(p + N_A)) & ~1;
+    made = setAdd(made, load(p + N_B)) & ~1;
+    made = setAdd(made, load(p + N_C)) & ~1;
+    made = setAdd(made, load(p + N_D)) & ~1;
+    store(p + N_SET, made as u64);
+  }
+  // Both added (`set.add`): equal when neither was new, as Node tells by the set's size.
+  const withA = setAdd(load(p + N_SET) as usize, a);
+  const withB = setAdd(withA & ~1, b);
+  store(p + N_SET, (withB & ~1) as u64);
+  if (((withA | withB) & 1) == 0) {
+    return 1;
+  }
+  nodePush(p, a, b);
+  return 0;
+}
+
+/** Node's rule: undoes the last entry. */
+function nodeLeave(): void {
+  const p = NODE.get() as usize;
+  const len = load(p + N_LEN) - 1;
+  store(p + N_LEN, len);
+  const at = p + N_ENTRIES + 16 * (len as usize);
+  const x = load(at);
+  const y = load(at + 8);
+  if (x != 0) {
+    const set = load(p + N_SET) as usize;
+    setRemove(set, x);
+    setRemove(set, y);
+  } else if (y == END_SECOND) {
+    store(p + N_FLAGS, load(p + N_FLAGS) & ~DEEP);
+  } else {
+    const set = load(p + N_SET) as usize;
+    if (set != 0) {
+      setFree(set);
+    }
+    // SAFETY: `p` came from `rawAlloc` with its capacity's bytes, and nothing is left in it.
+    unsafe {
+      rawFree(p, N_ENTRIES + 16 * (load(p + N_CAP) as usize));
+    }
+    NODE.set(0);
+  }
+}
+
+/** Pushes the entry `(x, y)` onto Node's state `p`, growing it when full. */
+function nodePush(p: usize, x: u64, y: u64): void {
+  let q = p;
+  const len = load(q + N_LEN) as usize;
+  if (len == (load(q + N_CAP) as usize)) {
+    q = nodeGrown(q);
+  }
+  const at = q + N_ENTRIES + 16 * len;
+  store(at, x);
+  store(at + 8, y);
+  store(q + N_LEN, (len + 1) as u64);
+}
+
+/** Node's state with room for more entries than `p` has (a new one for 0), holding what `p`
+ * holds, which it frees: this thread's state from now on. */
+@noInline
+function nodeGrown(p: usize): usize {
+  const cap = p == 0 ? FIRST : 2 * (load(p + N_CAP) as usize);
+  const q = rawAlloc(N_ENTRIES + 16 * cap);
+  if (p == 0) {
+    for (let i: usize = 0; i < N_ENTRIES; i += 8) {
+      store(q + i, 0);
+    }
+  } else {
+    const words = (N_ENTRIES + 16 * (load(p + N_LEN) as usize)) / 8;
+    for (let i: usize = 0; i < words; i++) {
+      store(q + 8 * i, load(p + 8 * i));
+    }
+    // SAFETY: `p` came from `rawAlloc` with its capacity's bytes; its words are copied.
+    unsafe {
+      rawFree(p, N_ENTRIES + 16 * (load(p + N_CAP) as usize));
+    }
+  }
+  store(q + N_CAP, cap as u64);
+  NODE.set(q as u64);
   return q;
 }

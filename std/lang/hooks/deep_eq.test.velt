@@ -1,41 +1,100 @@
-// velt/lang/hooks (tests): tests of deep_eq.velt, run by `velt test std/`: the guard's answers
-// (the runtime's guard pinned the same ones), the block of pairs grown past its first room with
-// every earlier pair still found, and the block given back when the last pair ends.
+// velt/lang/hooks (tests): tests of deep_eq.velt, run by `velt test std/`: Vitest's rule (the
+// answers the runtime's guard pinned), its block of pairs grown past its first room with every
+// earlier pair still found; Node 22's rule (`handleCycles`) step by step, its state grown; and
+// each block given back when the last pair ends.
 import { describe, expect, it } from "velt/test";
 import { deepEqEnter, deepEqLeave, pairsBlock } from "velt/lang/hooks/deep_eq";
 
-describe("deepEqEnter", () => {
+describe("deepEqEnter, Vitest's rule", () => {
   it("is equal for a pair met again and different for one side met again", () => {
     const a: u64 = 8;
     const b: u64 = 16;
     const c: u64 = 24;
-    expect(deepEqEnter(a, b)).toBe(0);
-    expect(deepEqEnter(a, b)).toBe(1);
+    expect(deepEqEnter(a, b, false)).toBe(0);
+    expect(deepEqEnter(a, b, false)).toBe(1);
     // `a` with another partner, or `b` with another one: a cycle on one side.
-    expect(deepEqEnter(a, c)).toBe(2);
-    expect(deepEqEnter(c, b)).toBe(2);
-    deepEqLeave();
-    expect(pairsBlock()).toBe(0);
-    expect(deepEqEnter(a, c)).toBe(0);
-    deepEqLeave();
-    expect(pairsBlock()).toBe(0);
+    expect(deepEqEnter(a, c, false)).toBe(2);
+    expect(deepEqEnter(c, b, false)).toBe(2);
+    deepEqLeave(false);
+    expect(pairsBlock(false)).toBe(0);
+    expect(deepEqEnter(a, c, false)).toBe(0);
+    deepEqLeave(false);
+    expect(pairsBlock(false)).toBe(0);
   });
 
   it("keeps every pair when the block grows", () => {
     // 40 pairs nested: the first block has room for 8, so it grows three times.
     const n: u64 = 40;
     for (let i: u64 = 0; i < n; i++) {
-      expect(deepEqEnter(100 + i * 8, 10000 + i * 8)).toBe(0);
+      expect(deepEqEnter(100 + i * 8, 10000 + i * 8, false)).toBe(0);
     }
     for (let i: u64 = 0; i < n; i++) {
-      expect(deepEqEnter(100 + i * 8, 10000 + i * 8)).toBe(1);
-      expect(deepEqEnter(100 + i * 8, 8)).toBe(2);
-      expect(deepEqEnter(8, 10000 + i * 8)).toBe(2);
+      expect(deepEqEnter(100 + i * 8, 10000 + i * 8, false)).toBe(1);
+      expect(deepEqEnter(100 + i * 8, 8, false)).toBe(2);
+      expect(deepEqEnter(8, 10000 + i * 8, false)).toBe(2);
     }
     for (let i: u64 = 0; i < n; i++) {
-      expect(pairsBlock() != 0).toBe(true);
-      deepEqLeave();
+      expect(pairsBlock(false) != 0).toBe(true);
+      deepEqLeave(false);
     }
-    expect(pairsBlock()).toBe(0);
+    expect(pairsBlock(false)).toBe(0);
+  });
+});
+
+describe("deepEqEnter, Node's rule", () => {
+  it("remembers the first two pairs, then a set of every object on the way", () => {
+    const [a, b, c, d, e] = [8, 16, 24, 32, 40] as u64[];
+    // The first pair; met again as the second, it is equal.
+    expect(deepEqEnter(a, b, true)).toBe(0);
+    expect(deepEqEnter(a, b, true)).toBe(1);
+    // Another second pair: compared, though `a` is the first pair's (Node's `memos.c`, `d`).
+    expect(deepEqEnter(a, c, true)).toBe(0);
+    // From the third on: equal when both objects are on the way already, of either side.
+    expect(deepEqEnter(c, b, true)).toBe(1);
+    expect(deepEqEnter(b, a, true)).toBe(1);
+    expect(deepEqEnter(d, b, true)).toBe(0);
+    expect(deepEqEnter(d, a, true)).toBe(1);
+    // Leaving the pair takes both its objects out of the set, as Node does: `b` (on the way
+    // since the first pair) too, so `c` with `b` is compared, and leaving it takes out `c`.
+    deepEqLeave(true);
+    expect(deepEqEnter(c, b, true)).toBe(0);
+    deepEqLeave(true);
+    expect(deepEqEnter(d, a, true)).toBe(0);
+    expect(deepEqEnter(e, b, true)).toBe(0);
+    deepEqLeave(true);
+    expect(deepEqEnter(e, b, true)).toBe(0);
+    deepEqLeave(true);
+    deepEqLeave(true);
+    deepEqLeave(true);
+    expect(pairsBlock(true) != 0).toBe(true);
+    deepEqLeave(true);
+    expect(pairsBlock(true)).toBe(0);
+  });
+
+  it("starts another second pair once one ends, before the set is made", () => {
+    const [a, b, c] = [8, 16, 24] as u64[];
+    expect(deepEqEnter(a, b, true)).toBe(0);
+    expect(deepEqEnter(a, c, true)).toBe(0);
+    deepEqLeave(true);
+    // `c` and `b` were both on the way, but no set is made yet: a second pair is compared.
+    expect(deepEqEnter(c, b, true)).toBe(0);
+    deepEqLeave(true);
+    deepEqLeave(true);
+    expect(pairsBlock(true)).toBe(0);
+  });
+
+  it("keeps its entries when the state grows", () => {
+    const n: u64 = 40;
+    for (let i: u64 = 0; i < n; i++) {
+      expect(deepEqEnter(1000 + i * 8, 100000 + i * 8, true)).toBe(0);
+    }
+    for (let i: u64 = 2; i < n; i++) {
+      expect(deepEqEnter(1000 + i * 8, 100000 + (n - 1 - i) * 8, true)).toBe(1);
+    }
+    for (let i: u64 = 0; i < n; i++) {
+      deepEqLeave(true);
+    }
+    expect(pairsBlock(true)).toBe(0);
+    expect(pairsBlock(false)).toBe(0);
   });
 });
