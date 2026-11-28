@@ -10,7 +10,8 @@
 //! program that never does calls `main` directly.
 //!
 //! Before it returns, `velt_main` hands the runtime the function releasing what static atomics
-//! hold at exit, when there are any (static_atomic.rs).
+//! hold at exit, when there are any (static_atomic.rs), and flushes stdout (`flushForExit`,
+//! stdout.rs), at each of its returns.
 //!
 //! On a JS host (`wasm32-unknown-unknown`) the thread cannot wait: instead of
 //! `velt_rt_block_on`, `velt_main` hands the root to `velt_rt_host_main` with the code that
@@ -35,6 +36,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.cpu_start();
         // Before any C code (natives' setup, initializers) can start a thread that calls back.
         lw.mark_program_thread();
+        // Whether stdout is a terminal, asked before any task can write (std/lang/hooks/stdout.velt).
+        lw.init_output();
         // `performance.now()`'s time origin, in a program that reads a clock: as near the start
         // of the process as Velt code gets (std/lang/hooks/clock.velt).
         let clock = velt_common::std_hooks::hook_index::clock_start;
@@ -46,7 +49,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             lw.call_rt(Rt::SetScheduler, vec![cint(1, Ty::U32)], None);
         }
         let Some(def) = lw.cx.hir.entry else {
-            lw.terminate(Terminator::Return(cint(0, Ty::I32)));
+            lw.exit_main(cint(0, Ty::I32));
             return lw.finish_export();
         };
         // Every module's initializers run before `main`, as Node evaluates the modules first
@@ -58,7 +61,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let code = lw.run_async_main(def);
             lw.sched_finish(&code);
             lw.fn_props_exit();
-            lw.terminate(Terminator::Return(code));
+            lw.exit_main(code);
             lw.scopes.clear();
             return lw.finish_export();
         }
@@ -91,9 +94,16 @@ impl<'c, 'h> FnLower<'c, 'h> {
             code
         };
         lw.fn_props_exit();
-        lw.terminate(Terminator::Return(code));
+        lw.exit_main(code);
         lw.scopes.clear();
         lw.finish_export()
+    }
+
+    /// The end of `velt_main` (or, on a JS host, of the code after its root) with exit code
+    /// `code`: stdout is flushed first, after everything else the program does.
+    fn exit_main(&mut self, code: Operand) {
+        self.flush_for_exit();
+        self.terminate(Terminator::Return(code));
     }
 
     /// Calls the synchronous `main` `def`: with `state` (the root of `SyncMainRoot`), stores its
@@ -190,7 +200,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             lw.assign(Place::local(s), Rvalue::Use(Operand::Copy(st)));
             lw.sync_main_tail(s, ret, throws)
         };
-        lw.terminate(Terminator::Return(code));
+        lw.exit_main(code);
         lw.scopes.clear();
         lw.finish("_Gmain_finish".into(), vec![Ty::Ptr], Ty::I32)
     }
@@ -298,7 +308,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let text = self.temp(STR);
         let tp = self.addr(Place::local(text));
         self.call_rt(Rt::StrbufFinish, vec![buf, tp.clone()], None);
-        self.call_rt(Rt::WriteStr, vec![cint(2, Ty::U32), tp.clone()], None);
+        self.write_str(&cint(2, Ty::U32), tp.clone());
         self.call_rt(Rt::StrDrop, vec![tp], None);
     }
 

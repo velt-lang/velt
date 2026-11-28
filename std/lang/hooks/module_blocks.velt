@@ -23,9 +23,8 @@
 import { Ptr } from "velt/ffi/ptr";
 import { addressLoad, addressStore, inline, noInline } from "velt/lang/intrinsics";
 import { addressCall } from "velt/lang/intrinsics/future";
+import { flushForExit, writeStrCold } from "./stdout";
 
-declare function velt_rt_write_str(stream: u32, s: string);
-declare function velt_rt_flush();
 declare function velt_rt_exit(code: i32): never;
 // As sched_mem.velt declares them: one C symbol has one signature in a program.
 declare c("c") function calloc$blocks(n: usize, size: usize): Ptr<u8> | null;
@@ -82,8 +81,8 @@ function copyWords(dst: usize, src: usize, n: usize): void {
  */
 @noInline
 function stop(message: string): never {
-  velt_rt_flush();
-  velt_rt_write_str(2, message);
+  flushForExit();
+  writeStrCold(2, message);
   velt_rt_exit(101);
 }
 
@@ -397,8 +396,8 @@ function newBlock(desc: usize): usize {
 @noInline
 function notReady(desc: usize, slot: u64): never {
   let at = ld(desc + DESC_NAMES);
-  velt_rt_flush();
-  velt_rt_write_str(2, "Uncaught ReferenceError: Cannot access '");
+  flushForExit();
+  writeStrCold(2, "Uncaught ReferenceError: Cannot access '");
   if (at !== 0) {
     for (let i: u64 = 0; i < slot; i++) {
       while (byte(at) !== 0) {
@@ -408,11 +407,11 @@ function notReady(desc: usize, slot: u64): never {
     }
     // Names are identifiers: ASCII, one byte a write (the error ends the program).
     while (byte(at) !== 0) {
-      velt_rt_write_str(2, String.fromCharCode(byte(at) as number));
+      writeStrCold(2, String.fromCharCode(byte(at) as number));
       at++;
     }
   }
-  velt_rt_write_str(2, "' before initialization\n");
+  writeStrCold(2, "' before initialization\n");
   velt_rt_exit(1);
 }
 

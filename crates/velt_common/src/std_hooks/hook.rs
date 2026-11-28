@@ -24,9 +24,10 @@ pub struct Hook {
     /// The runtime externs (`velt_rt_*`) whose job this hook does: the compiler must call the
     /// hook, not the extern, for the feature the hook implements (`velt_common`'s test
     /// `hook_replaces.rs` lists every place left that still names one, #2197). An extern the
-    /// hook only wraps is not listed: `processWrite` writes through `velt_rt_write_str`, which
-    /// stays the runtime's job. A hook may also call an extern it replaces for some of its
-    /// inputs: what counts is that the compiler no longer calls it in the hook's place.
+    /// hook only wraps is not listed: `writeStr` writes through the runtime's
+    /// `velt_rt_write_str`, which stays the runtime's job. A hook may also call an extern it
+    /// replaces for some of its inputs: what counts is that the compiler no longer calls it in
+    /// the hook's place.
     pub replaces: &'static [&'static str],
     /// Lowering does without it when the program doesn't load its module or sema left it
     /// unchecked (its module loaded without it is an internal error, `velt_vir` std_defs.rs). It
@@ -55,18 +56,31 @@ pub struct Hook {
 impl Hook {
     /// The canonical path of the module that defines it: `std/lang/hooks/number`.
     pub fn module(&self) -> String {
+        self.module_with(0)
+    }
+
+    /// The qualified name: `std/lang/hooks/number::f64ToString`.
+    pub fn qualified(&self) -> String {
+        let mut s = self.module_with(2 + self.item.len());
+        s.push_str("::");
+        s.push_str(self.item);
+        s
+    }
+
+    /// [`Hook::module`] with room for `more` bytes after it. Built without `format!`: sema asks
+    /// for every hook's name in each check (`seed_hooks`), and formatting was most of that.
+    fn module_with(&self, more: usize) -> String {
         let rel = crate::std_modules::rel(self.module_entry).unwrap_or_else(|| {
             panic!(
                 "ICE: hook module `{}` is not a std module",
                 self.module_entry
             )
         });
-        format!("{}{rel}", crate::std_modules::CANONICAL_PREFIX)
-    }
-
-    /// The qualified name: `std/lang/hooks/number::f64ToString`.
-    pub fn qualified(&self) -> String {
-        format!("{}::{}", self.module(), self.item)
+        let prefix = crate::std_modules::CANONICAL_PREFIX;
+        let mut s = String::with_capacity(prefix.len() + rel.len() + more);
+        s.push_str(prefix);
+        s.push_str(rel);
+        s
     }
 }
 

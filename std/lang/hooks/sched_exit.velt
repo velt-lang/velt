@@ -56,6 +56,7 @@ import * as nd from "./sched_node";
 import * as rp from "./sched_node_report";
 import * as wn from "./sched_node_woken";
 import { processEnv } from "./process";
+import { writeStrCold } from "./stdout";
 import * as sf from "./sched_sleep_forget";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
@@ -86,12 +87,10 @@ const KEPT = new Atomic<u32>(0);
 const KEPT_NOTE =
   "rc stats: an uncaught error ended the program with tasks live: no leak verdict\n";
 
-declare function velt_rt_write_str(stream: u32, s: string);
-
 /** Ends the process with `code`, after the note that the counts are no leak verdict (`KEPT`). */
 function exitNoted(code: i32): never {
   if (KEPT.load("relaxed") !== 0 && counting()) {
-    velt_rt_write_str(2, KEPT_NOTE);
+    writeStrCold(2, KEPT_NOTE);
   }
   process.exit(code);
 }

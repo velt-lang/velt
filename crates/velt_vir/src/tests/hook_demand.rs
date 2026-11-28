@@ -222,7 +222,7 @@ fn main_calls(src: &str) -> Vec<String> {
 /// write fewer is what brings the writer in Velt under the runtime's (#2197).
 #[test]
 fn a_number_is_written_with_the_byte_after_it() {
-    let writes_byte = |calls: &[String]| calls.iter().any(|s| s.contains("write_byte"));
+    let writes_byte = |calls: &[String]| calls.iter().any(|s| s.contains("writeByte"));
     for (ty, write) in [
         ("i64", "intWrite"),
         ("u64", "uintWrite"),

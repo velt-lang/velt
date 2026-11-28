@@ -432,7 +432,10 @@ impl<R> Call<R> {
                         | (Mode::BorrowMut, PassMode::BorrowMut)
                         | (Mode::Owned, PassMode::Owned)
                 ),
-                "ICE: a hook's passing mode differs from its table entry"
+                "ICE: a hook's passing mode differs from its table entry (`{}`: {mode:?}, std \
+                 infers {:?})",
+                lw.cx.fn_def(def).name,
+                p.mode
             );
             argv.push(match how {
                 How::As(op) => {

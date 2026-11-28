@@ -18,13 +18,12 @@ import {
   strbufPushAsciiWords,
   strWord0,
 } from "velt/lang/intrinsics";
+import { flushForExit, writeStrCold } from "velt/lang/hooks/stdout";
 
 declare function velt_rt_strbuf_new(cap: u64, out: string);
 declare function velt_rt_strbuf_push_u8s(buf: string, bytes: u8[], len: u64, units: u64);
 declare function velt_rt_strbuf_commit(buf: string, n: u64, ascii: u8);
 declare function velt_rt_exit(code: i32): never;
-declare function velt_rt_flush(): void;
-declare function velt_rt_write_str(stream: u32, s: string);
 
 // The SIMD operations the copy uses (`velt/simd`, std/simd/*.velt, is the API; declared again
 // here, as std/encoding/utf8_valid.velt does). `load` and `store` do not check their range.
@@ -195,8 +194,8 @@ function pushDecoded(out: string, b: u8[], from: usize, to: usize) {
  */
 @noInline
 function stringTooLong(): never {
-  velt_rt_flush();
-  velt_rt_write_str(2, "panic: string too long\n");
+  flushForExit();
+  writeStrCold(2, "panic: string too long\n");
   velt_rt_exit(101);
 }
 

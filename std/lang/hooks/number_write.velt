@@ -9,9 +9,8 @@
 // integer writer `intWrite`, which it calls then.
 
 import { hookCall, inline, noInline, strAsciiWords, trunc } from "velt/lang/intrinsics";
+import { writeByte, writeStr } from "./stdout";
 
-declare function velt_rt_write_byte(stream: u32, b: u8);
-declare function velt_rt_write_str(stream: u32, s: string);
 declare function velt_rt_math_ctz64(x: u64): u64;
 
 /**
@@ -38,12 +37,12 @@ export function numberWrite(stream: u32, x: f64, end: u8): void {
 @noInline
 function writeText(stream: u32, x: f64, end: u8): void {
   if (x == 0) {
-    velt_rt_write_str(stream, strAsciiWords(0x302d | ((end as u64) << 16), 0, 0, 3));
+    writeStr(stream, strAsciiWords(0x302d | ((end as u64) << 16), 0, 0, 3));
     return;
   }
   const text: string = hookCall("number_shortest", x);
-  velt_rt_write_str(stream, text);
-  velt_rt_write_byte(stream, end);
+  writeStr(stream, text);
+  writeByte(stream, end);
 }
 
 /**
@@ -73,22 +72,19 @@ export function wholeNumberWrite(stream: u32, v: i64, end: u8): void {
   if (!neg) {
     // The common case: the digits and `end`, one word below 10^7.
     if (n < 8) {
-      velt_rt_write_str(stream, strAsciiWords(d | (e << (n * 8)), 0, 0, (n + 1) as usize));
+      writeStr(stream, strAsciiWords(d | (e << (n * 8)), 0, 0, (n + 1) as usize));
       return;
     }
-    velt_rt_write_str(stream, strAsciiWords(d, e, 0, 9));
+    writeStr(stream, strAsciiWords(d, e, 0, 9));
     return;
   }
   // The minus before the digits, as velt/lang/number/integer's `eightWords` places it.
   const m = (d << 8) | 0x2d;
   if (n < 7) {
-    velt_rt_write_str(stream, strAsciiWords(m | (e << ((n + 1) * 8)), 0, 0, (n + 2) as usize));
+    writeStr(stream, strAsciiWords(m | (e << ((n + 1) * 8)), 0, 0, (n + 2) as usize));
     return;
   }
-  velt_rt_write_str(
-    stream,
-    strAsciiWords(m, (d >> 56) | (e << ((n - 7) * 8)), 0, (n + 2) as usize),
-  );
+  writeStr(stream, strAsciiWords(m, (d >> 56) | (e << ((n - 7) * 8)), 0, (n + 2) as usize));
 }
 
 // The eight ASCII digits of `x` (below 10^8), leading zeros included, the first in the low byte,

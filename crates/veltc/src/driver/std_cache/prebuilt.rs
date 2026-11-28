@@ -276,10 +276,9 @@ impl Finder {
         if restated {
             let _ = write_atomically(&self.manifest_path(&key), &manifest.render());
         }
-        let object_key = object_key(&key, &manifest.files);
-        if object_key.hex() != manifest.object {
-            return None;
-        }
+        // The fill recorded the object's key (`object_key`), of this lookup key and the hashes
+        // and paths of the files just found unchanged: not hashed again in every build.
+        let object_key = key_of_hex(&manifest.object)?;
         if !manifest.tls.is_empty() && !velt_codegen_cl::has_thread_local_data(&self.target) {
             return None;
         }
@@ -456,6 +455,24 @@ fn object_key(lookup: &Key, files: &[String]) -> Key {
         }
     }
     h.finish()
+}
+
+/// The key whose lowercase hex is `text` (`Key::hex`); `None` for anything else.
+fn key_of_hex(text: &str) -> Option<Key> {
+    let digits = text.as_bytes();
+    if digits.len() != 64 {
+        return None;
+    }
+    let nibble = |c: u8| match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        _ => None,
+    };
+    let mut key = [0u8; 32];
+    for (i, b) in key.iter_mut().enumerate() {
+        *b = (nibble(digits[2 * i])? << 4) | nibble(digits[2 * i + 1])?;
+    }
+    Some(Key(key))
 }
 
 /// Is the file of stamp `file` entry `entry` as it records: `Some(None)` with the same size and
@@ -644,6 +661,25 @@ pub(in crate::driver) fn found(
     found
 }
 
+/// After lowering a program that may link prebuilt objects (`sess.prebuilt`, what the check
+/// found): the hooks objects call out to (`prebuilt::calls_out`) exported under their own
+/// symbols, with no facts about their pointers from the program's calls, before the optimizer,
+/// which then keeps each whole (it may still inline it into the program's own callers).
+pub(in crate::driver) fn export_calls_out(sess: &Session, program: &mut vir::Program) {
+    if sess.prebuilt.is_empty() {
+        return;
+    }
+    for h in prebuilt::calls_out() {
+        let symbol = velt_vir::mangle::mangle(&h.qualified());
+        let defined =
+            (program.funcs.iter_mut()).find(|f| f.symbol == symbol && !f.blocks.is_empty());
+        if let Some(f) = defined {
+            f.linkage = vir::Linkage::Export;
+            super::prebuilt_object::unknown_callers(f);
+        }
+    }
+}
+
 /// After `program` (for `target`) is optimized: the objects of the prebuilt modules it calls
 /// into, placed for the link after the std cache's own (`hook<n>.<ext>`, linked or copied as
 /// those are), in `sess.std_objects`, and their thread-local values' externs added to `program`,
@@ -660,6 +696,16 @@ pub(in crate::driver) fn link(
     let (objects, tls) = linked_objects(program, &sess.prebuilt).map_err(BuildError::Ice)?;
     if objects.is_empty() {
         return Ok(());
+    }
+    if let Some(missing) = (prebuilt::calls_out())
+        .map(|h| velt_vir::mangle::mangle(&h.qualified()))
+        .find(|s| {
+            !(program.funcs.iter()).any(|f| &f.symbol == s && f.linkage != vir::Linkage::Internal)
+        })
+    {
+        return Err(BuildError::Ice(format!(
+            "ICE: the prebuilt objects call `{missing}`, which the program does not export"
+        )));
     }
     define_tls(program, &tls);
     let place =

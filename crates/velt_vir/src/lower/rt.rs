@@ -14,11 +14,7 @@ pub(super) enum Rt {
     StrClone,
     StrDrop,
     StrCmp,
-    /// `charCodeAt` on a non-ASCII string (ASCII is read inline).
-    WriteStr,
     TlaAt,
-    WriteBool,
-    WriteByte,
     Panic,
     Exit,
     /// An uncaught error is reported next: only the first thread to report goes on.
@@ -146,10 +142,7 @@ impl Rt {
             Rt::StrClone => ("velt_rt_str_clone", vec![Ptr, Ptr], Unit, false),
             Rt::StrDrop => ("velt_rt_str_drop", vec![Ptr], Unit, false),
             Rt::StrCmp => ("velt_rt_str_cmp", vec![Ptr, Ptr], I32, false),
-            Rt::WriteStr => ("velt_rt_write_str", vec![U32, Ptr], Unit, false),
             Rt::TlaAt => ("velt_rt_tla_at", vec![Ptr], Unit, false),
-            Rt::WriteBool => ("velt_rt_write_bool", vec![U32, Bool], Unit, false),
-            Rt::WriteByte => ("velt_rt_write_byte", vec![U32, U8], Unit, false),
             Rt::Panic => ("velt_rt_panic", vec![Ptr], Unit, true),
             Rt::Exit => ("velt_rt_exit", vec![I32], Unit, true),
             Rt::UncaughtReport => ("velt_rt_uncaught_report", vec![], Unit, false),

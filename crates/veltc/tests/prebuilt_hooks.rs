@@ -195,6 +195,36 @@ fn a_prebuilt_hook_calls_its_object_and_loads_its_module_without_one() {
     }
 }
 
+/// A program with an `RwLock` that writes a byte only inside a `read` callback, and prints an
+/// array through the objects: the objects call the writer's hooks by their plain symbols, which
+/// such a program lowers only in their checked and read versions of its own.
+const LOCKED: &str = r#"function main() {
+  const rw = new RwLock<number[]>([1, 2]);
+  const seen: number[][] = [];
+  rw.read((c) => {
+    seen.push(structuredClone(c));
+  });
+  console.log(seen);
+  rw.read((c) => console.log(c.length));
+}
+"#;
+
+/// A program with a lock set links the objects: the writer's call-outs are defined and exported
+/// in their plain versions, in debug and release builds.
+#[test]
+fn a_program_with_a_lock_set_links_the_objects() {
+    for mode in [&["run", "--release"][..], &["run"]] {
+        let tmp = test_dir::TestDir::new();
+        let dir = tmp.path();
+        let filled = velt(dir, "l.velt", LOCKED, mode, &[FILL]);
+        assert_eq!(text(&filled.stdout), "[ [ 1, 2 ] ]\n2\n");
+        let served = velt(dir, "l.velt", LOCKED, mode, &[]);
+        let err = text(&served.stderr);
+        assert!(err.contains(": object found"), "{mode:?}: {err}");
+        assert_eq!(text(&served.stdout), "[ [ 1, 2 ] ]\n2\n");
+    }
+}
+
 /// The object's key holds no program facts: the object stored for one program serves another
 /// whose own code changes how `u8[]` and `string` are compiled.
 #[test]

@@ -15,10 +15,10 @@
 // on a poll's path); the variables are read once, at the end.
 
 import { processEnv } from "./process";
+import { writeStrCold } from "./stdout";
 
 // The runtime's write to a stream: process.velt's `processWrite` may throw (for standard
 // output, which this never writes to), and `schedFinish`, which reports, throws nothing.
-declare function velt_rt_write_str(stream: u32, s: string);
 
 const RESCUES = new Atomic<u64>(0);
 const SPARES = new Atomic<u64>(0);
@@ -72,5 +72,5 @@ export function report(): void {
     return;
   }
   const counts = `rescues=${RESCUES.load()} spares=${SPARES.load()} locks-on=${LOCKS_ON.load()}`;
-  velt_rt_write_str(2, `rescue stats: ${counts} asked-carrying=${ASKED_CARRYING.load()}\n`);
+  writeStrCold(2, `rescue stats: ${counts} asked-carrying=${ASKED_CARRYING.load()}\n`);
 }

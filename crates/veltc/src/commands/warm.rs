@@ -60,6 +60,16 @@ pub fn warm_command(background: bool) -> Result<(), String> {
         .join(format!("out-{}", std::process::id()));
     std::fs::create_dir_all(&out).map_err(|e| format!("cannot create `{}`: {e}", out.display()))?;
     let started = std::time::Instant::now();
+    // Every prebuilt hook module, whether a warm-up program calls one of its hooks or not; first,
+    // so that the programs are compiled as later builds compile them, linking those objects
+    // (without the modules' code, and with the hooks objects call out to exported).
+    // In this process: an internal error there is one failure, not the end of the warm-up
+    // before its marker (every later warm-up would build everything again).
+    let hooks_failed = match clang {
+        true => std::panic::catch_unwind(prebuilt_hooks)
+            .unwrap_or_else(|_| vec!["the prebuilt hook modules: an internal error".into()]),
+        false => vec![],
+    };
     let mut failed = vec![];
     // Release builds need clang, without which a release build stores nothing.
     let modes: &[bool] = if clang { &[false, true] } else { &[false] };
@@ -74,14 +84,6 @@ pub fn warm_command(background: bool) -> Result<(), String> {
         }
     }
     let _ = std::fs::remove_dir_all(&out);
-    // Every prebuilt hook module, whether a warm-up program calls one of its hooks or not.
-    // In this process: an internal error there is one failure, not the end of the warm-up
-    // before its marker (every later warm-up would build everything again).
-    let hooks_failed = match clang {
-        true => std::panic::catch_unwind(prebuilt_hooks)
-            .unwrap_or_else(|_| vec!["the prebuilt hook modules: an internal error".into()]),
-        false => vec![],
-    };
     eprintln!(
         "velt: warmed the build cache with {} programs in {:.1}s",
         programs.len(),

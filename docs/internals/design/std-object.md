@@ -196,7 +196,7 @@ it reaches, into one object (`std_cache/prebuilt.rs`, `prebuilt_object.rs`):
   (hash, size, time), which a build checks and which go into the program's build stamp. Refused:
   an entry not lowered as the convention says, and code sharing state with the program (module
   state, thread-local values, static atomics, named statics) outside the module's private
-  modules.
+  modules, and calls of functions outside the object but the writer's (below).
 - **State of its own.** A module may keep thread-local values and static atomics in its *private*
   modules (`prebuilt::private`: modules nothing else imports, such as the weak core's
   `weak*.velt`, and module_blocks.velt, whose blocks of module state are refused in every other
@@ -208,6 +208,21 @@ it reaches, into one object (`std_cache/prebuilt.rs`, `prebuilt_object.rs`):
   storage an object can share, an object with thread-local values is a miss. An entry point must
   not take its caller's location (`track_caller.rs`), so such a module's code has no panic but its
   internal errors'.
+- **Calls out to the program's writer.** The buffers of stdout and stderr (std/lang/hooks/
+  stdout.velt and its writer, #2196) are the program's state, and nearly every world reaches
+  them: the number writers print through them, the allocator's and the panics' reports write to
+  stderr, and every exit flushes first. A copy in the object would be a second buffer, so the
+  world does not compile the writer: the hooks of `prebuilt::calls_out` (`writeStr`, `writeByte`,
+  `flushForExit`, an explicit list in velt_common `std_hooks/prebuilt.rs`) become declarations
+  under their own symbols (the mangled qualified name) before the world is optimized
+  (`prebuilt_object.rs` `declare_calls_out`), so the object holds only a call of each and none
+  of the writer's thread-local values or static atomics, and `shares_nothing` refuses as before.
+  An object calls nothing else outside itself but the runtime (`calls_nothing_else`). Each of
+  those hooks crosses as an entry point does, and is lowered on every native target whatever
+  the program calls (`velt_vir` `lower/stdout.rs` `seed_calls_out`); a build that may link an
+  object exports them before its optimizer runs, with no facts about their pointers from the
+  program's calls (`prebuilt.rs` `export_calls_out`), and one linking an object without them
+  is an internal compiler error. The program's own calls may still inline them.
 - **Pinned.** Once sema has called the entry points the build must link the object, so a build
   hard-links (or copies) the object it finds into a temporary directory it holds until it is done;
   another build's garbage collection or `velt clean --cache` cannot fail it. An object that
