@@ -106,3 +106,102 @@ fn container(aggs: &[AggLayout], func: &Function, place: &Place, proj: &[Proj]) 
     }
     Some(ty)
 }
+
+#[cfg(test)]
+mod tests {
+    //! One function per rule of [`element_pointers`]: each local named below is a candidate that
+    //! a rule must rule out (or, `elem`, the one that stays).
+
+    use super::*;
+    use crate::testkit::builder::*;
+    use velt_vir::vir::{BinOp, Callee, Const, Local, Program};
+
+    /// `f(p: ptr)` with a header `h`: `elem = ptradd (*h).0, 8` (an element pointer), and the
+    /// locals each rule is about. Returns the program and the locals by name.
+    fn function() -> (Program, AggId, Vec<(&'static str, Local)>) {
+        let mut pb = ProgramBuilder::new();
+        let hdr = pb.agg(
+            velt_vir::ARRAY_AGG_NAME,
+            24,
+            8,
+            &[(Ty::Ptr, 0), (Ty::U64, 8), (Ty::U64, 16)],
+        );
+        let mut fb = FuncBuilder::internal("make", &[], Ty::Ptr);
+        let b = fb.block();
+        fb.ret(b, int(0, Ty::Ptr));
+        let make = pb.add(fb.finish());
+
+        let mut fb = FuncBuilder::export("f", &[Ty::Ptr], Ty::Unit);
+        let p = fb.param(0);
+        let (hv, h) = (fb.local(Ty::Agg(hdr)), fb.local(Ty::Ptr));
+        let locals: Vec<(&'static str, Local)> = [
+            "elem",
+            "len_field",
+            "cap_field",
+            "address_taken",
+            "call_dest",
+            "from_param",
+        ]
+        .iter()
+        .map(|&n| (n, fb.local(Ty::Ptr)))
+        .collect();
+        let get = |n: &str| locals.iter().find(|(m, _)| *m == n).expect("named").1;
+        let (entry, after) = (fb.block(), fb.block());
+        fb.assign(entry, h, Rvalue::AddrOf(Place::local(hv)));
+        let field = |n: u32| Place {
+            local: h,
+            proj: vec![Proj::Deref(Ty::Agg(hdr)), Proj::Field(n)],
+        };
+        let off = || int(8, Ty::U64);
+        fb.assign(
+            entry,
+            get("elem"),
+            bin(BinOp::PtrAdd, copy_place(field(0)), off()),
+        );
+        // A param: the caller's pointer, which may point anywhere.
+        fb.assign(entry, p, bin(BinOp::PtrAdd, copy_place(field(0)), off()));
+        // Fields of the header other than its data pointer.
+        fb.assign(
+            entry,
+            get("len_field"),
+            bin(BinOp::PtrAdd, copy_place(field(1)), off()),
+        );
+        fb.assign(
+            entry,
+            get("cap_field"),
+            bin(BinOp::PtrAdd, copy_place(field(2)), off()),
+        );
+        // A local whose address is taken: a store through that address may change it.
+        let at = get("address_taken");
+        fb.assign(entry, at, bin(BinOp::PtrAdd, copy_place(field(0)), off()));
+        let addr = fb.local(Ty::Ptr);
+        fb.assign(entry, addr, Rvalue::AddrOf(Place::local(at)));
+        // A copy of the param.
+        fb.assign(
+            entry,
+            get("from_param"),
+            bin(BinOp::PtrAdd, copy_local(p), off()),
+        );
+        // A call's destination, also assigned an element pointer elsewhere.
+        let cd = get("call_dest");
+        fb.assign(entry, cd, bin(BinOp::PtrAdd, copy_place(field(0)), off()));
+        let next = fb.call(entry, Callee::Func(make), vec![], Some(cd));
+        fb.goto(next, after);
+        fb.ret(after, Operand::Const(Const::Unit, Ty::Unit));
+        let mut locals = locals;
+        locals.push(("param", p));
+        pb.add(fb.finish());
+        (pb.finish(), hdr, locals)
+    }
+
+    #[test]
+    fn only_a_ptradd_of_a_header_s_data_is_an_element_pointer() {
+        let (p, hdr, locals) = function();
+        let f = p.funcs.last().expect("f");
+        let elem = element_pointers(&p.aggs, f, hdr);
+        for (name, l) in locals {
+            let want = name == "elem";
+            assert_eq!(elem[l.0 as usize], want, "{name}");
+        }
+    }
+}
