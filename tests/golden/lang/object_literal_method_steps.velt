@@ -1,0 +1,53 @@
+// An object literal's async method called through an interface, whose promise may reject, takes
+// the steps Node takes (#3277): its slot method awaits the function in the literal's field
+// without a step of its own, so its `then` callbacks run in Node's order among other tasks'.
+interface Job {
+  run(tag: string): Promise<number>;
+}
+const log: string[] = [];
+async function tick(tag: string): Promise<number> {
+  log.push(tag + ":start");
+  if (tag == "never") {
+    throw new Error("x");
+  }
+  return 1;
+}
+const job: Job = {
+  async run(tag: string): Promise<number> {
+    log.push(tag + ":a");
+    const x = await tick(tag);
+    log.push(tag + ":b");
+    await tick(tag + "2");
+    log.push(tag + ":c");
+    return x;
+  },
+};
+const plain = {
+  async run(tag: string): Promise<number> {
+    log.push(tag + ":a");
+    await tick(tag);
+    log.push(tag + ":b");
+    return 2;
+  },
+};
+async function other(tag: string): Promise<void> {
+  log.push(tag + ":1");
+  await null;
+  log.push(tag + ":2");
+  await null;
+  log.push(tag + ":3");
+  await null;
+  log.push(tag + ":4");
+}
+async function main(): Promise<void> {
+  await Promise.all([
+    job.run("J").then(() => log.push("done")),
+    other("O").then(() => log.push("done")),
+    plain.run("P").then(() => log.push("done")),
+    other("Q").then(() => log.push("done")),
+  ]);
+  const j2: Job = job;
+  await Promise.all([j2.run("K").then(() => log.push("K done")), other("R")]);
+  console.log(log.join(" "));
+}
+main();
