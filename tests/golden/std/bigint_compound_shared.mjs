@@ -42,3 +42,96 @@ y *= y;
 console.log(y.toString());
 
 console.log("42", "42");
+
+// Shapes where a number is held elsewhere: each holder keeps its value.
+const s = (b) => b.toString();
+const held = n(1);
+const keep = () => s(held);
+let c1 = held;
+c1 += n(1);
+let c2 = n(5);
+const later = () => s(c2);
+const c2old = c2;
+c2 += n(1);
+console.log(s(held), s(c1), keep(), later(), s(c2old));
+
+const arr = [n(10)];
+let e1 = arr[0];
+e1 += n(1);
+const map = new Map();
+map.set("k", n(20));
+let e2 = map.get("k");
+e2 *= n(2);
+const box = new Acc();
+box.total = n(30);
+let e3 = box.total;
+e3 -= n(3);
+console.log(s(arr[0]), s(e1), s(map.get("k")), s(e2), s(box.total), s(e3));
+
+function bump(p) {
+  let q = p;
+  q += n(1);
+  return s(q);
+}
+const arg = n(40);
+console.log(bump(arg), s(arg));
+
+let self = n(3);
+const selfOld = self;
+self += self;
+self *= self;
+console.log(s(self), s(selfOld));
+
+for (const el of arr) {
+  let w = el;
+  w += n(5);
+  console.log(s(w), s(arr[0]));
+}
+const [d0] = [n(50)];
+let d1 = d0;
+d1 %= n(7);
+console.log(s(d0), s(d1));
+
+function twice(x) {
+  return [x, x];
+}
+const pair = twice(n(60));
+let g0 = pair[0];
+g0 += n(1);
+console.log(s(pair[0]), s(pair[1]), s(g0));
+
+async function stepAsync() {
+  let a = n(70);
+  const before = a;
+  await null;
+  a += n(1);
+  await null;
+  let b = n(80);
+  await null;
+  b += n(1);
+  return `${s(before)} ${s(a)} ${s(b)}`;
+}
+
+let unique = n(1);
+for (let i = 0; i < 5; i++) {
+  unique *= n(3);
+  unique += n(i);
+}
+console.log(s(unique));
+
+
+let r = n(1);
+const reassign = () => {
+  r = n(100);
+  return n(2);
+};
+r += reassign();
+console.log(s(r));
+
+let t = n(1);
+t += (t = n(5));
+console.log(s(t));
+async function main() {
+  console.log(await stepAsync());
+}
+main();

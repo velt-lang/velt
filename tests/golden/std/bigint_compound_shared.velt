@@ -8,18 +8,18 @@ const n = (k: i64): BigInt => new BigInt(k);
 
 const x = n(5);
 let z = x;
-z += n(1);
+z += new BigInt(1);
 console.log(x.toString(), z.toString());
 
 const a = n(100);
 let b = a;
-b -= n(1);
+b -= new BigInt(1);
 let c = a;
-c *= n(3);
+c *= new BigInt(3);
 let d = a;
-d /= n(7);
+d /= new BigInt(7);
 let e = a;
-e %= n(7);
+e %= new BigInt(7);
 let f = a;
 f <<= 2;
 let g = a;
@@ -35,8 +35,8 @@ const start = acc.total;
 const xs = [n(1), n(2)];
 const first = xs[0];
 for (let i: i64 = 1; i <= 3; i++) {
-  acc.total += n(i);
-  xs[0] *= n(10);
+  acc.total += new BigInt(i);
+  xs[0] *= new BigInt(10);
 }
 console.log(start.toString(), acc.total.toString(), first.toString(), xs[0].toString());
 
@@ -49,3 +49,96 @@ const m = n(40);
 const kept = m;
 m.addAssign(n(2));
 console.log(m.toString(), kept.toString());
+
+// Shapes where a number is held elsewhere: each holder keeps its value.
+const s = (b: BigInt): string => b.toString();
+const held = n(1);
+const keep = (): string => s(held);
+let c1 = held;
+c1 += new BigInt(1);
+let c2 = n(5);
+const later = (): string => s(c2);
+const c2old = c2;
+c2 += new BigInt(1);
+console.log(s(held), s(c1), keep(), later(), s(c2old));
+
+const arr = [n(10)];
+let e1 = arr[0];
+e1 += new BigInt(1);
+const map = new Map<string, BigInt>();
+map.set("k", n(20));
+let e2 = map.get("k")!;
+e2 *= new BigInt(2);
+const box = new Acc();
+box.total = n(30);
+let e3 = box.total;
+e3 -= new BigInt(3);
+console.log(s(arr[0]), s(e1), s(map.get("k")!), s(e2), s(box.total), s(e3));
+
+function bump(p: BigInt): string {
+  let q = p;
+  q += new BigInt(1);
+  return s(q);
+}
+const arg = n(40);
+console.log(bump(arg), s(arg));
+
+let self = n(3);
+const selfOld = self;
+self += self;
+self *= self;
+console.log(s(self), s(selfOld));
+
+for (const el of arr) {
+  let w = el;
+  w += new BigInt(5);
+  console.log(s(w), s(arr[0]));
+}
+const [d0] = [n(50)];
+let d1 = d0;
+d1 %= new BigInt(7);
+console.log(s(d0), s(d1));
+
+function twice<T>(x: T): T[] {
+  return [x, x];
+}
+const pair = twice(n(60));
+let g0 = pair[0];
+g0 += new BigInt(1);
+console.log(s(pair[0]), s(pair[1]), s(g0));
+
+async function stepAsync(): Promise<string> {
+  let a = n(70);
+  const before = a;
+  await null;
+  a += new BigInt(1);
+  await null;
+  let b = n(80);
+  await null;
+  b += new BigInt(1);
+  return `${s(before)} ${s(a)} ${s(b)}`;
+}
+
+let unique = n(1);
+for (let i = 0; i < 5; i++) {
+  unique *= new BigInt(3);
+  unique += new BigInt(i);
+}
+console.log(s(unique));
+
+
+let r = n(1);
+const reassign = (): BigInt => {
+  r = n(100);
+  return n(2);
+};
+r += reassign();
+console.log(s(r));
+
+let t = new BigInt(1);
+t += (t = new BigInt(5));
+console.log(s(t));
+async function main(): Promise<void> {
+  console.log(await stepAsync());
+}
+main();
