@@ -2,6 +2,7 @@
 //! lowered, verified, and executed by a VIR interpreter with an emulated runtime (interp/), which
 //! checks outputs against the goldens and fails on leaks, double frees and backend traps.
 
+mod address_thunk;
 mod builder;
 mod builder_m2;
 mod builder_m3;
@@ -59,6 +60,7 @@ mod transfer_sites;
 mod verifier;
 mod vir_ext;
 mod vtable_word;
+mod wasm_promises;
 mod yield_cancel;
 
 use velt_sema::hir;

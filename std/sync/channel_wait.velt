@@ -32,7 +32,7 @@ import {
   unlock,
   wakeFirst,
 } from "velt/sync/channel_block";
-import { wakerClone, wakerDrop, wakerOf, wakeOwned } from "#sync-chan-word";
+import { wakerClone, wakerDrop, wakerOf, wakeOwned } from "./channel_word";
 
 /** A wait of `kind` on block `b`: a heap future (poll `poll`, drop `drop`) holding a count. */
 export function newCell(b: usize, kind: usize, poll: usize, drop: usize): usize {

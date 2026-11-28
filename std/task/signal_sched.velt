@@ -1,6 +1,5 @@
-// velt/task (internal): the abort signals behind `AbortSignal` (signal.velt) under the executor in
-// Velt (`VELT_SCHEDULER=std`, the `std-scheduler` variant of `#task-signal`): std's own
-// (signal_core.velt). A signal is a handle; each holder releases its reference with `signalFree`.
+// velt/task (internal): the abort signals behind `AbortSignal` (signal.velt) on the executor in
+// Velt, every target's (#3905): std's own (signal_core.velt). A signal is a handle; each holder releases its reference with `signalFree`.
 
 import { promiseAt } from "velt/lang/intrinsics";
 import { publishOutput } from "#sync-output";

@@ -31,7 +31,7 @@ const LOADS_ALL: &str = "import \"velt/lang/this_fn\";\nimport \"velt/lang/recor
     import \"velt/ffi/export\";\n\
     import \"velt/lang/hooks/locale_compare\";\nimport \"velt/lang/hooks/sched\";\n\
     import \"velt/lang/hooks/clock\";\n\
-    import \"velt/lang/hooks/sched_blocking\";\n\
+    import \"velt/lang/hooks/sched_blocking\";\nimport \"velt/lang/hooks/sched_host\";\n\
     import \"velt/lang/hooks/sched_cells\";\n\
     import \"velt/process/child/child_reactor\";\nimport \"velt/net/dns/lookup_sched\";\n\
     import \"velt/net/tls/fd_server\";\nimport \"velt/net/tls/fd_client\";\n\

@@ -1,0 +1,92 @@
+// velt/lang/hooks (internal): the root task of `main` on the executor in Velt, begun and ended,
+// and the end of the program once the tasks left are done: the parts the loop that runs them
+// shares, worker 0's (sched.velt `schedBlockOn`, `schedFinish`) and a JS host's turns
+// (sched_host.velt), which run the same steps in calls of the host instead of one loop.
+
+import { inline } from "velt/lang/intrinsics";
+import * as fg from "./sched_foreign";
+import * as tb from "./sched_io_table";
+import * as m from "./sched_mem";
+import * as mod from "./sched_module";
+import * as mk from "./sched_make";
+import * as wn from "./sched_node_woken";
+import * as mv from "./sched_sleep_move";
+import * as sp from "./sched_spread";
+import * as st from "./sched_stats";
+import * as t from "./sched_task";
+import * as wk from "./sched_wake";
+
+/**
+ * Makes `poll` with its state at `state` the root task of `main` on executor `e` and queues it;
+ * `stay` as `schedBlockOn`'s. The root's task.
+ */
+@inline("always")
+export function rootBegin(e: usize, poll: usize, state: usize, stay: u64): usize {
+  // The modules' initializers ran as the start of the root task's poll if they used the executor
+  // (sched_foreign.velt `initTask`): their microtasks share its queue.
+  let k = fg.mainBegins(e);
+  if (stay !== 0) {
+    sp.stay(e);
+  }
+  if (k === 0) {
+    // The executor's reference and this one: the root is read after it is done.
+    k = mk.task(e, poll, 0, 0, 0, 0, 2);
+    m.st(k + t.T_TRANSFER, 0);
+  } else {
+    m.st(k + t.T_POLL, poll);
+    m.store32(k + t.T_STATE, t.SCHEDULED);
+  }
+  m.st(k + t.T_JOIN_STATE, 0);
+  m.st(k + t.T_ROOT, state);
+  m.st32(k + t.T_FLAGS, m.ld32(k + t.T_FLAGS) | t.ROOT);
+  wk.push(e, k);
+  // The synchronous code before is done: tasks may take the module lock.
+  mod.handOver();
+  // A park that finds nothing left to happen while it runs ends the program (sched_end.velt).
+  m.st(e + t.E_ROOT, k);
+  return k;
+}
+
+/** The root `k` of executor `e` left (`t.rootLeft`): its reference goes. */
+@inline("always")
+export function rootEnd(e: usize, k: usize): void {
+  m.st(e + t.E_ROOT, 0);
+  if ((m.load32(k + t.T_FLAGS) & t.COUNTED) === 0) {
+    // Finished (sched_main_end.velt `mainFinish`): a wake that pushed after its take of the woken
+    // stack and read the state before `DONE` left its reference there; this reference keeps `k`.
+    wn.giveBackWoken(k);
+  }
+  wk.release(k);
+}
+
+/** The end of a `main` that returned an exit code other than 0 or threw: nothing more runs. */
+export function finishFailed(): void {
+  if (wk.counting()) {
+    mod.dropAtExit();
+  }
+  st.report();
+}
+
+/**
+ * Do tasks of one-thread executor `e` (no lazy worker 0) still count: live ones, ones that
+ * threads that aren't workers spawned (`E_LIVE_F`, sched_foreign.velt), and the blocking pool's
+ * jobs (sched_blocking.velt)?
+ */
+@inline("always")
+export function soloLive(e: usize): bool {
+  return m.ld(e + t.E_LIVE) !== 0 || m.load(e + t.E_LIVE_F) !== 0 || m.load(e + t.E_BLOCKING) !== 0;
+}
+
+/** The program's end once no task is left on executor `e`: what is held goes, the counts. */
+export function finishTail(e: usize): void {
+  wk.settleWakes();
+  mv.settle(e);
+  // Streams dropped unclosed stay open to the end, as the runtime's: their buffers go now.
+  tb.releaseBuffers();
+  if (wk.counting()) {
+    // The block counters see what module state holds as freed (velt_rt entry.rs `finish` then
+    // drops the function properties and statics); otherwise it is kept to the end, as in Node.
+    mod.dropAtExit();
+  }
+  st.report();
+}

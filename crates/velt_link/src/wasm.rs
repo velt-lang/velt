@@ -28,12 +28,13 @@ pub const RUNTIME_LIB_NAME: &str = "libvelt_rt_wasm.a";
 const STACK_SIZE: &str = "stack-size=8388608";
 
 /// What a browser module exports besides `memory`: its entry, the turns the JS host drives
-/// (crates/velt_rt_wasm/src/host_turn.rs), and the runtime functions the JS glue converts host
-/// functions' values with (crates/velt_rt_wasm/src/host.rs).
+/// (std/lang/hooks/sched_host.velt: only a program that runs tasks has them, and the glue calls
+/// them only for one), and the runtime functions the JS glue converts host functions' values
+/// with (crates/velt_rt_wasm/src/host.rs).
 const BROWSER_EXPORTS: &[&str] = &[
     "--export=velt_start",
-    "--export=velt_turn",
-    "--export=velt_settle",
+    "--export-if-defined=velt_turn",
+    "--export-if-defined=velt_settle",
     // The shadow stack pointer, so a host can check that the turns leave it where it was.
     "--export=__stack_pointer",
     "--export=velt_host_str_ptr",

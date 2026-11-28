@@ -22,7 +22,12 @@ executor's workers use the runtime's leaves (§5, §6, §14) through the C waker
 targets velt_rt keeps only the promise functions a program without the executor still calls
 (`velt_rt_fut_share`, `velt_rt_fut_id`); a promise shared outside any task (a
 C library's thread) is refused (#3782).
-A WebAssembly program calls the functions of §1 and §2 directly (velt_rt_wasm's executor).
+Both WebAssembly targets run on the executor in Velt, on their one thread, as a native program
+does (#3905): `wasm32-wasip1` from `velt_main` to its end, `wasm32-unknown-unknown` (a JS host) in
+the turns the host drives (§2.5). velt_rt_wasm has no executor and no async function: std's
+WebAssembly variants run file operations as blocking-pool jobs over its sync calls
+(std/fs/rt_wasi.velt), answer sockets without the runtime (std/net/rt_none.velt) and await no
+runtime leaf.
 
 ## 1. Awaitable protocol
 
@@ -121,37 +126,9 @@ typedef struct VeltCx {                              // what `cx` points to (2 p
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_fut_box` | `(PollFn, DropFn, const void* state, u64 size, u64 align) -> VeltFut*` | WebAssembly only (velt_rt_wasm) [velt_rt's removed: native programs box, start and hand over promises on the executor in Velt, std/lang/hooks/sched_node.velt, sched_node_transfer.velt]. Moves a compiled initial state into a heap future (for `Promise<T>` values that are stored, put in arrays, returned); result at +16 = state offset 0. `align ≤ 16`. Lazy until polled or started (§1.1). |
-| `velt_rt_fut_start` | `(VeltFut* f, void (*result_drop)(void* slot))` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, as `velt_rt_fut_box`]. Start a boxed promise now (§1.1); no-op for any other future, or outside a task. `result_drop` disposes of an unclaimed result (null if nothing to do); for a promise that can reject it reports an `Err` like an unhandled rejection. |
-| `velt_rt_fut_start_rejecting` | `(VeltFut* f, void (*result_drop)(void* slot))` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, #2196: native programs start, give up and hand promises to combinators on the executor in Velt, std/lang/hooks/sched_node.velt, sched.velt `schedDetach`, `schedHandled`]. `velt_rt_fut_start` for a promise that can reject (its result is a `Result`, tag first; `result_drop` reports an `Err`): when it rejects while its owner does not wait for it, the rejection is reported as uncaught (through `result_drop`; on WebAssembly it then gets 0 from `velt_rt_unhandled_defer`) once the task's microtask queue is drained, unless the owner awaited it, dropped it, or handed it to a combinator or another task by then, as Node reports a rejection without a handler. |
-| `velt_rt_fut_transfer` | `(VeltFut* f, void (*transfer)(void* slot))` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, as `velt_rt_fut_box`]. The owner hands `f` to another task: `transfer` (compiled transfer glue, in place; null for a result with nothing counted, which only hands over a holder of a shared promise, §1.2) runs on the result slot on the task that produces the result, as it finishes (at once if a started promise already finished); with or without `transfer`, a started promise's rejection is no longer reported by the task that started it (`velt_rt_fut_start_rejecting`) but claimed or given up by the task holding it (#1497); a race passes it to its children; no-op for join handles (a task transfers its own result: `velt_rt_spawn_transfer`, or the mark of the promise `velt_rt_spawn_fut` runs) and runtime leaves. WebAssembly does the same on its one thread, so values are moved or copied where native targets move or copy them. |
-| `velt_rt_yield_now` | `(void* cx)` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, #2196: native programs yield on the executor in Velt, std/lang/hooks/sched_yield.velt `schedYield`, which returns the yield's token (`POLL`, 0: it has no record and goes on once the poll its task's root yielded it in is over, which the task's `YIELDED` state marks, whatever cx asks, or it was made off the workers; not 0: its held record on its task's yield list). A cx is told apart by its address: a yield with the task's own cx (`T_CX`) is the root's, one poll's first with no yield block in use, and takes one test; a child polled with a copy of its parent's cx (the same two words at another address) takes the task path that orders several yields of one poll. Only the inline `Promise.all` polls its children so (velt_vir async_fn/all.rs `child_cx`); everything else passes its own cx or the one it was given: `await yieldNow()` keeps it across its suspension, hands it to `schedYieldReady(cx, record)` when it resumes (it goes on once that record's turn came, whatever cx polls it), and to `schedYieldDrop(record)` from its cancel, #3611, #3687; so does `velt_rt_yield_now_fut` below, `schedYieldFut`]. `await yieldNow()` inline: call it, then `return 0`; resumes after other ready tasks. No allocation. |
-| `velt_rt_yield_now_fut` | `() -> VeltFut*` | WebAssembly only, as `velt_rt_yield_now`. `yieldNow()` as a value; result: none |
-| `velt_rt_await_tick` | `(void* cx) -> u64` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, #2196: native programs take `await` steps and queue microtasks on the executor in Velt, std/lang/hooks/sched_micro.velt]. The step of an `await` when the word is not 0: 0 to go on now (nothing else can run first, or the waiter's step was queued by `velt_rt_latch_open` already), else the ticket of an entry queued at the back of the task's microtask queue for `cx`'s waker. No allocation. |
-| `velt_rt_await_ready` | `(u64 ticket, void* cx) -> u32` | WebAssembly only, as `velt_rt_await_tick`. 1 once the queue reached `ticket` (or for a ticket of another queue); 0 while it waits, and the entry then resumes whoever polls with `cx` now. |
-| `velt_rt_microtask` | `() -> VeltFut*` | WebAssembly only, as `velt_rt_await_tick`. Waits for its turn in the microtask queue of the task that polls it (`then` / `catch` / `finally` callbacks and `queueMicrotask`, std/prelude/promise.velt); result: none. The queue is first in, first out and is drained at every job boundary of the task: after the root's poll and after each local promise the task runs from its ready queue (entries queued meanwhile run in the same drain). An entry runs its waiter directly: a local promise of the task is run, the root is polled, any other waker is woken; an entry whose promise is driven by its owner by then is skipped (the owner's own entry resumes it). Outside a task it is ready at once. WebAssembly keeps one queue that runs before the ready tasks. `await` steps (`velt_rt_await_tick`) use the same queue. No code pointers are stored (§13.5). |
-| `velt_rt_unhandled_defer` | `() -> u8` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, #2196: on native targets the executor in Velt calls the function only once the rejection is to be reported, with the throw's location already set, std/lang/hooks/sched_node_report.velt and sched_join.velt]. Called by the function that disposes of an unclaimed rejecting promise's result (`velt_rt_fut_start`'s `result_drop`) before it reports an `Err`: 1 when the runtime keeps the promise to report it once the task's microtask queue is drained, as Node does (the function then returns without reporting or dropping; the runtime calls it again then, and it gets 0); 0 to report now (outside a runtime drop of a started promise in a task). |
-| `velt_rt_uncaught_now` | `()` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, #2196: native programs keep the location in std, std/lang/hooks/sched_exit.velt `uncaughtNow`, and restore it in sched_node_report.velt `dropResult`]. The next rejection nobody handles is an error a timer or microtask callback threw (the prelude's `uncaught`): it is reported at once, as Node's uncaught exception, with the location where the callback threw, not where the prelude throws it again. |
-| `velt_rt_task_gate` | `() -> u64` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, #2196: nothing called it since the prelude's callbacks run on the creating task]. A counted handle to the gate of the task being polled (0 outside a task): a callback that runs on another task can wait with it for the end of its creator's poll (std/prelude/timers.velt no longer needs it: its callbacks run on the creating task). Released with `velt_rt_task_gate_free`. WebAssembly: always 0. |
-| `velt_rt_task_gate_wait` | `(u64 gate) -> VeltFut*` | WebAssembly only, as `velt_rt_task_gate`. Completes once the poll the gate's task was in when the wait was first polled has ended (each poll ends with the task's microtask queue drained), at once when the task is not in a poll or for gate 0; so a timer's callback never runs before the callbacks its creator queued. Result: none. |
-| `velt_rt_timer_new` | `(i64 ms) -> u64` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, #2196: native programs order their timers on the executor in Velt, std/lang/hooks/sched_order.velt, which lowering calls in place of these externs]. A place in the process-wide order of timer callbacks (`setTimeout`, `setInterval`, `setImmediate`; std/prelude/timers.velt) for a timer of the task being polled, as Node orders timers: at the end of the task's list for delay `ms` (negative = 0); a new list's expiry is the monotonic clock read now in whole milliseconds plus `ms`. The lists of all tasks run by (expiry, creation of the list); a pass over the due timers reads the clock once and runs each due list's timers due by then in creation order, and a list whose next timer is not due by then waits for it with a new place (Node's `listOnTimeout`). `ms` 0 (or less) is an immediate (`setImmediate`): the task's immediates are not in a list; once a pass finds nothing more due, the immediates created by then run, in creation order, before the next pass reads the clock (Node's check phase). The turn waits at least `ms`. Insert, removal and finding the next timer take logarithmic time. Freed with `velt_rt_timer_free`. |
-| `velt_rt_timer_turn` | `(u64 timer, u64 gate) -> VeltFut*` | WebAssembly only, as `velt_rt_timer_new`. Completes once the timer is due, the poll `gate`'s task (0: none; the prelude passes 0, its callbacks run on the creating task) was in when it came due has ended (as `velt_rt_task_gate_wait`), it comes next in the order among the timers whose task is not busy in a poll of another task (a busy task's lists are passed over as a whole), and the poll of the task that took the previous turn has ended (each poll ends with its microtask queue drained); the timer then leaves the order. So callbacks run in Node's order, each followed by its microtasks, across tasks. Ready at once for a timer that is no longer queued (`velt_rt_timer_clear`). Called in the first run of a started promise (the prelude's), it marks that promise as a timer's: it does not keep an orphaned set alive (§1.1; a ref'd timer holds a keep-alive reference itself). WebAssembly: the same lists, fired by the executor, and `block_on` does not wait for such promises. Result: none. |
-| `velt_rt_timer_again` | `(u64 timer, i64 ms)` | WebAssembly only, as `velt_rt_timer_new`. Queues the timer again at the end of its list, due `ms` after the clock read when it last took its turn (an interval's next run, as Node's: called after the callback's synchronous part). |
-| `velt_rt_timer_clear` | `(u64 timer)` | WebAssembly only, as `velt_rt_timer_new`. Takes the timer out of the order (`clearTimeout`; a no-op once it took its turn or was cleared); its turn completes at once. May be called from any task while the handle is live (the prelude calls it under the timer state's lock, which also covers `velt_rt_timer_free`). |
-| `velt_rt_timer_free` | `(u64 timer)` | WebAssembly only, as `velt_rt_timer_new`. Takes the timer out of the order if it is still queued (its task ends without a turn) and frees the handle. |
-| `velt_rt_task_gate_free` | `(u64 gate)` | WebAssembly only, as `velt_rt_task_gate`. Releases a gate handle (0: no-op). |
-| `velt_rt_all` | `(VeltFut* const* futs, u64 n, u64 result_size, void* results) -> VeltFut*` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, #2196: native programs join on the executor in Velt, std/lang/hooks/sched_all.velt]. `Promise.all(array)`: takes ownership of the `n` futures (not of the pointer array); child `i`'s result is moved to `results + i*result_size` (must stay valid until completion/drop); concurrent, only woken children are re-polled. Result: none. |
-| `velt_rt_all_with_drop` | `(VeltFut* const* futs, u64 n, u64 result_size, void* results, void (*result_drop)(void* slot)) -> VeltFut*` | WebAssembly only, as `velt_rt_all`. Same as `velt_rt_all` (which = this with `result_drop == NULL`), for results that own resources: if the returned future is dropped **before completing**, `result_drop(results + i*result_size)` runs for every child `i` that had already finished (pending children are cancelled via their own drop). After completion it never runs — all results belong to the awaiter. Use it whenever `T` needs dropping. |
-| `velt_rt_all_or_reject` | `(VeltFut* const* futs, u64 n, u64 result_size, void* results, void (*result_drop)(void* slot)) -> VeltFut*` | WebAssembly only, as `velt_rt_all`. `Promise.all` over promises that can reject: like `velt_rt_all_with_drop` over `Result<T, E>` slots (tag byte at offset 0, 0 = fulfilled), but completes as soon as a child rejects. Its result is empty. On a rejection the rejected child's result is moved to slot 0 and is the only initialized slot (so a rejection is an `Err` tag in slot 0, `n > 0`): the runtime drops the other finished results with `result_drop` (null: nothing to drop) and drops the pending children (started promises keep running; mark them with `velt_rt_futs_handled` first). |
-| `velt_rt_race` | `(VeltFut* const* futs, u64 n, u64 result_size) -> VeltFut*` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, #2196: native programs race on the executor in Velt, std/lang/hooks/sched_race.velt]. `Promise.race(array)`: takes ownership of the `n` futures (not of the pointer array); the first child to finish moves its `result_size`-byte result to the returned future's slot (+16) and the others are dropped (started promises keep running, §1.1; one created during the task's current poll that is queued, woken by that poll's own code, runs once now, before the race's awaiter; so do the pending children of `velt_rt_all_or_reject` when it rejects). `n == 0` never completes. |
-| `velt_rt_race_ok` | `(VeltFut* const* futs, u64 n, u64 result_size, void (*reject_drop)(void* slot)) -> VeltFut*` | WebAssembly only, as `velt_rt_race`. `Promise.any`: like `velt_rt_race` over `Result<T, E>` slots (tag byte at offset 0, 0 = fulfilled): the first fulfilled child wins; a rejected one is dropped with `reject_drop` (null: nothing to drop) while others are still running, and the last rejection is the result when all reject. |
-| `velt_rt_fut_detach` | `(VeltFut* f, void (*quiet_drop)(void* slot))` | WebAssembly only, as `velt_rt_fut_start_rejecting`. The owner gives up `f` without cancelling it (pending siblings of an early `Promise.all` rejection). A boxed promise that is still lazy, even one its owner has polled, becomes a started promise of the current task. If it was created during the task's current poll (and nothing yielded during it), it is polled once now, before the owner's continuation: only that poll's own code can have woken it, as with a JS microtask queued before the rejection handler (#150). Otherwise it runs at the task's next poll, after the owner's continuation, as in JS, where the rejection handler runs before the timers and events that woke it. A started promise keeps running, as a loser of `velt_rt_race` does (§1.1). Either way its result is disposed of with `quiet_drop` (handled, null: nothing to drop). Any other future is dropped (`f->drop(f)`). Takes ownership of `f`. |
 | `velt_rt_fut_share` | `(VeltFut* f, u64 result_size, void (*share)(const void* src, void* dst), void (*result_drop)(void* slot)) -> VeltFut*` | another holder of promise `f` (§1.2): a new handle on `f`, which is now shared; null stays null. `share` writes another reference to a result into a slot (null: the bytes are copied), `result_drop` drops one (null: nothing to drop) |
 | `velt_rt_fut_id` | `(VeltFut* f) -> u64` | the identity of promise `f` (§1.3): what `===` and `Set` / `Map` keys compare and hash for a promise; the same for every holder of a shared promise; null gives 0. Natively only std's `schedFutId` calls it, for a holder of the runtime's hub (a promise shared on a C library's thread, #2196 9e); WebAssembly also follows converted promises (below) |
-| `velt_rt_fut_alias` | `(VeltFut* w, VeltFut* inner, void (*quiet_drop)(void* slot))` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, #2196 9e: natively std's `schedFutAlias`, std/lang/hooks/sched_share_alias.velt]. Converted promise `w` (from `velt_rt_fut_box`, not yet run) wraps or awaits `inner` (a holder, borrowed): `w` stands for the promise `inner` holds when that one is shared (§1.3); `quiet_drop` drops `w`'s result without a report (null: nothing to drop). No-op for anything else |
-| `velt_rt_fut_views` | `(u8 on)` | WebAssembly only (velt_rt_wasm, a no-op there) [velt_rt's removed, #2196 9e: natively std's `schedFutViews`]. The holders `velt_rt_fut_share` makes until it is called with 0 are *views* (§1.3), through which a converted promise awaits the promise it stands for |
-| `velt_rt_fut_peek` | `(VeltFut* f) -> u8` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, #2196 9f: natively std's `schedPeek`, std/lang/hooks/sched_peek.velt, and `0` with no call in a program without the executor, where nothing is awaited]. What `console.log` shows of a promise its owner holds: `1` when its result is in the slot (+16; a `Result` tag first for a promise that can reject), `0` while pending. Polls, claims and moves nothing. A future that only runs when awaited (a runtime leaf, a join handle, a combinator, a promise created outside a task) reads as pending |
-| `velt_rt_futs_handled` | `(VeltFut* const* futs, u64 n, void (*quiet_drop)(void* slot))` | WebAssembly only, as `velt_rt_fut_start_rejecting`. The `n` futures are handed to a combinator (`race`, `any`, `all`), which handles their rejections like JS: a started promise among them that is dropped unfinished later disposes of its result with `quiet_drop` (null: nothing to drop) instead of its `result_drop`, so a rejection is not reported (§1.1). No-op for other futures. Called before the combinator takes the futures. |
+| `velt_rt_fut_peek` | `(VeltFut* f) -> u8` | No runtime's [velt_rt's removed, #2196 9f; velt_rt_wasm's with its executor, #3905: std's `schedPeek`, std/lang/hooks/sched_peek.velt, on every target, and `0` with no call in a program without the executor, where nothing is awaited]. What `console.log` shows of a promise its owner holds: `1` when its result is in the slot (+16; a `Result` tag first for a promise that can reject), `0` while pending. Polls, claims and moves nothing. A future that only runs when awaited (a runtime leaf, a join handle, a combinator, a promise created outside a task) reads as pending |
 
 Bounded drop nesting (#543) is std's (std/lang/hooks/drop_queue.velt, #2196): a drop that can nest (glue whose type leads back to itself) counts itself in this thread's state word, std's `STATE` (`ThreadLocal<u32>`), which compiled code reads and writes inline as a `velt_tls_*` value (rt_abi.md "Thread-local values"; velt_vir `tls::DROP_STATE_SLOT`): bits 0..29 count the drops under way, bit 30 says something was queued, bit 31 that the queue is being drained. Per drop: `n = STATE; if (n & 0x3fffffff) >= 128 { dropQueue(value, drop) } else { STATE = n + 1; <drop>; m = STATE - 1; STATE = m; if m == 1 << 30 { dropDrain() } }`. `dropQueue` keeps `value` and its drop glue (a closure env's drop, a field or struct value moved to a heap box, or a box with its last reference) for the end of the outermost drop and sets the queued bit; `dropDrain` drops the queued values, which may queue more, in the order they were queued, then gives the queue's block back and clears the word. A caught panic (std/task/unwind.velt) restores the word and drops what is still queued (`dropRecover`).
 
@@ -292,19 +269,20 @@ the holder of a node that drives it, whose hub keeps it allocated while any hold
 The call of an async host function (`declare host("m") async function f(…): Promise<T>`,
 https://veltlang.com/docs/reference/host-functions/) is the import `m.f`, which calls the JS
 function and returns a `u32` id under which the glue keeps its JS promise, then a promise leaf over
-that id (velt_rt_wasm `host_promise.rs`), and the promise of a std hook awaiting the leaf (velt_vir
+that id (`velt_rt_host_promise`, below), and the promise of a std hook awaiting the leaf (velt_vir
 `lower/host.rs`). The leaf's result is std's `HostSettled<W>` (std/host/promise.velt) in its foreign
 layout, `{ VeltStr code; VeltStr message; W value; }` (offsets 0, 24, 48): `W` is `T`, `u32` (a
 `HostRef` slot, 0 for `null`) for `HostRef` and `HostRef | null`, and `bool` (unused) for `void`.
 The hook throws `IoError(code, message)` when `code` is not empty, else makes the `T` of `value`;
 the call's promise is a `Promise<T, IoError>`, started like a compiled async function's call (§1.1).
 
-`VeltFut* velt_rt_host_promise(u32 id)` (velt_rt_wasm only, wasm32-unknown-unknown): the leaf of
-host promise `id`; result `HostSettled<W>`. Pending until the host settles the promise
-(`velt_settle`, §2.5); polled then, it calls the import `velt.host_take(id, slot)`, which writes
-the outcome to the zeroed slot (the value as the import's result convention writes a result of
-its type, or the rejection's name and message as strings) and forgets the promise. Dropped before
-that, it calls `velt.host_forget(id)`.
+`VeltFut* velt_rt_host_promise(u32 id)` (a JS host; std's `schedHostPromise`, a leaf of the
+executor in Velt, std/lang/hooks/sched_host.velt): the leaf of host promise `id`; result
+`HostSettled<W>`. Pending until the host settles the promise (`velt_settle`, §2.5); polled then,
+it calls the host function `velt:turns.take(id, slot)`, which writes the outcome to the zeroed
+slot (the value as the import's result convention writes a result of its type, or the
+rejection's name and message as strings) and forgets the promise. Dropped before that, it calls
+`velt:turns.forget(id)`. A pending one holds a keep-alive reference.
 
 ### 1.5 Promises that catch panics (`catchPanic`)
 
@@ -332,16 +310,16 @@ catches it for all of them), combinators that poll it raise it, and its result i
 transferred or handed to `mark_handled`'s quiet drop. A catching poll also records the thread's
 runtime-level holds (the `Mutex` count and how the module lock is held, §9) and puts them back when
 it catches, releasing a module lock taken for a `with`; the program's own `Mutex` stays locked.
-WebAssembly does not unwind: there a panic always ends the program (velt_rt_wasm defines the
-functions below as no-ops).
+WebAssembly does not unwind: there a panic always ends the program, and velt_rt_wasm defines the
+functions below so that no promise takes the arming (`catchPanic` then awaits its body's promise).
 
 | Function | Signature | Semantics |
 |---|---|---|
-| `velt_rt_catch_arm` | `() -> void` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, #2196: native programs catch panics on the executor in Velt, std/task/catch_sched.velt]. The next promise started on this thread (`velt_rt_fut_start*`) catches panics |
-| `velt_rt_catch_take` | `() -> u64` | WebAssembly only, as `velt_rt_catch_arm`. The promise that took the arming, as a counted handle, or 0; disarms |
-| `velt_rt_catch_settled` | `(u64 h) -> VeltFut*` | WebAssembly only, as `velt_rt_catch_arm`. Future of `bool`: waits until `h` finished, without claiming its result; true when it panicked |
-| `velt_rt_catch_message` | `(u64 h, VeltStr* out) -> void` | WebAssembly only, as `velt_rt_catch_arm`. The panic message of `h` (empty if it did not panic) |
-| `velt_rt_catch_free` | `(u64 h) -> void` | WebAssembly only, as `velt_rt_catch_arm`. Releases `h` (0 is ignored) |
+| `velt_rt_catch_arm` | `() -> void` | WebAssembly only (velt_rt_wasm) [velt_rt's removed, #2196: native programs catch panics on the executor in Velt, std/task/catch_sched.velt]. Arms nothing |
+| `velt_rt_catch_take` | `() -> u64` | WebAssembly only, as `velt_rt_catch_arm`. 0: no promise took the arming |
+| `velt_rt_catch_settled` | `(u64 h) -> VeltFut*` | WebAssembly only, as `velt_rt_catch_arm`. Never called (no handle exists); ends the program |
+| `velt_rt_catch_message` | `(u64 h, VeltStr* out) -> void` | WebAssembly only, as `velt_rt_catch_arm`. Never called; ends the program |
+| `velt_rt_catch_free` | `(u64 h) -> void` | WebAssembly only, as `velt_rt_catch_arm`. Does nothing |
 
 std's `catchPanic(body)` (std/task/panic.velt, through `#task-catch`: std/task/catch_rt.velt
 over these functions, std/task/catch_sched.velt on the executor in Velt) arms, calls `body` and
@@ -354,25 +332,19 @@ promise started after arming takes it), takes the handle, awaits `settled`, and 
 
 A native program runs on the executor in Velt (std/lang/hooks/sched*.velt): lowering calls its
 hooks (`sched_block_on`, `sched_spawn`, `sched_spawn_fut`, `sched_yield`, `sched_finish`) in place
-of this section's symbols. The symbols below are the ABI WebAssembly programs call
-(`velt_rt_wasm`); velt_rt defines them too, running tasks on its host (below), which also runs
-the runtime's Rust glue (child processes on Windows, file streams).
+of the runtime's task functions, which are gone (#2196), and so does a WebAssembly program
+(#3905). The symbols below are velt_rt's; it runs its own tasks on its host (below), which also
+runs the runtime's Rust glue (child processes on Windows, file streams).
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_block_on` | `(PollFn poll, void* state)` | WebAssembly only (velt_rt_wasm); native programs run on the executor in Velt (#2196). `async main`, and a synchronous `main` of a program that starts promises or tasks (§1.1; its root calls `main`): `velt_main` builds the state on its stack, calls this, then reads the result at `state+0`. Runs the root as a task on the runtime's workers; returns when READY. Tasks still running afterwards are abandoned when the process exits. Must not be called from inside a task. |
 | `velt_rt_tla_at` | `(const VeltStr* site)` | a top-level `await` (std/prelude/process.velt `topLevelAwaitAt`) at `site` (`path:line:col`, a string literal) suspends: called on the suspending path only (an `await` that goes on at once calls nothing), two atomic stores of the literal's bytes, no lock, no allocation. When the root can never finish, the site stored last makes the program write `Warning: Detected unsettled top-level await at <path>:<line>` and exit with 13, as Node does; with none stored it exits with 0 (`top_level_await.rs`, both runtimes) |
-| `velt_rt_spawn` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | WebAssembly only (velt_rt_wasm); native programs run on the executor in Velt (#2196). `spawn(f(...))`: copies the initial state into the task (caller gives up ownership of its contents), starts it now. Returns the join handle; its result slot (+16) receives `result_size` bytes (≤ 256; box larger results). Dropping the handle **detaches** (task keeps running); a result the handle never claims (dropped before or after the task finished) is dropped with `result_drop` (null: nothing to drop). |
-| `velt_rt_spawn_transfer` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align, u64 result_size, void (*result_drop)(void* slot), void (*result_transfer)(void* slot)) -> VeltFut*` | WebAssembly only (velt_rt_wasm); native programs run on the executor in Velt (#2196). `velt_rt_spawn` for a result that can reach counted objects: `result_transfer` (compiled transfer glue, in place) runs on the result as the task's state finishes, on the task and inside its local set (so promises the task started, which may still use the result's objects, are on the same thread, and a promise the glue starts joins the set), before the join handle can see it. Null: as `velt_rt_spawn`. |
-| `velt_rt_spawn_detached` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align)` | WebAssembly only (velt_rt_wasm); native programs run on the executor in Velt (#2196). spawn whose result is unused: no handle, one allocation |
-| `velt_rt_keep_alive_acquire` | `()` | WebAssembly only (velt_rt_wasm); on native targets lowering calls the executor in Velt's hook (std/lang/hooks/sched_end.velt `keepAcquire`). Takes a keep-alive reference: a ref'd timer is pending (std/prelude/timers.velt). |
-| `velt_rt_keep_alive_release` | `()` | WebAssembly only (velt_rt_wasm), as `velt_rt_keep_alive_acquire`. Releases one reference taken with `velt_rt_keep_alive_acquire`; the caller keeps them balanced. `velt_rt_block_on` returns only once none is held. |
-| `velt_rt_timer_unref_due` | `() -> VeltFut*` (result `bool`) | WebAssembly only (velt_rt_wasm): ready at once with false, as its one thread runs the timers and decides the end. On native targets lowering calls the executor in Velt's hook (std/lang/hooks/sched_end.velt `unrefDue`): a due `unref()`'d timer asks whether to drop its callback, true once the process was seen with nothing left that can happen, as Node exits without running it (std/prelude/timers.velt). |
-| `velt_rt_spawn_fut` | `(VeltFut* f, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | WebAssembly only (velt_rt_wasm); native programs run on the executor in Velt (#2196). `spawn(p)` where `p` is already a heap future (boxed promise, leaf); takes ownership of `f`; `result_drop` as for `velt_rt_spawn` |
-| `velt_rt_spawn_target` | `(i64 worker)` | WebAssembly only (velt_rt_wasm); native programs run on the executor in Velt (#2196). `spawn(p, { worker })` (#211): the next spawn on this thread pins its task to `worker`. Called right after the task's arguments are evaluated, immediately before `velt_rt_spawn` / `_transfer` / `_detached` / `_fut`. Out of range (`worker < 0` or `≥ velt_rt_worker_count()`): panic `spawn: worker <w> is out of range (the runtime has <n> workers)`. In range, velt_rt spawns the task as usual (its host has one worker). |
-| `velt_rt_worker_count` | `() -> u64` | the configured workers, `VELT_THREADS` (a positive integer) or one per core, fixed for the process (1 on WebAssembly): `workerCount()` on WebAssembly (std/task/worker_index.velt; on native targets the executor in Velt answers), and std/net's listener worker count (std/net/rt.velt). |
-| `velt_rt_current_worker` | `() -> u64` | an index for this thread, always below `velt_rt_worker_count()`: `currentWorker()` on WebAssembly. |
-| `velt_rt_set_scheduler` | `(u32 kind)` | A no-op, kept for programs compiled before the executor in Velt and for `velt_vir`'s `Rt::SetScheduler`. `1`: what `velt_main` calls first when the program pins a task (`spawn(p, { worker })`). `2`: each thread of the executor in Velt calls it before it polls its first task (std/lang/hooks/sched_workers.velt, spare workers too). |
+| `velt_rt_keep_alive_acquire` | `()` | No runtime defines it: lowering calls the executor in Velt's hook on every target (std/lang/hooks/sched_end.velt `keepAcquire`). Takes a keep-alive reference: a ref'd timer is pending (std/prelude/timers.velt). |
+| `velt_rt_keep_alive_release` | `()` | No runtime defines it, as `velt_rt_keep_alive_acquire` (`keepRelease`). Releases one reference taken with `velt_rt_keep_alive_acquire`; the caller keeps them balanced. |
+| `velt_rt_timer_unref_due` | `() -> VeltFut*` (result `bool`) | No runtime defines it: lowering calls the executor in Velt's hook on every target (std/lang/hooks/sched_end.velt `unrefDue`): a due `unref()`'d timer asks whether to drop its callback, true once the process was seen with nothing left that can happen, as Node exits without running it (std/prelude/timers.velt). |
+| `velt_rt_worker_count` | `() -> u64` | the configured workers, `VELT_THREADS` (a positive integer) or one per core, fixed for the process: std/net's listener worker count (std/net/rt.velt). |
+| `velt_rt_current_worker` | `() -> u64` | an index for this thread, always below `velt_rt_worker_count()`. |
+| `velt_rt_set_scheduler` | `(u32 kind)` | `1`: what `velt_main` calls first when the program pins a task (`spawn(p, { worker })`); a no-op. `2`: each thread of the executor in Velt calls it before it polls its first task (std/lang/hooks/sched_workers.velt, spare workers too): the thread enters the host's tokio context for the rest of the process, so the leaves it polls find the host's timers and I/O, and the runtime takes the process's tasks for the executor's (they have no runtime task). |
 
 velt_rt has no async runtime of its own: it starts no threads and runs no tasks. Its remaining
 leaves (`velt_rt_tcp_listen`, velt dev's listener handover) are polled by the executor in Velt
@@ -398,7 +370,6 @@ stored (§13.5).
 | `velt_rt_latch_free` | `(u64 latch)` | releases the handle (a pending wait keeps the latch alive) |
 | `velt_rt_latch_open` | `(u64 latch)` | opens it and resumes every waiter; a no-op when open. A waiter of the task being polled (its root or one of its started promises) is queued in that task's microtask queue now, as Node queues a promise's reactions inside `resolve`; that entry is the waiter's `await` step. Under the executor in Velt, a latch's one waiter that is a started promise of that task, at rest, is not queued but run on at once: the function of a `new Promise` takes its settlement and finishes, so the promise is settled when `velt_rt_latch_open` returns, as in Node, the reactions of those who await it are queued then in the order they started waiting, and whoever awaits it later finds it settled; a function awaiting the promise as its owner stops at its `await`'s step, queued at the back in the entry's place (sched_latch.velt `settleNow`, #3775). Other waiters are woken. |
 | `velt_rt_latch_wait` | `(u64 latch) -> VeltFut*` | completes (unit result) once the latch is open, and for a waiter queued by `velt_rt_latch_open`, once its queue reached that entry |
-| `velt_rt_task_id` | `() -> u64` | WebAssembly only (velt_rt_wasm) [velt_rt's export removed, #2196: native code and std get the id from the executor in Velt, std/lang/hooks/sched_id.velt]. a unique id of the task being polled, never reused and kept by its local promises when they outlive it (0 outside a task; natively, a C library's thread has one for each outermost exported function's call, #2907; always 1 on single-threaded wasm): `resolve` copies a value settled from another task |
 
 ### 2.2 Channels (`velt/sync`)
 
@@ -426,20 +397,9 @@ aborts it with a message carrying the delay, and std passes `timed` to a wait fo
 by `any` holds references to its sources until it is aborted (they reach it only through links it
 owns).
 
-Natively the signals are std's (`#task-signal`: std/task/signal_sched.velt over signal_core.velt,
-in raw memory; a wait is a heap future linked into its signal, woken in the order the waits
-began). WebAssembly's runtime keeps its own:
-
-| Symbol (velt_rt_wasm) | Signature | Notes |
-|---|---|---|
-| `velt_rt_signal_new` | `() -> u64` | WebAssembly only. A signal that is not aborted |
-| `velt_rt_signal_retain` | `(u64 s) -> u64` | WebAssembly only. Another reference to it (a scope's child task holds one) |
-| `velt_rt_signal_free` | `(u64 s)` | WebAssembly only. Releases a handle |
-| `velt_rt_signal_abort` | `(u64 s, const VeltStr* reason)` | WebAssembly only. Aborts it and the signals derived from it (`any`); a no-op if aborted |
-| `velt_rt_signal_aborted` | `(u64 s) -> bool` | WebAssembly only |
-| `velt_rt_signal_reason` | `(u64 s, VeltStr* out)` | WebAssembly only. The reason (`""` while not aborted) |
-| `velt_rt_signal_wait` | `(u64 s, bool timed) -> VeltFut*` | WebAssembly only. Completes (unit) once aborted; `timed` (a timer may abort it): the wait keeps the process alive |
-| `velt_rt_signal_any` | `(const VeltArray<u64>* signals) -> u64` | WebAssembly only. Aborted with the first of `signals` that is (its reason); keeps them alive until then |
+The signals are std's on every target (std/task/signal_sched.velt over signal_core.velt, in raw
+memory; a wait is a heap future linked into its signal, woken in the order the waits began); no
+runtime has functions for them.
 
 ### 2.4 Task groups (`taskScope`)
 
@@ -448,41 +408,41 @@ atomic word and a channel the last child closes); the runtime has no functions f
 
 ### 2.5 Turns a JS host drives (wasm32-unknown-unknown)
 
-A JS host's thread belongs to its event loop, so nothing waits on it (velt_rt_wasm
-`host_turn.rs`), and nothing unwinds through the module: every call from the host returns
-normally, with the executor's state on the heap. On `wasm32-unknown-unknown`, `velt_main` does not
-call `velt_rt_block_on`: it hands `main`'s root task to the runtime and returns.
-On both wasm targets `cx` is the same `VeltCx` with 32-bit pointers (the word at offset 0, the
-waker at 4; a header's table at its offset 0); velt_rt_wasm compiles velt_rt's `task/waker.rs`.
+A JS host's thread belongs to its event loop, so nothing waits on it, and nothing unwinds through
+the module: every call from the host returns normally, with the executor's state on the heap.
+The turns are the executor in Velt's (std/lang/hooks/sched_host.velt, #3905): on
+`wasm32-unknown-unknown`, `velt_main` hands `main`'s root task to them instead of blocking on it,
+and returns. On both wasm targets `cx` is the executor in Velt's `VeltCx`, its words 8 bytes wide
+(the waker at offset 8); a function whose address crosses takes machine words (#3905's P).
 
 - `velt_rt_host_main(PollFn poll, const void* state, u64 size, u64 align, int32_t (*finish)(void*
-  state))`: moves the root's unpolled state (`size` bytes, `align`) to the heap and runs the first
-  turn. `finish` is the code `velt_main` runs after `velt_rt_block_on` on other targets (the
-  uncaught error, the exit code), which the runtime calls with the heap state once the root is
-  done; then it frees the state.
-- `void velt_turn(void)` (export): a turn: run the microtasks, the ready tasks and the due timers
-  until none is left, as `velt_rt_block_on` does between its sleeps, so Velt's own order is the
-  native one; then ask for a wake-up at the earliest timer (every turn asks again: a host may
-  call early, as hosts round delays). The end follows native programs (velt_rt `entry.rs`
-  `finish`): once the root is done and the microtasks it queued ran, the runtime runs `finish`
-  at once (an uncaught error is reported then, whatever is still pending). A code other than 0
-  ends the program; with 0 the turns go on until no task `spawn` started and no started promise
-  is running and no keep-alive reference is held. When no timer or unsettled host promise can
-  wake a task any more, the program ends too (exit code 13 when the root waits at a top-level
-  `await` nothing can settle). Then the import `velt.done(code)`. No-op once the program ended.
-  WASI and the unit tests' `velt_rt_block_on` return to `velt_main` at the same point, and the
-  runtime runs the tasks on after a `main` that returned 0, sleeping between turns.
-- `void velt_settle(u32 id)` (export): host promise `id` settled: wake the task its leaf
-  registered (none if the leaf is gone), then `velt_turn()`.
-- `velt_start` (export) runs `velt_main`; a `main` that hands no root over ends at once, with
-  `velt.done(code)`.
+  state))` (std's `schedHostMain`): moves the root's unpolled state (`size` bytes, aligned to 16)
+  to the heap, tells the glue the program is hosted (`velt:turns.hosted()`) and runs the first
+  turn. `finish` is the code `velt_main` runs after the root on other targets (the uncaught
+  error, the exit code), which the turns call with the heap state once the root is done; then
+  they free the state.
+- `void velt_turn(void)` (export, std's): a turn: the worker's steps, as worker 0's loop takes
+  them (`schedBlockOn`, `schedFinish`), until it would wait in its reactor; then ask for a
+  wake-up at the earliest timer (`velt:turns.set_timer(ms)`, -1: none; every turn asks again: a
+  host may call early, as hosts round delays). The end follows native programs: once the root is
+  done, `finish` runs at once (an uncaught error is reported then, whatever is still pending). A
+  code other than 0 ends the program; with 0 the turns go on until no task is live. When nothing
+  can wake a task any more (no timer, no keep-alive reference, no unsettled host promise), the
+  program ends too (sched_end.velt; exit code 13 when the root waits at a top-level `await`
+  nothing can settle). Then `velt:turns.done(code)`. No-op once the program ended.
+- `void velt_settle(u32 id)` (export, std's): host promise `id` settled: wake the task its leaf
+  registered (none if the leaf is gone), then a turn.
+- `velt_start` (export, velt_rt_wasm) runs `velt_main` and reports its code with
+  `velt.done(code)`, which the glue takes as the end only for a program that is not hosted.
 
-Imports from module `velt` (the glue, crates/velt_rt_wasm/js/velt_web.mjs): `set_timer(f64 ms)`
-(call `velt_turn` in `ms` milliseconds, replacing the previous request; a negative `ms` cancels
-it), `done(i32 code)` (the program ended), `host_take(u32 id, void* out)` and
-`host_forget(u32 id)` (§1.4). `velt.exit(code)` throws (`process.exit`, a panic): the
-instance is done then. velt_link exports `velt_turn`, `velt_settle` and `__stack_pointer` (so a
-host can check that turns leave it where it was) from every browser module.
+Imports from module `velt` (the glue, crates/velt_rt_wasm/js/velt_web.mjs): `done(i32 code)`
+(`main` returned), and the host services. The turns call the glue's host functions of
+`velt:turns`: `hosted()`, `set_timer(f64 ms)` (call `velt_turn` in `ms` milliseconds, replacing
+the previous request; a negative `ms` cancels it), `done(i32 code)` (the program ended),
+`take(u32 id, u32 out)` and `forget(u32 id)` (§1.4). `velt.exit(code)` throws (`process.exit`, a
+panic): the instance is done then. velt_link exports `__stack_pointer` (so a host can check that
+turns leave it where it was) from every browser module, and `velt_turn` and `velt_settle` from
+one that runs tasks (the glue calls them only for such a program).
 A host that keeps the instance after `main` (a Worker) holds the program open with a started
 promise or a keep-alive reference while it calls entries of its own that spawn tasks, and drives
 them with the same `velt_turn` / `velt_settle`.
@@ -619,17 +579,15 @@ socket, device), 1 file, 2 directory, 3 symlink (not followed). The kind comes w
 (`d_type`, or Windows' find data); only an entry of unknown type costs an `lstat`.
 
 velt_rt defines these sync functions: a native build runs them on the executor's blocking pool
-(std/fs/rt_sched.velt). Each has an async twin of the same name without `_sync`, taking the
-same arguments without `out` and returning a `VeltFut*` of the same result. Only velt_rt_wasm
-defines the twins (WebAssembly builds, std/fs/rt.velt), so they are not in this table, whose
-names the JIT host exports (crates/velt_rt_host/tests/abi_symbols.rs).
+(std/fs/rt_sched.velt). A WebAssembly build runs velt_rt_wasm's (below) the same way
+(std/fs/rt_wasi.velt): no runtime has async file functions.
 
 Reading, writing and appending whole files, `stat`, `lstat` and `exists` are std code in a
 native build (`#fs-whole`: std/fs/whole/posix.velt over the C library's descriptors,
 `#fd-system`; whole/win32.velt over `CreateFileW`, `ReadFile`, `WriteFile` and
 `GetFileInformationByHandle`), with Node's messages, and text decoded with an invalid sequence
 as U+FFFD, as Node decodes it. velt_rt has no functions for them, so the table has none.
-velt_rt_wasm has, for WebAssembly builds, with their async twins:
+velt_rt_wasm has, for WebAssembly builds:
 `velt_rt_fs_read_file_bytes_sync(path, out)` (`IoResult<VeltBytes>`),
 `velt_rt_fs_write_file_sync(path, data, out)` and `velt_rt_fs_append_file_sync(path, data, out)`
 (`IoResult<()>`; append creates the file), `velt_rt_fs_stat_sync(path, out)` and
@@ -644,7 +602,7 @@ tree/win_remove.velt, which lists a directory from its handle, opens each entry 
 with ntdll's `NtCreateFile` and deletes it on its handle), with Node's messages and the names
 sorted by code point. On every system a tree is removed without reaching anything through a
 link, also one that takes a directory's place during the removal. velt_rt has none of these.
-velt_rt_wasm has, for WebAssembly builds, with their async twins:
+velt_rt_wasm has, for WebAssembly builds:
 `velt_rt_fs_read_dir_sync(path, out)` (`IoResult<VeltStrArray>`, the names sorted),
 `velt_rt_fs_read_dir_typed_sync(path, out)` (`IoResult<VeltDirents>`),
 `velt_rt_fs_mkdir_sync(path, recursive, out)` and `velt_rt_fs_remove_sync(path, recursive, out)`

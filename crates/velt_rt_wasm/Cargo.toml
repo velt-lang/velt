@@ -5,8 +5,8 @@ edition.workspace = true
 # The runtime for the WebAssembly targets (wasm32-wasip1, wasm32-unknown-unknown): a
 # single-threaded counterpart of crates/velt_rt. It compiles velt_rt's portable modules (strings,
 # formatting, JSON, fs operations, memory) from their sources and adds its own entry, output,
-# panics, process state, shared-state helpers and a current-thread executor. Build it for a wasm
-# target with `cargo build -p velt_rt_wasm --target wasm32-wasip1`.
+# panics, process state and shared-state helpers; programs run their tasks on std's executor
+# (#3905). Build it for a wasm target with `cargo build -p velt_rt_wasm --target wasm32-wasip1`.
 
 [lib]
 # staticlib: linked into every wasm program by velt_link. rlib: host unit tests.

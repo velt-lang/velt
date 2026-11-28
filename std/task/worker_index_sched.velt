@@ -1,6 +1,5 @@
-// velt/task (internal): the worker count and this task's worker under the executor in Velt
-// (`VELT_SCHEDULER=std`, the `std-scheduler` variant of `#task-workers`): its workers, not the
-// runtime's, whose executor never starts then.
+// velt/task (internal): the worker count and this task's worker on the executor in Velt, every
+// target's (#3905): its workers, not the runtime's, whose executor never starts.
 
 import { schedCurrentWorker, schedWorkerCount } from "velt/lang/hooks/sched";
 

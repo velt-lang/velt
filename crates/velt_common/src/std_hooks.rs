@@ -289,7 +289,7 @@ with_any_hooks! {
 
     // mutex.velt: a `Mutex`'s lock (#2196), inline on a native target: a compare-and-swap of its
     // lock word, the runtime's parking only when the lock is taken or a thread waits. Not a
-    // `replaces`: a wasm build keeps velt_rt_wasm's `velt_rt_mutex_lock` and executor.
+    // `replaces`: a wasm build keeps velt_rt_wasm's `velt_rt_mutex_lock`.
     /// `m.with(f)`'s lock of the word at the address.
     mutex_lock => lang_hooks_mutex, "mutexLock", sig((usize) -> void), lowered,
         bench("mutex_with"), constructs(Mutex);
@@ -324,6 +324,11 @@ with_any_hooks! {
     sched_export_exit => lang_hooks_sched, "schedExportExit", sig(() -> void), lowered;
     /// `velt_rt_block_on`'s job: `(poll, state)`.
     sched_block_on => lang_hooks_sched, "schedBlockOn", sig((usize, usize, u64) -> void), lowered;
+    /// `velt_rt_host_main`'s on a JS host (sched_host.velt): `(poll, state, size, finish, stay)`;
+    /// the turns the host drives run the root.
+    sched_host_main => lang_hooks_sched_host, "schedHostMain", sig((usize, usize, u64, usize, u64) -> void), lowered;
+    /// `velt_rt_host_promise`'s on a JS host: `(id)`, the leaf of the glue's promise `id`.
+    sched_host_promise => lang_hooks_sched_host, "schedHostPromise", sig((u32) -> usize), lowered;
     /// `velt_rt_spawn`'s: `(poll, drop, state, size, align, result_size, result_drop)`, the handle.
     sched_spawn => lang_hooks_sched_spawn, "schedSpawn", sig((usize, usize, usize, u64, u64, u64, usize, usize) -> usize), lowered;
     // The yields' rows: yield_hooks.rs.

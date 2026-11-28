@@ -1,0 +1,23 @@
+// velt/lang/hooks (internal): the wait a JS host's worker asked for (reactor_js.velt `wait`),
+// which the turn the host called ends with: the thread is the host's event loop, so the worker
+// does not wait there but returns, and the host calls the next turn when the timer is due or a
+// host promise settles (sched_host.velt).
+
+/** No wait asked for since the last `take`. */
+export const NONE: i64 = -2;
+
+// `NONE`, as a literal.
+
+const ASKED = new ThreadLocal<i64>(-2);
+
+/** The worker would wait `timeoutMs` (-1: until something wakes it). */
+export function ask(timeoutMs: i64): void {
+  ASKED.set(timeoutMs);
+}
+
+/** The wait asked for since the last call (`NONE`: none), forgotten. */
+export function take(): i64 {
+  const w = ASKED.get();
+  ASKED.set(NONE);
+  return w;
+}

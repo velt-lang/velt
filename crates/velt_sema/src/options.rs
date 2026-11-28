@@ -10,9 +10,9 @@ pub struct CheckOptions {
     /// Check every definition of std, also those the program never reaches (`velt check
     /// --std`); otherwise std's bodies are checked as the program reaches them (lazy std).
     pub eager_std: bool,
-    /// The program runs on the executor in Velt (std/lang/hooks/sched.velt): a native target.
-    /// Live code that runs something on it demands the executor's hooks. A wasm target keeps
-    /// `velt_rt_wasm`'s executor (#2649 step 6), so nothing demands them there.
+    /// The program runs on the executor in Velt (std/lang/hooks/sched.velt): a native target,
+    /// WASI or a JS host (veltc `driver::native_executor`, #3905). Live code that runs something
+    /// on it demands the executor's hooks.
     pub native_executor: bool,
     /// Check by units (#2943 M1, `crate::units`): std collected and checked whole as its own
     /// unit, frozen, then the program checked against it; writes across the boundary are counted

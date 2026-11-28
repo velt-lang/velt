@@ -29,11 +29,10 @@ pub(super) use velt_common::std_hooks::SCHED_EXTERNS as EXTERNS;
 pub(super) use velt_common::std_hooks::SCHED_UNREF_DUE as UNREF_DUE;
 
 impl FnLower<'_, '_> {
-    /// Does this program run on the executor in Velt? Only on a native target: a JS host drives
-    /// its turns itself (entry.rs), and WASI has no thread to wake the worker or OS wait for it
-    /// to park in (an idle program would spin forever), so the variable does nothing there.
+    /// Does this program run on the executor in Velt? On every target (#3905): WASI runs it on its
+    /// one thread, and a JS host in the turns the host drives (entry.rs, sched_host.velt).
     pub(super) fn std_sched(&self) -> bool {
-        velt_common::std_hooks::std_scheduler() && !self.cx.target.trim().starts_with("wasm")
+        velt_common::std_hooks::std_scheduler() && self.cx.runs_std_executor()
     }
 
     /// Do debug cell checks go to the executor in Velt's table (sched_cells.velt)? Only where it
@@ -138,6 +137,34 @@ impl FnLower<'_, '_> {
     /// promise it shares is the runtime's, for the runtime's hub.
     pub(super) fn sched_share_live(&self) -> bool {
         self.std_sched() && self.sched_hook_live(velt_common::std_hook!(sched_share))
+    }
+
+    /// The runtime's answer about a promise (`velt_rt_fut_peek`, `velt_rt_fut_id`,
+    /// `velt_rt_fut_share`) where the executor in Velt's hook doesn't give it, on WebAssembly,
+    /// whose runtime has no promises, hubs or aliases (#3905): written to `dest` here, without a
+    /// call. Such a program runs nothing on the executor (`sched_rt`), so the only promise it holds
+    /// is null (tests/golden/lang/any_promise_no_async.velt): `console.log` shows it pending, its
+    /// identity is its address (0), and another holder of it is null. Whether it answered.
+    pub(super) fn no_runtime_promises(
+        &mut self,
+        r: Rt,
+        args: &[Operand],
+        dest: &Option<Place>,
+    ) -> bool {
+        if !super::c_call::wasm32(&self.cx.target) {
+            return false;
+        }
+        let (Some(dest), Some(f)) = (dest, args.first()) else {
+            return false;
+        };
+        let value = match r {
+            Rt::FutPeek => Rvalue::Use(cint(0, Ty::U8)),
+            Rt::FutId => Rvalue::Cast(f.clone(), Ty::U64),
+            Rt::FutShare => Rvalue::Use(f.clone()),
+            _ => return false,
+        };
+        self.assign(dest.clone(), value);
+        true
     }
 
     /// `op` (a pointer or an integer) as a `usize` argument.
@@ -246,7 +273,8 @@ impl FnLower<'_, '_> {
     /// The end of `velt_main` with exit code `code`: when it is 0, the tasks still alive run to
     /// completion.
     pub(super) fn sched_finish(&mut self, code: &Operand) {
-        if self.std_sched() {
+        // A JS host's turns end the program themselves (sched_host.velt).
+        if self.std_sched() && !super::host::js_host(&self.cx.target) {
             let code = self.rvalue_temp(Ty::I32, Rvalue::Use(code.clone()));
             hooks::sched_finish(self, ty::I32::arg(code)).emit(self);
         }
@@ -312,6 +340,8 @@ impl FnLower<'_, '_> {
                 | Rt::CellGive
                 | Rt::CellCopy
                 | Rt::CellFree
+                | Rt::HostMain
+                | Rt::HostPromise
         ) || !self.std_sched()
         {
             return Err((args, dest));
@@ -512,6 +542,27 @@ impl FnLower<'_, '_> {
                     );
                     Some(c.emit(self).op())
                 }
+                // A JS host's turns and host promises on the executor in Velt (sched_host.velt).
+                (Rt::HostMain, [poll, state, size, _align, finish]) => {
+                    let [poll, state, finish] =
+                        [poll, state, finish].map(|o| self.as_usize(o.clone()));
+                    let stay = cint(i128::from(self.cx.boxing.fn_props), Ty::U64);
+                    hooks::sched_host_main(
+                        self,
+                        ty::USize::arg(poll),
+                        ty::USize::arg(state),
+                        ty::U64::arg(size.clone()),
+                        ty::USize::arg(finish),
+                        ty::U64::arg(stay),
+                    )
+                    .emit(self);
+                    None
+                }
+                (Rt::HostPromise, [id]) => Some(
+                    hooks::sched_host_promise(self, ty::U32::arg(id.clone()))
+                        .emit(self)
+                        .op(),
+                ),
                 (Rt::AwaitReady, [ticket, cx]) => {
                     let (ticket, cx) = (ticket.clone(), self.as_usize(cx.clone()));
                     let c =

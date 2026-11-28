@@ -1,6 +1,6 @@
 // velt/task (internal): `AbortController`, which aborts its signal.
 
-import { signalNew } from "#task-signal";
+import { signalNew } from "./signal_sched";
 import { AbortSignal, PLAIN_ABORT, signalCell } from "velt/task/signal";
 import { INSPECT } from "velt/lang/hooks/keys";
 

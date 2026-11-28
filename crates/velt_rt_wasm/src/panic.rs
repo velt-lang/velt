@@ -109,7 +109,7 @@ pub extern "C" fn velt_rt_catch_take() -> u64 {
 
 /// Never called (`velt_rt_catch_take` returns 0).
 #[no_mangle]
-pub extern "C" fn velt_rt_catch_settled(_h: u64) -> *mut crate::task::VeltFut {
+pub extern "C" fn velt_rt_catch_settled(_h: u64) -> *mut u8 {
     fatal("velt_rt_catch_settled: no promise catches panics in WebAssembly")
 }
 

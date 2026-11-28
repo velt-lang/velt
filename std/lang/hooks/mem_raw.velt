@@ -9,11 +9,13 @@
 
 import { Ptr } from "velt/ffi";
 import { addressLoad, addressStore, inline, rawAlloc, rawFree } from "velt/lang/intrinsics";
+// Blocks as long-lived as a thread: the C library's, or on a JS host (none there) the runtime's.
+import { lastingZeroed } from "#mem-lasting";
+
+export { lastingRelease, lastingZeroed } from "#mem-lasting";
 
 // Pointers are `Ptr`s, as in every other C declaration of these symbols (a program's own, velt/
 // ffi's `memcpy`): one C symbol has one signature in a program, and a pointer is `Ptr` there.
-declare c("c") function calloc$sched(n: usize, size: usize): Ptr<u8> | null;
-declare c("c") function free$sched(p: Ptr<u8> | null): void;
 declare c("c") function memcpy$sched(
   dst: Ptr<u8> | null,
   src: Ptr<u8> | null,
@@ -73,19 +75,6 @@ export function release(p: usize, n: usize): void {
   }
 }
 
-/**
- * `n` bytes set to 0, aligned to 16, from the C library: for a block that lives as long as the
- * worker (the executor, its I/O block, reactor and handle table), freed with `lastingRelease`.
- */
-export function lastingZeroed(n: usize): usize {
-  // SAFETY: calloc has no precondition; its result is checked.
-  const p = addr(unsafe { calloc$sched(1, n) });
-  if (p === 0) {
-    panic("out of memory");
-  }
-  return p;
-}
-
 /** This thread's scratch buffer (`scratch`; 0 before its first use). */
 const SCRATCH = new ThreadLocal<u64>(0);
 
@@ -102,14 +91,6 @@ export function scratch(): usize {
     SCRATCH.set(p as u64);
   }
   return p;
-}
-
-/** Frees what `lastingZeroed` gave. */
-export function lastingRelease(p: usize): void {
-  // SAFETY: `p` came from calloc and is not used after.
-  unsafe {
-    free$sched(ptr(p));
-  }
 }
 
 /**

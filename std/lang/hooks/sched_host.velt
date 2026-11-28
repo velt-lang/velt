@@ -1,0 +1,249 @@
+// velt/lang/hooks (internal): the turns a JS host drives (wasm32-unknown-unknown, #3905 step 2,
+// rt_abi_async.md §2.5), on the executor in Velt. The thread belongs to the host's event loop, so
+// nothing waits on it: `velt_main` hands the root task of `main` to `schedHostMain`, which moves
+// its state to the heap and runs the first turn, and `velt_main` returns. Each later turn is a
+// call from the host that returns normally: `velt_turn()` when the timer it asked for is due,
+// `velt_settle(id)` when a host promise settles. A turn runs the worker's steps, as worker 0's
+// loop does (sched.velt `schedBlockOn`, `schedFinish`), until the worker would wait in its
+// reactor (reactor_js.velt notes the wait instead, host_wait.velt), then asks the host for a
+// wake-up at the earliest timer (`set_timer`; every turn asks again, as hosts round delays). Once
+// the root is done, the code after it runs (`finish`, compiled: the uncaught error, the exit
+// code); when that is 0, the tasks `main` started go on, as natively, until none is left or none
+// can run again (sched_end.velt). The exit code reaches the host through `done`.
+//
+// Host promises (`declare host("m") async function`, rt_abi_async.md §1.4) are leaves of this
+// executor (`schedHostPromise`): a heap future under the id the glue keeps the JS promise by,
+// which `velt_settle(id)` wakes; polled then, it has the glue write the outcome into its result
+// (`take`). One dropped before that tells the glue to forget the promise (`forget`). A pending
+// one keeps the program alive, as a keep-alive reference.
+
+import { export as cExport } from "velt/ffi";
+import { addressCall, exportedAddress, inline } from "velt/lang/intrinsics";
+import * as end from "./sched_end";
+import * as hw from "./host_wait";
+import * as loop from "./sched_loop";
+import * as m from "./sched_mem";
+import * as mod from "./sched_module";
+import * as rt from "./sched_root";
+import * as t from "./sched_task";
+import * as workers from "./sched_workers";
+
+declare host("velt:turns") function hosted(): void;
+declare host("velt:turns") function set_timer(ms: f64): void;
+declare host("velt:turns") function done(code: i32): void;
+declare host("velt:turns") function take(id: u32, out: u32): void;
+declare host("velt:turns") function forget(id: u32): void;
+declare function velt_rt_flush();
+
+/** The program: no root handed over yet (or it ended), the root runs, `main` is done. */
+const NO_PROGRAM: u64 = 0;
+const ROOT_RUNS: u64 = 1;
+const AFTER_MAIN: u64 = 2;
+
+// `NO_PROGRAM`, as a literal.
+const PHASE = new ThreadLocal<u64>(0);
+/** The root's task, its state on the heap and that state's size, and the compiled `finish`. */
+const ROOT = new ThreadLocal<u64>(0);
+const STATE = new ThreadLocal<u64>(0);
+const STATE_SIZE = new ThreadLocal<u64>(0);
+const FINISH = new ThreadLocal<u64>(0);
+
+/**
+ * `velt_main`'s root on a JS host: `poll` with its unpolled state of `size` bytes at `state`,
+ * run in the turns the host drives; `finish(state)` (compiled, `(ptr) -> i32`) gives the exit
+ * code once it is done. `stay` as `schedBlockOn`'s. Runs the first turn.
+ */
+export function schedHostMain(
+  poll: usize,
+  state: usize,
+  size: u64,
+  finish: usize,
+  stay: u64,
+): void {
+  if (PHASE.get() !== NO_PROGRAM) {
+    panic("`velt_start` ran while a program is running");
+  }
+  const n = size === 0 ? 1 : (size as usize);
+  // Aligned to 16, every state's most.
+  const heap = m.lastingZeroed(n);
+  m.copy(heap, state, size as usize);
+  const e = workers.started();
+  ROOT.set(rt.rootBegin(e, poll, heap, stay) as u64);
+  STATE.set(heap as u64);
+  STATE_SIZE.set(n as u64);
+  FINISH.set(finish as u64);
+  PHASE.set(ROOT_RUNS);
+  hosted();
+  turn();
+}
+
+/** `velt_turn()`: a turn (module docs). Nothing to do once the program ended. */
+@cExport("velt_turn")
+export function velt_turn(): void {
+  turn();
+}
+
+/** `velt_settle(id)`: the JS promise the glue keeps under `id` settled: its task wakes, a turn. */
+@cExport("velt_settle")
+export function velt_settle(id: u32): void {
+  settle(id);
+  turn();
+}
+
+function turn(): void {
+  if (PHASE.get() === NO_PROGRAM) {
+    return;
+  }
+  const e = workers.started();
+  while (true) {
+    if (PHASE.get() === ROOT_RUNS) {
+      const k = ROOT.get() as usize;
+      if (t.rootLeft(k, false)) {
+        rt.rootEnd(e, k);
+        const state = STATE.get() as usize;
+        // SAFETY: `finish` is the compiled `(ptr) -> i32` of this root's state, a pointer-sized
+        // call on wasm32, whose result's low 32 bits are the code.
+        const code = (unsafe { addressCall(FINISH.get() as usize, state) } as u32) as i32;
+        m.lastingRelease(state);
+        if (code !== 0) {
+          rt.finishFailed();
+          ended(code);
+          return;
+        }
+        mod.handOver();
+        PHASE.set(AFTER_MAIN);
+        continue;
+      }
+    } else if (!rt.soloLive(e)) {
+      rt.finishTail(e);
+      ended(0);
+      return;
+    }
+    loop.turnSolo(e);
+    const w = hw.take();
+    if (w !== hw.NONE) {
+      velt_rt_flush();
+      // Rounded up by the glue; -1: no timer, a host promise may still settle.
+      set_timer(w as f64);
+      return;
+    }
+  }
+}
+
+/** The program ended with `code`: no more turns, no timer, the host told. */
+function ended(code: i32): void {
+  PHASE.set(NO_PROGRAM);
+  set_timer(-1.0);
+  velt_rt_flush();
+  done(code);
+}
+
+// A host promise's leaf: the heap future's header (poll, drop), its result (`HostSettled<W>`: two
+// strings and a value of at most 24 bytes, zeroed for the glue to fill), the id, its flags, the
+// waker of the task waiting for it (0: none yet), the next pending leaf.
+const H_RESULT: usize = 16;
+const H_RESULT_SIZE: usize = 72;
+const H_ID: usize = 88;
+const H_FLAGS: usize = 92;
+const H_WAKER: usize = 96;
+const H_NEXT: usize = 104;
+const H_SIZE: usize = 112;
+
+/** The host promise settled (`velt_settle`), and its outcome was taken into the result. */
+const SETTLED: u32 = 1;
+const TAKEN: u32 = 2;
+
+/** The pending leaves (not taken, not dropped), linked through `H_NEXT`. */
+const PENDING = new ThreadLocal<u64>(0);
+
+/** `velt_rt_host_promise(id)`'s job: the leaf of the host promise the glue keeps under `id`. */
+export function schedHostPromise(id: u32): usize {
+  const f = m.zeroed(H_SIZE);
+  // SAFETY: `@export`ed functions (only their addresses are read).
+  m.st(f, unsafe { exportedAddress(hostPoll) });
+  // SAFETY: as above.
+  m.st(f + 8, unsafe { exportedAddress(hostDrop) });
+  m.st32(f + H_ID, id);
+  m.st(f + H_NEXT, PENDING.get() as usize);
+  PENDING.set(f as u64);
+  end.keepAcquire(main());
+  return f;
+}
+
+/** Worker 0's block, where the keep-alive references count. */
+@inline("always")
+function main(): usize {
+  return m.ld(workers.started() + t.E_MAIN);
+}
+
+/** Leaf `f` is no longer pending: off the list, its keep-alive reference given back. */
+function unlist(f: usize): void {
+  let at = PENDING.get() as usize;
+  let before: usize = 0;
+  while (at !== 0 && at !== f) {
+    before = at;
+    at = m.ld(at + H_NEXT);
+  }
+  if (at === 0) {
+    return;
+  }
+  const next = m.ld(f + H_NEXT);
+  if (before === 0) {
+    PENDING.set(next as u64);
+  } else {
+    m.st(before + H_NEXT, next);
+  }
+  end.keepRelease(main());
+}
+
+/** Host promise `id` settled: the task waiting for its leaf wakes (none if the leaf is gone). */
+function settle(id: u32): void {
+  let f = PENDING.get() as usize;
+  while (f !== 0) {
+    if (m.ld32(f + H_ID) === id && (m.ld32(f + H_FLAGS) & SETTLED) === 0) {
+      m.st32(f + H_FLAGS, m.ld32(f + H_FLAGS) | SETTLED);
+      const w = m.ld(f + H_WAKER);
+      if (w !== 0) {
+        m.st(f + H_WAKER, 0);
+        m.wakeOwned(w);
+      }
+      return;
+    }
+    f = m.ld(f + H_NEXT);
+  }
+}
+
+/** A leaf's poll: ready once its promise settled, with the outcome the glue wrote. */
+@cExport("std_sched_host_poll")
+export function hostPoll(f: usize, cx: usize): u32 {
+  const flags = m.ld32(f + H_FLAGS);
+  if ((flags & TAKEN) !== 0) {
+    return 1;
+  }
+  if ((flags & SETTLED) === 0) {
+    const old = m.ld(f + H_WAKER);
+    m.st(f + H_WAKER, m.wakerClone(m.ld(cx + 8)));
+    if (old !== 0) {
+      m.wakerDrop(old);
+    }
+    return 0;
+  }
+  unlist(f);
+  m.st32(f + H_FLAGS, flags | TAKEN);
+  take(m.ld32(f + H_ID), (f + H_RESULT) as u32);
+  return 1;
+}
+
+/** A leaf's drop: a promise whose outcome was not taken is forgotten by the glue. */
+@cExport("std_sched_host_drop")
+export function hostDrop(f: usize): void {
+  if ((m.ld32(f + H_FLAGS) & TAKEN) === 0) {
+    unlist(f);
+    forget(m.ld32(f + H_ID));
+  }
+  const w = m.ld(f + H_WAKER);
+  if (w !== 0) {
+    m.wakerDrop(w);
+  }
+  m.release(f, H_SIZE);
+}

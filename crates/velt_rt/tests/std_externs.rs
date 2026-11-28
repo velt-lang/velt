@@ -319,27 +319,25 @@ fn mismatches(defs: &BTreeMap<String, Vec<(Sig, PathBuf)>>, required: bool) -> V
 }
 
 /// The std files whose declarations velt_rt may lack, bindings WebAssembly builds use:
-/// std/fs/rt.velt (`#fs-rt`), whose async leaves are velt_rt_wasm's alone (a native build
-/// imports only the file's `*_sync` twins and runs them on the executor's blocking pool), and
-/// std/process/tty_wasm.velt, env_wasm.velt, cwd_wasm.velt and memory_wasm.velt (`#tty`'s,
-/// `#env-sys`', `#cwd-sys`' and `#memory-sys`'s default variants: native builds ask the OS
+/// std/fs/rt_sync.velt (the calls of `#fs-rt`'s WebAssembly variant: velt_rt_wasm's alone, a
+/// native build uses rt_sched.velt), std/process/tty_wasm.velt, env_wasm.velt,
+/// cwd_wasm.velt and memory_wasm.velt (`#tty`'s, `#env-sys`', `#cwd-sys`' and `#memory-sys`'s default variants: native builds ask the OS
 /// from std), std/task/catch_rt.velt (`#task-catch`'s default variant: native builds catch
-/// panics on the executor in Velt, catch_sched.velt), and std/task/signal_rt.velt
-/// (`#task-signal`'s default variant: native builds keep abort signals in std) (#2196).
+/// panics on the executor in Velt, catch_sched.velt) (#2196).
 const WASM_ONLY_BINDINGS: &[&str] = &[
-    "std/fs/rt.velt",
+    "std/fs/rt_sync.velt",
     "std/task/catch_rt.velt",
-    "std/task/signal_rt.velt",
     "std/process/tty_wasm.velt",
     "std/process/env_wasm.velt",
     "std/process/cwd_wasm.velt",
     "std/process/memory_wasm.velt",
 ];
 
-/// The externs std declares that only the executor in Velt serves on native targets (velt_common
-/// `std_hooks::SCHED_EXTERNS`: lowering calls its hook in their place) and velt_rt no longer
-/// defines; velt_rt_wasm still does (#2196 9d; the Node timer order's externs since velt_rt's
-/// order went).
+/// The externs std declares that only the executor in Velt serves, and no runtime defines (velt_rt's
+/// went with #2196 9d and the Node timer order, velt_rt_wasm's with its executor, #3905): they
+/// are in velt_common `std_hooks::SCHED_EXTERNS`, so lowering calls a hook of the executor in
+/// place of every call of their `declare function`, on every target (velt_vir `lower/sched.rs`),
+/// and no call reaches the linker. `executor_only_externs_are_lowered_as_hooks` checks both.
 const EXECUTOR_ONLY: &[&str] = &[
     "velt_rt_task_id",
     "velt_rt_uncaught_now",
@@ -355,11 +353,10 @@ const EXECUTOR_ONLY: &[&str] = &[
     "velt_rt_timer_unref_due",
 ];
 
-/// `#net-tcp`'s default variant (std/imports.velt), which only WebAssembly builds compile: native
-/// builds take std/net/tcp_sched.velt, which imports from it only `velt_rt_tcp_listen` (velt dev's
-/// listener, which velt_rt defines). Its other declarations are velt_rt_wasm's where it has them,
-/// and otherwise undefined there on purpose: a WebAssembly program that uses TCP fails to link,
-/// with velt_link's note that it cannot (crates/velt_link/src/wasm.rs `explain_missing_symbols`).
+/// `#net-tcp`'s default variant (std/imports.velt), which no target takes now: native builds take
+/// std/net/tcp_sched.velt, which imports from it only `velt_rt_tcp_listen` (velt dev's listener,
+/// which velt_rt defines), and WebAssembly builds std/net/rt_none.velt. No runtime defines its
+/// other declarations (velt_rt_wasm's net.rs went with its executor, #3905).
 const WASM_TCP_BINDINGS: &str = "std/net/rt.velt";
 
 /// Whether `name`, declared in `paths` and not defined by velt_rt, is declared only in
@@ -410,7 +407,7 @@ fn std_declarations_match_velt_rt() {
             let paths = declared_in.get(name).map_or(&[][..], Vec::as_slice);
             let wasm_only = wasm_only_leaf(name, paths, &wasm)
                 || wasm_tcp_binding(paths)
-                || (EXECUTOR_ONLY.contains(&name) && wasm.contains_key(name));
+                || EXECUTOR_ONLY.contains(&name);
             !(m.ends_with(", not defined") && wasm_only)
         })
         .collect();
@@ -428,7 +425,7 @@ fn std_declarations_match_velt_rt() {
 #[test]
 fn only_the_wasm_bindings_may_declare_what_velt_rt_lacks() {
     let wasm = rust_definitions(&runtime_sources("velt_rt_wasm"));
-    let name = "velt_rt_fs_read_file_bytes";
+    let name = "velt_rt_fs_read_file_bytes_sync";
     assert!(wasm.contains_key(name), "velt_rt_wasm defines {name}");
     let bindings = repo().join(WASM_ONLY_BINDINGS[0]);
     let other = repo().join("std/process/rt.velt");
@@ -441,13 +438,66 @@ fn only_the_wasm_bindings_may_declare_what_velt_rt_lacks() {
     ));
     assert!(!wasm_only_leaf(name, &[], &wasm));
     assert!(!wasm_only_leaf("velt_rt_no_such_leaf", &[bindings], &wasm));
-    let tty = repo().join(WASM_ONLY_BINDINGS[1]);
+    let tty = repo().join("std/process/tty_wasm.velt");
+    assert!(WASM_ONLY_BINDINGS.contains(&"std/process/tty_wasm.velt"));
     assert!(wasm_only_leaf(
         "velt_rt_isatty",
         std::slice::from_ref(&tty),
         &wasm
     ));
     assert!(!wasm_only_leaf("velt_rt_isatty", &[tty, other], &wasm));
+}
+
+/// `EXECUTOR_ONLY`'s exemption holds because lowering replaces every call of those externs: each
+/// is in velt_common's `SCHED_EXTERNS` (read as text: this crate doesn't depend on velt_common;
+/// an entry is a string literal or a `&str` constant of that file, as `SCHED_UNREF_DUE`), and std
+/// binds none of them with `declare c`, a direct C call lowering keeps, which would link to
+/// nothing.
+#[test]
+fn executor_only_externs_are_lowered_as_hooks() {
+    let table =
+        std::fs::read_to_string(repo().join("crates/velt_common/src/std_hooks/scheduler.rs"))
+            .expect("velt_common's scheduler table");
+    let start = table
+        .find("pub const SCHED_EXTERNS")
+        .expect("SCHED_EXTERNS");
+    let list = &table[start..start + table[start..].find("];").expect("its end")];
+    let entries: Vec<String> = (list.lines().skip(1))
+        .map(|l| l.trim().trim_end_matches(','))
+        .filter(|e| !e.is_empty())
+        .map(|e| match e.strip_prefix('"') {
+            Some(lit) => lit.trim_end_matches('"').to_string(),
+            None => {
+                let def = format!("pub const {e}: &str = \"");
+                let at = table.find(&def).unwrap_or_else(|| panic!("constant {e}")) + def.len();
+                table[at..at + table[at..].find('"').expect("its end")].to_string()
+            }
+        })
+        .collect();
+    for name in EXECUTOR_ONLY {
+        assert!(
+            entries.iter().any(|e| e == name),
+            "{name} is not in velt_common's SCHED_EXTERNS: lowering would call it, and no runtime \
+             defines it"
+        );
+    }
+    let mut sources = vec![];
+    files(&repo().join("std"), "velt", &mut sources);
+    let mut direct = vec![];
+    for path in sources {
+        let text = std::fs::read_to_string(&path).expect("std source");
+        for line in text.lines().filter(|l| l.contains("declare c(")) {
+            for name in EXECUTOR_ONLY {
+                if line.contains(&format!("function {name}(")) {
+                    direct.push(format!("{}: {name}", short(&path)));
+                }
+            }
+        }
+    }
+    assert!(
+        direct.is_empty(),
+        "`declare c` bindings of externs no runtime defines: {direct:?}"
+    );
 }
 
 /// velt_rt_wasm compiles velt_rt's portable modules from their sources (checked above) and
@@ -541,7 +591,7 @@ fn velt_rt_wasm_defines_what_mirrored_directories_export() {
 fn the_parsers_see_the_whole_abi() {
     let decls = velt_declarations();
     assert!(decls.len() > 50, "found only {} declarations", decls.len());
-    let (params, ret) = &decls["velt_rt_fs_read_file_bytes"].0;
+    let (params, ret) = &decls["velt_rt_tcp_connect"].0;
     assert_eq!(
         (params.as_slice(), ret.as_str()),
         (&["ptr".to_string()][..], "ptr")

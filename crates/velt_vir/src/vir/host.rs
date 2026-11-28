@@ -19,8 +19,9 @@
 //! range or not an integer, a value of another type) is a `TypeError`, which stops the program.
 //!
 //! An async host function ([`HostImport::is_async`]) returns a `U32` instead: the id under which
-//! the glue keeps the JS promise. Lowering makes the promise leaf of it (`velt_rt_host_promise`),
-//! whose result the glue writes when the program takes it (`velt.host_take`): std's
+//! the glue keeps the JS promise. Lowering makes the promise leaf of it (`velt_rt_host_promise`,
+//! std's `schedHostPromise`), whose result the glue writes when the program takes it
+//! (`velt:turns.take`): std's
 //! `HostSettled<W>` in its foreign layout, `{ code: Str, message: Str, value: W }` (offsets 0, 24
 //! and 48). The value is stored as the scalar of its type (a `Ref` as its `U32` slot), or made
 //! through `velt_host_str_new` / `velt_host_bytes_new`; the code and message stay empty unless

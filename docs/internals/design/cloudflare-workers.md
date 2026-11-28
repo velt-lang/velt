@@ -108,19 +108,20 @@ declare host("cloudflare") async function r2Get(
 
 On `wasm32-unknown-unknown` the program runs in turns the host drives, and nothing unwinds
 through the module. The glue calls the export `velt_start`, which hands `main`'s root task to the
-runtime (`velt_rt_host_main`, which keeps its state on the heap), runs the first turn and
-returns. Each turn runs microtasks, ready tasks and due timers until none is left, asks the host
-for a wake-up at the next deadline (the import `set_timer(ms)`, which calls the export
-`velt_turn()`), and returns. When the root is done, the runtime runs the code after it (the
+executor in Velt's turns (std/lang/hooks/sched_host.velt `schedHostMain`, which keeps its state
+on the heap), runs the first turn and returns. Each turn runs the worker's steps until it would
+wait, asks the host for a wake-up at the next deadline (the host function
+`velt:turns.set_timer(ms)`, which calls the export `velt_turn()`), and returns. When the root is
+done, the turns run the code after it (the
 uncaught error, the exit code); after a `main` that returned 0 the turns go on while spawned
 tasks, started promises or ref'd timers remain, as in native programs. The end reaches the host
-through the import `done(code)`.
+through `velt:turns.done(code)`.
 
 An async host function's import returns an id under which the glue keeps the JS promise; the
-call awaits a promise leaf over that id (`velt_rt_host_promise`). When the JS promise settles,
+call awaits a promise leaf over that id (std's `schedHostPromise`). When the JS promise settles,
 the glue calls the export `velt_settle(id)`, which wakes the task and runs a turn; the leaf,
-polled, has the glue write the outcome (the import `host_take`) as std's `HostSettled<T>`. A leaf
-dropped first tells the glue to forget the promise (`host_forget`).
+polled, has the glue write the outcome (`velt:turns.take`) as std's `HostSettled<T>`. A leaf
+dropped first tells the glue to forget the promise (`velt:turns.forget`).
 
 Velt's `async` functions are state machines, so waiting on the host needs no stack switching (no
 Asyncify, no JSPI). The browser glue uses the same protocol, so `sleep` does not busy-wait there.

@@ -19,12 +19,9 @@ pub fn run_main(velt_main: extern "C" fn() -> i32) -> i32 {
 /// unit tests call this: with the hook installed, every later `#[should_panic]` test in the same
 /// test process (`cargo test`) would exit the process instead of unwinding.
 fn run_program(velt_main: extern "C" fn() -> i32) -> i32 {
+    // The executor in Velt runs the tasks left after `main` (std's `schedFinish`, or a JS host's
+    // turns: #3905), in `velt_main` or after it returns.
     let code = velt_main();
-    // Tasks that can still make progress keep the program alive after `main` returns, but not
-    // after it failed (an uncaught error, an exit code), as natively and in Node.
-    if code == 0 {
-        crate::task::executor::after_main();
-    }
     io::flush_stdout();
     code
 }
