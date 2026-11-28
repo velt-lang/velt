@@ -279,6 +279,7 @@ impl PB {
             dyn_members: None,
             generator_throw: false,
             nothing_slots: false,
+            any_calls_throw: false,
             object: None,
             function: None,
             unknown: None,

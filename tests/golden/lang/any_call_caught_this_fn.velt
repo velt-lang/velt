@@ -1,0 +1,30 @@
+// A function that reads `this`, called through `apply` on an `any` (a `ThisFn`), and a call of an
+// element once the program has `ThisFn` (velt/lang/this_fn's helpers make it): their errors reach
+// the caller's `catch` (#1938).
+function tagged(this: any, x: any): any {
+  if (x === 2) {
+    throw new RangeError("tagged " + x);
+  }
+  return x + (this === null ? 1 : 2);
+}
+const t: any = tagged;
+const one: any = [1];
+const two: any = [2];
+console.log("apply", t.apply(null, one));
+try {
+  t.apply(null, two);
+} catch (e) {
+  console.log("apply caught", `${e}`);
+}
+const f: any = (x: any) => {
+  if (x === 2) {
+    throw new RangeError("x " + x);
+  }
+  return x;
+};
+const fs: any = [f];
+try {
+  fs[0](2);
+} catch (e) {
+  console.log("element", `${e}`);
+}

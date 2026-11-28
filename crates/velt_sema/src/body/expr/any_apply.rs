@@ -73,7 +73,7 @@ impl FnCx<'_, '_> {
             let list = self.apply_list(recv.clone(), list, any, span);
             self.note_any_call();
             let all = vec![recv, key, text, first, list];
-            return self.intrinsic(Intrinsic::AnyCall, all, any, span);
+            return self.any_call_op(Intrinsic::AnyCall, all, any, span);
         }
         let recv = self.share_if_place(recv);
         self.with_temp("<apply>", recv, span, span, |lw, f| {
@@ -88,7 +88,7 @@ impl FnCx<'_, '_> {
             lw.note_any_call();
             let recv = lw.expr(f, None, Want::Borrow);
             let all = vec![recv, key, text, first, list];
-            lw.intrinsic(Intrinsic::AnyCall, all, any, span)
+            lw.any_call_op(Intrinsic::AnyCall, all, any, span)
         })
     }
 

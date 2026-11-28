@@ -14,6 +14,7 @@
 //!   callee bodies on demand; a cycle counts as not throwing yet). They are re-checked against
 //!   the final inference ([`checks`]): recursion may need a `throws` clause.
 
+mod any_calls;
 mod checks;
 mod conventions;
 mod fn_flows;

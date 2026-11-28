@@ -16,7 +16,9 @@
 //! The arguments `argv[0..argc]` are owned by the slot (converted to the parameter types or
 //! dropped). The status is `ST_OK` (`*out` written), `ST_UNSUPPORTED` (a member this phase
 //! cannot reach yet) or `ST_NOT_FN` (the member is not a function); the caller turns the last
-//! two into a `TypeError`. The slots exist only when `Program::dyn_members` is set.
+//! two into a `TypeError`. A call slot also returns `ST_THREW` (the function threw, its error
+//! boxed in `*out`) in a program whose calls through `any` throw (any_threw.rs). The slots exist
+//! only when `Program::dyn_members` is set.
 
 use velt_sema::hir::{self, Nothing, TyId, TyKind};
 
@@ -51,6 +53,8 @@ fn is_member_slot(slot: i128) -> bool {
 pub(super) const ST_OK: i128 = 0;
 pub(super) const ST_UNSUPPORTED: i128 = 1;
 pub(super) const ST_NOT_FN: i128 = 2;
+/// The function called threw: `*out` holds its error, boxed (any_threw.rs).
+pub(super) const ST_THREW: i128 = 4;
 
 impl Cx<'_> {
     /// The type `any`.
@@ -453,11 +457,14 @@ impl FnLower<'_, '_> {
     /// After a slot call: a `TypeError` for a status other than `ST_OK`. `not_fn`: the callee's
     /// text for `ST_NOT_FN`, and whether the error is thrown where a `catch` of this function
     /// takes it (a call through `any` in user code, any_not_fn.rs) rather than a panic.
+    /// `threw`: a call slot's `*out`, and whether a function's error it holds (`ST_THREW`) is
+    /// thrown here or reported as uncaught (any_threw.rs).
     pub(super) fn any_status_check(
         &mut self,
         st: Operand,
         unsupported: (&str, Option<&Operand>, &str),
         not_fn: Option<(&str, bool)>,
+        threw: Option<(&Place, bool)>,
     ) {
         let ok = self.rvalue_temp(
             Ty::Bool,
@@ -466,6 +473,9 @@ impl FnLower<'_, '_> {
         let (good, bad) = (self.new_block(), self.new_block());
         self.branch(ok, good, bad);
         self.switch_to(bad);
+        if let Some((out, routed)) = threw {
+            self.any_threw_check(&st, out, routed);
+        }
         if let Some((text, thrown)) = not_fn {
             let nf = self.rvalue_temp(
                 Ty::Bool,
@@ -584,7 +594,7 @@ impl FnLower<'_, '_> {
         } else {
             "' through `any` is not supported for this value yet (#924)"
         };
-        self.any_status_check(st, ("TypeError: reading '", Some(&key), tail), None);
+        self.any_status_check(st, ("TypeError: reading '", Some(&key), tail), None, None);
         self.proxy_join(done);
     }
 
@@ -619,6 +629,7 @@ impl FnLower<'_, '_> {
                 None,
                 "",
             ),
+            None,
             None,
         );
         self.proxy_join(done);
@@ -736,8 +747,9 @@ impl FnLower<'_, '_> {
         }
         let what = "TypeError: calling '";
         let tail = "' through `any` is not supported for this value yet (#924)";
+        let threw = Some((&Place::local(out), true));
         match &ka {
-            Some(k) => self.any_status_check(st, (what, Some(k), tail), Some((&text, true))),
+            Some(k) => self.any_status_check(st, (what, Some(k), tail), Some((&text, true)), threw),
             None => self.any_status_check(
                 st,
                 (
@@ -746,6 +758,7 @@ impl FnLower<'_, '_> {
                     "",
                 ),
                 Some((&text, true)),
+                threw,
             ),
         }
         self.own_value(Operand::Copy(Place::local(out)), ty)

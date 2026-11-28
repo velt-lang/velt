@@ -24,7 +24,8 @@ impl FnLower<'_, '_> {
 
     /// [`ready`](Self::ready), also for a member that throws when `throwing` (a method called,
     /// a getter read or a setter written through `any`: its error leaves the slot as uncaught,
-    /// `finish_ready_call`).
+    /// `finish_ready_call`, or, for a method in a program whose calls through `any` throw, with
+    /// the slot's status, any_threw.rs).
     pub(super) fn ready_with(&mut self, ty: TyId, m: &DynMember, throwing: bool) -> Option<Ready> {
         let (_, args) = self.plain_adt(ty)?;
         let owner = self.cx.subst(m.owner, &args);
@@ -86,6 +87,13 @@ impl FnLower<'_, '_> {
         self.any_box_with(v, r.ret, out, std_result);
     }
 
+    /// [`any_invoke`](Self::any_invoke)'s boxing of `r`'s result `v` into `out`.
+    pub(super) fn any_box_result(&mut self, v: Operand, r: &Ready, out: &Place) {
+        let std_result =
+            (self.cx.fn_def(r.def).name).starts_with(velt_common::std_modules::CANONICAL_PREFIX);
+        self.any_box_with(v, r.ret, out, std_result);
+    }
+
     /// Call `r` with `this` and the owned argument values `args`: its result, owned (of type
     /// `r.ret`).
     pub(super) fn invoke_ready(
@@ -135,6 +143,14 @@ impl FnLower<'_, '_> {
                     argv.push(Operand::Copy(p.clone()));
                     after.push((p, t));
                 }
+            }
+        }
+        // In a slot catching the error (any_threw.rs), what the call borrows is dropped on
+        // both ways out.
+        let catching = self.slot_catch;
+        if catching {
+            for (p, t) in std::mem::take(&mut after) {
+                self.own_place(p, t);
             }
         }
         let v = self.finish_ready_call(Callee::Func(fid), argv, r);

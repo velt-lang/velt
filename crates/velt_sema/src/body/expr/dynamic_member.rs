@@ -395,7 +395,7 @@ impl FnCx<'_, '_> {
         let call = move |s: &mut Self, recv, boxed: Vec<hir::Expr>| {
             let mut all = vec![recv, key, text];
             all.extend(boxed);
-            s.intrinsic(Intrinsic::AnyCall, all, any, span)
+            s.any_call_op(Intrinsic::AnyCall, all, any, span)
         };
         if promise_member {
             return Ok(self.promise_member_call(recv, &prop.name, boxed, any, span, call));
@@ -478,7 +478,7 @@ impl FnCx<'_, '_> {
             let text = self.key_lit(&text, span);
             let mut all = vec![f.clone(), key, text];
             all.extend(self.dynamic_args(args, any, false)?);
-            return Some(self.intrinsic(Intrinsic::AnyCall, all, any, span));
+            return Some(self.any_call_op(Intrinsic::AnyCall, all, any, span));
         }
         let (this, rest) = match args.split_first() {
             Some((this, _)) if matches!(this.kind, ast::ExprKind::Spread(_)) => return None,
@@ -550,7 +550,7 @@ impl FnCx<'_, '_> {
                 let boxed = self.dynamic_args(given, any, false)?;
                 let mut all = vec![held, key, text, t.clone()];
                 all.extend(boxed);
-                self.intrinsic(Intrinsic::AnyCall, all, any, span)
+                self.any_call_op(Intrinsic::AnyCall, all, any, span)
             }
             None => self.intrinsic(Intrinsic::Panic, vec![msg], never, span),
         };
@@ -583,7 +583,7 @@ impl FnCx<'_, '_> {
         };
         all.extend(boxed);
         self.note_any_call();
-        Ok(self.intrinsic(Intrinsic::AnyApply, all, any, span))
+        Ok(self.any_call_op(Intrinsic::AnyApply, all, any, span))
     }
 
     /// The arguments of a dynamic call, each boxed as an `any` (moved into the call). With a

@@ -293,6 +293,12 @@ pub const PROXY_MODULES: [&str; 5] = [
     "std/lang/proxy/traps",
 ];
 
+/// The standard library modules that call functions through `any` on their caller's behalf
+/// (`callOn` for `o[k](...)`, a `ThisFn`'s `apply`): their calls through `any` throw as a user
+/// module's do (sema `throws/any_calls.rs`, lowering's `any_threw.rs`), so the function's error
+/// reaches the caller.
+pub const ANY_CALL_MODULES: [&str; 1] = ["std/lang/this_fn"];
+
 /// The import specifier of table entry `name`: `std_specifier!(jsx)` is `"velt/jsx"`.
 #[macro_export]
 macro_rules! std_specifier {

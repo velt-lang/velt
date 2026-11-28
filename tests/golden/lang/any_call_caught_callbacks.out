@@ -1,0 +1,13 @@
+each 10
+each 30
+runner 10
+runner caught RangeError: x 2
+map a 10
+[ 30, 10 ]
+visit 10
+forEach caught RangeError: x 2
+map caught RangeError: x 2
+map a 10
+Map.forEach caught RangeError: x 2
+after [ 10, 30 ]
+timer 10

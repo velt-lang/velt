@@ -53,6 +53,7 @@ mod any_reflect;
 mod any_rest;
 mod any_set;
 mod any_set_site;
+mod any_threw;
 mod any_to_record;
 mod any_tuple;
 mod any_unbox_slow;
@@ -689,9 +690,16 @@ struct FnLower<'c, 'h> {
     /// The body of a function of a user module or of std/proxy: its operations on `any` throw
     /// what a proxy's trap throws, as velt_sema counts them (proxy_throws.rs).
     proxy_routes: bool,
-    /// While a `finally` block is lowered, the number of scopes outside it: a `try` among them
-    /// does not enclose its code (any_not_fn.rs).
-    finally_floor: usize,
+    /// The body of a function of a user module or of a standard library module that calls
+    /// through `any` on its caller's behalf (`ANY_CALL_MODULES`): its calls through `any` throw
+    /// what the callee throws, as velt_sema counts them (any_threw.rs).
+    any_call_routes: bool,
+    /// Lowering the call of a slot that catches the callee's error (any_threw.rs
+    /// `call_catching`): a `Proxy` method's error goes to its scope (`finish_ready_call`).
+    slot_catch: bool,
+    /// While the `finally` blocks of early-exit edges are lowered, the scopes each edge has left
+    /// (`lo..hi`, drops.rs `run_finally`): none of them encloses the block's code.
+    finally_left: Vec<(usize, usize)>,
     /// The held bases of the assignment target being formed, by the address of their HIR
     /// expression (index_order.rs `target_base`).
     held_targets: Vec<(usize, Operand)>,
