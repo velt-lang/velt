@@ -3,7 +3,7 @@
 //! The element buffer is a Rust `Vec<VeltStr>` (element size 24, align 8), i.e. the same memory
 //! `velt_rt_alloc(cap * 24, 8)` returns, so generated code may adopt or free it.
 
-use crate::str::{velt_rt_str_drop, VeltStr};
+use crate::str::VeltStr;
 
 /// `{ VeltStr* ptr; uint64_t len; uint64_t cap; }` — size 24, align 8.
 #[repr(C)]
@@ -52,22 +52,24 @@ impl VeltStrArray {
     }
 }
 
-/// Drop every element and the buffer, then zero `*a`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_str_array_drop(a: *mut VeltStrArray) {
-    let arr = &mut *a;
-    if arr.cap > 0 {
-        crate::str::stats::block_free();
-        let mut v = Vec::from_raw_parts(arr.ptr, arr.len as usize, arr.cap as usize);
-        for s in v.iter_mut() {
-            velt_rt_str_drop(s);
+/// Tests: drop every element and the buffer, then zero `self` (generated code frees a
+/// `VeltStrArray` itself).
+#[cfg(test)]
+impl VeltStrArray {
+    pub(crate) unsafe fn free(&mut self) {
+        if self.cap > 0 {
+            crate::str::stats::block_free();
+            let mut v = Vec::from_raw_parts(self.ptr, self.len as usize, self.cap as usize);
+            for s in v.iter_mut() {
+                crate::str::velt_rt_str_drop(s);
+            }
         }
+        *self = VeltStrArray {
+            ptr: std::ptr::null_mut(),
+            len: 0,
+            cap: 0,
+        };
     }
-    *arr = VeltStrArray {
-        ptr: std::ptr::null_mut(),
-        len: 0,
-        cap: 0,
-    };
 }
 
 #[cfg(test)]
@@ -80,9 +82,9 @@ mod tests {
         assert_eq!(a.len, 2);
         let second = unsafe { &*a.ptr.add(1) };
         assert_eq!(unsafe { second.as_bytes() }, b"bc");
-        unsafe { velt_rt_str_array_drop(&mut a) };
+        unsafe { a.free() };
         assert!(a.ptr.is_null());
         let mut e = VeltStrArray::from_strings(Vec::new());
-        unsafe { velt_rt_str_array_drop(&mut e) };
+        unsafe { e.free() };
     }
 }

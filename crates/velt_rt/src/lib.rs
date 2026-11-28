@@ -11,11 +11,9 @@
 
 #[cfg(velt_rt_host)]
 pub mod abi_symbols;
-pub mod array;
 pub mod build_profile;
 pub mod bytes;
 pub mod cell_owner;
-pub mod db_rows;
 #[cfg(all(debug_assertions, not(velt_rt_host)))]
 pub mod debug_alloc;
 pub mod deep_eq;
@@ -25,7 +23,6 @@ pub mod freed;
 pub mod handle;
 pub mod hash;
 pub mod hazard;
-pub mod host;
 pub mod inspect;
 mod inspect_cycles;
 mod inspect_layout;
@@ -37,7 +34,6 @@ pub mod net;
 pub mod panic;
 pub mod process;
 pub mod read_mode;
-pub mod registry;
 pub mod result;
 pub mod rwlock_write;
 pub mod shared;

@@ -7,11 +7,10 @@
 import { CellKind } from "velt/db/row_source";
 import { rowMismatch } from "velt/db/rt";
 
-// 1 and the integer in `out` (passed by pointer) when `v` is one exactly, else 0.
-declare function velt_rt_rows_exact_i64(v: f64, out: RowsI64): u8;
-
-struct RowsI64 {
-  v: i64;
+// Whether `v` is an `i64` exactly (as the JSON reader takes `3.0` for an integer): an integral
+// float in [-2^63, 2^63). NaN and the infinities are not.
+function rowsExactI64(v: f64): bool {
+  return v >= -9223372036854775808.0 && v < 9223372036854775808.0 && (v as i64) as f64 == v;
 }
 
 /**

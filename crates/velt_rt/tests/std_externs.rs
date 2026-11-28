@@ -192,8 +192,8 @@ fn rust_class(ty: &str, aliases: &BTreeMap<String, String>) -> String {
     while let Some(target) = aliases.get(ty) {
         ty = target;
     }
-    if ty.starts_with("Handle<") || ty.starts_with("Key<") {
-        // `handle::Handle<T>` and `registry::Key<T>` are `repr(transparent)` over `u64`.
+    if ty.starts_with("Handle<") {
+        // `handle::Handle<T>` is `repr(transparent)` over `u64`.
         return "u64".to_string();
     }
     if ty.starts_with('*')
@@ -324,10 +324,13 @@ fn mismatches(defs: &BTreeMap<String, Vec<(Sig, PathBuf)>>, required: bool) -> V
 /// std/process/tty_wasm.velt, env_wasm.velt, cwd_wasm.velt and memory_wasm.velt (`#tty`'s,
 /// `#env-sys`', `#cwd-sys`' and `#memory-sys`'s default variants: native builds ask the OS
 /// from std), std/task/catch_rt.velt (`#task-catch`'s default variant: native builds catch
-/// panics on the executor in Velt, catch_sched.velt), and std/task/signal_rt.velt
-/// (`#task-signal`'s default variant: native builds keep abort signals in std) (#2196).
+/// panics on the executor in Velt, catch_sched.velt), std/task/signal_rt.velt
+/// (`#task-signal`'s default variant: native builds keep abort signals in std), and
+/// std/host/rt.velt (`#host-rt`'s default variant: a native program has no JS host,
+/// std/host/rt_native.velt) (#2196).
 const WASM_ONLY_BINDINGS: &[&str] = &[
     "std/fs/rt.velt",
+    "std/host/rt.velt",
     "std/task/catch_rt.velt",
     "std/task/signal_rt.velt",
     "std/process/tty_wasm.velt",
