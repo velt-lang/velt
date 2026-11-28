@@ -24,6 +24,12 @@ pub const DELETED: &[&str] = &[
     // #2196: a byte range as a string (the `bytes_range_text` hook, std/lang/bytes/range_text.velt).
     "velt_rt_bytes_range_to_str",
     "velt_rt_bytes_range_to_str_lossy",
+    // #2196: `Number(s)` of a string held as `any` (the `str_to_number` hook,
+    // velt/lang/number/parse), and deep equality's cycle guard (the `deep_eq_enter` and
+    // `deep_eq_leave` hooks, std/lang/hooks/deep_eq.velt).
+    "velt_rt_str_to_number",
+    "velt_rt_deep_eq_enter",
+    "velt_rt_deep_eq_leave",
     // #2196: standard input (std/process/stdin_buffer.velt over `#stdin-sys`), which only std
     // called.
     "velt_rt_stdin_read_line_sync",

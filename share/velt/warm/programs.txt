@@ -32,6 +32,10 @@
 ../../../bench/stdport/pow_int.velt
 # The string methods in Velt (#2198): trim, repeat, pad, split, replace and the ASCII case mapping.
 ../../../bench/stdport/string_methods.velt
+# `Number(s)` of a string held as `any` (#2196): velt/lang/number/parse's `toNumber`.
+../../../bench/stdport/parse_float.velt
+# Deep equality's cycle guard in Velt (#2196).
+../../../bench/stdport/deep_equal.velt
 # The transfer map in Velt (#3584): a graph copied for each of 2,000 tasks.
 ../../../bench/stdport/transfer_graph.velt
 #

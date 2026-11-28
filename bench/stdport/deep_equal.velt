@@ -1,0 +1,58 @@
+// Deep equality's cycle guard (std/lang/hooks/deep_eq.velt): `deepEqual` of lists of 64 nodes
+// whose nodes all point back at the list's head, so every node is compared under the guard and
+// each `head` is met again as the pair being compared; equal lists, lists that differ at the
+// end, and rings of 1 to 8 nodes against rings of the same length (the same cycle on both sides),
+// 3,000 rounds. The Rust port compares the same graphs with a stack of pairs, as the runtime's
+// guard kept them.
+type N = { v: number; next: N | null; head: N | null };
+
+/** A list of `n` nodes valued `i % 7`, the last one `last`, each pointing back at the first. */
+function list(n: number, last: number): N {
+  const first: N = { v: 0, next: null, head: null };
+  first.head = first;
+  let cur = first;
+  for (let i = 1; i < n; i++) {
+    const x: N = { v: i == n - 1 ? last : i % 7, next: null, head: first };
+    cur.next = x;
+    cur = x;
+  }
+  return first;
+}
+
+/** A ring of `n` nodes valued 1. */
+function ring(n: number): N {
+  const first: N = { v: 1, next: null, head: null };
+  let cur = first;
+  for (let i = 1; i < n; i++) {
+    const x: N = { v: 1, next: null, head: null };
+    cur.next = x;
+    cur = x;
+  }
+  cur.next = first;
+  return first;
+}
+
+function main() {
+  const a = list(64, 63 % 7);
+  const b = list(64, 63 % 7);
+  const c = list(64, 99);
+  const rings: N[] = [];
+  const others: N[] = [];
+  for (let n = 1; n <= 8; n++) {
+    rings.push(ring(n));
+    others.push(ring(n));
+  }
+  let equal = 0;
+  for (let round = 0; round < 3000; round++) {
+    if (deepEqual(a, b)) {
+      equal += 1;
+    }
+    if (deepEqual(a, c)) {
+      equal += 1000000;
+    }
+    if (deepEqual(rings[round % 8], others[round % 8])) {
+      equal += 1000;
+    }
+  }
+  console.log(equal);
+}

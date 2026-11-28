@@ -1,0 +1,110 @@
+// velt/lang/hooks (internal): the cycle guard of deep equality (std-layout.md §10b): `deepEqual`,
+// `assertEq` and `toEqual` (the code std/lang/equal generates, through generated.velt's
+// `beginPair` and `endPair`), and lowering's `==` on aggregates that can hold themselves
+// (`velt_vir` `lower/glue/eq_cycles.rs`). It keeps the pairs of objects being compared field by
+// field on this thread, by identity (address), with Vitest's `aStack`/`bStack` rule: a pair met
+// again while it is being compared (the same cycle on both sides: a parent pointer, rings of one
+// length) counts as equal, an object met again with another partner (a cycle on one side, rings
+// of two lengths) as different. The comparison is synchronous, so it stays on one thread.
+//
+// The pairs are a block of words `[capacity, length, a0, b0, a1, b1, …]` from `rawAlloc`, kept in
+// a thread-local: the first pair allocates it, and it is given back when the last pair ends, so a
+// thread keeps nothing between comparisons.
+
+import { addressLoad, addressStore, noInline, rawAlloc, rawFree } from "velt/lang/intrinsics";
+
+/** This thread's block of pairs being compared: 0 when none is. */
+const PAIRS = new ThreadLocal<u64>(0);
+
+/** The pairs a new block has room for. */
+const FIRST: usize = 8;
+
+/** The word at `a`, in a block of this module's. */
+function load(a: usize): u64 {
+  // SAFETY: `a` is a word of a block `rawAlloc` gave this module and not yet freed.
+  return unsafe { addressLoad<u64>(a) };
+}
+
+function store(a: usize, v: u64): void {
+  // SAFETY: as `load`.
+  unsafe {
+    addressStore<u64>(a, v);
+  }
+}
+
+/** The bytes of a block with room for `cap` pairs. */
+function bytesOf(cap: usize): usize {
+  return (2 + 2 * cap) * 8;
+}
+
+/**
+ * Starts comparing the objects with identities `a` and `b`, as Vitest's `equals` checks them
+ * (from the innermost pair out): 1 when `a` is being compared with `b` already (a cycle at the
+ * same depth: equal), 2 when `a` or `b` is being compared with another object (a cycle on one
+ * side only: they differ); else 0, and the pair is being compared until `deepEqLeave`.
+ */
+export function deepEqEnter(a: u64, b: u64): u8 {
+  let p = PAIRS.get() as usize;
+  let len: usize = 0;
+  if (p != 0) {
+    len = load(p + 8) as usize;
+    let i = len;
+    while (i > 0) {
+      i -= 1;
+      const at = p + 16 + 16 * i;
+      const x = load(at);
+      const y = load(at + 8);
+      if (x == a) {
+        return y == b ? 1 : 2;
+      }
+      if (y == b) {
+        return 2;
+      }
+    }
+  }
+  if (p == 0 || len == (load(p) as usize)) {
+    p = grown(p, len);
+  }
+  const at = p + 16 + 16 * len;
+  store(at, a);
+  store(at + 8, b);
+  store(p + 8, (len + 1) as u64);
+  return 0;
+}
+
+/** Ends the comparison `deepEqEnter` last started. */
+export function deepEqLeave(): void {
+  const p = PAIRS.get() as usize;
+  const len = load(p + 8) - 1;
+  if (len == 0) {
+    // SAFETY: `p` came from `rawAlloc` with its capacity's bytes, and no pair is left in it.
+    unsafe {
+      rawFree(p, bytesOf(load(p) as usize));
+    }
+    ;
+    PAIRS.set(0);
+    return;
+  }
+  store(p + 8, len);
+}
+
+/** A block with room for more than `len` pairs, holding those of `p` (0 for none), which it
+ * frees: this thread's block from now on. */
+@noInline
+function grown(p: usize, len: usize): usize {
+  const cap = p == 0 ? FIRST : 2 * (load(p) as usize);
+  const q = rawAlloc(bytesOf(cap));
+  store(q, cap as u64);
+  for (let i: usize = 0; i < 2 * len; i++) {
+    store(q + 16 + 8 * i, load(p + 16 + 8 * i));
+  }
+  if (p != 0) {
+    // SAFETY: `p` came from `rawAlloc` with its capacity's bytes; its pairs are copied.
+    unsafe {
+      rawFree(p, bytesOf(load(p) as usize));
+    }
+    ;
+  }
+  PAIRS.set(q as u64);
+  return q;
+}

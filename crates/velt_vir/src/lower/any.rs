@@ -24,6 +24,7 @@
 use velt_sema::hir::{self, TyId, TyKind};
 
 use super::glue::{Glue, VtableKey};
+use super::hook_calls::{self as hooks, ty, Construct, HookTy};
 use super::rt::Rt;
 use super::{cint, Cx, FnLower, Work};
 use crate::vir::{
@@ -296,10 +297,10 @@ impl FnLower<'_, '_> {
         let v = Operand::Copy(p.clone());
         let r = match self.cx.kind(ty) {
             TyKind::Str => {
-                let out = Place::local(self.temp(Ty::F64));
                 let a = self.addr(p);
-                self.call_rt(Rt::StrToNumber, vec![a], Some(out.clone()));
-                Operand::Copy(out)
+                hooks::str_to_number(self, Construct::Dynamic, ty::Str::arg(a))
+                    .emit(self)
+                    .op()
             }
             TyKind::Bool => {
                 let n = self.rvalue_temp(Ty::U8, Rvalue::Cast(v, Ty::U8));

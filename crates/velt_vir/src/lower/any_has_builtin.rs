@@ -335,17 +335,18 @@ impl FnLower<'_, '_> {
         let (index, other) = (self.new_block(), self.new_block());
         self.branch(digit, index, other);
         self.switch_to(index);
-        let n = Place::local(self.temp(Ty::F64));
-        self.call_rt(Rt::StrToNumber, vec![k.clone()], Some(n.clone()));
+        let n = hooks::str_to_number(self, Construct::Dynamic, ty::Str::arg(k.clone()))
+            .emit(self)
+            .op();
         let lenf = self.rvalue_temp(Ty::F64, Rvalue::Cast(len, Ty::F64));
-        let lt = Rvalue::Binary(BinOp::Lt, Operand::Copy(n.clone()), lenf);
+        let lt = Rvalue::Binary(BinOp::Lt, n.clone(), lenf);
         let lt = self.rvalue_temp(Ty::Bool, lt);
         let (check, absent) = (self.new_block(), self.new_block());
         self.branch(lt, check, absent);
         // Below the length (a digit first, so not negative): the key must be the index's own
         // text.
         self.switch_to(check);
-        let i = self.rvalue_temp(Ty::U64, Rvalue::Cast(Operand::Copy(n), Ty::U64));
+        let i = self.rvalue_temp(Ty::U64, Rvalue::Cast(n, Ty::U64));
         let s = self.temp(Ty::Agg(STR_AGG));
         hooks::uint_text(self, Construct::Dynamic, ty::U64::arg(i)).emit_to(self, Place::local(s));
         let sp = self.addr(Place::local(s));

@@ -770,8 +770,6 @@ Neither runtime has clock functions.
 | `velt_rt_lk_kept_before` | `(void* obj) -> u8` | 1 when a store in this thread's reads already kept the object `obj` as itself (`velt_rt_lk_kept_again`): moved on again (its count back at 1), its parts are not kept, and the caller's objects among them not counted, a second time (§9.1) |
 | `velt_rt_xfer_keep_shared` | `(u8 enter)` | such a transfer goes into (`enter` 1) or comes out of (0) the parts of an object the readers still reference, kept as itself: `velt_rt_lk_leave` keeps those parts the readers' own until the reads end, also one referenced only there, since the readers may still change them through it (§9.1) |
 | `velt_rt_lk_leave_to` | `(u64 levels) -> u64` | the transfers that follow move into a frame `levels` `read` callbacks out from the running one (`u64::MAX`: code outside every read; `0`: the running callback itself, so the object stays the reader's own and keeps `LOCAL`, for a copy lent to a method of the lock's value or of a temporary the reader made), for a store into a container a nested callback captured; returns the number it replaces, which the caller puts back after them (§9.1) |
-| `velt_rt_deep_eq_enter` | `(u64 a, u64 b) -> u8` | the cycle guard of `deepEqual` and `toEqual` (std/lang/equal's generated code) and of `==` on aggregates holding types that can hold themselves (#1881), by the objects' identities (addresses): 1 if this thread is comparing `a` with `b` already (equal), 2 if it is comparing `a` or `b` with another object (different), else 0 and the pair is being compared until `velt_rt_deep_eq_leave` |
-| `velt_rt_deep_eq_leave` | `() -> ()` | the pair `velt_rt_deep_eq_enter` last took on is compared |
 | `velt_rt_lk_write` | `(u64* count)` | a write of the lock-set object whose count word is at `count`: stops the program in read mode unless the reader made the object (§9.1) |
 | `velt_rt_free_after_reads` | `(void* obj, void (*drop)(void** slot))` | the last reference to the lock-set object `obj` (count still 1) went in code changing the caller's containers inside a read: `drop` (its drop glue) frees it now, or in read mode once this thread's outermost read ends (§9.1) |
 | `velt_rt_str_hash` | `(const VeltStr* s) -> u64` | string Map/Set keys; fixed seed (deterministic), not flood-resistant |
@@ -1022,7 +1020,6 @@ runtime keeps the functions below.
 | `velt_rt_str_is_well_formed` | `(const VeltStr* s) -> u8` | 1 when `s` has no lone surrogates (std's `encodeURIComponent`) |
 | `velt_rt_str_to_upper` / `_to_lower` | `(const VeltStr* s, VeltStr* out)` | full Unicode default case mapping (`ß` → `SS`, final sigma), like JS, for text that is not ASCII; ASCII text is mapped in std (std/lang/string/case.velt), which calls these for the rest |
 | `velt_rt_str_from_char_code` | `(i64 code, VeltStr* out)` | JS `ToUint16(code)`; a surrogate gives a lone surrogate, as JS. std makes the string of an ASCII unit itself (inline, no call) and calls this for the others |
-| `velt_rt_str_to_number` | `(const VeltStr* s) -> f64` | exact JS `Number(s)`: trimmed; `""` ⇒ 0; `0x`/`0o`/`0b` (unsigned); `±Infinity`; whole string must be a decimal literal, else NaN |
 | `velt_rt_str_array_drop` | `(VeltStrArray* a)` | already in §4 |
 
 ### 12.3 JSON pull reader (`JSON.parse<T>`)

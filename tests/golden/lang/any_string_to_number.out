@@ -1,0 +1,72 @@
+"3.14" 3.14 3.14 false false false
+"  3.14abc" NaN NaN false false false
+"-.5" -0.5 -0.5 false false false
+".5" 0.5 0.5 false false false
+"5." 5 5 false false false
+"." NaN NaN false false false
+"-" NaN NaN false false false
+"+" NaN NaN false false false
+"1e" NaN NaN false false false
+"1e+" NaN NaN false false false
+"1e5x" NaN NaN false false false
+"1E-3" 0.001 0.001 false false false
+"Infinity" Infinity Infinity false false false
+"-Infinityx" NaN NaN false false false
+"+Infinity" Infinity Infinity false false false
+"infinity" NaN NaN false false false
+"0x10" 16 16 false true false
+"" 0 0 true false false
+"  " 0 0 true false false
+"1.7976931348623159e308" Infinity Infinity false false false
+"2e-324" 0 0 true false false
+"-0" -0 -0 true false false
+"0.1e-5" 0.000001 0.000001 false false false
+"1.2.3" NaN NaN false false false
+"  4" 4 4 false false false
+"12_3" NaN NaN false false false
+"NaN" NaN NaN false false false
+"1e1000" Infinity Infinity false false false
+"00.5" 0.5 0.5 false false false
+"0x1F" 31 31 false false false
+"0o17" 15 15 false false false
+"0b101" 5 5 false false false
+"0b" NaN NaN false false false
+"-0x10" NaN NaN false false false
+" 12 " 12 12 false false false
+"12 px" NaN NaN false false false
+"\n" 0 0 true false false
+"-Infinity" -Infinity -Infinity false false false
+" +Infinity " Infinity Infinity false false false
+"+.5" 0.5 0.5 false false false
+"0X1f" 31 31 false false false
+"1_0" NaN NaN false false false
+"١" NaN NaN false false false
+"0.0000001" 1e-7 1e-7 false false false
+"1e-7" 1e-7 1e-7 false false false
+"    42 ﻿" 42 42 false false false
+"0xffffffffffffffffffffffffffffff" 1.329227995784916e+36 1.329227995784916e+36 false false false
+"0b111111111111111111111111111111111111111111111111111111111111" 1152921504606847000 1152921504606847000 false false false
+"0o777" 511 511 false false false
+"0o8" NaN NaN false false false
+"1e+5" 100000 100000 false false false
+"-1e-5" -0.00001 -0.00001 false false false
+"123456789012345678901234567890" 1.2345678901234568e+29 1.2345678901234568e+29 false false false
+"0.1" 0.1 0.1 false false false
+"9007199254740993" 9007199254740992 9007199254740992 false false false
+".e1" NaN NaN false false false
+"1.e1" 10 10 false false false
+"Infinityx" NaN NaN false false false
+"  -  5" NaN NaN false false false
+"4.9406564584124654e-324" 5e-324 5e-324 false false false
+"2.4703282292062327e-324" 0 0 true false false
+" 1" NaN NaN false false false
+"0" true
+"1" true
+"2" true
+"3" false
+"01" false
+"1.0" false
+"2 " false
+" 1" false
+"-0" false
+"1e0" false

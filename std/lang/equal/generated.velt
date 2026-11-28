@@ -18,10 +18,8 @@ import {
   keyEq,
   toAny,
 } from "velt/lang/intrinsics";
+import { deepEqEnter, deepEqLeave } from "velt/lang/hooks/deep_eq";
 import { recordEntriesOf } from "velt/lang/hooks/record";
-
-declare function velt_rt_deep_eq_enter(a: u64, b: u64): u8;
-declare function velt_rt_deep_eq_leave();
 
 /**
  * Deep equality as `deepEqual` and `assertEq` compare: arrays, tuples, structs and object values
@@ -56,12 +54,12 @@ function dynamicOf<T>(v: T): any {
  * on one side only: different).
  */
 function beginPair(a: u64, b: u64): u8 {
-  return velt_rt_deep_eq_enter(a, b);
+  return deepEqEnter(a, b);
 }
 
 /** Ends the comparison `beginPair` last started. */
 function endPair(): void {
-  velt_rt_deep_eq_leave();
+  deepEqLeave();
 }
 
 /** SameValueZero of two dynamic values (`any`, `unknown`): `===`, with `NaN` equal to itself. */
