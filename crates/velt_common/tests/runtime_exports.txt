@@ -5,7 +5,6 @@ velt_rt velt_rt_array_view_cold
 velt_rt velt_rt_array_view_get
 velt_rt velt_rt_array_view_put
 velt_rt velt_rt_array_view_remove
-velt_rt velt_rt_bytes_drop
 velt_rt velt_rt_bytes_from_str
 velt_rt velt_rt_bytes_to_str
 velt_rt velt_rt_bytes_zeroed
@@ -24,8 +23,6 @@ velt_rt velt_rt_free
 velt_rt velt_rt_free_after_reads
 velt_rt velt_rt_fut_id
 velt_rt velt_rt_fut_share
-velt_rt velt_rt_host_clone
-velt_rt velt_rt_host_release
 velt_rt velt_rt_latch_free
 velt_rt velt_rt_latch_new
 velt_rt velt_rt_latch_open
@@ -64,7 +61,6 @@ velt_rt velt_rt_process_node_argv
 velt_rt velt_rt_rc_dec
 velt_rt velt_rt_rc_inc
 velt_rt velt_rt_realloc
-velt_rt velt_rt_rows_exact_i64
 velt_rt velt_rt_rwlock_init
 velt_rt velt_rt_rwlock_read
 velt_rt velt_rt_rwlock_read_unlock
@@ -76,7 +72,6 @@ velt_rt velt_rt_start
 velt_rt velt_rt_statics
 velt_rt velt_rt_stdout_write_bytes
 velt_rt velt_rt_str_append
-velt_rt velt_rt_str_array_drop
 velt_rt velt_rt_str_byte_slice
 velt_rt velt_rt_str_clone
 velt_rt velt_rt_str_cmp
