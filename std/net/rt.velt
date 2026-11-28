@@ -1,7 +1,9 @@
 // velt/net (internal): the runtime's TCP functions that velt/net's streams and listeners
-// call (docs/internals/contracts/rt_abi_async.md §6), through `#net-tcp` (std/imports.velt): this
-// file in every build but one compiled with the executor in Velt, whose variant
-// (std/net/tcp_sched.velt) exports the same names and hands the runtime's handles here.
+// call (docs/internals/contracts/rt_abi_async.md §6), through `#net-tcp` (std/imports.velt). This
+// file is the variant of a build without the executor in Velt (WebAssembly), whose runtime defines
+// them without a network. A build with the executor uses std/net/tcp_sched.velt, which exports the
+// same names on the executor's reactor and calls only `velt_rt_tcp_listen` here, for the listener
+// `velt dev` hands over.
 
 import { IoResult } from "velt/native/result";
 import { IoStatus } from "velt/native/status";
