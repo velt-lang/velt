@@ -516,14 +516,16 @@ fn velt_rt_wasm_defines_what_mirrored_directories_export() {
 #[test]
 fn the_parsers_see_the_whole_abi() {
     let decls = velt_declarations();
-    assert!(decls.len() > 150, "found only {} declarations", decls.len());
+    assert!(decls.len() > 50, "found only {} declarations", decls.len());
     let (params, ret) = &decls["velt_rt_fs_read_file_bytes"].0;
     assert_eq!(
         (params.as_slice(), ret.as_str()),
         (&["ptr".to_string()][..], "ptr")
     );
     // A floor that shows the parser reads the sources, not the size of the ABI: velt_rt shrinks
-    // as std takes its functions over (#2196, #2563), 199 at the time of writing.
+    // as std takes its functions over (#2196, #2563): 199 when this was written, 148 on
+    // 2026-11-28. Lower it again when the runtime crosses it; it must stay above what a parser
+    // that misreads the files would find (none or a handful).
     let defs = rust_definitions(&runtime_sources("velt_rt"));
-    assert!(defs.len() > 150, "found only {} definitions", defs.len());
+    assert!(defs.len() > 50, "found only {} definitions", defs.len());
 }
