@@ -597,6 +597,7 @@ pub(crate) const VELT_MEMBERS: &[(&str, &[VeltOnly])] = &[
             ("setAt", JSON_VALUE),
             ("stringify", JSON_VALUE),
             ("toJSON", JSON_VALUE),
+            ("toString", JSON_VALUE),
         ],
     ),
     (
