@@ -83,8 +83,8 @@ int32_t velt_main(void) {
 }
 "#;
 
-/// A worker of the executor in Velt starts with `velt_rt_set_scheduler(2)`, which links and does
-/// nothing: the runtime has no host of its own any more.
+/// A worker of the executor in Velt in a program compiled before the runtime's host went starts
+/// with `velt_rt_set_scheduler(2)`, which still links and does nothing.
 const HOST: &str = r#"
 void velt_rt_set_scheduler(uint32_t);
 int32_t velt_main(void) {

@@ -20,15 +20,14 @@
 //!   functions the program calls; a splice that calls an observer where the kept program had
 //!   none is refused. (An edit that removes the last observer keeps the steps a cold build
 //!   leaves out: nothing can observe them, so the program does the same, with more code.)
-//! - `uses_placement`, `sched_tasks` with the declared start and spawn runtime functions
-//!   (`reaches_tasks`), `sched_used` (`module_sched`: module state through the executor's
-//!   hooks), the static atomics the code uses (`statics_used`: the release `_Gstatics_drop`
-//!   registered in `velt_main`), `facts`, `boxing` (kept.rs `relower`): whether a task is pinned
-//!   or started, whether the program runs on the executor, what lowering learned of the program,
-//!   the counted types.
+//! - `sched_tasks` with the declared start and spawn runtime functions (`reaches_tasks`),
+//!   `sched_used` (`module_sched`: module state through the executor's hooks), the static
+//!   atomics the code uses (`statics_used`: the release `_Gstatics_drop` registered in
+//!   `velt_main`), `facts`, `boxing` (kept.rs `relower`): whether a task is started, whether the
+//!   program runs on the executor, what lowering learned of the program, the counted types.
 //!
 //! `velt_main` (entry.rs) is the one function a splice never builds again, so its inputs are
-//! named here: `uses_placement` and `reaches_tasks` (compared), `no_await_steps` (refused when
+//! named here: `reaches_tasks` (compared), `no_await_steps` (refused when
 //! it would change), the module state's slots (declarations), and `main`'s
 //! own signature (warm sema compares interfaces), and the statics table it registers
 //! (`statics_used`). The other code built once per program is

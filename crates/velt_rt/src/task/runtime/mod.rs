@@ -4,7 +4,7 @@
 //! counts them and decides what keeps the process alive after `main` (std/lang/hooks/
 //! sched_end.velt), as Node's event loop does. The runtime starts no threads and runs no tasks
 //! of its own. The three externs here stay for programs compiled before the executor in Velt
-//! took them over, and for `velt_vir`'s `Rt::SetScheduler`.
+//! took them over.
 
 use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -21,9 +21,10 @@ pub fn worker_count() -> usize {
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
 }
 
-/// `velt_rt_set_scheduler(kind)`: called by `velt_main` of a program compiled before the switch
-/// (`1`) and by each worker of the executor in Velt (`2`, std/lang/hooks/sched_workers.velt).
-/// Nothing to do: the runtime has no host of its own to start or enter.
+/// `velt_rt_set_scheduler(kind)`: called by programs compiled before the runtime's host went,
+/// from `velt_main` when the program pins a task (`1`) and from each worker of the executor in
+/// Velt (`2`). Nothing to do: the runtime has no host of its own to start or enter, and code
+/// compiled now does not call it.
 #[no_mangle]
 pub extern "C-unwind" fn velt_rt_set_scheduler(_kind: u32) {}
 

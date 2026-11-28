@@ -41,10 +41,6 @@ impl<'c, 'h> FnLower<'c, 'h> {
         if lw.cx.hir.hooks_demanded.contains(clock) {
             hooks::clock_start(&mut lw, velt_common::std_hooks::Construct::Clock).emit(&mut lw);
         }
-        if lw.cx.uses_placement {
-            // Before anything starts the runtime (#211).
-            lw.call_rt(Rt::SetScheduler, vec![cint(1, Ty::U32)], None);
-        }
         let Some(def) = lw.cx.hir.entry else {
             lw.terminate(Terminator::Return(cint(0, Ty::I32)));
             return lw.finish_export();

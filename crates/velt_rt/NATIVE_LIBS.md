@@ -77,7 +77,8 @@ shorter (`shared_native_libs` in `crates/velt_link/src/system.rs`). Release buil
 `crates/velt_rt/tests/link_check.rs` (runs under `cargo test -p velt_rt`) compiles tiny C objects
 that only define `velt_main`, links them with the system linker and runs the executables, checking
 stdout/stderr/exit codes (normal return, `velt_rt_panic` → 101, `velt_rt_exit`). It also calls
-`velt_rt_set_scheduler(2)`, as each worker of the executor in Velt does. `crates/veltc/tests/stdout_tasks.rs` checks that a program's
+`velt_rt_set_scheduler(2)`, as each worker of the executor in Velt did in programs compiled before
+the runtime's host went. `crates/veltc/tests/stdout_tasks.rs` checks that a program's
 output reaches a pipe while it idles in an `await`.
 
 ## Allocator
