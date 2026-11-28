@@ -93,11 +93,18 @@ describe("the environment's proxy", () => {
   it("reads the uppercase variable when the lowercase one is empty, as Bun", () => {
     expect(pick(false, "example.com", ["http_proxy", "", "HTTP_PROXY", "u:1"])).toBe("u:1");
     expect(pick(true, "example.com", ["https_proxy", "", "HTTPS_PROXY", "u:1"])).toBe("u:1");
-    expect(pick(false, "example.com", ["http_proxy", `""`, "HTTP_PROXY", "u:2"])).toBe("u:2");
-    expect(pick(false, "example.com", ["http_proxy", "''"])).toBe("");
     // On Windows the two spellings are one variable, whose value is the later one ("").
     const later = ["HTTP_PROXY", "u:1", "http_proxy", ""];
     expect(pick(false, "example.com", later)).toBe(ONE_NAME ? "" : "u:1");
+  });
+
+  it("takes a lowercase `\"\"` or `''`, which is no proxy, as Bun", () => {
+    // Not empty, so taken over the uppercase one (on Windows the later value is the one).
+    const quoted = ["http_proxy", `""`, "HTTP_PROXY", "u:2"];
+    expect(pick(false, "example.com", quoted)).toBe(ONE_NAME ? "u:2" : "");
+    expect(pick(false, "example.com", ["http_proxy", "''"])).toBe("");
+    // No proxy, so `ALL_PROXY` is read.
+    expect(pick(false, "example.com", ["http_proxy", "''", "ALL_PROXY", "a:1"])).toBe("a:1");
   });
 
   it("takes ALL_PROXY when the scheme's variable is unset, as Bun", () => {
@@ -111,21 +118,25 @@ describe("the environment's proxy", () => {
     expect(pick(true, "example.com", ["ALL_PROXY", "socks5://a:3"])).toBe("");
   });
 
-  it("ignores a value naming a proxy this client does not speak (https:, socks)", () => {
-    expect(pick(true, "example.com", ["https_proxy", "https://s:1"])).toBe("");
+  it("takes https:// proxies, and ignores a kind this client does not speak (socks)", () => {
+    expect(pick(true, "example.com", ["https_proxy", "https://s:1"])).toBe("s:1");
+    expect(pick(false, "example.com", ["http_proxy", "HTTPS://s"])).toBe("s:443");
+    expect(pick(false, "example.com", ["http_proxy", "HTTP://h:1"])).toBe("h:1");
     expect(pick(false, "example.com", ["http_proxy", "socks5://s:1"])).toBe("");
     expect(pick(false, "example.com", ["HTTP_PROXY", " SOCKS5h://s:1"])).toBe("");
-    // Ignored, the next variable is read.
+    // Ignored as no proxy: the lowercase one was taken, so `ALL_PROXY` is read next, not the
+    // uppercase one (on Windows the later value is the one).
     const next = ["https_proxy", "socks5://s:1", "HTTPS_PROXY", "http://u:2"];
-    expect(pick(true, "example.com", next)).toBe("u:2");
-    expect(pick(true, "example.com", ["https_proxy", "https://s:1", "ALL_PROXY", "a:3"])).toBe(
+    expect(pick(true, "example.com", next)).toBe(ONE_NAME ? "u:2" : "");
+    expect(pick(true, "example.com", ["https_proxy", "socks5://s:1", "ALL_PROXY", "a:3"])).toBe(
       "a:3",
     );
-    expect(pick(false, "example.com", ["http_proxy", "HTTP://h:1"])).toBe("h:1");
-    // The `proxy` option still refuses them.
+    expect(pick(true, "example.com", ["ALL_PROXY", "https://a:3"])).toBe("a:3");
+    expect(proxyFor(true, "example.com", 443, "https://given")?.addr).toBe("given:443");
+    // The `proxy` option refuses another kind.
     let message = "";
     try {
-      proxyFor(true, "example.com", 443, "https://s:1");
+      proxyFor(true, "example.com", 443, "socks5://s:1");
     } catch (e) {
       message = e.code;
     }
@@ -260,10 +271,21 @@ describe("proxy URLs", () => {
     expect(parseProxy("http://user:@proxy:8080", "$X").authorization).toBe("");
   });
 
-  it("are refused when not http:, naming the variable but not the password", () => {
+  it("are spoken to over TLS for https:, port 443 by default", () => {
+    const a = parseProxy("https://u:p@proxy.example", "$X");
+    expect(`${a.addr} ${a.tls} ${a.host} ${a.authorization}`).toBe(
+      "proxy.example:443 true proxy.example Basic dTpw",
+    );
+    const b = parseProxy("https://[::1]:8443/", "$X");
+    expect(`${b.addr} ${b.tls} ${b.host}`).toBe("[::1]:8443 true ::1");
+    const c = parseProxy("proxy:3128", "$X");
+    expect(`${c.addr} ${c.tls}`).toBe("proxy:3128 false");
+  });
+
+  it("are refused when not http: or https:, naming the variable but not the password", () => {
     const bad = [
       "socks5://proxy:1080",
-      "https://proxy:443",
+      "ftp://proxy:21",
       "http://user:secret@",
       "http://user:sec%0Aret@proxy:1",
       // Only an origin, as undici's `parseOrigin`.

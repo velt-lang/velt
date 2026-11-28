@@ -24,13 +24,14 @@ export type RequestInit = {
   ca?: string;
   /**
    * Velt (as Bun's): the proxy for this request and its redirects,
-   * `http://[user:password@]host[:port]`, or `""` to connect directly. Without it, `fetch` uses
-   * the environment's, as Bun does (Node only with `NODE_USE_ENV_PROXY=1`): `https_proxy` /
-   * `HTTPS_PROXY` for `https:`, `http_proxy` / `HTTP_PROXY` for `http:`, else `ALL_PROXY`,
-   * except for the hosts `NO_PROXY` lists (`NO_PROXY=*` for none), read at every request; a
-   * variable naming another kind of proxy (`socks5://`, `https://`) is ignored, which this option
-   * refuses (`EINVAL`). Only `fetch` reads it, not `new Request`; on
-   * `wasm32-unknown-unknown` the host's `fetch` runs and this is ignored.
+   * `http[s]://[user:password@]host[:port]` (`https://`: TLS to the proxy), or `""` to connect
+   * directly; `NO_PROXY` does not apply to it (Bun's does). Without it, `fetch` uses the
+   * environment's, as Bun does (Node only with `NODE_USE_ENV_PROXY=1`): `https_proxy` /
+   * `HTTPS_PROXY` for `https:`, `http_proxy` / `HTTP_PROXY` for `http:`, else `ALL_PROXY`, except
+   * for the hosts `NO_PROXY` lists (`NO_PROXY=*` for none), as the variables are at each request;
+   * a variable naming another kind of proxy (`socks5://`) is ignored, which this option refuses
+   * (`EINVAL`). Only `fetch` reads it, not `new Request`; on `wasm32-unknown-unknown` the host's
+   * `fetch` runs and this is ignored.
    */
   proxy?: string;
 };
