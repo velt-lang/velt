@@ -36,6 +36,14 @@ export function jsonReplacerDepthNow(): i64 {
 }
 
 /**
+ * Sets back the depth `jsonReplacerDepthNow` gives (`depth`: what it gave before a call of
+ * `JSON.stringify(value, replacer)` made inside another one's walk).
+ */
+export function jsonReplacerDepthRestore(depth: i64): void {
+  JSON_REPLACER_DEPTH.set(depth);
+}
+
+/**
  * Starts the walk through the members of the value with identity `id`, which the replacer kept:
  * Node's `TypeError` when that value is being walked or written already (it contains itself). A
  * value without an identity (0, a struct held by value) is not checked. Each start needs a
