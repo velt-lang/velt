@@ -99,7 +99,9 @@ macro_rules! with_any_hooks {
             /// A class used as a value (`velt_sema` `ctor_objects.rs`; printed by `glue/format.rs`).
             class_object => lang_hooks_class_object, "classObject", sig((&string, &string) -> FnRest(([ClassMarker(string)]) -> any)), lowered;
             /// `class_object` of a class with static fields or accessors.
-            class_object_statics => lang_hooks_class_object, "classObjectStatics", sig((&string, &string) -> FnRest(([ClassMarker(bool)]) -> any));
+            class_object_statics => lang_hooks_class_object, "classObjectStatics", sig((&string, &string) -> FnRest(([ClassMarker(bool)]) -> any)), lowered;
+            /// A call of a class object through `any`: Node's `TypeError` (`velt_vir` `any_not_fn.rs`).
+            class_call_error => lang_hooks_class_object, "classCallError", sig((&any) -> void throws TypeError), lowered;
             /// `v.constructor` of an `any` holding no class instance (`velt_sema` `ctor_objects.rs`).
             any_ctor => lang_hooks_class_object, "anyCtor", sig((&any, move any, move any, move any, move any, move any, move any) -> any);
             /// `r.constructor` of an `any` holding a record.

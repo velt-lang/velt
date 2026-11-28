@@ -1676,7 +1676,20 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   `[PROXY_SET](key, value, receiver)` and `[PROXY_HAS](key)` (keys of std/lang/hooks/keys.velt;
   velt_vir `lower/any_proxy.rs`), which run the handler's traps or forward to the target; its
   keys slot (`AnyKeys`) calls `[PROXY_KEYS]()` (the `ownKeys` and `getOwnPropertyDescriptor`
-  traps). `delete o.k` / `delete o[k]` of an `any` or `object` is a
+  traps). A proxy of a function is a function (#3978): `typeof` asks `[PROXY_IS_FUNCTION]()`,
+  and its `AnyApply` slot, a member call that reads one (`AnyCall` of an object or a proxy) and
+  `AnyApplyThis` call `[PROXY_CALLEE]()`, then the handler's `apply` trap
+  (`[PROXY_APPLY](thisArg, args)`) or the target with the same `this` (velt_vir
+  `lower/proxy_apply.rs`); `p.call` / `p.apply` / `p.bind` of one with a trap are
+  `[PROXY_FN_METHOD](key, args)`, after the `get` trap read `call` / `apply` / `bind` (which
+  `Reflect.get` answers `undefined` for where the value has no such member: JavaScript's
+  `Function.prototype` methods). An `apply` trap's error reaches the caller's `catch` for `f(args)` in a user module
+  (`AnyApply` is a throw source of `[PROXY_APPLY]`, sema `any_op`; lowering calls it directly
+  for a proxy whose call runs a trap); from glue (member calls, `call` / `apply`) it is
+  uncaught. A class object called through `any` (`AnyApply` of a `classObject` closure, also
+  through a proxy) answers status 3 with Node's message in `*out`, which the call site throws
+  as a `TypeError` where a `catch` of the function takes one (std's `classCallError`; velt_vir
+  `any_not_fn.rs`), else stops with it. `delete o.k` / `delete o[k]` of an `any` or `object` is a
   call of the hook `anyDeleteMember(o, k)` (`anyDeleteProxy` once `Proxy` is loaded: a proxy's
   `deleteProperty` trap; another value's `Intrinsic::AnyDelete`, std only, through slot 15
   `AnyDelete (data, key: *string) -> u8` of its table, velt_vir `lower/any_delete.rs`), and the

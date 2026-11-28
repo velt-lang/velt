@@ -1,0 +1,43 @@
+// An `apply` trap may throw, as in Node: its error reaches the caller's `catch` for a call of the
+// proxy, also through a proxy of it and from a function the proxy was passed to (#3978). A
+// program whose trap throws used to fail to compile. The Node twin is proxy_callable_throws.mjs.
+class Boom extends Error {}
+const f = (x: number) => x * 2;
+const thrower: any = new Proxy(f, {
+  apply(t: any, th: any, a: any[]): any {
+    if (a[0] > 1) {
+      throw new Boom("boom " + a[0]);
+    }
+    return t(a[0]);
+  },
+});
+const nested: any = new Proxy(thrower, {});
+function callIt(g: any, x: number): any {
+  return g(x);
+}
+try {
+  console.log(thrower(1));
+  console.log(nested(2));
+  console.log("not reached");
+} catch (e) {
+  console.log("nested", e instanceof Boom, (e as Error).message);
+}
+try {
+  callIt(thrower, 3);
+} catch (e) {
+  console.log("through a function", e instanceof Boom, (e as Error).message);
+} finally {
+  console.log("finally");
+}
+const typeErr: any = new Proxy(f, {
+  apply(t: any, th: any, a: any[]): any {
+    throw new TypeError("no " + a.length);
+  },
+});
+try {
+  typeErr(1, 2);
+} catch (e) {
+  console.log("type error", e instanceof TypeError, (e as Error).message);
+}
+const plain: any = (x: number) => x + 1;
+console.log(plain(1), callIt(plain, 2), callIt(nested, 1));

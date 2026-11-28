@@ -1,5 +1,5 @@
 // Prelude: JS number globals (`NaN`, `Infinity`, `isNaN`, `isFinite`), `toFixed`,
-// `toExponential` and `toPrecision` on f64, and
+// `toExponential` and `toPrecision` on f64, `valueOf` on every number type, and
 // the static members of `Number` (`Number.isInteger`, `Number.MAX_SAFE_INTEGER`, …).
 
 import { hookCall, trunc } from "velt/lang/intrinsics";
@@ -33,6 +33,11 @@ export function isFinite(x: f64): bool {
 }
 
 extend f64 {
+  /** The number itself (JS `Number.prototype.valueOf`): `(2.5).valueOf()` is 2.5. */
+  valueOf(): f64 {
+    return this;
+  }
+
   /**
    * Exponential notation with `digits` (0 to 100) digits after the point, rounded like JS (to
    * the nearest, an exact tie away from zero): `(123.456).toExponential(2)` is "1.23e+2". Without
@@ -71,6 +76,11 @@ extend f64 {
 }
 
 extend f32 {
+  /** The number itself, as `valueOf` on `number`. */
+  valueOf(): f32 {
+    return this;
+  }
+
   /**
    * Exponential notation of the `f32`'s exact value, as `toExponential` on `number` (every `f32`
    * is a `number`, and prints as that one): `(0.1 as f32).toExponential(2)` is "1.00e-1", and
@@ -86,6 +96,92 @@ extend f32 {
    */
   toPrecision(precision?: number): string {
     return (this as f64).toPrecision(precision);
+  }
+}
+
+// `valueOf` of the other number types: the number itself, as on `number`.
+
+extend i8 {
+  /** The number itself, as `valueOf` on `number`. */
+  valueOf(): i8 {
+    return this;
+  }
+}
+
+extend i16 {
+  /** The number itself, as `valueOf` on `number`. */
+  valueOf(): i16 {
+    return this;
+  }
+}
+
+extend i32 {
+  /** The number itself, as `valueOf` on `number`. */
+  valueOf(): i32 {
+    return this;
+  }
+}
+
+extend i64 {
+  /** The number itself, as `valueOf` on `number`. */
+  valueOf(): i64 {
+    return this;
+  }
+}
+
+extend isize {
+  /** The number itself, as `valueOf` on `number`. */
+  valueOf(): isize {
+    return this;
+  }
+}
+
+extend u8 {
+  /** The number itself, as `valueOf` on `number`. */
+  valueOf(): u8 {
+    return this;
+  }
+}
+
+extend u16 {
+  /** The number itself, as `valueOf` on `number`. */
+  valueOf(): u16 {
+    return this;
+  }
+}
+
+extend u32 {
+  /** The number itself, as `valueOf` on `number`. */
+  valueOf(): u32 {
+    return this;
+  }
+}
+
+extend u64 {
+  /** The number itself, as `valueOf` on `number`. */
+  valueOf(): u64 {
+    return this;
+  }
+}
+
+extend usize {
+  /** The number itself, as `valueOf` on `number`. */
+  valueOf(): usize {
+    return this;
+  }
+}
+
+extend f16 {
+  /** The number itself, as `valueOf` on `number`. */
+  valueOf(): f16 {
+    return this;
+  }
+}
+
+extend bf16 {
+  /** The number itself, as `valueOf` on `number`. */
+  valueOf(): bf16 {
+    return this;
   }
 }
 

@@ -1,0 +1,38 @@
+// `p.call`, `p.apply` and `p.bind` of a proxy of a function read `call` / `apply` / `bind`
+// through the handler's `get` trap first, as in Node, then call the proxy, so its `apply` trap
+// runs; without one they call the target (#3978). `bind` of a proxy without a trap over one with
+// a trap runs the inner trap. (Node's `bind` also reads `length` and `name` through the trap;
+// those reads are left out here.) The Node twin is proxy_callable_get.mjs.
+const seen: string[] = [];
+const traced: any = new Proxy((x: number) => x + 1, {
+  get(t: any, k: any, r: any): any {
+    seen.push(String(k));
+    return Reflect.get(t, k, r);
+  },
+  apply(t: any, th: any, a: any[]): any {
+    return "trap " + a.join(",");
+  },
+});
+console.log(traced.call(null, 1), traced.apply(null, [2, 3]));
+console.log(seen.join(","));
+const o: any = { name: "o" };
+const reads: string[] = [];
+const named: any = new Proxy(function (this: any, x: number) { return this?.name + x; }, {
+  get(t: any, k: any, r: any): any {
+    reads.push(String(k));
+    return Reflect.get(t, k, r);
+  },
+});
+console.log(named.call(o, 1), named.apply(o, [2]), named(4));
+console.log(reads.join(","));
+console.log(traced.bind(null, 4)(5), named.bind(o, 3)());
+const plain: any = new Proxy(function (this: any, x: number) { return this?.name + x; }, {});
+console.log(plain.call(o, 5), plain.apply(o, [6]), plain.bind(o)(7));
+const inner: any = new Proxy((a: number, b: number) => a + b, {
+  apply(t: any, th: any, a: any[]): any {
+    return "inner " + (th === undefined ? "-" : th.name) + " " + a.join(",");
+  },
+});
+const outer: any = new Proxy(inner, {});
+const b: any = outer.bind(o, 1);
+console.log(b(2), outer.call(o, 3, 4), outer.apply(o, [5, 6]), typeof b);

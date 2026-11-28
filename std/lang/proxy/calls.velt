@@ -1,0 +1,89 @@
+// velt/lang/proxy (internal): calling a `Proxy` (velt/lang/proxy) of a function (#3978). A proxy
+// is a function when its target is, through proxies of proxies; a call of it runs the handler's
+// `apply` trap with the target, `this` and the arguments as an array, or, without one, the call
+// of the target with the same `this` and arguments (velt_vir `lower/proxy_apply.rs`). A program
+// that calls no `call`, `apply` or `bind` through `any` doesn't compile `proxyFnMethod`'s body.
+
+import { anyArgList, anyFnMethodCalled } from "velt/lang/hooks/any_ops";
+import {
+  PROXY_APPLY,
+  PROXY_CALLEE,
+  PROXY_FN_METHOD,
+  PROXY_IS_FUNCTION,
+  PROXY_TARGET,
+} from "velt/lang/hooks/keys";
+import { Proxy } from "velt/lang/proxy";
+
+/** Whether `p`'s target, through proxies of proxies, is a function: `typeof p`. */
+export function proxyIsFunction(p: Proxy): boolean {
+  const t = p[PROXY_TARGET]();
+  if (t instanceof Proxy) {
+    return t[PROXY_IS_FUNCTION]();
+  }
+  return typeof t === "function";
+}
+
+/**
+ * What a call of `p` runs: `null` when `p`, or a proxy it targets through proxies of proxies, has
+ * an `apply` trap (`proxyApply` runs the first); else the function at the end of the chain,
+ * called with the same `this` and arguments; `undefined` when the target is no function, which
+ * makes the call Node's `TypeError` (`p is not a function`).
+ */
+export function proxyCallee(p: Proxy): any {
+  if (!proxyIsFunction(p)) {
+    return undefined;
+  }
+  if (p.applyTrap() != null) {
+    return null;
+  }
+  const t = p[PROXY_TARGET]();
+  if (t instanceof Proxy) {
+    return t[PROXY_CALLEE]();
+  }
+  return t;
+}
+
+/** The call of `p` with `this` = `thisArg` where `proxyCallee` is `null`: its first `apply` trap. */
+export function proxyApply(p: Proxy, thisArg: any, args: any[]): any {
+  const t = p[PROXY_TARGET]();
+  const trap = p.applyTrap();
+  if (trap != null) {
+    return trap(t, thisArg, args);
+  }
+  if (t instanceof Proxy) {
+    return t[PROXY_APPLY](thisArg, args);
+  }
+  return undefined;
+}
+
+/**
+ * `p.call(thisArg, ...args)`, `p.apply(thisArg, list)` and `p.bind(thisArg, ...args)` (`key`)
+ * where `proxyCallee` is `null`: JavaScript's `Function.prototype` methods, which call the proxy,
+ * so its `apply` trap runs.
+ */
+export function proxyFnMethod(p: Proxy, key: any, args: any[]): any {
+  if (!anyFnMethodCalled()) {
+    return undefined;
+  }
+  const thisArg = args.length > 0 ? args[0] : undefined;
+  if (key === "apply") {
+    const list = args.length > 1 ? args[1] : undefined;
+    return proxyApply(p, thisArg, list == null ? [] : anyArgList(list));
+  }
+  const rest = args.slice(1);
+  if (key === "bind") {
+    // A function that calls the proxy with `thisArg` and `rest` followed by its own arguments:
+    // its `apply` trap, or the first one on the chain of proxies it targets. The trap is the one
+    // the handler had when `bind` ran (Node reads it at each call).
+    const trap = p.applyTrap();
+    const t = p[PROXY_TARGET]();
+    return (...more: any[]): any => {
+      const all = rest.concat(more);
+      if (trap != null) {
+        return trap(t, thisArg, all);
+      }
+      return t instanceof Proxy ? t[PROXY_APPLY](thisArg, all) : undefined;
+    };
+  }
+  return proxyApply(p, thisArg, rest);
+}

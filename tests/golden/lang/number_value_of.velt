@@ -1,0 +1,14 @@
+// `valueOf()` on a number is the number itself (#3884), on `number`, a literal type, the integer
+// and other float types, and through `any`. The Node twin is number_value_of.mjs.
+const n: number = 2.5;
+console.log(n.valueOf(), (4).valueOf(), (-0.5).valueOf() + 1);
+const k: i64 = 3;
+const s: u8 = 200;
+const w: i32 = -7;
+const f: f32 = 1.5 as f32;
+console.log(k.valueOf(), s.valueOf(), w.valueOf() * 2, f.valueOf());
+const lit: 1 | 2 = 2;
+console.log(lit.valueOf(), n.valueOf() === n, typeof n.valueOf());
+const a: any = 2.5;
+console.log(a.valueOf(), [1, 2, 3].map((x) => x.valueOf() * 10).join(","));
+console.log(NaN.valueOf(), Infinity.valueOf(), (0.1 + 0.2).valueOf());

@@ -6,9 +6,9 @@
 //! | slot | calls |
 //! |---|---|
 //! | `AnyGet` / `AnyIndex` | `[PROXY_GET](key, receiver)` (a number key as its string) |
-//! | `AnyCall` | `[PROXY_GET](key, receiver)`, then the function value it returns (`AnyApply` slot); an array method (`ArrayMethod`) is `[PROXY_ARRAY_CALL](method, args, receiver)` |
+//! | `AnyCall` | `[PROXY_GET](key, receiver)`, then the function value it returns (`AnyApply` slot); an array method (`ArrayMethod`) is `[PROXY_ARRAY_CALL](method, args, receiver)`; `call` / `apply` / `bind` read as `undefined` on a proxy of a function are its own (proxy_apply.rs) |
 //! | `AnySet` / `AnySetIndex` | `[PROXY_SET](key, value, receiver)`; `false` is Node's `TypeError` |
-//! | `AnyApply` | not a function (a proxy of a function comes later) |
+//! | `AnyApply` | a proxy of a function: its `apply` trap, or the call of the target (proxy_apply.rs); else not a function |
 //!
 //! The receiver is the proxy itself: the `Proxy` object again, with its own table.
 
@@ -182,6 +182,7 @@ impl FnLower<'_, '_> {
         let (yes, no) = (self.new_block(), self.new_block());
         self.branch(is_plain, yes, no);
         self.switch_to(yes);
+        self.proxy_fn_keys((data, key, argv, argc, out), ty, None);
         let t = Place::local(self.temp(avt));
         if !self.proxy_invoke(velt_common::std_key!(proxy_target), data, ty, vec![], &t) {
             self.any_drop_args_all(argv, argc);
@@ -210,6 +211,8 @@ impl FnLower<'_, '_> {
             return self.ret_status(ST_UNSUPPORTED);
         }
         let (fd, fdesc) = self.any_parts(Operand::Copy(f.clone()), any);
+        // `p.call(...)` & co. of a proxy of a function, read through the `get` trap (proxy_apply.rs).
+        self.proxy_fn_keys((data, key, argv, argc, out), ty, Some((&f, &fdesc)));
         self.this_fn_method_call((&f, any, &fd, &fdesc), (data, argv, argc, out), ty);
         self.proxy_array_call(&f, fdesc.clone(), (data, argv, argc, out), ty);
         let a = [argv, argc, out].map(|l| Operand::Copy(Place::local(l)));

@@ -430,8 +430,8 @@ impl FnLower<'_, '_> {
         }
         let t = self.sub(a.ty);
         let v = self.expr(a);
-        let (_, desc) = self.any_parts(v, t);
-        let tag = self.any_tag_of(desc);
+        let (data, desc) = self.any_parts(v, t);
+        let tag = self.any_tag_of(desc.clone());
         let out = Place::local(self.temp(Ty::Agg(STR_AGG)));
         let done = self.new_block();
         let blocks: Vec<_> = (0..TYPEOF.len()).map(|_| self.new_block()).collect();
@@ -447,6 +447,10 @@ impl FnLower<'_, '_> {
         });
         for (k, b) in blocks.into_iter().enumerate() {
             self.switch_to(b);
+            if k == TAG_OBJECT as usize {
+                // A proxy of a function is one (proxy_apply.rs).
+                self.proxy_typeof((data.clone(), desc.clone()), &out, done);
+            }
             let s = self.str_lit(TYPEOF[k]);
             self.assign(out.clone(), Rvalue::Use(s));
             self.goto(done);

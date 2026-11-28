@@ -109,6 +109,14 @@ export const PROXY_JSON = Symbol("proxyJson");
 export const PROXY_ARRAY_CALL = Symbol("proxyArrayCall");
 /** `Proxy`: what `hasOwn` does for the compiler and `Reflect`. */
 export const PROXY_HAS_OWN = Symbol("proxyHasOwn");
+/** `Proxy`: what `callee` does for the compiler. */
+export const PROXY_CALLEE = Symbol("proxyCallee");
+/** `Proxy`: what `apply` does for the compiler. */
+export const PROXY_APPLY = Symbol("proxyApply");
+/** `Proxy`: what `isFunction` does for the compiler. */
+export const PROXY_IS_FUNCTION = Symbol("proxyIsFunction");
+/** `Proxy`: what `fnMethod` does for the compiler. */
+export const PROXY_FN_METHOD = Symbol("proxyFnMethod");
 /** `Record`: what `at` does for the compiler. */
 export const RECORD_AT = Symbol("recordAt");
 /** `Record`: what `decoded` does for the compiler. */

@@ -421,7 +421,10 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
     ("WeakMap", &["delete", "get", "has", "set"]),
     ("WeakRef", &["deref"]),
     ("WeakSet", &["add", "delete", "has"]),
-    ("number", &["toExponential", "toFixed", "toPrecision"]),
+    (
+        "number",
+        &["toExponential", "toFixed", "toPrecision", "valueOf"],
+    ),
     (
         "string",
         &[

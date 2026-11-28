@@ -15,8 +15,9 @@
 //!
 //! The arguments `argv[0..argc]` are owned by the slot (converted to the parameter types or
 //! dropped). The status is `ST_OK` (`*out` written), `ST_UNSUPPORTED` (a member this phase
-//! cannot reach yet) or `ST_NOT_FN` (the member is not a function); the caller turns the last
-//! two into a `TypeError`. The slots exist only when `Program::dyn_members` is set.
+//! cannot reach yet), `ST_NOT_FN` (the member is not a function) or `ST_CLASS_CALL` (a class
+//! object called without `new`, its message in `*out`: any_not_fn.rs); the caller turns the
+//! last three into a `TypeError`. The slots exist only when `Program::dyn_members` is set.
 
 use velt_sema::hir::{self, Nothing, TyId, TyKind};
 
@@ -51,6 +52,7 @@ fn is_member_slot(slot: i128) -> bool {
 pub(super) const ST_OK: i128 = 0;
 pub(super) const ST_UNSUPPORTED: i128 = 1;
 pub(super) const ST_NOT_FN: i128 = 2;
+pub(super) const ST_CLASS_CALL: i128 = 3;
 
 impl Cx<'_> {
     /// The type `any`.
@@ -575,8 +577,12 @@ impl FnLower<'_, '_> {
                 lw.proxy_get_direct((obj, pty, r), ProxyKey::Str(k), out.clone());
             },
         );
-        let args = vec![data.clone(), key.clone(), out];
+        let args = vec![data.clone(), key.clone(), out.clone()];
         let st = self.any_slot(desc.clone(), SLOT_GET, args, vec![Ty::Ptr; 3]);
+        let st = match self.in_reflect {
+            true => self.reflect_fn_method_read(st, &key, &out),
+            false => st,
+        };
         // In `Reflect.get`, the read a proxy forwards to its target: a method of a class
         // instance, which a method call through a proxy with traps reads, is the common case.
         let tail = if self.in_reflect {
@@ -725,6 +731,12 @@ impl FnLower<'_, '_> {
         };
         let out = self.temp(avt);
         let oa = self.addr(Place::local(out));
+        // `f(args)` of a proxy whose `apply` trap may throw: the trap called directly, so its
+        // error reaches the caller's `catch` (proxy_apply.rs).
+        let routed = match (&ka, this.is_none()) {
+            (None, true) => self.proxy_apply_route((&data, &desc), (&argv, &argc, &oa)),
+            _ => None,
+        };
         let st = match &ka {
             Some(ka) => {
                 let a = vec![data, ka.clone(), argv, argc, oa];
@@ -750,11 +762,13 @@ impl FnLower<'_, '_> {
                 }
             }
         };
+        let st = self.proxy_apply_join(routed, st);
         if let Some((held, arr, at)) = list {
             // The call owns the elements now: the array keeps none of them.
             self.assign(proj(&arr, Proj::Field(1)), Rvalue::Use(cint(0, Ty::U64)));
             self.drop_glue(held, at);
         }
+        self.class_call_check(&st, Place::local(out), ty);
         let what = "TypeError: calling '";
         let tail = "' through `any` is not supported for this value yet (#924)";
         match &ka {

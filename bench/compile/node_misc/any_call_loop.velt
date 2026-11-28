@@ -1,0 +1,10 @@
+// Calls of functions held as `any`, plain and as members, in a program that has `Proxy`
+// (bench/compile/node_misc_instr.sh): both sides run it.
+const add: any = (a: number, b: number) => a + b;
+const o: any = { f: add };
+const unused: any = new Proxy({}, {});
+let s = 0;
+for (let i = 0; i < 200000; i++) {
+  s += add(i, 1) + o.f(i, 2);
+}
+console.log(s, typeof unused);

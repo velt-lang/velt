@@ -50,8 +50,8 @@ impl FnCx<'_, '_> {
 
     /// The `Proxy` method an operation on `any` runs on a proxy, whose errors (its trap's) the
     /// operation throws: `[PROXY_GET]` for a read, `[PROXY_SET]` for a write, `[PROXY_HAS]` for
-    /// `in` and `[PROXY_KEYS]` for `Object.keys` (std/lang/hooks/keys.velt). `None` for another
-    /// intrinsic.
+    /// `in`, `[PROXY_KEYS]` for `Object.keys` and `[PROXY_APPLY]` for a call `f(args)` (the
+    /// `apply` trap; std/lang/hooks/keys.velt). `None` for another intrinsic.
     pub(crate) fn proxy_method_of(i: hir::Intrinsic) -> Option<&'static str> {
         use hir::Intrinsic as I;
         Some(match i {
@@ -59,6 +59,7 @@ impl FnCx<'_, '_> {
             I::AnySet | I::AnySetIndex => velt_common::std_key!(proxy_set),
             I::AnyHas => velt_common::std_key!(proxy_has),
             I::AnyKeys => velt_common::std_key!(proxy_keys),
+            I::AnyApply => velt_common::std_key!(proxy_apply),
             _ => return None,
         })
     }

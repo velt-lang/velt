@@ -43,6 +43,11 @@ export type ProxyHandler<T> = {
   getOwnPropertyDescriptor?: (target: any, p: string | symbol) => PropertyDescriptor | undefined;
   /** `Reflect.defineProperty(p, key, attributes)`: whether the property was defined. */
   defineProperty?: (target: any, p: string | symbol, attributes: PropertyDescriptor) => boolean;
+  /**
+   * `p(...args)` of a proxy of a function: the result of the call. `thisArg` is the object the
+   * function was read from (`o.p(1)`), or `undefined` for a plain call.
+   */
+  apply?: (target: any, thisArg: any, argArray: any[]) => any;
 };
 
 /**
