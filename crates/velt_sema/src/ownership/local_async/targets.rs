@@ -218,7 +218,9 @@ impl Visit for Scan<'_> {
                         self.1.dispatch.push((me, callee.clone(), recv));
                     }
                     Callee::Indirect(_) => self.1.through_values.push(me),
-                    Callee::Intrinsic(Intrinsic::AnyApply) => self.1.through_any.push(me),
+                    Callee::Intrinsic(Intrinsic::AnyApply | Intrinsic::AnyApplyThis) => {
+                        self.1.through_any.push(me)
+                    }
                     Callee::Intrinsic(Intrinsic::AnySet) => self.1.store_sites.push(me),
                     _ => {}
                 },
@@ -459,6 +461,15 @@ pub(super) fn methods_of(cx: &Ctx, c: DefId) -> Vec<DefId> {
     }
     methods.sort_by_key(|m| m.0);
     methods
+}
+
+/// The operands of `AnyApply` (`f`, `text`) or `AnyApplyThis` (`f`, `this`, `text`) in front of
+/// the arguments.
+pub(super) fn any_apply_skip(i: Intrinsic) -> usize {
+    match i {
+        Intrinsic::AnyApplyThis => 3,
+        _ => 2,
+    }
 }
 
 /// The functions a call through a function value may run (#854; write-effects.md "Function

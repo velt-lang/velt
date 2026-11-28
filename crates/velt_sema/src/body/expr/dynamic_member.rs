@@ -204,7 +204,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The key `name` as a string literal.
-    fn key_lit(&mut self, name: &str, span: Span) -> hir::Expr {
+    pub(super) fn key_lit(&mut self, name: &str, span: Span) -> hir::Expr {
         let ty = self.cx.ty.str_;
         self.mk(H::Lit(Lit::Str(name.to_string())), ty, span)
     }

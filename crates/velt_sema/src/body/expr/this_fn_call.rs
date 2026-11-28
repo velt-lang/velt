@@ -1,10 +1,11 @@
 //! Method calls that pass their object as `this` to a function expression with a `this: any`
 //! parameter (`this_fn_expr.rs`), in a program that has one (it loads std/lang/this_fn/index.velt). A call
 //! `o.m(x)` on an `any` is a slot call that does so already (velt_vir this_fn.rs); the other
-//! member calls whose function is a dynamic value read here call
-//! `callOn(<o.m>, o, [x])` when the member read is a function, which passes `o` to such a
-//! function and calls any other one plainly; a member that is no function is called plainly
-//! (`o.m(...[x])`), whose `TypeError` names the callee as Node does:
+//! member calls whose function is a dynamic value read here are one call of the member read,
+//! `AnyApplyThis(<o.m>, o, "<text>", x)` (velt_vir this_fn.rs, one glue function per program):
+//! it passes `o` to such a function and calls any other value plainly (a proxy through its own
+//! apply), and a member that is no function throws the `TypeError` naming the callee as Node
+//! does, to the program's `catch` (velt_vir any_not_fn.rs):
 //!
 //! - `o[k](x)` (an `any` `o`, or an element of an `any[]`, `arr[0](x)`);
 //! - `o.m?.(x)` (`undefined` when `o.m` is `null` or `undefined`, without evaluating the
@@ -22,7 +23,6 @@ use super::setters::synth;
 use crate::any::Dynamic;
 use crate::body::FnCx;
 use crate::hir;
-use crate::hook_calls::{self as hooks, ty, HookTy};
 
 impl FnCx<'_, '_> {
     /// Does the call `callee(..)` go through `callOn` (module docs)? Only in a user module of
@@ -158,9 +158,9 @@ impl FnCx<'_, '_> {
             lw.with_temp("<method>", f, callee.span, span, |lw, f| {
                 if let Some(l) = lw.f.scopes.last().and_then(|s| s.names.get("<method>")) {
                     let l = *l;
-                    lw.f.chain_texts.push((l, text));
+                    lw.f.chain_texts.push((l, text.clone()));
                 }
-                let call = |lw: &mut Self| lw.call_on_function(f, o, args, span);
+                let call = |lw: &mut Self| lw.call_on_function(f, o, &text, args, span);
                 if !optional {
                     return call(lw);
                 }
@@ -198,55 +198,56 @@ impl FnCx<'_, '_> {
         })
     }
 
-    /// `typeof f === "function" ? callOn(f, o, <args>) : f(...<args>)`, the arguments evaluated
-    /// first, into `<args>` (`f` names the member read, `o` the object).
+    /// `AnyApplyThis(f, o, text, args)`: one call, which passes `o` as `this` to a function
+    /// expression taking it and calls any other value plainly (a proxy through its own apply);
+    /// a value that is no function throws Node's `TypeError` naming the callee (`text`: `o[k]
+    /// is not a function`) to the program's own `catch`, or stops the program, as any call
+    /// through `any` does (velt_vir `any_not_fn.rs`). The arguments are evaluated at the call,
+    /// after the object and the member (`f` names the member read, `o` the object, each held).
     fn call_on_function(
         &mut self,
         f: &ast::Expr,
         o: &ast::Expr,
+        text: &str,
         args: &[ast::Expr],
         span: Span,
     ) -> hir::Expr {
         let Some(any) = self.any_ty() else {
             return self.error_expr(span);
         };
-        let list = synth(ast::ExprKind::Array(args.to_vec()), span);
-        let anys = self.cx.ty.array(any);
-        let list = self.expr(&list, Some(anys), crate::body::Want::Move);
-        let list = self.coerce(list, anys);
-        self.with_temp("<args>", list, span, span, |lw, xs| {
-            let ty_of = synth(
-                ast::ExprKind::Unary {
-                    op: ast::UnaryOp::TypeOf,
-                    expr: Box::new(f.clone()),
-                },
-                span,
-            );
-            let function = synth(ast::ExprKind::Lit(ast::Lit::Str("function".into())), span);
-            let is_fn = binary(ast::BinaryOp::StrictEq, ty_of, function, span);
-            let cond = lw.expr(&is_fn, Some(lw.cx.ty.bool_), crate::body::Want::Move);
-            let (fa, oa) = (ty::Any::of(f.clone()), ty::Any::of(o.clone()));
-            let then = hooks::call_on(fa, oa, ty::Array::<ty::Any>::of(xs.clone())).check(lw, span);
-            let spread = synth(ast::ExprKind::Spread(Box::new(xs.clone())), span);
-            let plain = synth(
-                ast::ExprKind::Call {
-                    callee: Box::new(f.clone()),
-                    type_args: vec![],
-                    args: vec![spread],
-                    optional: false,
-                },
-                span,
-            );
-            let els = lw.expr(&plain, Some(any), crate::body::Want::Move);
-            let els = lw.coerce(els, any);
-            let then = lw.coerce(then, any);
-            let kind = hir::ExprKind::If {
-                cond: Box::new(cond),
-                then: Box::new(then),
-                els: Box::new(els),
-            };
-            lw.mk(kind, any, span)
+        self.held_as_any("<fn>", f, any, span, |lw, f| {
+            lw.held_as_any("<obj>", o, any, span, |lw, o| {
+                let fh = lw.expr(f, Some(any), crate::body::Want::Borrow);
+                let oh = lw.expr(o, Some(any), crate::body::Want::Borrow);
+                let text = lw.key_lit(text, span);
+                let Some(boxed) = lw.dynamic_args(args, any, false) else {
+                    return lw.error_expr(span);
+                };
+                let mut all = vec![fh, oh, text];
+                all.extend(boxed);
+                lw.note_any_call();
+                lw.intrinsic(hir::Intrinsic::AnyApplyThis, all, any, span)
+            })
         })
+    }
+
+    /// `body` with the held value `x` (a temporary's name) as an `any`: itself when it is one,
+    /// else boxed into a temporary of its own (`name`; a typed object `arr`, a `Function` member).
+    fn held_as_any(
+        &mut self,
+        name: &str,
+        x: &ast::Expr,
+        any: hir::TyId,
+        span: Span,
+        body: impl FnOnce(&mut Self, &ast::Expr) -> hir::Expr,
+    ) -> hir::Expr {
+        let t = self.trial_type(x);
+        if t.is_some_and(|t| matches!(self.cx.dynamic(t), Some(Dynamic::Any))) {
+            return body(self, x);
+        }
+        let h = self.expr(x, Some(any), crate::body::Want::Move);
+        let h = self.coerce(h, any);
+        self.with_temp(name, h, span, span, body)
     }
 }
 

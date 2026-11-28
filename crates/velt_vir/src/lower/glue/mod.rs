@@ -136,6 +136,9 @@ pub(crate) enum Glue {
     AnyIndex,
     AnyCall,
     AnyApply,
+    /// `(data, desc, this: *any, argv, argc, out) -> u8`: `AnyApply` passing `this` to a function
+    /// expression taking it (`ThisFn`), once per program, for its type (this_fn.rs).
+    AnyApplyThis,
     AnySet,
     AnySetIndex,
     AnyHas,
@@ -231,6 +234,7 @@ impl Glue {
             Glue::AnyIndex => "anyindex",
             Glue::AnyCall => "anycall",
             Glue::AnyApply => "anyapply",
+            Glue::AnyApplyThis => "anyapplythis",
             Glue::AnySet => "anyset",
             Glue::AnySetIndex => "anysetindex",
             Glue::AnyHas => "anyhas",
@@ -297,6 +301,7 @@ impl Glue {
             Glue::AnyIndex => (vec![Ptr, F64, Ptr], U8),
             Glue::AnyCall => (vec![Ptr, Ptr, Ptr, U64, Ptr], U8),
             Glue::AnyApply => (vec![Ptr, Ptr, U64, Ptr], U8),
+            Glue::AnyApplyThis => (vec![Ptr, Ptr, Ptr, Ptr, U64, Ptr], U8),
             Glue::AnySet => (vec![Ptr, Ptr, Ptr], U8),
             Glue::AnySetIndex => (vec![Ptr, F64, Ptr], U8),
             Glue::AnyHas | Glue::AnyDelete | Glue::AnyKeys | Glue::AnyAwait => (vec![Ptr, Ptr], U8),
@@ -365,6 +370,11 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::AnyHash => lw.any_hash_body(args[0], ty),
             Glue::AnyGet | Glue::AnyIndex | Glue::AnyCall | Glue::AnyApply => {
                 lw.any_member_glue(g, &args, ty)
+            }
+            Glue::AnyApplyThis => {
+                lw.push_scope(super::ScopeKind::Block);
+                lw.any_apply_this_body(&args, ty);
+                lw.scopes.pop();
             }
             Glue::AnySet | Glue::AnySetIndex => lw.any_set_glue(g, &args, ty),
             Glue::AnyHas => lw.any_has_glue(args[0], args[1], ty),
