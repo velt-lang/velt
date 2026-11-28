@@ -4,8 +4,8 @@
 // so a lone surrogate escape stays a lone surrogate (joined with a half next to it, as string
 // concatenation joins halves).
 //
-// Port of crates/velt_text/src/json_scan.rs (#1668): the same tokens, error details and error
-// offsets.
+// Port of velt_text's json_scan.rs (#1668, since deleted): the same tokens, error details and
+// error offsets.
 
 import { detailText, scannerEscape } from "velt/encoding/json/scan_escape";
 import { utf8Substring } from "velt/encoding";

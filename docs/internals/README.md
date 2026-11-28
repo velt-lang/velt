@@ -177,7 +177,7 @@ own executor.
 | `velt_rt_shared` | the same runtime built as a shared library, which debug builds link against |
 | `velt_rt_wasm` | the WebAssembly runtime and its JavaScript glue |
 | `velt_rt_host` | the runtime's sources built as an rlib, which hosts JIT-compiled programs in `velt dev` |
-| `velt_text` | Velt's string encoding, number formatting and database JSON, shared by the runtime and std's native libraries |
+| `velt_text` | Velt's string encoding and number formatting, for the runtime and the compiler |
 | `velt_build_cache` | the machine-wide build cache: compiled code keyed by content, bounded in size |
 | `velt_fmt` | formatter |
 | `velt_lsp` | language server |
