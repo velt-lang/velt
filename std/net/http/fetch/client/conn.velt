@@ -204,8 +204,12 @@ export class Conn {
  */
 export function keyOf(t: Target, ca: string): string {
   const via = t.proxy;
-  const origin = via == null ? t.origin : `${t.origin} via ${via.addr} ${via.authorization}`;
-  return t.https && ca.length > 0 ? `${origin} ${ca}` : origin;
+  const origin =
+    via == null
+      ? t.origin
+      : `${t.origin} via ${via.tls ? "https" : "http"}://${via.addr} ${via.authorization}`;
+  const tls = t.https || (via != null && via.tls);
+  return tls && ca.length > 0 ? `${origin} ${ca}` : origin;
 }
 
 /**
@@ -266,9 +270,9 @@ export async function dial(
 
 /**
  * A new connection to `t` (at `addr`) through proxy `via`: a `CONNECT` tunnel to `addr`, for
- * `http:` as for `https:` (as undici's), with the TLS client's handshake through it for `https:`.
- * The request then names only the path, so nothing of the URL's user or password reaches the
- * proxy.
+ * `http:` as for `https:` (as undici's), over TLS to an `https://` proxy, with the TLS client's
+ * handshake to the origin through it for `https:`. The request then names only the path, so
+ * nothing of the URL's user or password reaches the proxy.
  */
 async function viaProxy(
   t: Target,
@@ -291,6 +295,28 @@ async function viaProxy(
       throw new IoError(e.code, `${e.message} (connecting to proxy ${via.addr})`);
     }
     throw e;
+  }
+  if (via.tls) {
+    // An `https://` proxy: TLS to it first (the stream's handle takes the socket's place: the
+    // tunnel, and the origin's TLS for `https:`, run over it as over a socket).
+    const toProxy = t.tls;
+    if (toProxy == null) {
+      TcpStream.ofHandle(fd).close();
+      throw new IoError(
+        "ENOTSUP",
+        `fetch failed: the https:// proxy ${via.addr} needs TLS, which a fetch of an http: ` +
+          "URL that follows no redirect leaves out",
+      );
+    }
+    const left = CONNECT_MS - ((Date.now() as i64) - start);
+    try {
+      fd = await toProxy(fd, via.addr, via.host, ca, "http/1.1", left, signal);
+    } catch (e) {
+      if (e instanceof IoError) {
+        throw new IoError(e.code, `${e.message} (connecting to proxy ${via.addr})`);
+      }
+      throw e;
+    }
   }
   const s = TcpStream.ofHandle(fd);
   await tunnel(s, via, addr, CONNECT_MS - ((Date.now() as i64) - start), signal);

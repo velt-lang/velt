@@ -8,9 +8,18 @@ proxy: al.test:<http>
 proxy: localhost:<https>
 == ALL_PROXY naming a SOCKS proxy is ignored
 http://localhost:<http>/so 200 http localhost:<http>/so
-== https:// and socks5:// proxies are ignored
-http://localhost:<http>/x 200 http localhost:<http>/x
-https://localhost:<https>/y 200 https localhost:<https>/y
+== a lowercase "" is no proxy
+http://127.0.0.1:<http>/g5 200 http 127.0.0.1:<http>/g5
+== an https:// proxy
+http://t1.test:<http>/ 200 http t1.test:<http>/
+https://localhost:<https>/t2 200 https localhost:<https>/t2
+https://127.0.0.1:<https>/t3 200 https 127.0.0.1:<https>/t3
+tls proxy: t1.test:<http>
+tls proxy: localhost:<https>
+tls proxy: 127.0.0.1:<https>
+== an https:// ALL_PROXY
+http://t4.test:<http>/ 200 http t4.test:<http>/
+tls proxy: t4.test:<http>
 == the variables read at each request
 http://o1.test:<http>/a 200 http o1.test:<http>/a
 env:http_proxy=

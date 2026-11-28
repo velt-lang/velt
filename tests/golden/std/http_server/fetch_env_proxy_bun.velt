@@ -1,15 +1,17 @@
 // `fetch` and the environment's proxy where Velt reads it as Bun (`src/dotenv/env_loader.rs`,
 // `src/dotenv/no_proxy.rs`) and not as Node 22 (fetch_env_proxy.velt has the rest): an empty
-// lowercase variable reads the uppercase one, `""` and `''` are empty, `ALL_PROXY` when the
-// scheme's variable is unset, a value naming a proxy this client does not speak (`socks5://`,
-// `https://`) ignored, the variables read at every request, and `NO_PROXY` entries as Bun reads
-// them: a domain with its subdomains, `.name` with the name, bare IPv6 addresses, CIDR blocks.
-// Each run is this program again with its own environment ("child"); servers, proxy and its log
-// are here. fetch_env_proxy_bun.mjs is its twin for Bun, which prints the same (the proxy logs
-// the host it is asked for, by `CONNECT` or, as Bun asks for `http:`, by an absolute URL).
-// network; a later Node differs: Node 26 sends `http:` to a proxy without `CONNECT`).
+// lowercase variable reads the uppercase one, a lowercase `""` or `''` is taken and is no proxy,
+// `ALL_PROXY` when the scheme's variable is unset (one naming a SOCKS proxy ignored), the
+// variables read again after `setEnv`, `NO_PROXY` entries as Bun reads them (a domain with its
+// subdomains, `.name` with the name, bare IPv6 addresses, CIDR blocks), and `https://` proxies
+// (TLS to the proxy, and for `https:` TLS to the origin within it). Each run is this program
+// again with its own environment ("child"); servers, proxies and their log are here.
+// fetch_env_proxy_bun.mjs is its twin for Bun, which prints the same (a proxy logs the host it
+// is asked for, by `CONNECT` or, as Bun asks for `http:`, by an absolute URL). Where Bun
+// differs (a SOCKS proxy in the scheme's variable: Bun fails the request, Velt goes directly) is
+// tests/std/fetch/proxy.test.velt's.
 import { serve } from "http-server";
-import { connect, listen, TcpStream } from "velt/net";
+import { connect, listen, listenTls, TcpListener, TcpStream } from "velt/net";
 import { utf8DecodeLossy } from "velt/encoding";
 import { platform } from "velt/os";
 import { envAll, setEnv } from "velt/process";
@@ -65,8 +67,32 @@ async function pipe(from: TcpStream, to: TcpStream) {
   }
 }
 
+/** The connections `listener` accepts, each `proxyOne`'s, logged as `name`'s. */
+function serveProxy(listener: TcpListener, log: Channel<string>, name: string) {
+  spawn(async () => {
+    while (true) {
+      let conn: TcpStream;
+      try {
+        conn = await listener.accept();
+      } catch (e) {
+        return;
+      }
+      spawn(proxyGuarded(conn, log, name));
+    }
+  });
+}
+
+/** `proxyOne`, closing `conn` on an error (a TLS handshake that failed). */
+async function proxyGuarded(conn: TcpStream, log: Channel<string>, name: string) {
+  try {
+    await proxyOne(conn, log, name);
+  } catch (e) {
+    conn.close();
+  }
+}
+
 /** One connection to the proxy: `CONNECT` logged, then tunneled to 127.0.0.1 or refused. */
-async function proxyOne(conn: TcpStream, log: Channel<string>) {
+async function proxyOne(conn: TcpStream, log: Channel<string>, name: string) {
   let input: u8[] = [];
   let text = "";
   while (text.indexOf("\r\n\r\n") < 0) {
@@ -93,7 +119,7 @@ async function proxyOne(conn: TcpStream, log: Channel<string>) {
       auth = line.slice(20).trim();
     }
   }
-  await log.send(`proxy: ${target}`);
+  await log.send(`${name}: ${target}`);
   if (target.startsWith("refuse.test:")) {
     await conn.write("HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\n\r\n");
     conn.close();
@@ -147,19 +173,14 @@ async function main() {
   });
 
   const listener = await listen("127.0.0.1:0");
-  spawn(async () => {
-    while (true) {
-      let conn: TcpStream;
-      try {
-        conn = await listener.accept();
-      } catch (e) {
-        return;
-      }
-      spawn(proxyOne(conn, log));
-    }
-  });
+  serveProxy(listener, log, "proxy");
+  // An `https://` proxy, with the test certificate (localhost's).
+  const tlsListener = await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: TEST_KEY });
+  serveProxy(tlsListener, log, "tls proxy");
   const proxyPort = listener.port as number;
+  const tlsPort = tlsListener.port as number;
   const P = `http://127.0.0.1:${proxyPort}`;
+  const TP = `https://localhost:${tlsPort}`;
   const H = plain.port as number;
   const S = secure.port as number;
 
@@ -173,7 +194,9 @@ async function main() {
     .split(`=${S}`)
     .join("=<https>")
     .split(`:${proxyPort}`)
-    .join(":<proxy>");
+    .join(":<proxy>")
+    .split(`:${tlsPort}`)
+    .join(":<tls proxy>");
 
   async function run(name: string, vars: Record<string, string>, urls: string[]) {
     console.log(`== ${name}`);
@@ -215,12 +238,17 @@ async function main() {
   await run("ALL_PROXY naming a SOCKS proxy is ignored", { ALL_PROXY: "socks5://127.0.0.1:1" }, [
     `http://localhost:${H}/so`,
   ]);
-  // Bun tries these two (and fails); the twin leaves them out.
-  await run(
-    "https:// and socks5:// proxies are ignored",
-    { http_proxy: "socks5://127.0.0.1:1", https_proxy: "https://127.0.0.1:1" },
-    [`http://localhost:${H}/x`, `https://localhost:${S}/y`],
-  );
+  // A lowercase `""` is taken, and is no proxy: no `HTTP_PROXY`.
+  await run("a lowercase \"\" is no proxy", { http_proxy: `""`, HTTP_PROXY: P }, [
+    `http://127.0.0.1:${H}/g5`,
+  ]);
+  // TLS to the proxy; for `https:` TLS to the origin within it.
+  await run("an https:// proxy", { http_proxy: TP, https_proxy: TP }, [
+    `http://t1.test:${H}/`,
+    `https://localhost:${S}/t2`,
+    `https://127.0.0.1:${S}/t3`,
+  ]);
+  await run("an https:// ALL_PROXY", { ALL_PROXY: TP }, [`http://t4.test:${H}/`]);
   await run("the variables read at each request", { http_proxy: P }, [
     `http://o1.test:${H}/a`,
     "env:http_proxy=",
@@ -244,6 +272,7 @@ async function main() {
     [`http://h.test:${H}/`],
   );
   listener.close();
+  tlsListener.close();
   await plain.shutdown();
   await secure.shutdown();
 }

@@ -4,12 +4,13 @@
 // hop: read again after `setEnv` or `removeEnv` changed the environment, else kept (a program
 // that never fetches reads none of the variables):
 // - `http_proxy`, else `HTTP_PROXY`, for `http:`; `https_proxy`, else `HTTPS_PROXY`, for `https:`
-//   (never the `http:` one); `all_proxy`, else `ALL_PROXY`, for both when the scheme's is unset.
-//   A lowercase variable that is empty counts as unset, so the uppercase one is read (CI
-//   environments often set `http_proxy=""`), and so do `""` and `''` (a shell's empty quotes).
-// - A value is `http://…` or `host:port`; one that names another kind of proxy (`https://`,
-//   `socks5://`) is ignored: this client speaks to neither (Bun speaks TLS to an `https://` one).
-// - `no_proxy`, else `NO_PROXY` (empty counts as unset), lists the hosts reached directly
+//   (never the `http:` one). The lowercase one is taken when it is set and not empty, else the
+//   uppercase one (CI environments often set `http_proxy=""`). A value that is empty, `""` or
+//   `''` (a shell's empty quotes) is no proxy, and then `all_proxy`, else `ALL_PROXY`, is read.
+// - A value is `http://…`, `https://…` (TLS to the proxy) or `host:port`. One that names another
+//   kind of proxy (`socks5://`) is ignored, as no proxy: this client does not speak it (Bun
+//   ignores it in `ALL_PROXY` and fails a request through one in the scheme's variable).
+// - `no_proxy`, else `NO_PROXY` (each read only when not empty), lists the hosts reached directly
 //   (no_proxy.velt: domains with their subdomains, IP addresses, CIDR blocks, ports). This
 //   machine is not special (`localhost` goes to the proxy too).
 // Opting out is `NO_PROXY=*` or `proxy: ""`. Node 22.21+ reads the environment's proxy only with
@@ -18,12 +19,13 @@
 // `https:` through the `http:` proxy when no `https:` one is set, and a `NO_PROXY` entry names
 // that host alone (`.example.com` only its subdomains), without IP blocks.
 //
-// A proxy is `http://[user:password@]host[:port][/]` (port 80 by default); its user and password,
-// when it has both, become `proxy-authorization: Basic …` (with only one of them, none, as in
-// undici). Every request goes through a `CONNECT` tunnel to the
-// origin's host and port (tunnel.velt), `http:` too, as undici does; for `https:` TLS to the
-// origin runs inside it, as without a proxy. The `proxy` option rejects any other proxy with
-// `EINVAL`, as it does a proxy URL with a path, query or fragment (in a variable too).
+// A proxy is `http[s]://[user:password@]host[:port][/]` (port 80, or 443 for `https://`); its
+// user and password, when it has both, become `proxy-authorization: Basic …` (with only one of
+// them, none, as in undici). Every request goes through a `CONNECT` tunnel to the origin's host
+// and port (tunnel.velt), `http:` too, as undici does; to an `https://` proxy over TLS, its
+// certificate checked as an origin's (built-in roots and the request's `ca`). For `https:` TLS to
+// the origin runs inside the tunnel, as without a proxy. The `proxy` option rejects any other
+// proxy with `EINVAL`, as it does a proxy URL with a path, query or fragment (in a variable too).
 
 import { IoError } from "velt/io/error";
 import { base64Encode, utf8Encode } from "velt/encoding";
@@ -39,18 +41,25 @@ export class Via {
   addr: string;
   /** The `proxy-authorization` header's value; "" for none. */
   authorization: string;
+  /** Whether it is an `https://` proxy, spoken to over TLS. */
+  tls: bool;
+  /** Its host as its certificate names it (an IPv6 address without brackets). */
+  host: string;
 
-  constructor(addr: string, authorization: string) {
+  constructor(addr: string, authorization: string, tls: bool, host: string) {
     this.addr = addr;
     this.authorization = authorization;
+    this.tls = tls;
+    this.host = host;
   }
 }
 
 /**
  * The proxy of a request to `hostname` (as the URL parser serializes it: IPv6 in brackets) on
  * `port`: the request's `given` one ("" for none), or when it is null the environment's. Throws
- * `EINVAL` for a proxy URL that is not `http:`, naming where it came from, never its value
- * (which may hold a password).
+ * `EINVAL` for a proxy URL this client cannot use (another scheme, a path), naming where it came
+ * from, never its value (which may hold a password); a variable naming another kind of proxy is
+ * ignored instead (module comment).
  */
 export function proxyFor(
   https: bool,
@@ -117,62 +126,70 @@ function envProxy(): EnvProxy {
     return last;
   }
   const vars = new EnvProxy(changes);
-  const all = usable(variable("all_proxy")) ?? usable(variable("ALL_PROXY"));
-  vars.http = usable(variable("http_proxy"));
-  vars.httpName = "http_proxy";
-  if (vars.http == null) {
-    vars.http = usable(variable("HTTP_PROXY"));
-    vars.httpName = "HTTP_PROXY";
-  }
+  const allName = lowerThenUpper("all_proxy", "ALL_PROXY");
+  const all = proxyIn(allName);
+  vars.httpName = lowerThenUpper("http_proxy", "HTTP_PROXY");
+  vars.http = proxyIn(vars.httpName);
   if (vars.http == null && all != null) {
     vars.http = all;
-    vars.httpName = usable(variable("all_proxy")) != null ? "all_proxy" : "ALL_PROXY";
+    vars.httpName = allName;
   }
-  vars.https = usable(variable("https_proxy"));
-  vars.httpsName = "https_proxy";
-  if (vars.https == null) {
-    vars.https = usable(variable("HTTPS_PROXY"));
-    vars.httpsName = "HTTPS_PROXY";
-  }
+  vars.httpsName = lowerThenUpper("https_proxy", "HTTPS_PROXY");
+  vars.https = proxyIn(vars.httpsName);
   if (vars.https == null && all != null) {
     vars.https = all;
-    vars.httpsName = usable(variable("all_proxy")) != null ? "all_proxy" : "ALL_PROXY";
+    vars.httpsName = allName;
   }
-  vars.list = variable("no_proxy") ?? variable("NO_PROXY");
+  vars.list = emptyish(getEnv("no_proxy")) ?? emptyish(getEnv("NO_PROXY"));
   known = vars;
   return vars;
 }
 
-/** Variable `name`, or null when it is unset, empty, `""` or `''` (as Bun's `is_emptyish`). */
-function variable(name: string): string | null {
-  const value = getEnv(name);
+/** As Bun's `get_lower_then_upper`: `lower` when it is set and not empty, else `upper`. */
+function lowerThenUpper(lower: string, upper: string): string {
+  const value = getEnv(lower);
+  return value != null && value.length > 0 ? lower : upper;
+}
+
+/** The proxy variable `name` names: null when it is no proxy or one ignored (module comment). */
+function proxyIn(name: string): string | null {
+  const value = emptyish(getEnv(name));
+  if (value == null) {
+    return null;
+  }
+  const text = value.trim();
+  const sep = text.indexOf("://");
+  if (sep < 0) {
+    return value;
+  }
+  const scheme = text.slice(0, sep).toLowerCase();
+  return scheme == "http" || scheme == "https" ? value : null;
+}
+
+/** `value`, or null when it is unset, empty, `""` or `''` (as Bun's `is_emptyish`). */
+function emptyish(value: string | undefined): string | null {
   if (value == null || value.length == 0 || value == `""` || value == "''") {
     return null;
   }
   return value;
 }
 
-/** `value` when it names an `http:` proxy (or has no scheme), else null (module comment). */
-function usable(value: string | null): string | null {
-  if (value == null) {
-    return null;
-  }
-  const text = value.trim();
-  const sep = text.indexOf("://");
-  return sep < 0 || text.slice(0, sep).toLowerCase() == "http" ? value : null;
-}
-
 /** The proxy `value` names; `what` says where it came from in an error. */
 export function parseProxy(value: string, what: string): Via throws IoError {
   let text = value.trim();
   const sep = text.indexOf("://");
+  let tls = false;
   if (sep < 0) {
     text = `http://${text}`;
   } else {
     const scheme = text.slice(0, sep).toLowerCase();
-    if (scheme != "http") {
-      throw invalid(what, `\`${scheme}://\` proxies are not supported (only \`http://\`)`);
+    if (scheme != "http" && scheme != "https") {
+      throw invalid(
+        what,
+        `\`${scheme}://\` proxies are not supported (only \`http://\` and \`https://\`)`,
+      );
     }
+    tls = scheme == "https";
   }
   const u = URL.parse(text);
   if (u == null || u.hostname.length == 0) {
@@ -182,7 +199,8 @@ export function parseProxy(value: string, what: string): Via throws IoError {
   if (u.pathname != "/" || u.search.length > 0 || u.hash.length > 0) {
     throw invalid(what, "a path, query or fragment after the host");
   }
-  const port = u.port.length > 0 ? u.port : "80";
+  // The URL parser leaves out a scheme's default port.
+  const port = u.port.length > 0 ? u.port : tls ? "443" : "80";
   let authorization = "";
   // As undici's `ProxyAgent`: only with both a user and a password.
   if (u.username.length > 0 && u.password.length > 0) {
@@ -195,7 +213,9 @@ export function parseProxy(value: string, what: string): Via throws IoError {
     }
     authorization = `Basic ${base64Encode(utf8Encode(plain))}`;
   }
-  return new Via(`${u.hostname}:${port}`, authorization);
+  const host =
+    u.hostname.startsWith("[") ? u.hostname.slice(1, (u.hostname.length as i64) - 1) : u.hostname;
+  return new Via(`${u.hostname}:${port}`, authorization, tls, host);
 }
 
 function invalid(what: string, why: string): IoError {
