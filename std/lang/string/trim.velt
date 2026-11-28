@@ -11,7 +11,10 @@
 
 import { strByteAt, strByteLen } from "velt/lang/intrinsics";
 
-declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64, units: u64): string;
+
+/** The piece's unit count, unknown: `velt_rt_str_byte_slice` counts it. */
+const UNCOUNTED: u64 = 0xffffffffffffffff;
 
 /** Is `b` an ASCII white space character: TAB to CR, or a space? */
 function asciiSpace(b: u8): bool {
@@ -105,16 +108,16 @@ function trailing(s: string, start: usize, n: usize): usize {
 export function trim(s: string): string {
   const n = strByteLen(s);
   const start = leading(s, n);
-  return velt_rt_str_byte_slice(s, start as u64, trailing(s, start, n) as u64);
+  return velt_rt_str_byte_slice(s, start as u64, trailing(s, start, n) as u64, UNCOUNTED);
 }
 
 /** `s.trimStart()`. */
 export function trimStart(s: string): string {
   const n = strByteLen(s);
-  return velt_rt_str_byte_slice(s, leading(s, n) as u64, n as u64);
+  return velt_rt_str_byte_slice(s, leading(s, n) as u64, n as u64, UNCOUNTED);
 }
 
 /** `s.trimEnd()`. */
 export function trimEnd(s: string): string {
-  return velt_rt_str_byte_slice(s, 0, trailing(s, 0, strByteLen(s)) as u64);
+  return velt_rt_str_byte_slice(s, 0, trailing(s, 0, strByteLen(s)) as u64, UNCOUNTED);
 }

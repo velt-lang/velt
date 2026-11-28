@@ -15,7 +15,11 @@ import { addressLoad, addressStore, rawAlloc, rawFree, strByteLen } from "velt/l
 import { pushU64 } from "velt/lang/number/integer";
 
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
-declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64, units: u64): string;
+
+/** The piece's unit count, unknown: `velt_rt_str_byte_slice` counts it. */
+const UNCOUNTED: u64 = 0xffffffffffffffff;
+
 declare function velt_rt_strbuf_finish(buf: string, out: string);
 
 /** How many objects are being printed (at most three, `SLOTS`). */
@@ -280,8 +284,8 @@ export function inspectLeave(buf: string): void {
   let text = "";
   velt_rt_strbuf_finish(buf, text);
   const len = strByteLen(text) as u64;
-  const head = velt_rt_str_byte_slice(text, 0, start);
-  const tail = velt_rt_str_byte_slice(text, start, len);
+  const head = velt_rt_str_byte_slice(text, 0, start, UNCOUNTED);
+  const tail = velt_rt_str_byte_slice(text, start, len, UNCOUNTED);
   velt_rt_strbuf_push_str(buf, head);
   velt_rt_strbuf_push_str(buf, "<ref *");
   pushU64(buf, n as u64);

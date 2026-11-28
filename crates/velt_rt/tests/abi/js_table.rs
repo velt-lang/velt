@@ -71,23 +71,6 @@ pub const TO_NUMBER: &[(&str, u64)] = &[
     ("2.4703282292062327e-324", 0x0000000000000000),
     ("\u{85} 1", NAN),
 ];
-pub const SLICE: &[(&str, i64, i64, &str)] = &[
-    ("hello world", 0, 5, "hello"),
-    ("hello world", 6, i64::MAX, "world"),
-    ("hello world", -5, i64::MAX, "world"),
-    ("hello world", -5, -1, "worl"),
-    ("hello world", 3, 1, ""),
-    ("hello world", -100, 3, "hel"),
-    ("hello world", 2, 100, "llo world"),
-    ("hello world", 0, 0, ""),
-    ("hello world", 11, i64::MAX, ""),
-    ("hello world", -1, i64::MAX, "d"),
-    ("hello world", 0, -100, ""),
-    ("hello world", 5, 5, ""),
-    ("hello world", -3, -5, ""),
-    ("hello world", 0, i64::MAX, "hello world"),
-    ("hello world", 100, i64::MAX, ""),
-];
 pub const CASE: &[(&str, &str, &str)] = &[
     ("hello", "HELLO", "hello"),
     ("Stra\u{df}e", "STRASSE", "stra\u{df}e"),

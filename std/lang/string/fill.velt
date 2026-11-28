@@ -27,7 +27,11 @@ import {
 } from "velt/lang/intrinsics";
 import { codePoint4 } from "velt/lang/string/code_units";
 
-declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64, units: u64): string;
+
+/** The piece's unit count, unknown: `velt_rt_str_byte_slice` counts it. */
+const UNCOUNTED: u64 = 0xffffffffffffffff;
+
 declare function velt_rt_str_from_char_code(code: i64): string;
 declare function velt_rt_strbuf_new(cap: u64, out: string);
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
@@ -161,7 +165,7 @@ export function repeat(s: string, count: i64): string {
     return "";
   }
   if (count == 1) {
-    return velt_rt_str_byte_slice(s, 0, n as u64);
+    return velt_rt_str_byte_slice(s, 0, n as u64, UNCOUNTED);
   }
   const times = count as usize;
   const total = n * times;
@@ -328,7 +332,7 @@ function pushPrefix(buf: string, fill: string, units: usize) {
       u++;
     }
   }
-  const whole = velt_rt_str_byte_slice(fill, 0, i as u64);
+  const whole = velt_rt_str_byte_slice(fill, 0, i as u64, UNCOUNTED);
   velt_rt_strbuf_push_str(buf, whole);
   if (half >= 0) {
     const high = velt_rt_str_from_char_code(half);
@@ -359,7 +363,7 @@ function pad(s: string, target: i64, fill: string, atStart: bool): string {
   const units = strLen(s) as i64;
   const fb = strByteLen(fill);
   if (target <= units || fb == 0) {
-    return velt_rt_str_byte_slice(s, 0, n as u64);
+    return velt_rt_str_byte_slice(s, 0, n as u64, UNCOUNTED);
   }
   const missing = (target - units) as usize;
   let buf = "";

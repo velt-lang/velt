@@ -348,22 +348,6 @@ impl VeltStr {
         pos
     }
 
-    /// The byte positions of units `a` and `b` (`a <= b`; both clamped as by
-    /// [`Self::unit_to_byte`]): the second is found by a forward scan from the first when it is
-    /// near (a short slice of a long string costs one translation).
-    ///
-    /// # Safety
-    /// `self` must be valid.
-    pub unsafe fn unit_range_to_bytes(&self, a: usize, b: usize) -> (BytePos, BytePos) {
-        let pa = self.unit_to_byte(a);
-        let b = b.min(self.units());
-        if self.is_ascii() || b <= a || b - a >= STRIDE {
-            return (pa, self.unit_to_byte(b));
-        }
-        let first = a - pa.low_half as usize;
-        (pa, scan_forward(self.as_bytes(), pa.byte, first, b))
-    }
-
     /// The index of the first UTF-16 unit of the code point at byte `byte` (a code point
     /// boundary, at most [`Self::len`]; larger is clamped).
     ///

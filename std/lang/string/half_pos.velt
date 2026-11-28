@@ -20,7 +20,11 @@ import {
 } from "velt/lang/string/code_units";
 import { findTwoWay } from "velt/lang/string/two_way";
 
-declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64, units: u64): string;
+
+/** The piece's unit count, unknown: `velt_rt_str_byte_slice` counts it. */
+const UNCOUNTED: u64 = 0xffffffffffffffff;
+
 declare function velt_rt_str_from_char_code(code: i64): string;
 
 /**
@@ -87,19 +91,19 @@ export function unitsText(s: string, a: u64, b: u64): string {
   const ba = (a >> 1) as usize;
   const bb = (b >> 1) as usize;
   if (((a | b) & 1) == 0) {
-    return velt_rt_str_byte_slice(s, ba as u64, bb as u64);
+    return velt_rt_str_byte_slice(s, ba as u64, bb as u64, UNCOUNTED);
   }
   if (a == b) {
     return "";
   }
   if ((a & 1) == 0) {
     // Ends inside the pair at `bb`.
-    const head = velt_rt_str_byte_slice(s, ba as u64, bb as u64);
+    const head = velt_rt_str_byte_slice(s, ba as u64, bb as u64, UNCOUNTED);
     return head + halfOf(s, bb, false);
   }
   // Starts inside the pair at `ba`, whose low half comes first.
   const low = halfOf(s, ba, true);
-  const middle = velt_rt_str_byte_slice(s, (ba + 4) as u64, bb as u64);
+  const middle = velt_rt_str_byte_slice(s, (ba + 4) as u64, bb as u64, UNCOUNTED);
   if ((b & 1) == 0) {
     return low + middle;
   }
@@ -114,5 +118,5 @@ export function unitText(s: string, p: u64): string {
     return halfOf(s, i, (p & 1) != 0);
   }
   const len: usize = b < 0x80 ? 1 : b < 0xe0 ? 2 : 3;
-  return velt_rt_str_byte_slice(s, i as u64, (i + len) as u64);
+  return velt_rt_str_byte_slice(s, i as u64, (i + len) as u64, 1);
 }

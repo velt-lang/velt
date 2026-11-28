@@ -363,6 +363,62 @@ fn char_code_at_calls_the_positions_object() {
     }
 }
 
+/// The same kind of program cutting its strings with `slice`, `charAt` and `substring` (#2816):
+/// the object's `sliceWide` translates both ends through the same cache, and its cut of a pair's
+/// half is a lone surrogate. Node 22 prints the same.
+const SLICES: &str = r#"function built(piece: string, n: i64): string {
+  let s = "";
+  for (let i: i64 = 0; i < n; i++) {
+    s += piece;
+  }
+  return s;
+}
+
+function codes(s: string): string {
+  const out: string[] = [];
+  for (let i = 0; i < s.length; i++) {
+    out.push(`${s.charCodeAt(i)}`);
+  }
+  return out.join(" ");
+}
+
+function cut(piece: string, n: i64, at: i64): string {
+  const s = built(piece, n);
+  return `${codes(s.slice(at, at + 3))} ${codes(s.charAt(at + 1))} ${s.substring(at, 0).length}`;
+}
+
+function main() {
+  const out: string[] = [];
+  for (let round: i64 = 0; round < 2; round++) {
+    out.push(cut("é日😀a", 100, 250));
+    out.push(cut("😀é日a", 100, 250));
+    out.push(cut("a😀日é", 100, 251));
+  }
+  console.log(out.join("|"));
+}
+"#;
+const SLICES_OUT: &str = "233 26085 55357 26085 250|55357 56832 233 56832 250|55357 56832 26085 56832 251|\
+                          233 26085 55357 26085 250|55357 56832 233 56832 250|55357 56832 26085 56832 251\n";
+
+/// `slice` of non-ASCII text calls the object of positions.velt where the cache holds it, with
+/// the output of the module loaded, in debug and release builds.
+#[test]
+fn slice_calls_the_positions_object() {
+    for mode in [&["run", "--release"][..], &["run"]] {
+        let tmp = test_dir::TestDir::new();
+        let dir = tmp.path();
+        let filled = velt(dir, "s.velt", SLICES, mode, &[FILL]);
+        assert_eq!(text(&filled.stdout), SLICES_OUT, "{mode:?}");
+        let served = velt(dir, "s.velt", SLICES, mode, &[]);
+        let err = text(&served.stderr);
+        assert!(
+            err.contains("std/lang/string/positions: object found"),
+            "{err}"
+        );
+        assert_eq!(text(&served.stdout), SLICES_OUT, "{mode:?}");
+    }
+}
+
 /// WebAssembly links no objects: the build loads the module, whatever the cache holds.
 #[test]
 fn webassembly_loads_the_module() {

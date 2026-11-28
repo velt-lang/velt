@@ -2,6 +2,10 @@
 // text of a range of them, and whether the string is ASCII.
 
 import { velt_rt_str_byte_slice } from "velt/encoding/rt";
+
+/** The piece's unit count, unknown: `velt_rt_str_byte_slice` counts it. */
+const UNCOUNTED: u64 = 0xffffffffffffffff;
+
 import { strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
 
 /**
@@ -33,7 +37,7 @@ export function utf8Substring(s: string, start: usize, end: usize): string {
   if (!charStart(s, start, n) || !charStart(s, end, n)) {
     panic(`RangeError: bytes ${start} to ${end} split a character`);
   }
-  return velt_rt_str_byte_slice(s, start as u64, end as u64);
+  return velt_rt_str_byte_slice(s, start as u64, end as u64, UNCOUNTED);
 }
 
 // Whether byte `i` of `s` (`n` bytes) starts a character, or is its end.

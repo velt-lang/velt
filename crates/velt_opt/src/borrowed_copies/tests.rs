@@ -719,3 +719,21 @@ fn the_translation_of_positions_is_known() {
     ));
     assert!(!translates("_V4scan"));
 }
+
+/// std's `slice` of non-ASCII text (the `string_slice` hook and its noinline part, and their
+/// instances) is a slice to the views mode and never part of the read-only translation: it writes
+/// its result through its out-pointer (#2816). Its object's entry point is the prebuilt symbol.
+#[test]
+fn std_s_slice_is_a_slice_not_a_translation() {
+    use super::{slice_entry, slices, translates};
+    for symbol in [
+        "_V3stdP4langP6stringP9positionsN9sliceWide",
+        "_V3stdP4langP6stringP9positionsN7cutWide",
+        "_V3stdP4langP6stringP9positionsN7cutWide_L2x1",
+    ] {
+        assert!(slices(symbol) && !translates(symbol), "{symbol}");
+    }
+    assert!(!slices("_V3stdP4langP6stringP9positionsN14unitToByteWide"));
+    assert!(!slices("_V3stdP4langP6stringP4trimN9sliceWide"));
+    assert_eq!(slice_entry(), "velt_hook_string_slice");
+}

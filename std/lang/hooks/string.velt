@@ -8,7 +8,7 @@ import {
   strLen,
 } from "velt/lang/intrinsics";
 
-declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64, units: u64): string;
 
 /**
  * The characters of `s` (code points, a surrogate pair as one string, a lone surrogate as one),
@@ -28,7 +28,9 @@ export function stringCodePoints(s: string): string[] {
       continue;
     }
     const len: usize = b < 0xe0 ? 2 : b < 0xf0 ? 3 : 4;
-    out.push(velt_rt_str_byte_slice(s, i as u64, (i + len) as u64));
+    // One code point: two units for four bytes (a pair), else one; the runtime counts nothing.
+    const units: u64 = len == 4 ? 2 : 1;
+    out.push(velt_rt_str_byte_slice(s, i as u64, (i + len) as u64, units));
     i += len;
   }
   return out;

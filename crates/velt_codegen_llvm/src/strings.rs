@@ -181,8 +181,8 @@ mod tests {
         assert!(fast_path("velt_rt_str_hash", &[Ty::Ptr], Ty::U64, false).is_some());
         assert!(fast_path("velt_rt_str_hash", &[Ty::Ptr], Ty::I64, false).is_none());
         // std's `slice` makes one unit of an ASCII string itself (std/prelude/string.velt, #2198).
-        let slice = [Ty::Ptr, Ty::I64, Ty::I64, Ty::Ptr];
-        assert!(fast_path("velt_rt_str_slice", &slice, Ty::Unit, false).is_none());
+        let slice = [Ty::Ptr, Ty::U64, Ty::U64, Ty::U64, Ty::Ptr];
+        assert!(fast_path("velt_rt_str_byte_slice", &slice, Ty::Unit, false).is_none());
         assert!(fast_path(
             "velt_rt_str_concat",
             &[Ty::Ptr, Ty::Ptr, Ty::Ptr],

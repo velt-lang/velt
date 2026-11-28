@@ -5,7 +5,7 @@
 //! layout it was allocated with.
 
 use super::*;
-use crate::str_ops::slice::{char_code_at, velt_rt_str_slice};
+use crate::str_ops::slice::{char_code_at, unit_slice};
 
 /// Does `s` point into the buffer of `parent`'s bytes?
 fn inside(s: &VeltStr, parent: &VeltStr) -> bool {
@@ -13,13 +13,12 @@ fn inside(s: &VeltStr, parent: &VeltStr) -> bool {
     (p..p + n).contains(&(bytes(s).as_ptr() as usize))
 }
 
-/// `s.slice(a, b)` in code units, through the ABI entry generated code calls.
+/// `s.slice(a, b)` in code units (`a`, `b` not negative, clamped), as std's `sliceWide` cuts it
+/// at whole code points: both ends translated, then the ABI entry with the piece's units.
 fn js_slice(s: &VeltStr, a: i64, b: i64) -> VeltStr {
-    let mut out = std::mem::MaybeUninit::<VeltStr>::uninit();
-    unsafe {
-        velt_rt_str_slice(s, a, b, out.as_mut_ptr());
-        out.assume_init()
-    }
+    let n = s.units();
+    let (a, b) = ((a as usize).min(n), (b as usize).min(n));
+    unsafe { unit_slice(s, a, b.max(a)) }
 }
 
 /// UTF-16 of a string, the reference model.

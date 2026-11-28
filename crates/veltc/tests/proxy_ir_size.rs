@@ -40,9 +40,12 @@ const READ: &str = "const p = new Proxy({ a: 1 } as any, {});\nconsole.log(p.a a
 /// numbers (#3154). A proxy's key text needs a float's text (`p[1.5]` reads the key `"1.5"`),
 /// and std's shortest printer, about 5,200 lines, is that now. A real build links it prebuilt
 /// (velt/lang/hooks/number_shortest, from the build cache or the toolchain), but `--emit llvm`
-/// compiles it in. A real need can raise the budget; a new dependency of `Proxy` on the array
-/// algorithms or on `sort` can't get past it.
-const READ_BUDGET: usize = 51_000;
+/// compiles it in. 57,117 since `charAt` and `slice` of non-ASCII text are std's (#2816):
+/// `Reflect.get`'s element read of an `any` target may index a string, and the position
+/// translation (velt/lang/string/positions, about 5,100 lines) is prebuilt the same way. A real
+/// need can raise the budget; a new dependency of `Proxy` on the array algorithms or on `sort`
+/// can't get past it.
+const READ_BUDGET: usize = 58_000;
 
 #[test]
 fn one_proxy_stays_within_its_budget() {

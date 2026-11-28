@@ -7,8 +7,8 @@
 //! bytes and translates positions at entry and exit (`VeltStr::unit_to_byte`, `byte_to_unit`:
 //! breadcrumbs for long heap strings, a scan otherwise). The places where a code unit is half of
 //! a pair stored as one 4-byte sequence (slicing between the halves, a needle that starts with a
-//! lone low surrogate or ends with a lone high one, `split("")`, `replaceAll("", x)`) go through
-//! `units.rs`.
+//! lone low surrogate or ends with a lone high one, `split("")`, `replaceAll("", x)`) are std's
+//! (std/lang/string/positions.velt, half_pos.velt, #2198, #2816).
 //!
 //! A string may hold lone surrogates (#377): [`text`] gives a `&str` only for well-formed text.
 //! Searching, slicing, splitting, replacing, padding and repeating work on the WTF-8 bytes
@@ -24,7 +24,6 @@ pub mod case;
 pub mod number;
 pub mod search;
 pub mod slice;
-mod units;
 
 use crate::str::{VeltStr, Wtf8};
 use std::borrow::Cow;
@@ -73,14 +72,4 @@ pub fn is_js_whitespace(c: char) -> bool {
                 | '\u{3000}'
                 | '\u{feff}'
         )
-}
-
-/// JS relative index (`slice`): negative counts from the end; result clamped to `0..=len` (a
-/// length in code units, or in bytes for an ASCII string).
-fn relative_index(i: i64, len: usize) -> usize {
-    if i < 0 {
-        (len as i64).saturating_add(i).max(0) as usize
-    } else {
-        (i as u64).min(len as u64) as usize
-    }
 }

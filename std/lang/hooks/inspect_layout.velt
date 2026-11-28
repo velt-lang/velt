@@ -10,7 +10,10 @@ declare function velt_rt_strbuf_adopt(part: string, head: string, cap: u64, out:
 declare function velt_rt_strbuf_drop(buf: string);
 declare function velt_rt_strbuf_finish(buf: string, out: string);
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
-declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64, units: u64): string;
+
+/** The piece's unit count, unknown: `velt_rt_str_byte_slice` counts it. */
+const UNCOUNTED: u64 = 0xffffffffffffffff;
 
 /** Lays out the value the builder `buf` holds from byte `start` on, as Node breaks it. */
 export function inspectLayout(buf: string, start: u64): void {
@@ -37,7 +40,7 @@ function replaceTail(buf: string, start: u64, text: string): void {
   }
   let whole: string = "";
   velt_rt_strbuf_finish(buf, whole);
-  const head = velt_rt_str_byte_slice(whole, 0, start);
+  const head = velt_rt_str_byte_slice(whole, 0, start, UNCOUNTED);
   velt_rt_strbuf_push_str(buf, head);
   velt_rt_strbuf_push_str(buf, text);
 }

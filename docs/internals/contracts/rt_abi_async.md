@@ -1016,8 +1016,7 @@ runtime keeps the functions below.
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_str_slice` | `(const VeltStr* s, i64 start, i64 end, VeltStr* out)` | JS `slice`: negative = from end, clamped, empty if `start >= end`; omitted `end` = `i64::MAX` |
-| `velt_rt_str_byte_slice` | `(const VeltStr* s, u64 start, u64 end, VeltStr* out)` | bytes `start..end` of the WTF-8 (velt/encoding `utf8Substring`); the caller checks `start <= end <= len` and code point boundaries |
+| `velt_rt_str_byte_slice` | `(const VeltStr* s, u64 start, u64 end, u64 units, VeltStr* out)` | **[non-additive, #2816]** bytes `start..end` of the WTF-8 (velt/encoding `utf8Substring`, `trim`, `split`, and `slice` / `substring` / `charAt` / `at`, whose positions std translates); `units` is the piece's UTF-16 length, or `u64::MAX` when the caller doesn't know it (the runtime counts); the caller checks `start <= end <= len` and code point boundaries (`slice` itself is std's, the runtime's JS slice is gone) |
 | `velt_rt_str_eq` | `(const VeltStr* a, const VeltStr* b) -> u8` | `==` fast path: length check + one memcmp |
 | `velt_rt_str_join` | `(const VeltStrArray* parts, const VeltStr* sep, VeltStr* out)` | `parts.join(sep)`: sums the pieces' lengths and unit counts, then writes the result once (inline, or a heap buffer of exactly its size) |
 | `velt_rt_str_is_well_formed` | `(const VeltStr* s) -> u8` | 1 when `s` has no lone surrogates (std's `encodeURIComponent`) |

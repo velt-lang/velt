@@ -69,6 +69,10 @@ macro_rules! with_string_hooks {
             string_char_code_at => lang_string_positions, "charCodeAtWide", sig((&string, i64) -> i64),
                 lowered, constructs(CharCode), replaces("velt_rt_str_char_code_at"),
                 bench("string_methods"), prebuilt;
+            /// `s.slice(start, end)` of a string that is not ASCII (the prelude's `sliceOf` and
+            /// `charAt` past their inline ASCII paths; `substring` and `at` through them).
+            string_slice => lang_string_positions, "sliceWide", sig((&string, i64, i64) -> string),
+                replaces("velt_rt_str_slice"), bench("string_methods"), prebuilt;
 
             // velt/lang/bytes/range_text: a byte range as a string (#2196), which the prelude's
             // `utf8Slice` calls by role, so a program loads the decoder only when live code calls it.

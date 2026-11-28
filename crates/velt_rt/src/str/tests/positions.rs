@@ -227,7 +227,7 @@ fn sequential_loops_over_static_strings_stay_linear() {
     // `slice(i, i + 1)`, and the same loop backward.
     let n = scanned(&mut || {
         for u in 0..units {
-            let (a, b) = unsafe { st.unit_range_to_bytes(u, u + 1) };
+            let (a, b) = unsafe { (st.unit_to_byte(u), st.unit_to_byte(u + 1)) };
             assert_eq!((a, b), (want[u], want[u + 1]), "unit {u}");
         }
         for u in (0..units).rev() {

@@ -84,6 +84,9 @@ pub const DELETED: &[&str] = &[
     // #2816: `charCodeAt` past an ASCII string (the `string_char_code_at` hook,
     // std/lang/string/positions.velt).
     "velt_rt_str_char_code_at",
+    // #2816: `slice`, `substring`, `charAt` and `at` past an ASCII string (the `string_slice`
+    // hook, std/lang/string/positions.velt).
+    "velt_rt_str_slice",
     // #2196: `**` on floats (std/lang/math/pow, #1676).
     "velt_rt_pow_f64",
     // #2196: `**` on integers (std/lang/hooks/pow_int).

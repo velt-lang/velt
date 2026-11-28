@@ -12,6 +12,7 @@ generated with the same LCG in both, so runs are deterministic; each prints one 
 |---|---|
 | `char_code_at` | `for (let i = 0; i < s.length; i++) s.charCodeAt(i)`, twice over each of three 2M-character texts: Latin with ~5% accented letters, CJK, and emoji-heavy (one character in three an emoji, including `❤️` and `👍🏽`) |
 | `for_of` | `for (const c of s)` (the compiler's loop over the characters) and a walk of the same string as an `Iterable<string>` (the string iterator), over each of three 400k-character texts like `char_code_at`'s |
+| `slice` | `charAt` of every unit, `at` from the end, `slice(i, i + 5)` every third unit, `substring(i + 300, i)` every 97th, and a parser consuming 100k units from the front (`rest = rest.slice(7)`), over each of three 400k-character texts like `for_of`'s |
 | `sort` | `sort()` without a comparator on 200k words of 2–8 characters from ASCII, accented Latin, CJK, Hangul, emoji, `ﬁ` and `€` |
 | `csv` | 100k lines with non-ASCII fields: `join("\n")`, `split("\n")`, `split(",")` per line, re-joined with `";"` and `"\n"` |
 | `json` | `JSON.stringify` and `JSON.parse<Item[]>` (Node: `JSON.parse`) of 50k objects whose strings hold accents, CJK and emoji, 3 rounds |

@@ -236,12 +236,28 @@ fn check_one(rng: &mut Rng, alphabets: &[Alphabet]) -> Result<(), String> {
         match rng.below(11) {
             0 => diff(format!("{}.length", show(&s)), rt_length(rs), s.len()),
             1 => {
+                // A piece cut at whole code points with its unit count, as std's `sliceWide`
+                // cuts one (std/lang/string/positions.velt): the model's slice, no count.
                 let (a, b) = (gen_pos(rng, s.len()), gen_pos(rng, s.len()));
-                let got = out_str(|o| velt_rt_str_slice(rs, a, b, o));
+                let clamp = |i: i64| i.clamp(0, s.len() as i64) as usize;
+                let (ua, ub) = (clamp(a), clamp(b).max(clamp(a)));
+                let (pa, pb) = (rs.unit_to_byte(ua), rs.unit_to_byte(ub));
+                if pa.low_half || pb.low_half {
+                    return Ok(());
+                }
+                let (piece, units) = {
+                    let mut out = MaybeUninit::<VeltStr>::uninit();
+                    let (from, to, n) = (pa.byte as u64, pb.byte as u64, (ub - ua) as u64);
+                    velt_rt_str_byte_slice(rs, from, to, n, out.as_mut_ptr());
+                    let mut t = out.assume_init();
+                    let got = (wtf8_decode(t.as_bytes()), t.units());
+                    velt_rt_str_drop(&mut t);
+                    got
+                };
                 diff(
-                    format!("{}.slice({a}, {b})", show(&s)),
-                    got,
-                    model::slice(&s, a, b),
+                    format!("{}.slice({ua}, {ub})", show(&s)),
+                    (piece, units),
+                    (model::slice(&s, ua as i64, ub as i64), ub - ua),
                 )
             }
             2 => {
