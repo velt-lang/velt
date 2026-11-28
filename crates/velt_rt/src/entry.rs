@@ -58,19 +58,18 @@ pub fn run_main(velt_main: extern "C" fn() -> i32) -> i32 {
 
 /// What happens once `main` returned `code`: the program's end (returns its exit code).
 fn finish(code: i32) -> i32 {
-    // Servers, timers and tasks that can still make progress keep a program alive after `main`
-    // returns, but not after it failed (an uncaught error, or an exit code): like Node, which
-    // exits on an uncaught exception whatever is still listening.
+    // What can still make progress (servers, timers, tasks) kept the program alive before
+    // `velt_main` returned: the executor in Velt ends it (std/lang/hooks/sched_end.velt), as
+    // Node's event loop does. After a failure (an uncaught error, or an exit code) nothing waits.
     if code == 0 {
-        crate::task::runtime::wait_for_the_end();
-        crate::str::stats::settle(crate::task::runtime::tasks_may_run);
+        crate::str::stats::settle(tasks_may_run);
         // The leak counters see what the runtime keeps per process as freed (std dropped module
         // state and function properties already: module_blocks.velt, fn_props_env.velt).
         // Otherwise it is kept to the end, as in Node, where nothing runs at exit.
         if crate::str::stats::counting() {
             statics_drop_at_exit();
         }
-        crate::str::stats::freeze(crate::task::runtime::tasks_may_run);
+        crate::str::stats::freeze(tasks_may_run);
     }
     crate::io::flush_stdout();
     crate::str::stats::report();
@@ -78,6 +77,13 @@ fn finish(code: i32) -> i32 {
     #[cfg(all(debug_assertions, not(velt_rt_host)))]
     crate::debug_alloc::check_quarantine(&crate::GLOBAL_QUARANTINE);
     code
+}
+
+/// Whether a block may still be freed (for the leak counters): a Rust waker is giving back its
+/// reference to a task of the executor in Velt, which may be the last (a reactor thread's late
+/// wake of a task that is done).
+fn tasks_may_run() -> bool {
+    crate::task::waker::giving_back()
 }
 
 /// The program's function releasing what its static atomics hold (`velt_rt_statics`).

@@ -15,7 +15,6 @@
 pub mod identity;
 pub mod latch;
 pub mod leaf;
-pub(crate) mod quiet;
 pub mod runtime;
 pub mod shared;
 pub mod waker;
