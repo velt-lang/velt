@@ -64,7 +64,7 @@
 //! load it moves to where the load may not run, and the next load of the chain then cannot
 //! move either; and an object field may be null (the zero fill) where LLVM would assume not.
 
-mod elements;
+pub(crate) mod elements;
 
 use std::collections::HashMap;
 
