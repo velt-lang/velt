@@ -1,0 +1,74 @@
+// IPv6 hosts are serialized canonically, as the WHATWG URL standard and Node write them (#3965):
+// lower-case hex without leading zeros, the first longest run of two or more zero pieces as
+// `::`, an embedded IPv4 address as two hex pieces; zone IDs and malformed literals are invalid.
+// The setters and a non-special scheme parse the same way. The Node twin is url_ipv6_canonical.mjs.
+import { URL } from "velt/net/url";
+
+const inputs: string[] = [
+  "http://[0:0::1]/",
+  "http://[::1]/",
+  "http://[::]/",
+  "http://[0:0:0:0:0:0:0:0]/",
+  "http://[1::]/",
+  "http://[::1:0:0:0]/",
+  "http://[1:0:0:2:0:0:0:3]/",
+  "http://[1:0:0:2:0:0:3:4]/",
+  "http://[1:0:2:0:3:0:4:5]/",
+  "http://[1:0:0:0:2:0:0:0]/",
+  "http://[0:0:1:0:0:0:0:1]/",
+  "http://[2001:0DB8:0000:0000:0000:FF00:0042:8329]/",
+  "http://[2001:db8::0:1]:8080/p?q#f",
+  "http://[::ffff:127.0.0.1]/",
+  "http://[::ffff:7f00:1]/",
+  "http://[::127.0.0.1]/",
+  "http://[0:0:0:0:0:ffff:1.2.3.4]/",
+  "http://[1:2:3:4:5:6:1.2.3.4]/",
+  "http://[::1.2.3.4]:443/",
+  "https://[::1]:443/",
+  "https://[ABCD:EF01::]:8443/",
+  "http://[0001:0002:0003:0004:0005:0006:0007:0008]/",
+  "foo://[0:0::1]/x",
+  "ws://[0::0]:80/",
+  "http://[1:2:3:4:5:6:7::]/",
+  "http://[::2:3:4:5:6:7:8]/",
+  "http://[::1%25eth0]/",
+  "http://[fe80::1%eth0]/",
+  "http://[::1::]/",
+  "http://[1:::2]/",
+  "http://[:1]/",
+  "http://[1:]/",
+  "http://[1:2:3:4:5:6:7:8:9]/",
+  "http://[1:2:3:4:5:6:7]/",
+  "http://[12345::]/",
+  "http://[g::]/",
+  "http://[::1.2.3]/",
+  "http://[::1.2.3.4.5]/",
+  "http://[::1.2.3.256]/",
+  "http://[::01.2.3.4]/",
+  "http://[::1.2.3.]/",
+  "http://[1:2:3:4:5:6:7:1.2.3.4]/",
+  "http://[::ffff:1.2.3.4x]/",
+  "http://[]/",
+  "http://[:]/",
+  "http://[::]:65536/",
+  "http://[::1]x/",
+  "http://[1.2.3.4]/",
+];
+
+for (const s of inputs) {
+  const u = URL.parse(s);
+  if (u == null) {
+    console.log(`${s} -> invalid`);
+  } else {
+    console.log(`${s} -> ${u.href} | ${u.host} | ${u.hostname} | ${u.port}`);
+  }
+}
+
+const v = new URL("http://example.com:81/a");
+v.hostname = "[0:0:0::ffff:10.0.0.1]";
+console.log(v.href);
+v.host = "[1:0:0:2::3]:82";
+console.log(v.href);
+v.hostname = "[::1%eth0]";
+console.log(v.href);
+console.log(new URL("http://[0:0::1]:8080/").origin);

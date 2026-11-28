@@ -1,0 +1,204 @@
+// velt/net/url (internal): the WHATWG IPv6 parser and serializer (url.spec.whatwg.org §3.5,
+// "IPv6 parser" and "IPv6 serializer") for a bracketed host. The address is parsed into its eight
+// 16-bit pieces, so every spelling of one address serializes the same: lower-case hex without
+// leading zeros, the first longest run of two or more zero pieces compressed to `::`, and an
+// embedded IPv4 address (`::ffff:127.0.0.1`) written as two hex pieces (`::ffff:7f00:1`), as
+// Node's `URL` does. A zone ID (`%eth0`) or any other character is invalid.
+
+import { arrayWithCapacity } from "velt/lang/intrinsics";
+import { bytesOf, strictUtf8 } from "velt/net/url/encode";
+
+/** The serialized host for the bracketed literal `input` (`[...]`), or null if it is invalid. */
+export function parseIpv6(input: string): string | null {
+  // Its bytes: anything but ASCII is invalid.
+  const b = bytesOf(input);
+  const end = (b.length as i64) - 1;
+  if (end < 1 || b[end as usize] != 93) {
+    return null;
+  }
+  const pieces: i64[] = [0, 0, 0, 0, 0, 0, 0, 0];
+  let piece: i64 = 0;
+  let compress: i64 = -1;
+  // `b[p]`, the code point the spec's pointer is at; `end` (the `]`) is its EOF.
+  let p: i64 = 1;
+  if (p < end && (b[p as usize] as i64) == 58) {
+    if (p + 1 >= end || (b[(p + 1) as usize] as i64) != 58) {
+      return null;
+    }
+    p += 2;
+    piece++;
+    compress = piece;
+  }
+  while (p < end) {
+    if (piece == 8) {
+      return null;
+    }
+    if ((b[p as usize] as i64) == 58) {
+      if (compress != -1) {
+        return null;
+      }
+      p++;
+      piece++;
+      compress = piece;
+      continue;
+    }
+    let value: i64 = 0;
+    let length: i64 = 0;
+    while (length < 4 && p < end) {
+      const h = hexValue(b[p as usize] as i64);
+      if (h < 0) {
+        break;
+      }
+      value = value * 16 + h;
+      p++;
+      length++;
+    }
+    if (p < end && (b[p as usize] as i64) == 46) {
+      // An IPv4 address in the last two pieces.
+      if (length == 0 || piece > 6) {
+        return null;
+      }
+      p -= length;
+      const next = ipv4Pieces(b, p, end, pieces, piece);
+      if (next < 0) {
+        return null;
+      }
+      piece = next;
+      p = end;
+      break;
+    }
+    if (p < end && (b[p as usize] as i64) == 58) {
+      p++;
+      if (p >= end) {
+        return null;
+      }
+    } else if (p < end) {
+      return null;
+    }
+    pieces[piece] = value;
+    piece++;
+  }
+  if (compress != -1) {
+    // The pieces after the `::` move to the end; the ones they leave are zero.
+    let swaps = piece - compress;
+    let i: i64 = 7;
+    while (i != 0 && swaps > 0) {
+      const j = compress + swaps - 1;
+      const t = pieces[i];
+      pieces[i] = pieces[j];
+      pieces[j] = t;
+      i--;
+      swaps--;
+    }
+  } else if (piece != 8) {
+    return null;
+  }
+  return serialize(pieces);
+}
+
+// The dotted IPv4 address `b[from..end]` into `pieces[piece]` and `pieces[piece + 1]`: the
+// index after them, or -1 if it is not four decimal numbers of at most 255 without leading zeros.
+function ipv4Pieces(b: u8[], from: i64, end: i64, pieces: i64[], at: i64): i64 {
+  let p = from;
+  let piece = at;
+  let seen: i64 = 0;
+  while (p < end) {
+    if (seen > 0) {
+      if ((b[p as usize] as i64) != 46 || seen >= 4) {
+        return -1;
+      }
+      p++;
+    }
+    if (p >= end || !isDigit((b[p as usize] as i64))) {
+      return -1;
+    }
+    let n: i64 = -1;
+    while (p < end && isDigit((b[p as usize] as i64))) {
+      const d = (b[p as usize] as i64) - 48;
+      if (n == 0) {
+        return -1;
+      }
+      n = n < 0 ? d : n * 10 + d;
+      if (n > 255) {
+        return -1;
+      }
+      p++;
+    }
+    pieces[piece] = pieces[piece] * 256 + n;
+    seen++;
+    if (seen == 2 || seen == 4) {
+      piece++;
+    }
+  }
+  return seen == 4 ? piece : -1;
+}
+
+// `[a:b:...]` with the first longest run of two or more zero pieces as `::`, written into one
+// buffer of bytes.
+function serialize(pieces: i64[]): string {
+  let compress: i64 = -1;
+  let best: i64 = 1;
+  let run: i64 = 0;
+  for (let i: i64 = 0; i < 8; i++) {
+    if (pieces[i] != 0) {
+      run = 0;
+    } else {
+      run++;
+      if (run > best) {
+        best = run;
+        compress = i + 1 - run;
+      }
+    }
+  }
+  // `[`, eight pieces of four digits, seven colons and `]`.
+  const out: u8[] = arrayWithCapacity(41);
+  out.push(91);
+  let k: i64 = 0;
+  while (k < 8) {
+    if (k == compress) {
+      out.push(58);
+      if (k == 0) {
+        out.push(58);
+      }
+      k += best;
+      continue;
+    }
+    pushHex(out, pieces[k]);
+    if (k != 7) {
+      out.push(58);
+    }
+    k++;
+  }
+  out.push(93);
+  return strictUtf8(out) ?? "";
+}
+
+// `v` (below 0x10000) in lower-case hex without leading zeros.
+function pushHex(out: u8[], v: i64) {
+  let shift: i64 = 12;
+  while (shift > 0 && (v >> shift) == 0) {
+    shift -= 4;
+  }
+  while (shift >= 0) {
+    const d = (v >> shift) & 15;
+    out.push((d < 10 ? 48 + d : 87 + d) as u8);
+    shift -= 4;
+  }
+}
+
+function isDigit(c: i64): bool {
+  return c >= 48 && c <= 57;
+}
+
+function hexValue(c: i64): i64 {
+  if (c >= 48 && c <= 57) {
+    return c - 48;
+  }
+  if (c >= 97 && c <= 102) {
+    return c - 87;
+  }
+  if (c >= 65 && c <= 70) {
+    return c - 55;
+  }
+  return -1;
+}
