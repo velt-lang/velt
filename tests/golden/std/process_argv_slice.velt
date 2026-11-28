@@ -1,0 +1,8 @@
+// A program that reads `process.argv` and slices a string: the arguments' reader (std/process/
+// args_read.velt) and `slice` declare the same runtime function, with the same signature.
+function main() {
+  const a = process.argv[2] ?? "xyz";
+  console.log(a.slice(1));
+  const wide = "日本😀語";
+  console.log(wide.slice(1, 4), wide.length, process.argv.slice(2).length);
+}

@@ -20,7 +20,7 @@ import { executablePath, osArgs } from "#args-sys";
 import { passedVar } from "#env-sys";
 import { noInline, strByteAt, strByteLen } from "velt/lang/intrinsics";
 
-declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64): string;
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64, units: u64): string;
 
 /**
  * Every command-line argument, starting with the program path (like C's `argv`): as velt passed
@@ -91,8 +91,23 @@ export function decodeArgv(text: string): string[] | undefined {
     if (end < len && (strByteAt(text, end) & 0xc0) === 0x80) {
       return undefined;
     }
-    out.push(velt_rt_str_byte_slice(text, i + 1, end));
+    out.push(velt_rt_str_byte_slice(text, i + 1, end, utf16Units(text, i + 1, end)));
     i = end;
   }
   return out;
+}
+
+/**
+ * The UTF-16 length of bytes `start..end` of `s`, whole characters: one unit for each character
+ * but those of four bytes, two for those (a surrogate pair).
+ */
+function utf16Units(s: string, start: u64, end: u64): u64 {
+  let units: u64 = 0;
+  for (let j = start; j < end; j++) {
+    const b = strByteAt(s, j);
+    if ((b & 0xc0) !== 0x80) {
+      units += b >= 0xf0 ? 2 : 1;
+    }
+  }
+  return units;
 }
