@@ -1,0 +1,113 @@
+// velt/process (internal): the command-line arguments as read (`readArgv`, and Node's
+// `process.argv`, `readNodeArgv`), which std/lang/hooks/process_argv.velt reads once per process
+// and keeps (`argv`, `args` and `process.argv` reach them through std/lang/hooks/process.velt
+// `argList`).
+//
+// They are the OS's (`osArgs` of `#args-sys`' variant: std/process/args_darwin.velt,
+// args_linux.velt, args_win32.velt, args_wasi.velt; none in the browser), except when velt runs
+// the program inside its own process (`velt dev`, the source-generator host): there velt passes
+// them in `VELT_ARGV` (std/process/env_hidden.velt), each argument as its length in UTF-8 bytes,
+// a colon and its text (`5:hello3:a b`). `velt run` and `velt test` pass the script in
+// `VELT_SCRIPT` (Node's `process.argv[1]`). The program's own reads of its environment leave
+// both out.
+//
+// Nothing here keeps state: the readers may be compiled into a prebuilt object (velt_common
+// `std_hooks/prebuilt.rs`), which must share none with the program. So they read velt's
+// variables without the environment's lock: they run once, and std's changes of the environment
+// wait for that (std/process/env_posix.velt `argsReady`).
+
+import { executablePath, osArgs } from "#args-sys";
+import { passedVar } from "#env-sys";
+import { noInline, strByteAt, strByteLen } from "velt/lang/intrinsics";
+
+declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64, units: u64): string;
+
+/**
+ * Every command-line argument, starting with the program path (like C's `argv`): as velt passed
+ * them (`VELT_ARGV`), else the OS's. Read once (std/lang/hooks/process_argv.velt `ready`).
+ */
+@noInline
+export function readArgv(): string[] {
+  const passed = passedVar(true);
+  if (passed !== undefined) {
+    const decoded = decodeArgv(passed);
+    if (decoded !== undefined) {
+      return decoded;
+    }
+  }
+  return osArgs();
+}
+
+/**
+ * Node's `process.argv`: `[runtime, script, ...args]`. The runtime is the running executable
+ * (the program, or `velt` under `velt dev`); the script is the source file under `velt run`,
+ * `velt test` and `velt dev`, else the executable again (as for a Node single-executable
+ * application). In WebAssembly both are the module's path (WASI) or empty (the browser). Read
+ * once, as `readArgv`.
+ */
+@noInline
+export function readNodeArgv(): string[] {
+  const all = readArgv();
+  let exe = executablePath();
+  if (exe.length === 0 && all.length > 0) {
+    exe = all[0];
+  }
+  const script = passedVar(false);
+  const out: string[] = [exe, script ?? exe];
+  for (let i: usize = 1; i < all.length; i++) {
+    out.push(all[i]);
+  }
+  return out;
+}
+
+/**
+ * `VELT_ARGV`'s arguments: each its length in UTF-8 bytes, ":", its text. Undefined when the text
+ * isn't that (the OS's arguments are used then), a length that ends inside a character included.
+ */
+export function decodeArgv(text: string): string[] | undefined {
+  const out: string[] = [];
+  const len = strByteLen(text) as u64;
+  let i: u64 = 0;
+  while (i < len) {
+    let n: u64 = 0;
+    let digits: u64 = 0;
+    while (i < len) {
+      const c = strByteAt(text, i);
+      if (c < 48 || c > 57) {
+        break;
+      }
+      n = n * 10 + ((c - 48) as u64);
+      digits++;
+      i++;
+      if (n > len) {
+        return undefined;
+      }
+    }
+    if (digits === 0 || i >= len || strByteAt(text, i) !== 58 || i + 1 + n > len) {
+      return undefined;
+    }
+    const end = i + 1 + n;
+    // The argument starts after an ASCII ":", so only its end can fall inside a character.
+    if (end < len && (strByteAt(text, end) & 0xc0) === 0x80) {
+      return undefined;
+    }
+    out.push(velt_rt_str_byte_slice(text, i + 1, end, utf16Units(text, i + 1, end)));
+    i = end;
+  }
+  return out;
+}
+
+/**
+ * The UTF-16 length of bytes `start..end` of `s`, whole characters: one unit for each character
+ * but those of four bytes, two for those (a surrogate pair).
+ */
+function utf16Units(s: string, start: u64, end: u64): u64 {
+  let units: u64 = 0;
+  for (let j = start; j < end; j++) {
+    const b = strByteAt(s, j);
+    if ((b & 0xc0) !== 0x80) {
+      units += b >= 0xf0 ? 2 : 1;
+    }
+  }
+  return units;
+}

@@ -11,14 +11,12 @@
 //! executable carries a small generated `main` that passes `velt_main` to [`velt_rt_start`]). The *non-test* `velt_rt` rlib still
 //! contains `main`, so Rust integration tests must not link it: the ABI tests are compiled into
 //! the unit-test binary instead (see `lib.rs`), and tests/link_check.rs uses the staticlib only.
-//! Command-line arguments come from `argv` on Unix (musl gives Rust's `std::env::args` nothing)
-//! and from `std::env::args_os` (wide APIs) on Windows; the JIT host sets them itself.
+//! The command-line arguments are std's (std/process/args_read.velt reads them from the OS): `main`
+//! and [`velt_rt_start`] take `argc`/`argv` and leave them.
 
 /// Initialize runtime state. Called by `main` before `velt_main`.
 pub fn init() {
     crate::panic::install_hook();
-    crate::process::init_clock();
-    crate::process::init_script();
     crate::io::init_stdout();
     ignore_sigpipe();
     #[cfg(all(debug_assertions, not(velt_rt_host)))]
@@ -144,7 +142,7 @@ pub unsafe extern "C" fn main(
     velt_rt_start(argc, argv, program)
 }
 
-/// Run the program whose entry point is `entry` with the process arguments `argc`/`argv`: what
+/// Run the program whose entry point is `entry` (`argc`/`argv` are not used): what
 /// `main` does. Exported for executables linked against the shared runtime, whose own `main`
 /// (generated, see `velt_codegen_cl::emit_entry_object`) calls it with `velt_main`.
 ///
@@ -158,26 +156,7 @@ pub unsafe extern "C" fn velt_rt_start(
 ) -> std::ffi::c_int {
     #[cfg(feature = "mimalloc")]
     crate::mem::configure();
-    #[cfg(unix)]
-    // SAFETY: the caller passes `argc` valid NUL-terminated strings in `argv`.
-    crate::process::set_args(args_from_c(argc, argv));
-    #[cfg(not(unix))]
+    // std reads the arguments from the OS itself (std/process/args_read.velt).
     let _ = (argc, argv);
     run_main(entry)
-}
-
-/// The arguments `main` received. On Unix, `std::env::args` only works where the C library hands
-/// `argc`/`argv` to start-up hooks (glibc does, musl does not: a Velt program on Alpine saw no
-/// arguments at all), because Rust's own `main` is not the one that runs. Windows reads them
-/// from the OS (wide APIs) instead, through `std::env::args_os`.
-///
-/// # Safety
-/// `argv` must hold `argc` valid NUL-terminated strings.
-#[cfg(unix)]
-unsafe fn args_from_c(argc: std::ffi::c_int, argv: *const *const std::ffi::c_char) -> Vec<String> {
-    (0..argc.max(0) as usize)
-        .map(|i| *argv.add(i))
-        .filter(|p| !p.is_null())
-        .map(|p| std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned())
-        .collect()
 }

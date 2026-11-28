@@ -1,11 +1,12 @@
 //! The string methods' rows of the hook table (std/lang/string/, #2198), and a byte range as a
-//! string and a number stored into an integer array (#2196, #3182): the searches, `trim`,
-//! `repeat`, `padStart` / `padEnd`, `split`, `replace` / `replaceAll` and the case mapping, which
-//! the prelude's methods call by role (`hookCall`), so a program loads a method's module only
-//! when live code calls it; `replace` with a function, which sema calls; and `Date`'s zone name,
-//! a string the prelude's `toTimeString` gets by role the same way. Those that take and return only strings and numbers are `prebuilt`. Kept
-//! apart from the rest of the table ([`super`]), which [`with_string_hooks`] gives to
-//! `with_inspect_layout_hooks!` with these rows after it.
+//! string, the command-line arguments and a number stored into an integer array (#2196, #3182):
+//! the searches, `trim`, `repeat`, `padStart` / `padEnd`, `split`, `replace` / `replaceAll` and
+//! the case mapping, which the prelude's methods call by role (`hookCall`), so a program loads a
+//! method's module only when live code calls it; `replace` with a function, which sema calls; and
+//! `Date`'s zone name, a string the prelude's `toTimeString` gets by role the same way. Those that
+//! take and return only strings and numbers are `prebuilt`. Kept apart from the rest of the table
+//! ([`super`]), which [`with_string_hooks`] gives to `with_inspect_layout_hooks!` with these rows
+//! after it.
 
 /// `with_inspect_layout_hooks!` over the rows given, then the string methods'.
 macro_rules! with_string_hooks {
@@ -79,6 +80,19 @@ macro_rules! with_string_hooks {
             /// `b.utf8Slice(start, end)` with its positions clamped (`from <= to <= b.length`).
             bytes_range_text => lang_bytes_range_text, "rangeText", sig((&[u8], usize, usize) -> string),
                 replaces("velt_rt_bytes_range_to_str_lossy"), bench("bytes_utf8");
+
+            // velt/lang/hooks/process_argv: the command-line arguments (#2196), which `argList`
+            // (`process.argv`, velt/process's `argv`) reads by role, one at a time, so a program
+            // loads the readers only when live code reads them, and calls their prebuilt object
+            // where the build cache holds it.
+            /// The number of arguments: of `process.argv`'s `[runtime, script, ...args]` (1), else
+            /// of `argv()`'s list (0).
+            process_arg_count => lang_hooks_process_argv, "argCount", sig((u32) -> u64), prebuilt;
+            /// Argument `i` of the list `process_arg_count` counts; "" past the last.
+            process_arg_at => lang_hooks_process_argv, "argAt", sig((u32, u64) -> string), prebuilt;
+            /// Before std changes the environment: the first read of the arguments, which takes
+            /// velt's variables from it without its lock, done.
+            process_args_ready => lang_hooks_process_argv, "argsReady", sig(() -> void), prebuilt;
 
             // velt/lang/hooks/int_store: a `number` stored into an element of an integer array,
             // converted as a typed array stores it (#3182; `velt_sema` `element_store.rs` calls

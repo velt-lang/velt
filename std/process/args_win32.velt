@@ -1,0 +1,54 @@
+// velt/process (internal): the arguments on Windows (`#args-sys`' win32 variant,
+// std/imports.velt): the process's command line (`GetCommandLineW`) split by the C runtime's rules
+// (std/process/args_cmdline.velt), and the executable's path (`GetModuleFileNameW`, as it is:
+// resolving it would make it a `\\?\` path).
+
+import { Ptr } from "velt/ffi/ptr";
+import { wideText } from "velt/ffi/wide";
+import { addressLoad, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+import { splitCommandLine } from "./args_cmdline";
+
+export { keepArgs, keptArg, keptCount } from "./args_keep";
+
+declare c("c") function GetCommandLineW(): Ptr<u16> | null;
+declare c("c") function GetModuleFileNameW(module: Ptr<void> | null, buf: u16[], size: u32): u32;
+
+/** Every argument the process was started with, program path first. */
+export function osArgs(): string[] {
+  const units: u16[] = [];
+  // SAFETY: no precondition; the command line lives as long as the process.
+  const line = unsafe { GetCommandLineW() };
+  if (line !== null) {
+    let at = Ptr.addressOf(line);
+    while (true) {
+      // SAFETY: inside the NUL-terminated command line.
+      const u = unsafe { addressLoad<u16>(at) };
+      if (u === 0) {
+        break;
+      }
+      units.push(u);
+      at += 2;
+    }
+  }
+  return splitCommandLine(units, executablePath);
+}
+
+/** The running executable's path (Node's `process.execPath`). */
+export function executablePath(): string {
+  let room: u32 = 260;
+  while (true) {
+    const buf = arrayWithCapacity<u16>(room as usize);
+    arraySetLen(buf, room as usize);
+    // SAFETY: `buf` holds `room` code units; the result is truncated (and `room` returned) when
+    // the path is longer.
+    const n = unsafe { GetModuleFileNameW(null, buf, room) };
+    if (n === 0) {
+      return "";
+    }
+    if (n < room) {
+      arraySetLen(buf, n as usize);
+      return wideText(buf);
+    }
+    room *= 2;
+  }
+}

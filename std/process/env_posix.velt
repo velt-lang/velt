@@ -5,11 +5,13 @@
 //
 // The C library's `getenv` takes no lock, and `setenv`/`unsetenv` may move the table it reads, so
 // velt/process takes one lock around every use of the environment: a variable read on one thread
-// while another sets one reads the old or the new table, never a freed one. (C code that reads
+// while another sets one reads the old or the new table, never a freed one. The one read without
+// it, of velt's variables when the program first reads its arguments (`getEnvOnce`), comes before
+// every change: `setEnv` and `removeEnv` wait for it (`argsReady`). (C code that reads
 // the environment outside velt/process, `localtime_r` reading `TZ` say, isn't covered, as for any
 // C library.)
 
-import { ptrFromAddress } from "velt/lang/intrinsics";
+import { hookCall, ptrFromAddress } from "velt/lang/intrinsics";
 import { Ptr } from "velt/ffi/ptr";
 import { readCString } from "velt/ffi/read";
 import { strBytesOf } from "velt/ffi/str_bytes";
@@ -63,6 +65,16 @@ function unlock() {
   LOCK.store(0, "release");
 }
 
+/**
+ * Before the environment changes: the program's first read of its arguments, which takes velt's
+ * variables from it without the lock (`getEnvOnce`), done if it wasn't (by role:
+ * std/lang/hooks/process_argv.velt `argsReady`, perhaps a prebuilt object's, which can't share
+ * this lock).
+ */
+function argsReady() {
+  hookCall("process_args_ready");
+}
+
 /** Whether `name` can name a variable: not empty, no "=" or NUL. */
 function validName(name: string): bool {
   return strByteLen(name) > 0 && !hasByte(name, 61) && !hasByte(name, 0);
@@ -94,6 +106,18 @@ export function getEnv(name: string): string | undefined {
   return value;
 }
 
+/**
+ * The variable whose NUL-terminated name is `name`, or undefined when it isn't set, read without
+ * the lock: only for the program's first read of its arguments (std/process/args_read.velt),
+ * which `setEnv` and `removeEnv` wait for (`argsReady`), so that nothing changes the table then.
+ */
+export function getEnvOnce(name: readonly u8[]): string | undefined {
+  // SAFETY: a NUL-terminated name; no change of the table runs during the first read (above).
+  const at = unsafe { getenv(name) };
+  // SAFETY: getenv's value is a NUL-terminated string, in place while the lock is held.
+  return at === null ? undefined : unsafe { readCString(at) };
+}
+
 /** Sets the variable `name` to `value` (a name or value C can't hold changes nothing). */
 export function setEnv(name: string, value: string) {
   if (!validName(name) || hasByte(value, 0)) {
@@ -101,6 +125,7 @@ export function setEnv(name: string, value: string) {
   }
   const n = cBytes(name);
   const v = cBytes(value);
+  argsReady();
   lock();
   // SAFETY: NUL-terminated name and value; the lock keeps every other use of the table out.
   unsafe {
@@ -115,6 +140,7 @@ export function removeEnv(name: string) {
     return;
   }
   const n = cBytes(name);
+  argsReady();
   lock();
   // SAFETY: as `setEnv`.
   unsafe {
