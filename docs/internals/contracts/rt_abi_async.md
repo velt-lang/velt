@@ -1069,8 +1069,9 @@ built and edited in place, docs/internals/design/json-engine.md); it has no runt
 
 ## 13. Dev mode (`velt dev`, [hot-reload.md](../design/hot-reload.md))
 
-Nothing here changes the ABI generated code uses; it is how the runtime behaves under the
-`velt dev` supervisor, and how `velt` hosts JIT-compiled programs.
+Nothing here changes the ABI generated code uses; it is how std behaves under the `velt dev`
+supervisor (whose side of the dev channel is crates/veltc/src/dev/handover), and how `velt` hosts
+JIT-compiled programs.
 
 ### 13.1 Listener handover
 `VELT_DEV_SOCKET` names the supervisor's dev channel: a Unix socket path, or on Windows a local

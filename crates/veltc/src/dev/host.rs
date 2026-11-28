@@ -60,11 +60,11 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
     }
     // The kept check of a build that loaded, for the reload loop; none is kept otherwise.
     let mut kept = sess.kept.take().filter(|_| loaded.is_ok());
-    if let Some(socket) = std::env::var_os(velt_rt_host::dev::SOCKET_ENV) {
+    if let Some(socket) = std::env::var_os(crate::dev::SOCKET_ENV) {
         let mut files: Vec<_> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
         files.extend(super::native::source_files(opts.packages.as_ref()));
         let ready =
-            velt_rt_host::dev::handover::report_build(socket.as_ref(), loaded.is_ok(), &files);
+            crate::dev::handover::report_build(socket.as_ref(), loaded.is_ok(), &files);
         match ready {
             Ok(Some(channel)) => {
                 let seed = sess.counted_seed.take();

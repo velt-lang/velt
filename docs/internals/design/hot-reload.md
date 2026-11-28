@@ -53,7 +53,7 @@ how long a new executable takes to start (`crates/veltc/src/commands/doctor/smok
   at run time, so the runtime asks the supervisor for them over a channel named by
   `VELT_DEV_SOCKET` (a Unix socket carrying the listener with `SCM_RIGHTS`; on Windows a named
   pipe carrying `WSADuplicateSocketW` records). The supervisor binds on the first request and
-  returns the same socket to every later process (`crates/velt_rt/src/dev/handover/`).
+  returns the same socket to every later process (`crates/veltc/src/dev/handover/`).
 - The old process gets a stop request, drains in-flight requests, and is killed after a grace
   period of 1.5 s (`VELT_DEV_STOP_GRACE_MS` overrides it). Interrupting the supervisor (Ctrl-C,
   SIGTERM, SIGHUP; console events on Windows) stops the program the same way and waits for it

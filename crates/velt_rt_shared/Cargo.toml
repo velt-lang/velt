@@ -31,12 +31,8 @@ parking_lot_core = "0.9.12"
 velt_text = { path = "../velt_text" }
 
 [target.'cfg(unix)'.dependencies]
-# Listener handover in dev mode (SCM_RIGHTS over a Unix socket).
+# SIGPIPE at process entry (entry.rs) and the checking allocator's guard pages (debug_alloc).
 libc = "0.2.189"
-
-[target.'cfg(windows)'.dependencies]
-# Listener handover in dev mode (named pipe + WSADuplicateSocketW).
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Threading"] }
 
 [features]
 # mimalloc is the global allocator by default; build with --no-default-features for the system allocator.

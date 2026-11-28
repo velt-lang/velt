@@ -533,7 +533,7 @@ function twice(n: number): number { return n * 2; }
         assert!(
             !matches!(
                 reloaded,
-                velt_rt_host::dev::handover::reload::Reloaded::Failed { .. }
+                crate::dev::handover::reload::Reloaded::Failed { .. }
             ),
             "{reloaded:?}"
         );

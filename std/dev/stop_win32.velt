@@ -1,5 +1,5 @@
 // velt/dev (internal): how a program under `velt dev` hears the stop request on Windows
-// (std/dev/stop.velt), which has no SIGTERM: the stop channel (crates/velt_rt/src/dev/handover:
+// (std/dev/stop.velt), which has no SIGTERM: the stop channel (crates/veltc/src/dev/handover:
 // `watch-stop\n` to the supervisor's dev pipe, `ok\n` back; the supervisor later writes `stop\n`,
 // or goes away). The pipe is opened for overlapped I/O, so a wait for the stop on the executor's
 // blocking pool also ends at `wake` (an event it waits for beside the read), with no thread left

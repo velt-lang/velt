@@ -1580,7 +1580,6 @@ dependencies = [
  "parking_lot",
  "parking_lot_core",
  "velt_text",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1594,7 +1593,6 @@ dependencies = [
  "parking_lot",
  "parking_lot_core",
  "velt_text",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1608,7 +1606,6 @@ dependencies = [
  "parking_lot",
  "parking_lot_core",
  "velt_text",
- "windows-sys 0.61.2",
 ]
 
 [[package]]

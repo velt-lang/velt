@@ -1,4 +1,4 @@
-//! Supervisor side of the dev channel (protocol and transports in `velt_rt_host::dev::handover`):
+//! Supervisor side of the dev channel (protocol and transports in `crate::dev::handover`):
 //! - owns the listening sockets for the whole `velt dev` session and hands them to each program
 //!   version. Because the supervisor keeps every socket open, connections that arrive while one
 //!   version stops and the next starts wait in the kernel backlog instead of being refused;
@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
-use velt_rt_host::dev::handover::{self, Request, Server, Stream};
+use crate::dev::handover::{self, Request, Server, Stream};
 
 /// A JIT host's build report; after a good build, `stream` is where to send `go`.
 pub struct Built {
