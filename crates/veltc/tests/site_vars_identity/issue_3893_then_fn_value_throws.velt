@@ -1,0 +1,24 @@
+// As `issue_3893_then_fn_value`, but the function stored in the field throws: the variable's
+// set is not empty, so `then` chooses `promiseThenThrows` with and without variables, and the
+// rejection reaches the `catch`.
+class Refused extends Error {}
+
+class Gate {
+  open: (n: number) => void = (n: number) => {};
+}
+
+async function main(): Promise<void> {
+  const g = new Gate();
+  g.open = (n: number) => {
+    if (n > 0) {
+      throw new Refused("refused");
+    }
+  };
+  try {
+    await Promise.resolve().then(() => g.open(1));
+  } catch (e) {
+    console.log("caught", e instanceof Refused);
+  }
+}
+
+main();

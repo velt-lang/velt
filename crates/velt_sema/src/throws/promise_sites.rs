@@ -102,6 +102,28 @@ impl Ctx<'_> {
         false
     }
 
+    /// Would a promise of type `from` stored as a value of promise type `to` seed `to`'s site
+    /// ([`Self::seed_promise_site`]) with a rejection type that holds error-set variables
+    /// (`const maybe: Promise<number> | null = p` with `p` from a call of a function whose
+    /// `Promise<number>` result has one)? Such a store is converted as the types are written,
+    /// the variables assumed empty, as a check without variables finds nothing to seed while
+    /// their sets are empty; when one is not, the program is checked again with the solved
+    /// sets, as a seed would make it (#3893).
+    pub(crate) fn promise_store_of_vars(&mut self, from: TyId, to: TyId) -> bool {
+        if !self.fn_sites.user_vars || self.fn_sites.target.is_none() || self.fn_sites.is_last() {
+            return false;
+        }
+        let (Some(from), Some(to)) = (self.promise_part(from), self.promise_part(to)) else {
+            return false;
+        };
+        let (Some(e), Some(f)) = (self.rejection_error(from), self.rejection_error(to)) else {
+            return false;
+        };
+        self.mentions_err_var(e)
+            && self.error_outside(Some(f), Some(e)).is_some()
+            && self.target_site(to).is_some()
+    }
+
     /// Add what `e` holds to site `site` (the program is checked again with it); false when the
     /// check is the last one or `e` can't be kept.
     pub(crate) fn seed_site_with(&mut self, site: Span, e: TyId) -> bool {
