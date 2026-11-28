@@ -14,5 +14,7 @@ function read(w: W): void {
 
 const w = { tag: "t", n: 1 } as any as W;
 console.log(w.tag);
+// Printed, the member holds no value, so it shows as one the object lacks (Node prints its value).
+console.log(w, [w]);
 read(w);
 console.log("unreached");

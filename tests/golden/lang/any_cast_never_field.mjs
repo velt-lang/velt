@@ -19,3 +19,12 @@ console.log(tag);
 
 const typed = { tag: "v" };
 console.log(typed.tag);
+
+const c = { ...w };
+console.log(c.tag, w === w);
+const opt = w;
+console.log(opt !== undefined);
+async function later(x) {
+  return x.tag + "!";
+}
+later(w).then((s) => console.log(s));

@@ -40,6 +40,15 @@ function tested() {
   });
 }
 
+function named() {
+  return using(new Sub("d"), (m) => {
+    const s = m;
+    const text = s.hello();
+    console.log("in named");
+    return text;
+  });
+}
+
 function parts() {
   return using(new Base("c"), (m) => {
     const [{ name }] = [m];
@@ -52,3 +61,4 @@ function parts() {
 console.log(called());
 console.log(tested());
 console.log(parts());
+console.log(named());

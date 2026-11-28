@@ -124,7 +124,7 @@ impl FnCx<'_, '_> {
         // The local stays usable after the cast, as after `instanceof`: a value taken is a
         // share of it, not a move.
         let value = self.expr(expr, None, crate::body::Want::Borrow);
-        let value = self.downcast_value(value, l, want);
+        let value = self.downcast_value(value, l, want, span);
         let then = self.mk(hir::ExprKind::Downcast(Box::new(value)), target, span);
         let name = self.cx.display(target);
         let msg = format!("TypeError: type assertion failed: the value is not of type `{name}`");
@@ -185,7 +185,7 @@ impl FnCx<'_, '_> {
             let cond = self.class_test(test, class, span)?;
             // The local stays usable after the cast, as after `instanceof`.
             let value = self.expr(expr, None, crate::body::Want::Borrow);
-            let value = self.downcast_value(value, l, want);
+            let value = self.downcast_value(value, l, want, span);
             let down = self.mk(hir::ExprKind::Downcast(Box::new(value)), member, span);
             let then = self.coerce(down, target);
             let kind = hir::ExprKind::If {
@@ -198,19 +198,51 @@ impl FnCx<'_, '_> {
         Some(out)
     }
 
-    /// The value of local `l` (`value`, a read of it) a downcast hands on, used per `want`: a
-    /// share when it is taken, so the local stays usable as after `instanceof`, except for a
-    /// `using` local, whose value is disposed at the end of its block: taking it is a move, an
-    /// error (`crate::moves`) like `return m` (#3451).
-    fn downcast_value(&mut self, mut value: hir::Expr, l: LocalId, want: Want) -> hir::Expr {
+    /// The value of local `l` (`value`, a read of it) a downcast at `span` hands on, used per
+    /// `want`: a share when it is taken, so the local stays usable as after `instanceof`, except
+    /// for a `using` local, whose value is disposed at the end of its block: taking it is a move,
+    /// an error (`crate::moves`) like `return m` (#3451). The initializer of a `const` that is
+    /// another name for it ([`Self::note_using_alias`]) is a share.
+    fn downcast_value(
+        &mut self,
+        mut value: hir::Expr,
+        l: LocalId,
+        want: Want,
+        span: Span,
+    ) -> hir::Expr {
         match want {
-            Want::Move if self.local_kind(l) == LocalKind::Using => {
+            Want::Move
+                if self.local_kind(l) == LocalKind::Using && self.f.using_alias != Some(span) =>
+            {
                 set_place_mode(&mut value, UseMode::Move);
                 value
             }
             Want::Move => self.share_if_place(value),
             _ => value,
         }
+    }
+
+    /// `const s = m as Sub` (also to a union of subclasses) where `m` is a `using` local: `s` is
+    /// another name for `m`, declared as `using` too, so neither can be moved away and `m` is
+    /// disposed at the end of its block (#3451). Notes the cast for [`Self::downcast_value`] and
+    /// returns its span; `None` for any other declaration.
+    pub(crate) fn note_using_alias(&mut self, v: &velt_syntax::ast::VarDecl) -> Option<Span> {
+        use velt_syntax::ast::{ExprKind as E, VarKind};
+        let init = v.init.as_ref().map(super::object_builtins::strip_parens);
+        let alias = match init.map(|e| (e, &e.kind)) {
+            Some((e, E::Cast { expr, .. })) if v.kind == VarKind::Const => {
+                match &super::object_builtins::strip_parens(expr).kind {
+                    E::Ident(id) => self
+                        .declared_local(&id.name)
+                        .filter(|&l| self.local_kind(l) == LocalKind::Using)
+                        .map(|_| e.span),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        self.f.using_alias = alias;
+        alias
     }
 
     /// Fills the open `slots` of class `class` (narrowed from a value of class `from`, its

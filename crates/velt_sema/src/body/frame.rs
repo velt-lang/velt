@@ -96,6 +96,9 @@ pub(crate) struct Frame {
     pub using_shares: Vec<(Span, LocalId)>,
     /// The `using` locals declared `await using`.
     pub await_using: rustc_hash::FxHashSet<LocalId>,
+    /// The span of `m as C`, a downcast of a `using` local `m` that initializes a `const`
+    /// (`stmt.rs` `using_alias`): the `const` is another name for `m`, which stays its own.
+    pub using_alias: Option<Span>,
     /// Marks of locals: [`READONLY`] for one declared with a read-only array or collection type,
     /// which the body may not write to (`readonly_arrays.rs`), [`NUMBER_RECORD`] for one declared
     /// with a number-keyed record type (`expr::number_records`).
@@ -281,6 +284,7 @@ impl Frame {
             soft_moves: vec![],
             using_shares: vec![],
             await_using: Default::default(),
+            using_alias: None,
             local_marks: Default::default(),
             assign_hint: None,
             record_reads: Default::default(),

@@ -1,7 +1,7 @@
 // A `using` variable read through a downcast or an array literal without taking it (#3451):
-// a call on `m as Sub`, a test, and patterns that take the element apart or leave it out are
-// reads, and the variable is disposed at the end of its block, as in Node
-// (using_cast_borrow.mjs prints the same). Taking it is an error
+// a call on `m as Sub`, a `const` naming the cast used in the block, a test, and patterns that
+// take the element apart or leave it out are reads, and the variable is disposed at the end of
+// its block, as in Node (using_cast_borrow.mjs prints the same). Taking it is an error
 // (tests/golden/lang/errors/using_cast_move.velt).
 class Base {
   constructor(public name: string) {}
@@ -30,6 +30,15 @@ function tested(): boolean {
   return yes;
 }
 
+// `s` is another name for `m`, used in the block (it ran on 3e37e2d4 as well).
+function named(): string {
+  using m: Base = new Sub("d");
+  const s = m as Sub;
+  const text = s.hello();
+  console.log("in named");
+  return text;
+}
+
 function parts(): string {
   using m = new Base("c");
   const [{ name }] = [m];
@@ -42,4 +51,5 @@ function main() {
   console.log(called());
   console.log(tested());
   console.log(parts());
+  console.log(named());
 }

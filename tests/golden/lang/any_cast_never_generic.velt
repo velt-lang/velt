@@ -1,0 +1,13 @@
+// A cast from `any` to a generic interface at `never` (`Box<never>`, #3121): the member of type
+// `T` is a `never` there, so the cast succeeds as for an interface with a `never` member
+// (any_cast_never_field.velt). Node prints the same (any_cast_never_generic.mjs).
+interface Box<T> {
+  tag: string;
+  v: T;
+}
+
+const raw: any = { tag: "t", v: 1 };
+const b = raw as Box<never>;
+console.log(b.tag);
+const n = raw as Box<number>;
+console.log(n.tag, n.v);

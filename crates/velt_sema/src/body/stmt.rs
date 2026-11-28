@@ -490,6 +490,7 @@ impl FnCx<'_, '_> {
             };
             return self.simple_decl(&v, name, ann, span, out);
         }
+        let alias = self.note_using_alias(v); // `const s = m as Sub` of a `using` `m`
         let init = match self.borrowed_const(v, name, ann, span, out) {
             Ok(()) => return,
             Err(Some(h)) => Some(h),
@@ -574,6 +575,7 @@ impl FnCx<'_, '_> {
             self.cx.error(d);
         }
         let kind = match v.kind {
+            ast::VarKind::Const if alias.is_some() => LocalKind::Using,
             ast::VarKind::Const => LocalKind::Const,
             ast::VarKind::Let => LocalKind::Let,
             ast::VarKind::Using | ast::VarKind::AwaitUsing => LocalKind::Using,

@@ -34,3 +34,14 @@ console.log(tag);
 
 const typed: W = { tag: "v" } as any;
 console.log(typed.tag);
+
+// A copy of the object, a comparison, an optional binding and an async call that take it: the
+// code after a copy of the `never` member runs on (each was a write after free).
+const c = { ...w };
+console.log(c.tag, w === w);
+const opt: W | undefined = w;
+console.log(opt !== undefined);
+async function later(x: W): Promise<string> {
+  return x.tag + "!";
+}
+later(w).then((s) => console.log(s));

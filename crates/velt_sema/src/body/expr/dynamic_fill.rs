@@ -16,19 +16,21 @@ impl FnCx<'_, '_> {
     /// Note that `exp`, the target of a conversion of a dynamic value, may be built from the
     /// members of a value of another type: lowering then has the member slots.
     pub(super) fn note_object_fill(&mut self, exp: TyId) {
-        let TyKind::Adt(d, _) = self.cx.ty.kind(exp).clone() else {
+        let TyKind::Adt(d, args) = self.cx.ty.kind(exp).clone() else {
             return;
         };
         let fields = self.cx.adt(d).map(|a| a.fields.clone()).unwrap_or_default();
         let fill = fields.iter().any(|f| {
-            f.optional
+            // No value is a `never` (#3121): an object never has the type exactly. At its type
+            // arguments: `Box<never>` of `interface Box<T> { v: T }`.
+            let never = self.cx.subst(f.ty, &args) == self.cx.ty.never;
+            never
+                || f.optional
                 || f.name == "#call"
                 || self.cx.lit_value(f.declared).is_some()
                 || self.cx.dynamic(f.ty).is_some()
                 || self.cx.ty.opt_payload(f.ty).is_some()
                 || self.cx.union_def(f.ty).is_some()
-                // No value is a `never` (#3121): an object never has the type exactly.
-                || matches!(self.cx.ty.kind(f.ty), TyKind::Never)
         });
         if fill {
             self.cx.note_dyn_members();

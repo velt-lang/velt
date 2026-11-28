@@ -7,3 +7,6 @@ true
 in parts 2
 dispose c
 c
+in named
+dispose d
+hello d
