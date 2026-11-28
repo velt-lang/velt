@@ -125,8 +125,6 @@ pub(super) enum Rt {
     StrbufPushWords,
     StrbufPushBool,
     StrbufPushByte,
-    StrbufPushInspectStr,
-    StrbufPushInspectKey,
     StrbufFinish,
     StrbufDrop,
 }
@@ -270,8 +268,6 @@ impl Rt {
             ),
             Rt::StrbufPushBool => f("velt_rt_strbuf_push_bool", vec![Ptr, Bool], Unit),
             Rt::StrbufPushByte => f("velt_rt_strbuf_push_byte", vec![Ptr, U8], Unit),
-            Rt::StrbufPushInspectStr => f("velt_rt_strbuf_push_inspect_str", vec![Ptr, Ptr], Unit),
-            Rt::StrbufPushInspectKey => f("velt_rt_strbuf_push_inspect_key", vec![Ptr, Ptr], Unit),
             Rt::StrbufFinish => f("velt_rt_strbuf_finish", vec![Ptr, Ptr], Unit),
             Rt::StrbufDrop => f("velt_rt_strbuf_drop", vec![Ptr], Unit),
             other => crate::lower::ice(format_args!("no signature for {other:?}")),

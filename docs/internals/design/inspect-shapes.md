@@ -138,6 +138,13 @@ the top level (`inspectJsonValue`, std/encoding/json/value_inspect.velt) call th
 hook by its role (`hookCall`), so its module is loaded only where their live code needs it. The
 runtime has no layout of its own.
 
+A string inside a container and an object key are std's too: lowering calls `inspectStr` and
+`inspectKey` (std/lang/hooks/inspect.velt) where it writes a string value nested or a record's
+key. Printable ASCII with no quote or backslash, most of what programs print, is written in place
+between single quotes; anything else goes by role to `quotedText` (inspect_quote.velt), Node's
+choice of quote and escapes in a prebuilt module, so a program links its object rather than
+compiling the quoting.
+
 ## Runtime cost
 
 Each hook is checked only where a program may need it; the list is `INSPECT_SHAPES` in

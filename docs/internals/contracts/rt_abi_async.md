@@ -984,8 +984,6 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_strbuf_push_bytes` | `(VeltStrBuf* b, const u8* p, u64 len)` | static text chunks of a template; `len == 0` ⇒ `p` unused. The low 32 bits of `len` are the byte count; the high 32 bits may carry the UTF-16 unit count (as a string's `w1`): equal to the byte count, the text is ASCII and is not scanned; 0 means unknown (counted) |
 | `velt_rt_strbuf_push_words` | `(VeltStrBuf* b, u64 w0, u64 w1, u64 w2, u64 n)` | the first `n` (at most 24) bytes of the three words, ASCII, byte `i` in bits `8 * (i % 8)` of word `i / 8`: the slow path of `strbufPushAsciiWords`, by value so the caller needs no stack for the words (#1982) |
 | `velt_rt_strbuf_push_u8s` | `(VeltStrBuf* b, const VeltBytes* bytes, u64 len, u64 units)` | the first `len` bytes of a `u8[]` (canonical WTF-8 Velt code built, e.g. std/encoding/json/writer.velt); `units == len`: ASCII, not scanned; otherwise counted |
-| `velt_rt_strbuf_push_inspect_str` | `(VeltStrBuf* b, const VeltStr* s)` | a string as `console.log` shows it inside a container (node `util.inspect` quoting and escaping) |
-| `velt_rt_strbuf_push_inspect_key` | `(VeltStrBuf* b, const VeltStr* s)` | an object key as `console.log` shows it: bare if it matches `[A-Za-z_][A-Za-z0-9_]*` (node quotes `$`), else quoted like `push_inspect_str` |
 | `velt_rt_strbuf_push_bool` | `(VeltStrBuf* b, u8 v)` | `true`/`false` |
 | `velt_rt_strbuf_push_byte` | `(VeltStrBuf* b, u8 c)` | punctuation in generated glue |
 | `velt_rt_strbuf_finish` | `(VeltStrBuf* b, VeltStr* out)` | moves the text to `*out`; `*b` becomes empty (reusable, nothing to free) |

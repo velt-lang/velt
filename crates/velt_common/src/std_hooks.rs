@@ -251,6 +251,15 @@ with_any_hooks! {
     /// `, ... n more items` after the first 100 entries of an array, `Map` or `Set`.
     inspect_more => lang_hooks_inspect, "inspectMore", sig((&mut string, u64) -> void),
         lowered, constructs(Format, Dynamic), replaces("velt_rt_strbuf_inspect_more");
+    /// A string inside a container: quoted and escaped as Node's `util.inspect` writes it.
+    inspect_str => lang_hooks_inspect, "inspectStr", sig((&mut string, &string) -> void),
+        lowered, constructs(Format, Dynamic), replaces("velt_rt_strbuf_push_inspect_str");
+    /// An object key: bare when it is an identifier, else quoted as `inspect_str` quotes it.
+    inspect_key => lang_hooks_inspect, "inspectKey", sig((&mut string, &string) -> void),
+        lowered, constructs(Format, Dynamic), replaces("velt_rt_strbuf_push_inspect_key");
+    /// The text of a string quoted and escaped as Node's `util.inspect` writes it in a container
+    /// (called by role from `inspectStr`; inspect_quote.velt).
+    inspect_quote => lang_hooks_inspect_quote, "quotedText", sig((&string) -> string), prebuilt;
     /// An array: `[ 1, 2 ]`, its first 100 elements, `[Array]` past the depth limit.
     inspect_array => lang_hooks_inspect, "inspectArray", sig(<A>(&mut string, &[A], u32) -> void),
         lowered, fallback, constructs(Format, Dynamic);

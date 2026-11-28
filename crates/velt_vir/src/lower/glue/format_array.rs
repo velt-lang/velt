@@ -9,7 +9,7 @@ use crate::lower::operand::proj;
 use crate::lower::{cint, FnLower};
 use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Ty};
 
-/// Node's default `maxArrayLength` (velt_rt's `inspect::MAX_ARRAY_LENGTH`): an array, `Map` or
+/// Node's default `maxArrayLength` (std's `inspectArray` stops at it too): an array, `Map` or
 /// `Set` shows this many entries.
 pub(super) const MAX_ARRAY_LENGTH: i128 = 100;
 

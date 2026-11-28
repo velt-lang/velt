@@ -1,0 +1,23 @@
+// Strings inside containers and object keys (std/lang/hooks/inspect.velt `inspectStr`,
+// `inspectKey`): plain ASCII, quotes, escapes and non-ASCII text, each printed in an array and
+// as values and keys of a record.
+function main(): void {
+  const words: string[] = [
+    "alpha",
+    "a longer string of plain text that is copied in one piece",
+    "it's",
+    "tab\tand\nline",
+    "日本語のテキスト",
+    "café crème",
+    "say \"hi\" and 'bye'",
+    "",
+  ];
+  const rec: Record<string, string> = {};
+  for (let i = 0; i < words.length; i++) {
+    rec[words[i]] = words[(i + 3) % words.length];
+  }
+  for (let i = 0; i < 2000; i++) {
+    console.log(words);
+    console.log(rec);
+  }
+}

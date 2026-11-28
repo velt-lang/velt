@@ -186,4 +186,8 @@ pub const DELETED: &[&str] = &[
     "velt_rt_strbuf_inspect_begin",
     "velt_rt_strbuf_inspect_atom",
     "velt_rt_strbuf_len",
+    // #2196: a string and an object key quoted as Node's `util.inspect` writes them inside a
+    // container (std/lang/hooks/inspect.velt `inspectStr`, `inspectKey`).
+    "velt_rt_strbuf_push_inspect_str",
+    "velt_rt_strbuf_push_inspect_key",
 ];

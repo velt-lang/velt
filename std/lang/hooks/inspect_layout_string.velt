@@ -2,14 +2,14 @@
 // lines. Node's `formatPrimitive` splits a string longer than 16 UTF-16 units, and longer than
 // the room left on its line, after each line break, each piece quoted on its own and joined by
 // ` +` and a new line (lib/internal/util/inspect.js). The printer wrote the string quoted and
-// escaped (velt_rt's `push_inspect_string`), so this reads it back first.
+// escaped (inspect.velt's `inspectStr`), so this reads it back first.
 
+import { inspectStr } from "velt/lang/hooks/inspect";
 import { pushRange } from "velt/lang/hooks/inspect_layout_pieces";
 import { hasByte, utf16Units, wordAt } from "velt/lang/hooks/inspect_layout_width";
 import { strByteAt, strByteLen, strDataAddress } from "velt/lang/intrinsics";
 
 declare function velt_rt_strbuf_push_byte(buf: string, b: u8);
-declare function velt_rt_strbuf_push_inspect_str(buf: string, s: string);
 declare function velt_rt_strbuf_push_u8s(buf: string, bytes: u8[], len: u64, units: u64);
 declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64, units: u64): string;
 
@@ -55,7 +55,7 @@ export function splitString(src: string, a: u64, b: u64, indent: u64): string {
         velt_rt_strbuf_push_byte(out, 0x20);
       }
     }
-    velt_rt_strbuf_push_inspect_str(out, piece);
+    inspectStr(out, piece);
     from = to;
   }
   return out;
@@ -95,8 +95,8 @@ function nextBackslash(s: string, data: u64, i: u64, end: u64): u64 {
 }
 
 /**
- * The text of the quoted string at bytes `a..b` of `s` (quotes included), as velt_rt's
- * `push_inspect_string` escaped it: `\n`, `\t`, `\b`, `\f`, `\r`, `\xHH` (a control character),
+ * The text of the quoted string at bytes `a..b` of `s` (quotes included), as inspect.velt's
+ * `inspectStr` escaped it: `\n`, `\t`, `\b`, `\f`, `\r`, `\xHH` (a control character),
  * `\uXXXX` (a lone surrogate, in WTF-8), and a backslash before any other byte, which stands for
  * that byte. `breaks` gets the offset of each line break in the text.
  */

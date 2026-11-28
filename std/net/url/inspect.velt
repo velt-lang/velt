@@ -1,9 +1,10 @@
 // velt/net/url (internal): what `console.log` and `util.inspect` print for a `URL` and a
 // `URLSearchParams`, as Node's custom inspects of the two write it (lib/internal/url.js).
 
+import { inspectStr } from "velt/lang/hooks/inspect";
+
 declare function velt_rt_strbuf_new(cap: u64, out: string);
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
-declare function velt_rt_strbuf_push_inspect_str(buf: string, s: string);
 declare function velt_rt_strbuf_finish(buf: string, out: string);
 
 /** Node's `breakLength`: a `URLSearchParams` whose pairs are longer is broken across lines. */
@@ -12,16 +13,16 @@ const BREAK_LENGTH: i64 = 80;
 /**
  * `s` as Node's `util.inspect` quotes it at indentation `indent` (`'a'`, `"it's"`): split after
  * each line break when it is longer than 16 units and than the room left on the line, each piece
- * quoted on its own and joined by ` +` and a new line (velt_rt's `render_string`). Written here,
- * not with the `inspect` intrinsic, which starts a top-level value and with it would make the
- * runtime forget the custom inspect text of the value being printed.
+ * quoted on its own and joined by ` +` and a new line (std/lang/hooks/inspect_layout_string.velt
+ * `splitString`). Written here, not with the `inspect` intrinsic, which starts a top-level value
+ * and with it would make the layout forget the custom inspect text of the value being printed.
  */
 function quoted(s: string, indent: i64): string {
   const n = s.length as i64;
   let out = "";
   velt_rt_strbuf_new((n as u64) + 2, out);
   if (n <= 16 || n + indent + 4 <= BREAK_LENGTH || s.indexOf("\n") < 0) {
-    velt_rt_strbuf_push_inspect_str(out, s);
+    inspectStr(out, s);
   } else {
     const separator = ` +\n${" ".repeat(indent + 2)}`;
     let from: i64 = 0;
@@ -32,7 +33,7 @@ function quoted(s: string, indent: i64): string {
         velt_rt_strbuf_push_str(out, separator);
       }
       const piece = s.slice(from, end);
-      velt_rt_strbuf_push_inspect_str(out, piece);
+      inspectStr(out, piece);
       from = end;
     }
   }

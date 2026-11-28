@@ -26,7 +26,6 @@ pub mod handle;
 pub mod hash;
 pub mod hazard;
 pub mod host;
-pub mod inspect;
 pub mod io;
 pub mod math;
 pub mod mem;

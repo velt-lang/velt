@@ -29,8 +29,8 @@ use crate::lower::rt::Rt;
 use crate::lower::{cint, unit, FnLower};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
-/// Node's `util.inspect` default `depth` (velt_rt's `inspect::DEPTH`): a container at a greater
-/// depth prints as `[Name]`.
+/// Node's `util.inspect` default `depth` (std's `openPlain` and `inspectArray` cut at it too): a
+/// container at a greater depth prints as `[Name]`.
 const DEPTH: i128 = 2;
 
 /// Node's depth of a `console.log` argument.
@@ -196,7 +196,8 @@ impl FnLower<'_, '_> {
             }
             TyKind::Str => {
                 let a = self.addr(place.clone());
-                self.call_rt(Rt::StrbufPushInspectStr, vec![buf.clone(), a], None);
+                let (b, s) = (ty::Str::arg(buf.clone()), ty::Str::arg(a));
+                _ = hooks::inspect_str(self, Construct::Format, b, s).emit(self);
             }
             TyKind::Symbol => {
                 self.push_symbol(buf, Operand::Copy(place.clone()));
