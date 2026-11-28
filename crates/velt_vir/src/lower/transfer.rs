@@ -47,6 +47,23 @@ impl Cx<'_> {
         self.holds_counted_in(t, true, &mut FxHashSet::default())
     }
 
+    /// [`transfers`](Self::transfers) of a value transferred as a whole (a transfer root),
+    /// recorded as a root whatever the answer: in a pass that does not count its parts yet, the
+    /// next pass does, and the transfer's types (boxing/transfers.rs) are closed over the types
+    /// that pass counts. Recorded only once the answer is yes, a root would join one pass late,
+    /// and the counted types would take one more lowering pass of the whole program to settle.
+    pub(super) fn root_transfers(&mut self, t: TyId) -> bool {
+        self.note_transfer(t);
+        self.transfers(t)
+    }
+
+    /// [`holds_counted`](Self::holds_counted) of a transfer root, recorded as for
+    /// [`root_transfers`](Self::root_transfers).
+    pub(super) fn root_holds_counted(&mut self, t: TyId) -> bool {
+        self.note_transfer(t);
+        self.holds_counted(t)
+    }
+
     fn holds_counted_in(&mut self, t: TyId, promises: bool, seen: &mut FxHashSet<TyId>) -> bool {
         if !seen.insert(t) {
             return false;
@@ -327,7 +344,7 @@ impl FnLower<'_, '_> {
     /// object. The caller keeps its reference, so everything reachable is copied.
     pub(super) fn transfer_copy(&mut self, v: Operand, ty: TyId) -> Operand {
         let ty = self.sub(ty);
-        if self.dead() || !self.cx.transfers(ty) {
+        if self.dead() || !self.cx.root_transfers(ty) {
             return v;
         }
         let copy = self.thread_copy(v, ty);
@@ -367,10 +384,9 @@ impl FnLower<'_, '_> {
     /// as a cycle, like a transfer (std's transfer map): an async closure's captures, which
     /// each call (maybe on another task) gets a copy of.
     pub(super) fn clone_keeping_identity(&mut self, v: Operand, ty: TyId) -> Operand {
-        if !self.cx.holds_counted(ty) {
+        if !self.cx.root_holds_counted(ty) {
             return self.clone_value(v, ty);
         }
-        self.cx.note_transfer(ty);
         self.xfer_begin();
         let copy = self.clone_value(v, ty);
         self.xfer_end();
@@ -426,7 +442,7 @@ impl FnLower<'_, '_> {
 
     /// The owned value `v` of type `ty`, made safe to hand to another thread (module docs).
     pub(super) fn transfer_value(&mut self, v: Operand, ty: TyId) -> Operand {
-        if self.dead() || !self.cx.transfers(ty) {
+        if self.dead() || !self.cx.root_transfers(ty) {
             return v;
         }
         let vt = self.cx.ty(ty);
@@ -451,7 +467,7 @@ impl FnLower<'_, '_> {
     /// made and alone holds moves (the transfer glue's rules in read mode). Outside read mode
     /// (checked code) it stays as it is.
     pub(super) fn reader_copy(&mut self, v: Operand, ty: TyId) -> Operand {
-        if self.dead() || !self.cx.transfers(ty) || !self.cx.holds_counted(ty) {
+        if self.dead() || !self.cx.root_transfers(ty) || !self.cx.holds_counted(ty) {
             return v;
         }
         let vt = self.cx.ty(ty);
@@ -470,7 +486,7 @@ impl FnLower<'_, '_> {
     /// Transfer the owned value at `p` (concrete type `ty`) in place as one transfer (the
     /// `TransferRoot` glue: an object it reaches twice is copied once).
     pub(super) fn transfer_root_in_place(&mut self, p: Place, ty: TyId) {
-        if self.dead() || !self.cx.transfers(ty) {
+        if self.dead() || !self.cx.root_transfers(ty) {
             return;
         }
         let a = self.addr(p);

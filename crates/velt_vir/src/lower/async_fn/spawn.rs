@@ -95,7 +95,7 @@ impl FnLower<'_, '_> {
             ];
             // The result reaches the joining task: the task transfers it as it finishes, while
             // promises it started (which may still use the result's objects) are on its thread.
-            if !detached && self.cx.transfers(slot) {
+            if !detached && self.cx.root_transfers(slot) {
                 args.push(cfunc(self.cx.func(Work::Glue(Glue::TransferRoot, slot))));
             }
             if self.std_sched() {
@@ -199,7 +199,7 @@ impl FnLower<'_, '_> {
         let slot = self.cx.promise_slot(pty);
         // A result with nothing counted has no glue (null): the runtime still hears of the
         // promise, which may be a holder of a shared one to hand over (#212).
-        let g = match self.cx.holds_counted(slot) {
+        let g = match self.cx.root_holds_counted(slot) {
             true => cfunc(self.cx.func(Work::Glue(Glue::TransferRoot, slot))),
             false => cint(0, Ty::Ptr),
         };
