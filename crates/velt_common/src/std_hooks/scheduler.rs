@@ -3,7 +3,7 @@
 
 /// The environment variable that selected the executor in Velt at compile time before the
 /// switch (`VELT_SCHEDULER=std`, #2649 step 3.1). The compiler no longer reads it: it is accepted
-/// and ignored. The runtime reads the same variable for its own backends until they go (#2649 D1).
+/// and ignored, and the runtime doesn't read it either.
 pub const SCHEDULER_ENV: &str = "VELT_SCHEDULER";
 
 /// Is the executor in Velt the program's (on a native target)? Always, since the switch (#2649):

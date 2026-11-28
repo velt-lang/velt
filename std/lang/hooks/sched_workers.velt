@@ -24,7 +24,6 @@ import * as t from "./sched_task";
 import * as tb from "./sched_io_table";
 import * as wk from "./sched_wake";
 
-declare function velt_rt_set_scheduler(kind: u32): void;
 declare c("c") function velt_rt_latch_new$rt(): u64;
 declare c("c") function velt_rt_latch_open$rt(l: u64): void;
 
@@ -136,8 +135,6 @@ function startOn(e: usize): void {
     dbg.handlePauseSetup();
   }
   t.install(e);
-  // The runtime's leaves that need its timers and I/O find them from this thread.
-  velt_rt_set_scheduler(2);
   startWorkers(e);
 }
 
@@ -295,8 +292,6 @@ function workerMain(arg: Ptr<u8> | null): Ptr<u8> | null {
   m.st(w + t.E_CPU, r.threadClock() as usize);
   t.installWorker(w);
   io.installHere(m.ld(w + t.E_IO));
-  // The runtime's leaves polled here find its timers and I/O.
-  velt_rt_set_scheduler(2);
   // Awake: its first turn may take work no wake brought (an offer it steals, input it borrows).
   wk.awake(w);
   if ((m.ld32(w + t.E_MODE) & t.M_MONITOR) !== 0) {

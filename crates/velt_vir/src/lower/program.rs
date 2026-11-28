@@ -40,7 +40,6 @@ impl<'h> Cx<'h> {
             prelude_defs: std::cell::OnceCell::new(),
             weak_targets: std::cell::OnceCell::new(),
             to_primitive_classes: std::cell::OnceCell::new(),
-            uses_placement: false,
             cell_checks: false,
             heap_hooks: false,
             target: String::new(),
@@ -548,11 +547,6 @@ impl<'h> Cx<'h> {
         ret: Ty,
         noreturn: bool,
     ) -> ExternId {
-        // Only pinning selects the per-core scheduler: `workerCount()` sizes pools of unpinned
-        // tasks, which run faster on the stealing one.
-        if symbol == "velt_rt_spawn_target" {
-            self.uses_placement = true;
-        }
         if let Some(&id) = self.extern_map.get(symbol) {
             let e = &self.externs[id.0 as usize];
             if e.params != params || e.ret != ret || e.variadic {
