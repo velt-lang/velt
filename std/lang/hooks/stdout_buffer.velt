@@ -12,7 +12,14 @@
 
 import { Ptr } from "velt/ffi/ptr";
 import { mutexLock, mutexUnlock } from "#thread-lock";
-import { osWrite, pauseMs, stdoutIsTerminal, yieldThread } from "#stdout-os";
+import {
+  osWrite,
+  pauseMs,
+  stdoutIsTerminal,
+  unwatchThreadExit,
+  watchThreadExit,
+  yieldThread,
+} from "#stdout-os";
 import { HEADER, freeBlock, grow, lenOf, newBlock, put, setLen, sizeOf } from "./stdout_block";
 import {
   addressAtomicCas,
@@ -154,6 +161,7 @@ function local(): usize {
 function newLocal(): usize {
   const b = newBlock(CAP + 64);
   LOCAL.set(b as u64);
+  watchThreadExit();
   return b;
 }
 
@@ -341,6 +349,7 @@ export function releaseLocal(): void {
   if (b !== 0) {
     LOCAL.set(0);
     freeBlock(b);
+    unwatchThreadExit();
   }
 }
 

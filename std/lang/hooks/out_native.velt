@@ -9,7 +9,8 @@
 // Every exit that Velt code reaches flushes first: the end of `main`, `process.exit`, an uncaught
 // error, a panic (lowering calls `flushForExit` before them; std's own exits call it). An exit the
 // runtime takes by itself (a fatal error inside its Rust, `velt dev`'s stop of a server) goes
-// through the C library's `exit`, which runs `flushAtExit` (registered at the start); its stderr
+// through the C library's `exit`, which runs `flushAtExit` (registered at the start; on Windows,
+// whose runtime exits by `ExitProcess`, the exiting thread's fiber-local callback); its stderr
 // message comes before the flushed stdout there. Not in the dev JIT, whose reload replaces this
 // code: there such an exit loses what was printed since a worker last went idle, which is when the
 // executor writes the shared buffer out.
@@ -153,8 +154,9 @@ export function initOutput(): void {
 }
 
 /**
- * Registers `flushAtExit` with the C library's `exit` (`#stdout-os`): an executable's start, not
- * the dev JIT's, whose reload replaces this code.
+ * Registers `flushAtExit` with the end of the process (`#stdout-os`: the C library's `exit`; on
+ * Windows the exiting thread's fiber-local callback): an executable's start, not the dev JIT's,
+ * whose reload replaces this code.
  */
 export function registerExitFlush(): void {
   // SAFETY: `flushAtExit` is `@cExport`ed as `void f(void *)`, what `exit` calls.
@@ -162,7 +164,7 @@ export function registerExitFlush(): void {
 }
 
 /**
- * The flush the C library's `exit` runs: for an exit the runtime takes by itself (a fatal error
+ * The flush the end of the process runs: for an exit the runtime takes by itself (a fatal error
  * in its Rust, as misusing a `RwLock` or an allocation it refuses; `velt dev`'s stop of a server),
  * which compiled code doesn't flush before. Every other exit flushed already, and this finds
  * nothing left; it never reports `VELT_STDOUT_STATS` (`flushForExit` did).

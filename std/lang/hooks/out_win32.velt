@@ -8,11 +8,13 @@
 // checks would bring number printing into every program.
 
 import { Ptr } from "velt/ffi/ptr";
-import { addressLoad, addressStore } from "velt/lang/intrinsics";
+import { addressLoad, addressStore, noInline } from "velt/lang/intrinsics";
 import { HEADER, freeBlock, newBlock } from "./stdout_block";
 
 declare c("c") function GetStdHandle(which: u32): Ptr<void> | null;
 declare c("c") function SwitchToThread$out(): i32;
+declare c("c") function FlsAlloc$out(callback: Ptr<u8> | null): u32;
+declare c("c") function FlsSetValue$out(slot: u32, value: Ptr<u8> | null): i32;
 declare c("c") function Sleep$out(ms: u32): void;
 declare c("c") function GetConsoleMode$out(handle: Ptr<void> | null, mode: Ptr<u32> | null): i32;
 declare c("c") function WriteFile$out(
@@ -46,7 +48,6 @@ const MAX_CALL: usize = 1 << 30;
 const CARRY = new Atomic<u64>(0);
 const CARRY_ERR = new Atomic<u64>(0);
 
-/** Gives the core to another thread that is ready to run, if any (a spin at the writer's lock). */
 /** Waits about a millisecond (the exit flush's wait for the writer's lock). */
 export function pauseMs(): void {
   // SAFETY: no precondition.
@@ -55,6 +56,7 @@ export function pauseMs(): void {
   }
 }
 
+/** Gives the core to another thread that is ready to run, if any (a spin at the writer's lock). */
 export function yieldThread(): void {
   // SAFETY: no precondition.
   unsafe {
@@ -62,12 +64,52 @@ export function yieldThread(): void {
   }
 }
 
+/** `FlsAlloc`'s failure, and the slot before `registerAtExit` took one. */
+const NO_SLOT: u32 = 0xffffffff;
+/** The fiber-local slot whose callback is the exit flush (`registerAtExit`), plus one: 0 is none. */
+const EXIT_SLOT = new Atomic<u32>(0);
+
 /**
- * No exit handler on Windows: the runtime's own exits end the process without running C's
- * `atexit` functions (`ExitProcess`), so such an exit loses what was printed since a worker last
- * went idle.
+ * Has the end of the process call the C function at `f`, of C type `void f(void *)`. The runtime's
+ * own exits end the process with `ExitProcess`, which runs no `atexit` function, but it does run
+ * the exiting thread's fiber-local callbacks: `f` is the callback of a fiber-local slot, set on
+ * every thread that writes stdout (`watchThreadExit`). It also runs when such a thread ends
+ * without giving its buffer back, which then goes out.
+ * Out of line: the calls stay the writer's (veltc `outside.rs`), however its callers are inlined.
  */
-export function registerAtExit(f: usize): void {}
+@noInline
+export function registerAtExit(f: usize): void {
+  // SAFETY: `f` is a C function taking a `void *`, as `FlsAlloc`'s callback is.
+  const slot = unsafe { FlsAlloc$out(Ptr.orNull<u8>(f)) };
+  if (slot !== NO_SLOT) {
+    EXIT_SLOT.store(slot + 1, "release");
+    watchThreadExit();
+  }
+}
+
+/** This thread writes stdout: the end of the process from it, or its own end, runs the flush. */
+@noInline
+export function watchThreadExit(): void {
+  const slot = EXIT_SLOT.load("acquire");
+  if (slot !== 0) {
+    // SAFETY: a slot `FlsAlloc` gave; any value but null has the callback run.
+    unsafe {
+      FlsSetValue$out(slot - 1, Ptr.orNull<u8>(1));
+    }
+  }
+}
+
+/** This thread gave its buffer back (`threadEnd`): its end runs no flush. */
+@noInline
+export function unwatchThreadExit(): void {
+  const slot = EXIT_SLOT.load("acquire");
+  if (slot !== 0) {
+    // SAFETY: a slot `FlsAlloc` gave; null runs no callback.
+    unsafe {
+      FlsSetValue$out(slot - 1, null);
+    }
+  }
+}
 
 /**
  * Whether standard output's handle is a console, as libuv decides it for Node (std/process/

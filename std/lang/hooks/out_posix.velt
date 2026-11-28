@@ -70,6 +70,12 @@ export function registerAtExit(f: usize): void {
   }
 }
 
+/** This thread writes stdout: nothing to do, `exit` runs the flush from any thread. */
+export function watchThreadExit(): void {}
+
+/** This thread gave its buffer back: nothing to do. */
+export function unwatchThreadExit(): void {}
+
 /** Writes the `n` bytes at `p` to file descriptor `fd` (1 or 2). */
 export function osWrite(fd: i32, p: usize, n: usize): void {
   let done: usize = 0;

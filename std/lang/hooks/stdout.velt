@@ -57,7 +57,7 @@ export function initOutput(): void {
 }
 
 /**
- * The program's start outside the dev JIT: registers the flush with the C library's exit, for the
+ * The program's start outside the dev JIT: registers the flush with the end of the process, for the
  * exits the runtime takes by itself.
  */
 export function registerExitFlush(): void {
