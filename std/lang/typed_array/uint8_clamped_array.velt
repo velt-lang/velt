@@ -32,6 +32,7 @@ import {
   VIEW_SIZE,
 } from "velt/lang/hooks/keys";
 import { setBytes } from "velt/lang/bytes/copy";
+import { isExactClass, speciesNew } from "velt/lang/intrinsics";
 
 /**
  * An array of 8-bit unsigned integers, clamped to 0..255 when written in an `ArrayBuffer` (JS `Uint8ClampedArray`): `new Uint8ClampedArray(n)` (`n` zeros),
@@ -305,6 +306,9 @@ export class Uint8ClampedArray extends TypedArray implements Iterable<number> {
         kept.push(x);
       }
     }
+    if (!isExactClass(this)) {
+      return this.speciesOf(kept);
+    }
     return Uint8ClampedArray.ofArray(kept);
   }
 
@@ -415,6 +419,9 @@ export class Uint8ClampedArray extends TypedArray implements Iterable<number> {
 
   /** A new array of `f`'s results, converted. */
   map<E>(f: (x: number, i: number) => number throws E): Uint8ClampedArray throws E {
+    if (!isExactClass(this)) {
+      return this.speciesMap(f);
+    }
     const out = Uint8ClampedArray.zeros(this.len);
     for (let i: usize = 0; i < this.len; i++) {
       out.put(i, f(this.get(i), i as number));
@@ -497,9 +504,72 @@ export class Uint8ClampedArray extends TypedArray implements Iterable<number> {
     const from = relative(toInteger(start), len);
     const stop = relative(toInteger(end), len);
     const n = stop > from ? stop - from : 0;
+    if (!isExactClass(this)) {
+      return this.speciesSlice(from, n);
+    }
     const o = (this.off + from * 1) as i64;
     const bytes = this.buf.bytes.slice(o, o + ((n * 1) as i64));
     return Uint8ClampedArray.view(ArrayBuffer.adopt(bytes), 0, n);
+  }
+
+  // `slice` of an object of a subclass: the `n` elements from `from` in a new object of its class.
+  private speciesSlice(from: usize, n: usize): Uint8ClampedArray {
+    const out = this.speciesSized(n);
+    for (let i: usize = 0; i < n; i++) {
+      out.put(i, this.get(from + i));
+    }
+    return out;
+  }
+
+  // `map` of an object of a subclass: the new object of its class is made before `f` runs.
+  private speciesMap<E>(f: (x: number, i: number) => number throws E): Uint8ClampedArray throws E {
+    const out = this.speciesSized(this.len);
+    for (let i: usize = 0; i < this.len; i++) {
+      out.put(i, f(this.get(i), i as number));
+    }
+    return out;
+  }
+
+  // `filter` of an object of a subclass: the elements kept, in a new object of its class.
+  private speciesOf(kept: number[]): Uint8ClampedArray {
+    const out = this.speciesSized(kept.length);
+    for (let i: usize = 0; i < kept.length; i++) {
+      out.put(i, kept[i]);
+    }
+    return out;
+  }
+
+  // A subclass's `slice`, `map` and `filter` make their result with its own class, as JS does
+  // (TypedArraySpeciesCreate): `new C(n)` (`speciesNew`), which must be at least `n` long. What
+  // the class's constructor throws stops the program (JS: it passes to the caller), so these
+  // methods throw what they did.
+  private speciesSized(n: usize): Uint8ClampedArray {
+    const length = n as number;
+    let made: Uint8ClampedArray | null = null;
+    try {
+      made = speciesNew(this, length);
+    } catch (e) {
+      panic(String(e));
+    }
+    const out = made ?? Uint8ClampedArray.zeros(n);
+    if (out.len < n) {
+      panic("TypeError: Derived TypedArray constructor created an array which was too small");
+    }
+    return out;
+  }
+
+  // A subclass's `subarray`: `new C(buffer, byteOffset, length)` of its own class.
+  private speciesView(at: usize, n: usize): Uint8ClampedArray {
+    const buffer = this.buf;
+    const byteOffset = at as number;
+    const length = n as number;
+    let made: Uint8ClampedArray | null = null;
+    try {
+      made = speciesNew(this, buffer, byteOffset, length);
+    } catch (e) {
+      panic(String(e));
+    }
+    return made ?? Uint8ClampedArray.view(this.buf, at, n);
   }
 
   /**
@@ -533,6 +603,9 @@ export class Uint8ClampedArray extends TypedArray implements Iterable<number> {
     if (at > (this.buf.bytes.length as usize)) {
       // Not even the view's start is left: an empty view with a buffer of its own.
       return Uint8ClampedArray.zeros(0);
+    }
+    if (!isExactClass(this)) {
+      return this.speciesView(at, n);
     }
     return Uint8ClampedArray.view(this.buf, at, n);
   }

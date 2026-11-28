@@ -1,0 +1,22 @@
+<2;3> true 2
+<2;4;6> <2;3> <2>
+<1;9;3> true 4
+Loud ctor object undefined undefined
+Loud ctor number undefined undefined
+Loud ctor number undefined undefined
+1.5,2.5 0
+Loud ctor number undefined undefined
+map 1.5
+map 2.5
+map 3.5
+2.5,3.5,4.5
+filter 1.5
+filter 2.5
+filter 3.5
+Loud ctor number undefined undefined
+2.5,3.5
+Loud ctor object 8 2
+Loud ctor object 8 2
+2.5,3.5 true
+true -5,-6,-7 true
+6 false

@@ -1,0 +1,28 @@
+ctor , g
+ctor /,/g gy
+exec on gy 0 call 1 true
+exec on gy 1 call 2 true
+exec on gy 2 call 3 true
+[ 'a', 'b' ] calls 0 lastIndex 0
+ctor /,/g g
+exec on g 2 call 1 true
+exec on g 4 call 2 true
+[ ',@3' ] lastIndex 2
+ctor \d+ 
+ctor /\d+/ y
+exec on y 0 call 1 true
+exec on y 1 call 2 true
+exec on y 2 call 3 true
+exec on y 3 call 4 true
+[ 'x', 'y' ]
+quiet exec gy true
+quiet exec gy true
+quiet exec gy true
+quiet exec g false
+quiet exec g false
+quiet exec g false
+[ 'a', 'b' ] 2
+Fixed ctor
+Fixed ctor
+[ '', '', '' ]
+caught no copies of /,/g

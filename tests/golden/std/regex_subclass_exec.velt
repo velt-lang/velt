@@ -4,11 +4,9 @@
 // leave, and use what it answers. A subclass without one, and a `RegExp` in the same program,
 // behave as before.
 //
-// `split` and `matchAll` run on a copy of the regex in JavaScript (`new C(re, flags)`), which
-// Velt cannot make from the object: the regex itself plays the copy and gets its `lastIndex`
-// back. `exec` sees the same subject and `lastIndex` as on the copy, but the constructor does
-// not run again and the fields are the regex's own, so this test counts calls in a module
-// variable, not in a field.
+// `split` and `matchAll` run on a copy of the regex made with its class's constructor (`new
+// C(re, flags)`, #3817; regex_species_copy.velt shows the copy's own fields and constructor):
+// the regex keeps its `lastIndex`. This test counts calls in a module variable.
 //
 // Node twin: regex_subclass_exec.mjs (same output).
 import { RegExpMatch } from "velt/text";

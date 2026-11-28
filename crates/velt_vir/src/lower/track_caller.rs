@@ -2,7 +2,9 @@
 //! synchronous, capture-free function defined in a standard-library file whose body calls
 //! `panic` directly (or calls another such function) reports the location of its call site
 //! when it panics. An internal error (`panic("ICE: …")`, std's own bug) does not count: it
-//! reports where it is. A small one (at most `COPY_LIMIT` HIR nodes) gets an instance per direct
+//! reports where it is, and neither does a branch lowering leaves out (`if (!isExactClass(this))`
+//! of a class nothing in the program extends: code only a subclass's object reaches, #3817).
+//! A small one (at most `COPY_LIMIT` HIR nodes) gets an instance per direct
 //! call site (`Work::Tracked`), whose location is a compile-time constant; copies that small
 //! cost little and are inlined anyway. A larger one has one instance that takes the location
 //! as a hidden last parameter, as Rust passes it (`srcloc::ARG_LOC`), so a program does not
@@ -18,11 +20,34 @@ use super::Cx;
 /// instance per call site; a larger one takes its caller's location as a parameter.
 const COPY_LIMIT: usize = 64;
 
-/// What `block_panics` collects: the direct callees and the size of the body.
-#[derive(Default)]
-struct Scan {
+/// What `block_panics` collects: the direct callees and the size of the body. `exact` answers
+/// whether no class of the program extends a class type, where `isExactClass` is a constant
+/// `true` and lowering leaves out the branch it rules out (`FnLower::const_cond`).
+struct Scan<'a> {
     callees: Vec<DefId>,
     nodes: usize,
+    exact: &'a mut dyn FnMut(hir::TyId) -> bool,
+}
+
+impl Scan<'_> {
+    /// `cond`'s value where lowering knows it without running it: `isExactClass(x)` of a class
+    /// nothing extends, or its negation (std's code only a subclass's object reaches, #3817).
+    fn known(&mut self, cond: &hir::Expr) -> Option<bool> {
+        match &cond.kind {
+            hir::ExprKind::Call {
+                callee: hir::Callee::Intrinsic(Intrinsic::IsExactClass),
+                args,
+            } => {
+                let t = args.first()?.ty;
+                (self.exact)(t).then_some(true)
+            }
+            hir::ExprKind::Unary {
+                op: hir::UnOp::Not,
+                expr,
+            } => self.known(expr).map(|v| !v),
+            _ => None,
+        }
+    }
 }
 
 impl Cx<'_> {
@@ -42,10 +67,21 @@ impl Cx<'_> {
                     && f.captures.is_empty()
                     && !untracked(&f.name) =>
             {
-                let mut sc = Scan::default();
+                let mut exact = |t: hir::TyId| match self.kind(t) {
+                    hir::TyKind::Adt(d, _) if self.adt_def(d).kind == hir::AdtKind::Class => {
+                        !self.has_subclasses(d)
+                    }
+                    _ => false,
+                };
+                let mut sc = Scan {
+                    callees: vec![],
+                    nodes: 0,
+                    exact: &mut exact,
+                };
                 let direct = block_panics(&f.body.block, &mut sc);
-                self.tracked_size.insert(def, sc.nodes);
-                direct || sc.callees.into_iter().any(|d| self.tracks_caller(d))
+                let (callees, nodes) = (sc.callees, sc.nodes);
+                self.tracked_size.insert(def, nodes);
+                direct || callees.into_iter().any(|d| self.tracks_caller(d))
             }
             _ => false,
         };
@@ -121,9 +157,16 @@ fn stmt_panics(s: &hir::Stmt, callees: &mut Scan) -> bool {
         S::Let { init: Some(e), .. } | S::Expr(e) | S::Return(Some(e)) => expr_panics(e, callees),
         S::LetPat { init, .. } => expr_panics(init, callees),
         S::If { cond, then, els } => {
-            let mut f = expr_panics(cond, callees) | block_panics(then, callees);
-            if let Some(b) = els {
-                f |= block_panics(b, callees);
+            let mut f = expr_panics(cond, callees);
+            match callees.known(cond) {
+                Some(true) => f |= block_panics(then, callees),
+                Some(false) => f |= els.as_ref().is_some_and(|b| block_panics(b, callees)),
+                None => {
+                    f |= block_panics(then, callees);
+                    if let Some(b) = els {
+                        f |= block_panics(b, callees);
+                    }
+                }
             }
             f
         }

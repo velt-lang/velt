@@ -77,3 +77,11 @@ tests/golden/std/regex_subclass_exec_throws.velt                   #3684 units=2
 tests/golden/std/drop_queue_catch_panic.velt                       #2943 units
 tests/golden/std/inspect_layout_custom_panic.velt                  #2943 units
 tests/golden/std/regexp_print.velt                                 #2943 units
+# - a std body that makes a copy with the receiver's own class (`speciesNew`, #3817: `split`
+#   and `matchAll` of a regex, `slice`, `map`, `filter` and `subarray` of a typed array) also
+#   dispatches over the program's classes: in std's unit the copy is of the built-in class.
+tests/golden/std/regex_species_copy.velt                           #2943 units
+tests/golden/std/regex_subclass_exec.velt                          #2943 units
+tests/golden/std/species_copy_fallback.velt                        #2943 units
+tests/golden/std/typed_array_species_copy.velt                     #2943 units
+tests/golden/std/typed_array_species_too_small.velt                #2943 units

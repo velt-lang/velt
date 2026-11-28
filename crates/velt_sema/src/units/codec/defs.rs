@@ -103,6 +103,7 @@ enums! {
         1 => Op(a),
         2 => AnyToPrimitive,
         3 => HookCall,
+        4 => SpeciesNew,
     }
     Inline {
         0 => Always,

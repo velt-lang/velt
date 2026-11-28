@@ -1,0 +1,2 @@
+warning: the constructor of `Named` can't take `(RegExp, string)`, the arguments of `RegExp`'s that built-in methods make copies with: those copies of a `Named` are `RegExp`s
+warning: the constructor of `Sized` can't take `(ArrayBuffer, f64, f64)`, the arguments of `Uint8Array`'s that built-in methods make copies with: those copies of a `Sized` are `Uint8Array`s

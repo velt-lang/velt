@@ -47,6 +47,26 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         };
+        let targs = match &class.kind {
+            ast::TypeExprKind::Named { args: targs, .. } => Some(&targs[..]),
+            _ => None,
+        };
+        self.new_class(d, slots, (class.span, targs), args, exp, span)
+    }
+
+    /// `new C(args)` of the class `d` (`slots`: its explicit type arguments, `written` the
+    /// span of the class's name and the type arguments written after it, `None` for a class
+    /// the program doesn't name there: `body::expr::species`).
+    pub(crate) fn new_class(
+        &mut self,
+        d: DefId,
+        slots: Vec<Option<TyId>>,
+        written: (Span, Option<&[ast::TypeExpr]>),
+        args: &[ast::Expr],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
+        let (class_span, targs) = written;
         if self.cx.is_generator_class(d) && !self.cx.scopes[self.module].is_std {
             let fix = match Some(d) == self.cx.generator_class() {
                 true => "write a generator function (`function* f(): Generator<T> { ... }`) and call it",
@@ -63,7 +83,7 @@ impl FnCx<'_, '_> {
                 "`{0}` is a C type: it exists only behind a `Ptr<{0}>`, which C functions give",
                 a.name
             );
-            self.cx.error(Diagnostic::error(msg, class.span));
+            self.cx.error(Diagnostic::error(msg, class_span));
             self.check_args_loose(args);
             return self.error_expr(span);
         }
@@ -76,7 +96,7 @@ impl FnCx<'_, '_> {
                 "cannot create an instance of abstract class `{}` (TypeScript's TS2511)",
                 a.name
             );
-            self.cx.error(Diagnostic::error(msg, class.span).with_note(
+            self.cx.error(Diagnostic::error(msg, class_span).with_note(
                 "create an instance of a subclass that implements its abstract members",
             ));
             self.check_args_loose(args);
@@ -91,7 +111,7 @@ impl FnCx<'_, '_> {
         let mut ctor_args = vec![];
         let (params, what) = match ctor {
             Some(c) => {
-                self.check_ctor_access(c, class.span);
+                self.check_ctor_access(c, class_span);
                 let owner = self.cx.fn_info(c).owner.expect("ICE: ctor owner");
                 let owner_ty = self.ancestor(self_ty, owner);
                 let oargs = match self.cx.ty.kind(owner_ty) {
@@ -134,7 +154,7 @@ impl FnCx<'_, '_> {
         self.collect_iterable_args = self.takes_iterable(d);
         self.weak_key_args = Some(d) == self.cx.prelude_adt("WeakRef");
         // A type bound an explicit type argument breaks is reported there (`tsc` TS2344).
-        if let ast::TypeExprKind::Named { args: targs, .. } = &class.kind {
+        if let Some(targs) = targs {
             let spans = targs.iter().enumerate().map(|(i, t)| (i, t.span));
             self.explicit_type_spans = Some((span, spans.collect()));
         }

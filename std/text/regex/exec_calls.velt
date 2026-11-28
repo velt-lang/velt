@@ -8,29 +8,36 @@
 // its `exec` is known, and each method has a search of its own that builds no match it does
 // not need.
 //
-// `split` and `matchAll` run on a copy in JavaScript, `new C(re, flags)` with `C` the regex's
-// class. Velt cannot construct the class of an object it is given, so the regex itself plays
-// the copy and gets its `lastIndex` back at the end: `exec` is called with the same subject and
-// finds the same `lastIndex` as on the copy, and for `split` the built-in `exec` matches exactly
-// at `lastIndex`, as the copy's `y` flag makes it. What differs: the class's constructor does
-// not run again, and the fields `exec` sees are the regex's own (its `flags` and `sticky` too).
+// `split` and `matchAll` run on a copy, as in JavaScript: `new C(re, flags)` with `C` the regex's
+// class (`speciesNew`; `flags + "y"` for `split`), whose constructor runs, and `exec` is the
+// copy's. The regex itself is left as it was. A class whose constructor can't take a `RegExp`
+// and a `string` gets a copy of `RegExp` (the compiler warns where it is declared). For `split`
+// the built-in `exec` of the copy matches exactly at `lastIndex`, as its `y` flag makes it.
 //
 // A class's `exec` may throw. What it throws passes through every function here to the caller
 // of the string method, as in JavaScript (no function declares what it throws: it is what the
-// program's `exec` does), and the regex that played a copy gets its `lastIndex` back then too.
+// program's `exec` does).
 
-import { identity } from "velt/lang/intrinsics";
+import { speciesNew } from "velt/lang/intrinsics";
 import { CURSOR } from "velt/text/regex/keys";
 import { RegExp } from "velt/text/regex/regexp";
 import { RegExpMatch } from "velt/text/regex/regexp_match";
 
-/** The identity of the regex whose `split` is running on this thread, 0 when none is. */
-const splitter = new ThreadLocal<u64>(0);
-
-/** Is `re` the regex a `split` of this thread is calling `exec` on? Its built-in `exec` then
- * matches exactly at `lastIndex`, whatever its flags. */
+/** Is `re` a regex a `split` plays its sticky copy with, whose built-in `exec` must match exactly
+ * at `lastIndex`? No longer: `split` runs on a copy with the `y` flag (`splitByExec`), as in
+ * JavaScript. `RegExp`'s `execOwn` still asks; its branch for it goes once regexp.velt changes. */
 export function splitting(re: RegExp): bool {
-  return splitter.get() == identity(re);
+  return false;
+}
+
+/** A `RegExp` of `re`'s pattern with `flags` (its own, or with `y`), for a class whose own
+ * constructor doesn't make the copy (`speciesNew`). The pattern is valid, so it doesn't throw. */
+function copyOf(re: RegExp, flags: string): RegExp {
+  try {
+    return new RegExp(re, flags);
+  } catch (e) {
+    panic(`ICE: a copy of ${re} with the flags ${flags}: ${e}`);
+  }
 }
 
 /** Does `re` match code points (the `u` or `v` flag), so that an empty match moves on past a
@@ -85,16 +92,13 @@ export function matchByExec(re: RegExp, s: string): string[] | null {
   return texts.length == 0 ? null : texts;
 }
 
-/** `s.matchAll(re)` of a global `re`: every match `exec` gives from `lastIndex` on, which the
- * regex gets back (JavaScript moves a copy's). */
+/** `s.matchAll(re)` of a global `re`: every match the `exec` of its copy (`new C(re,
+ * re.flags)`, starting at `re`'s `lastIndex`) gives. */
 export function matchAllByExec(re: RegExp, s: string): RegExpMatch[] {
-  const cursor = re[CURSOR]();
-  const from = cursor.at.load();
-  try {
-    return execAll(re, s);
-  } finally {
-    cursor.at.store(from);
-  }
+  const flags = re.flags;
+  const matcher = speciesNew(re, re, flags) ?? copyOf(re, flags);
+  matcher[CURSOR]().at.store(re[CURSOR]().at.load());
+  return execAll(matcher, s);
 }
 
 /** `s.search(re)`: where `re.exec(s)` matches with `lastIndex` 0, or -1; `lastIndex` is put
@@ -148,23 +152,17 @@ export function replaceFound<E>(
   return out;
 }
 
-/** `s.split(re, limit)` (no limit when undefined, `[]` for 0): `re.exec(s)` at each position of
- * `s` in turn, with `re` as the specification's sticky copy (the module's comment). */
+/** `s.split(re, limit)` (no limit when undefined, `[]` for 0): the `exec` of `re`'s sticky copy
+ * (`new C(re, flags + "y")`, the module's comment) at each position of `s` in turn. */
 export function splitByExec(re: RegExp, s: string, limit: number | undefined): string[] {
+  const flags = re.flags;
+  const sticky = flags.includes("y") ? flags : flags + "y";
+  const copy = speciesNew(re, re, sticky) ?? copyOf(re, sticky);
   const n = limit == null ? -1 : limit as i64;
   if (n == 0) {
     return [];
   }
-  const cursor = re[CURSOR]();
-  const saved = cursor.at.load();
-  const outer = splitter.get();
-  splitter.set(identity(re));
-  try {
-    return splitParts(re, s, n > 0 ? n as usize : 0);
-  } finally {
-    splitter.set(outer);
-    cursor.at.store(saved);
-  }
+  return splitParts(copy, s, n > 0 ? n as usize : 0);
 }
 
 /** The parts of `splitByExec`, at most `limit` of them (0: no limit). */
