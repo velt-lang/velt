@@ -1,7 +1,0 @@
-before
-caught x.missing is not a function
-caught twice TypeError x.missing is not a function
-9
-caught area o.a is not a function
-caught forEach o.a is not a function
-after
