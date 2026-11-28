@@ -8,16 +8,8 @@ import { propertyList, relayout } from "velt/encoding/json/relayout";
 import { hookCall } from "velt/lang/intrinsics";
 import { StringBuilder } from "velt/text/string_builder";
 import { replaceJsonResult } from "velt/encoding/json/any_replace";
-import {
-  holdsJsonValue,
-  jsonCutBegin,
-  jsonCutEnd,
-  jsonCutFailed,
-  jsonCutWalked,
-  jsonPresent,
-  writeJsonResultKeeping,
-} from "velt/encoding/json/any";
-import { JsonHookResults } from "velt/encoding/json/hook_results";
+import { holdsJsonValue, jsonPresent, writeJsonResult } from "velt/encoding/json/any";
+import { jsonResultFailed, jsonResultWalked } from "velt/encoding/json/replace_ops";
 
 // `JSON.stringify(value, replacer, space)` (the compiler calls these): `text` is
 // `JSON.stringify(value)`; `keys` the replacer array's JSON text, applied when `filter`; `gap`
@@ -47,11 +39,11 @@ function jsonReplacerOfAny(f: (key: string, value: any) => any): JsonReplacer {
 }
 
 // What a replacer declared with `any` returned for `key`, as JSON: a `JsonValue` as it is;
-// `undefined`, a function or a symbol left out, as Node leaves them; anything else as Node
-// writes it, without its own `toJSON` (that ran before the replacer, if it was the value). A
-// value met again inside itself is cut there: then the result is walked here, through itself
-// (`replaceJsonResult`, with the results of the `toJSON`s that ran while it was written, so each
-// runs once), and the walk takes it as it is (`jsonCutTaken`).
+// `undefined`, a function or a symbol left out, as Node leaves them; a value with members walked
+// here through itself, once, as Node walks it (`replaceJsonResult`: each member read, its
+// `toJSON` called and the replacer called for it, then its own members), and the walk takes it as
+// it is (`jsonResultTaken`); anything else as Node writes it, without its own `toJSON` (that ran
+// before the replacer, if it was the value).
 function jsonOfAny(
   r: any,
   key: string,
@@ -63,21 +55,20 @@ function jsonOfAny(
   if (holdsJsonValue(r)) {
     return r as JsonValue;
   }
-  const w = new StringBuilder();
-  const hooks = new JsonHookResults();
-  const before = jsonCutBegin();
-  writeJsonResultKeeping(w, r, key, hooks);
-  if (jsonCutEnd(before)) {
-    // A replacer can't throw: the walk throws what this walk did when it takes the result.
-    let out = JsonValue.of(null);
-    try {
-      out = replaceJsonResult(r, key, jsonReplacerOfAny(f), hooks);
-      jsonCutWalked();
-    } catch (e) {
-      jsonCutFailed(e instanceof RangeError);
-    }
-    return out;
+  let walked: JsonValue | null = null;
+  try {
+    walked = replaceJsonResult(r, key, f, jsonReplacerOfAny);
+  } catch (e) {
+    // A replacer can't throw: the walk throws this when it takes the `null` returned instead.
+    jsonResultFailed(e instanceof RangeError);
+    return JsonValue.of(null);
   }
+  if (walked != null) {
+    jsonResultWalked();
+    return walked!;
+  }
+  const w = new StringBuilder();
+  writeJsonResult(w, r, key);
   let out = JsonValue.of(null);
   try {
     out = JsonValue.parse(w.take(), { maxDepth: 4294967295 });

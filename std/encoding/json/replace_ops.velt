@@ -8,7 +8,6 @@
 
 import { noInline } from "velt/lang/intrinsics";
 import { beginVisit, endVisit } from "velt/reflect";
-import { jsonCutError, jsonCutTaken } from "velt/encoding/json/any";
 import { JsonValue } from "velt/prelude/json/json_value";
 import { JsonReplacer } from "velt/prelude/json/layout";
 import {
@@ -21,6 +20,58 @@ import {
 // The depth of the value the replacer is called for (`jsonReplacerDepth`): where a walk the
 // replacer's result needs starts (`jsonReplacerDepthNow`).
 const JSON_REPLACER_DEPTH = new ThreadLocal<i64>(0);
+
+// What a replacer declared with `any` returned, when it was walked through itself already
+// (`jsonOfAny`, std/prelude/json/layout.velt): 1 from when that walk ended (`jsonResultWalked`)
+// until the walk that called the replacer takes the result as it is (`jsonResultTaken`); 2 (a
+// `TypeError`) or 3 (a `RangeError`) when that walk threw, until the walk takes the `null`
+// returned instead and throws it (`jsonResultError`); otherwise 0.
+const JSON_RESULT = new ThreadLocal<u64>(0);
+
+/** The replacer's result about to be returned has been walked already (`jsonResultTaken`). */
+export function jsonResultWalked(): void {
+  JSON_RESULT.set(1);
+}
+
+/** The walk of the replacer's result threw (`range`: a `RangeError`, else a `TypeError`). */
+export function jsonResultFailed(range: bool): void {
+  JSON_RESULT.set(range ? 3 : 2);
+}
+
+/** Whether the replacer's result just taken was walked already (`jsonResultWalked`; once). */
+function jsonResultTaken(): bool {
+  if (JSON_RESULT.get() != 1) {
+    return false;
+  }
+  JSON_RESULT.set(0);
+  return true;
+}
+
+/**
+ * What the walk of the replacer's result just taken threw (`jsonResultFailed`; once): 1 for a
+ * `TypeError`, 2 for a `RangeError`, else 0.
+ */
+function jsonResultError(): u64 {
+  const s = JSON_RESULT.get();
+  if (s != 2 && s != 3) {
+    return 0;
+  }
+  JSON_RESULT.set(0);
+  return s - 1;
+}
+
+/**
+ * The state above when `JSON.stringify(value, replacer)` starts, for `jsonResultRestore`: a call
+ * made inside another one's walk leaves that walk's state as it was.
+ */
+export function jsonResultSave(): u64 {
+  return JSON_RESULT.get();
+}
+
+/** Ends what `JSON.stringify(value, replacer)` did to the state above (`s`: `jsonResultSave`). */
+export function jsonResultRestore(s: u64): void {
+  JSON_RESULT.set(s);
+}
 
 /** Throws Node's stack overflow `RangeError` past the replacer walk's depth limit. */
 export function jsonReplacerDepth(depth: i64): void {
@@ -129,13 +180,13 @@ export function jsonReplacedNull(
 
 /**
  * `r`, the replacer's result at `depth`, with its members replaced in turn; as it is when that
- * was done already (a cycle in what a replacer declared with `any` returned is walked through
- * that value itself, as Node walks it: `jsonCutTaken`, #3871); a `null` for one whose walk
- * threw is that error (`jsonCutError`).
+ * was done already (what a replacer declared with `any` returned is walked through that value
+ * itself, as Node walks it: `jsonResultTaken`, #3871); a `null` for one whose walk threw is that
+ * error (`jsonResultError`).
  */
 export function jsonReplacedMembers(r: JsonValue, replacer: JsonReplacer, depth: i64): JsonValue {
   if (r.isArray()) {
-    if (jsonCutTaken()) {
+    if (jsonResultTaken()) {
       return r;
     }
     const out = JsonValue.array();
@@ -147,7 +198,7 @@ export function jsonReplacedMembers(r: JsonValue, replacer: JsonReplacer, depth:
     return out;
   }
   if (r.isObject()) {
-    if (jsonCutTaken()) {
+    if (jsonResultTaken()) {
       return r;
     }
     const out = JsonValue.object();
@@ -158,7 +209,7 @@ export function jsonReplacedMembers(r: JsonValue, replacer: JsonReplacer, depth:
     return out;
   }
   if (r.isNull()) {
-    const thrown = jsonCutError();
+    const thrown = jsonResultError();
     if (thrown == 1) {
       throw new TypeError("Converting circular structure to JSON");
     }

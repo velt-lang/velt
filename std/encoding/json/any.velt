@@ -12,7 +12,6 @@ import { StringBuilder } from "velt/text/string_builder";
 import { appendJsonNumber, appendJsonString, appendJsonUint } from "velt/encoding/json/append";
 import { JsonValue } from "velt/prelude/json/json_value";
 import { anyIsPromise } from "velt/lang/intrinsics";
-import { JsonHookResults } from "velt/encoding/json/hook_results";
 import {
   beginVisit,
   callToJSON,
@@ -52,11 +51,6 @@ function circular(): never {
  * to `w`: `null` for a value without a JSON form.
  */
 export function writeJsonAny(w: StringBuilder, v: any, key: string): void {
-  writeAny(w, v, key, null);
-}
-
-/** `writeJsonAny`, each `toJSON` result kept in `hooks` (when not null) as it runs. */
-function writeAny(w: StringBuilder, v: any, key: string, hooks: JsonHookResults | null): void {
   if (!jsonPresent(v)) {
     w.append("null");
     return;
@@ -72,40 +66,32 @@ function writeAny(w: StringBuilder, v: any, key: string, hooks: JsonHookResults 
   } else if (kind == "string") {
     appendJsonString(w, v as string);
   } else if (kind == "proxy") {
-    writeAny(w, callToJSON(v, key), key, hooks);
+    writeJsonAny(w, callToJSON(v, key), key);
   } else if (holdsJsonValue(v)) {
     // Its text, through its `toJSON()` hook: a `JsonValue` here (narrowed by `instanceof`)
     // would check all of its methods in every program that writes an `any`, where one holds
     // a `JsonValue` only in a program that has some.
     w.append(callToJSON(v, key) as string);
   } else if (kind == "array" || kind == "tuple") {
-    if (!enter(w, v)) {
-      return;
-    }
-    writeElements(w, v, hooks);
+    enter(v);
+    writeElements(w, v);
     endVisit();
   } else if (kind == "shared") {
-    if (!enter(w, v)) {
-      return;
-    }
-    writeAny(w, entryValue(v, 0), key, hooks);
+    enter(v);
+    writeJsonAny(w, entryValue(v, 0), key);
     endVisit();
   } else if (kind == "class" && t.hasHook("toJSON")) {
-    writeHooked(w, v, key, hooks);
+    writeHooked(w, v, key);
   } else if (kind == "map" || kind == "set") {
     // No enumerable own properties, as in Node.
     w.append("{}");
   } else if (kind == "object" || kind == "class" || kind == "struct") {
-    if (!enter(w, v)) {
-      return;
-    }
-    writeMembers(w, v, null, hooks);
+    enter(v);
+    writeMembers(w, v, null);
     endVisit();
   } else if (kind == "record") {
-    if (!enter(w, v)) {
-      return;
-    }
-    writeMembers(w, v, recordOrder(v), hooks);
+    enter(v);
+    writeMembers(w, v, recordOrder(v));
     endVisit();
   } else if (anyIsPromise(v)) {
     // An object with no own enumerable members, as Node writes it (#924).
@@ -120,91 +106,11 @@ export function holdsJsonValue(v: any): bool {
   return v instanceof JsonValue;
 }
 
-// 1 while `jsonOfAny` writes what a replacer declared with `any` returned, 2 once a value met
-// again inside itself was cut there (written as `null`), and 3 from when that result has been
-// walked through itself (`jsonCutWalked`) until the walk takes it as it is (`jsonCutTaken`,
-// replace_ops.velt); 4 (a `TypeError`) or 5 (a `RangeError`) when that walk threw, until the
-// walk takes the `null` returned instead and throws it (`jsonCutError`). Otherwise (0) such a
-// value is Node's circular-structure error at once.
-const JSON_CUT = new ThreadLocal<u64>(0);
-
-/**
- * Starts writing `v`: true, or, when `v` is being written already (a cycle), the circular-structure
- * error, or `null` written for it while a replacer's result is written (`jsonCutBegin`).
- */
-export function enter(w: StringBuilder, v: any): bool {
-  if (beginVisit(identity(v))) {
-    return true;
-  }
-  const s = JSON_CUT.get();
-  if (s != 1 && s != 2) {
+/** Starts writing `v`, which is a cycle when it is being written already. */
+export function enter(v: any): void {
+  if (!beginVisit(identity(v))) {
     circular();
   }
-  JSON_CUT.set(2);
-  w.append("null");
-  return false;
-}
-
-/**
- * Starts writing a replacer's result, with a cycle in it cut as `null` (`enter`): the state
- * before, for `jsonCutEnd`.
- */
-export function jsonCutBegin(): u64 {
-  const before = JSON_CUT.get();
-  JSON_CUT.set(1);
-  return before;
-}
-
-/** Ends what `jsonCutBegin` started (`before`: what it returned): whether a cycle was cut. */
-export function jsonCutEnd(before: u64): bool {
-  const cut = JSON_CUT.get() == 2;
-  JSON_CUT.set(before == 3 ? 0 : before);
-  return cut;
-}
-
-/** The replacer's result about to be returned has been walked already (`jsonCutTaken`). */
-export function jsonCutWalked(): void {
-  JSON_CUT.set(3);
-}
-
-/** Whether the replacer's result just taken was walked already (`jsonCutWalked`; once). */
-export function jsonCutTaken(): bool {
-  if (JSON_CUT.get() != 3) {
-    return false;
-  }
-  JSON_CUT.set(0);
-  return true;
-}
-
-/** The walk `jsonCutWalked` names threw (`range`: a `RangeError`, else a `TypeError`). */
-export function jsonCutFailed(range: bool): void {
-  JSON_CUT.set(range ? 5 : 4);
-}
-
-/**
- * What the walk of the replacer's result just taken threw (`jsonCutFailed`; once): 1 for a
- * `TypeError`, 2 for a `RangeError`, else 0.
- */
-export function jsonCutError(): u64 {
-  const s = JSON_CUT.get();
-  if (s != 4 && s != 5) {
-    return 0;
-  }
-  JSON_CUT.set(0);
-  return s - 3;
-}
-
-/**
- * The state above when `JSON.stringify(value, replacer)` starts, for `jsonCutRestore`: a call made
- * while another one's replacer has its result written (from a `toJSON` in it) keeps that state.
- */
-export function jsonCutSave(): u64 {
-  return JSON_CUT.get();
-}
-
-/** Ends what `JSON.stringify(value, replacer)` did to the state above (`s`: `jsonCutSave`). */
-export function jsonCutRestore(s: u64): void {
-  JSON_CUT.set(s);
 }
 
 /** A number as its type writes it: an integer exactly, a float as JavaScript does. */
@@ -219,12 +125,8 @@ function writeNumber(w: StringBuilder, v: any, repr: string): void {
 }
 
 /** What a class instance's `toJSON(key)` returns, written ([`writeJsonResult`]). */
-function writeHooked(w: StringBuilder, v: any, key: string, hooks: JsonHookResults | null): void {
-  const r = callToJSON(v, key);
-  if (hooks != null) {
-    hooks.add(identity(v), key, r);
-  }
-  writeResult(w, r, key, hooks);
+function writeHooked(w: StringBuilder, v: any, key: string): void {
+  writeJsonResult(w, callToJSON(v, key), key);
 }
 
 /**
@@ -233,23 +135,6 @@ function writeHooked(w: StringBuilder, v: any, key: string, hooks: JsonHookResul
  * `return this`, or another) is written by its members (a `Date` has none: `{}`); anything else as `writeJsonAny` writes it.
  */
 export function writeJsonResult(w: StringBuilder, r: any, key: string): void {
-  writeResult(w, r, key, null);
-}
-
-/**
- * `writeJsonResult` of what a replacer returned, each `toJSON` result kept in `hooks` as it runs
- * (for `replaceJsonResult`, any_replace.velt).
- */
-export function writeJsonResultKeeping(
-  w: StringBuilder,
-  r: any,
-  key: string,
-  hooks: JsonHookResults,
-): void {
-  writeResult(w, r, key, hooks);
-}
-
-function writeResult(w: StringBuilder, r: any, key: string, hooks: JsonHookResults | null): void {
   if (jsonPresent(r) && !holdsJsonValue(r)) {
     const t = typeOf(r);
     if (t.kind == "class" && t.hasHook("toJSON")) {
@@ -258,18 +143,16 @@ function writeResult(w: StringBuilder, r: any, key: string, hooks: JsonHookResul
         w.append("{}");
         return;
       }
-      if (!enter(w, r)) {
-        return;
-      }
-      writeMembers(w, r, null, hooks);
+      enter(r);
+      writeMembers(w, r, null);
       endVisit();
       return;
     }
   }
-  writeAny(w, r, key, hooks);
+  writeJsonAny(w, r, key);
 }
 
-function writeElements(w: StringBuilder, v: any, hooks: JsonHookResults | null): void {
+function writeElements(w: StringBuilder, v: any): void {
   const n = entryCount(v);
   if (n < 0) {
     unsupported();
@@ -279,18 +162,13 @@ function writeElements(w: StringBuilder, v: any, hooks: JsonHookResults | null):
     if (i > 0) {
       w.append(",");
     }
-    writeAny(w, entryValue(v, i), `${i}`, hooks);
+    writeJsonAny(w, entryValue(v, i), `${i}`);
   }
   w.append("]");
 }
 
 /** The members of an object, a class instance, a struct or a record, in `order`. */
-function writeMembers(
-  w: StringBuilder,
-  v: any,
-  order: i64[] | null,
-  hooks: JsonHookResults | null,
-): void {
+function writeMembers(w: StringBuilder, v: any, order: i64[] | null): void {
   const n = entryCount(v);
   if (n < 0) {
     // std's `WeakMap` and `WeakSet` keep their entries out of sight: `{}`, as in Node.
@@ -317,7 +195,7 @@ function writeMembers(
     const name = entryName(v, i);
     appendJsonString(w, name);
     w.append(":");
-    writeAny(w, x, name, hooks);
+    writeJsonAny(w, x, name);
   }
   w.append("}");
 }
