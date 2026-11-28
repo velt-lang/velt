@@ -1,0 +1,33 @@
+// velt/lang/hooks (internal): whether the runtime has a leaf outstanding, for the process
+// lifetime under the executor in Velt (sched_end.velt): the runtime's own question of a due
+// `unref()`'d timer (`velt_rt_timer_unref_due`, quiet.rs `UnrefDue`), asked as a probe. The
+// default variant of `#sched-quiet`; on WASI the program awaits no runtime leaf
+// (quiet_none.velt).
+
+import { futDrop, futPoll } from "velt/lang/intrinsics";
+import * as m from "./sched_mem";
+
+/** The runtime's question of a due `unref()`'d timer, asked as a probe (a heap future). */
+declare c("c") function velt_rt_timer_unref_due$probe(): usize;
+
+/** The probe's answer: a bool at the result slot. */
+const RESULT: usize = 16;
+
+/**
+ * Has the runtime nothing outstanding: no pending leaf, keep-alive reference or queued task?
+ * `cx`: the probe's `cx`, whose waker does nothing.
+ */
+export function runtimeQuiet(cx: usize): bool {
+  // SAFETY: the runtime's entry takes nothing and returns a new heap future, owned here.
+  const f = unsafe { velt_rt_timer_unref_due$probe() };
+  // SAFETY: `f` is a live heap future; the probe's `cx` lives in the executor.
+  const r = unsafe { futPoll(f, cx) };
+  // The probe's contract (quiet.rs `UnrefDue`): pending while the runtime may be quiet, ready
+  // with 1 when it saw its own end (quiet too), ready with 0 when something is outstanding.
+  const quiet = r === 0 || (m.ld(f + RESULT) & 255) !== 0;
+  // SAFETY: owned, polled no more.
+  unsafe {
+    futDrop(f);
+  }
+  return quiet;
+}

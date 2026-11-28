@@ -29,11 +29,11 @@ pub(super) use velt_common::std_hooks::SCHED_EXTERNS as EXTERNS;
 pub(super) use velt_common::std_hooks::SCHED_UNREF_DUE as UNREF_DUE;
 
 impl FnLower<'_, '_> {
-    /// Does this program run on the executor in Velt? Only on a native target: a JS host drives
-    /// its turns itself (entry.rs), and WASI has no thread to wake the worker or OS wait for it
-    /// to park in (an idle program would spin forever), so the variable does nothing there.
+    /// Does this program run on the executor in Velt? On a native target and on WASI, which runs
+    /// it on its one thread (#3905). A JS host drives its turns itself (entry.rs) and keeps the
+    /// runtime's executor until those turns are the executor in Velt's.
     pub(super) fn std_sched(&self) -> bool {
-        velt_common::std_hooks::std_scheduler() && !self.cx.target.trim().starts_with("wasm")
+        velt_common::std_hooks::std_scheduler() && self.cx.runs_std_executor()
     }
 
     /// Do debug cell checks go to the executor in Velt's table (sched_cells.velt)? Only where it
