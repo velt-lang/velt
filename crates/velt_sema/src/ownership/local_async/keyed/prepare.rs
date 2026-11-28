@@ -11,7 +11,9 @@ use crate::ownership::local_closures::walk::{self, Visit};
 use super::super::changes::{callee_name, unconverted, Memo};
 use super::super::fed::{adt_of, own};
 use super::super::reach::{constructor, plain};
-use super::super::targets::{held_adts, method_targets, methods_of, targets_for, Literals};
+use super::super::targets::{
+    any_apply_skip, held_adts, method_targets, methods_of, targets_for, Literals,
+};
 use super::apply::Shapes;
 use super::{Arg, Ev, Key, Prepared, Run, Site};
 
@@ -209,10 +211,13 @@ impl Visit for Prep<'_, '_> {
                 }
                 // `f(c, v)` of a function read from an `any`: [`Ev::FromAny`]. Its operands are the
                 // value, the callee as written, and the arguments.
-                Callee::Intrinsic(Intrinsic::AnyApply) if args.len() >= 2 => {
-                    let want: Vec<TyId> = args[2..].iter().map(|a| unconverted(a).ty).collect();
+                Callee::Intrinsic(c @ (Intrinsic::AnyApply | Intrinsic::AnyApplyThis))
+                    if args.len() >= any_apply_skip(*c) =>
+                {
+                    let skip = any_apply_skip(*c);
+                    let want: Vec<TyId> = args[skip..].iter().map(|a| unconverted(a).ty).collect();
                     let mut actual = vec![vec![Arg::Own]];
-                    actual.extend(self.args(&args[2..]));
+                    actual.extend(self.args(&args[skip..]));
                     let methods = self.shapes.id(&actual);
                     let values = self.shapes.id(&actual[1..]);
                     let site = self.at(e, format!("{}(…)", short(self.names, &args[0])));

@@ -1,0 +1,17 @@
+undefined:1 plain:2
+arg of fs[5]
+fs[5] is not a function
+undefined:1 plain:2
+d:3
+d.name is not a function
+target:1
+m,name
+p.name is not a function
+get m
+arg
+g:1
+after an await: o.n is not a function
+o:2
+TypeError true
+o:1
+done
