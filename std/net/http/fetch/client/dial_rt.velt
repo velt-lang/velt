@@ -56,3 +56,8 @@ export async function tlsOn(
 export async function idleReadable(c: TcpStream, ms: i64): Promise<bool> {
   return await c.readableWithin(ms as number);
 }
+
+/** Never: this build's waits are the runtime's. */
+export function idleEnding(): bool {
+  return false;
+}

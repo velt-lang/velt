@@ -161,6 +161,14 @@ export async function idleReadable(c: TcpStream, ms: i64): Promise<bool> {
   }
 }
 
+/**
+ * Whether the program is ending and gave the idle waits back (a counted run, sched_io_wait.velt
+ * `endIdle`): an idle session closes then rather than wait again.
+ */
+export function idleEnding(): bool {
+  return wt.idleEnded();
+}
+
 /** `idleReadable` of socket `h` on the reactor, until `deadline` (`wt.now()`). */
 async function idleSocket(h: u64, deadline: u64): Promise<bool> {
   const s = tb.enter(h);

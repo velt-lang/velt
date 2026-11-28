@@ -6,6 +6,11 @@
 //! client's two requests share one connection (the server names the client's address), and the
 //! server, which only listens, is still running after the client ended.
 //!
+//! The client's other cases, each after a first request: a response of 3 MiB it never reads
+//! (more than the HTTP/2 stream window, so the stream ends only when the dropped response cancels
+//! it, after which the server sends nothing), a second request answered after 500 ms (it keeps
+//! the process alive until then, on the same connection), and an abort as its last action.
+//!
 //! With the debug runtime's counters (`VELT_RC_STATS=1`) the end gives the idle session back
 //! first, so its blocks are freed as the rest (`blocks=A/F` with A == F).
 //!
@@ -49,8 +54,18 @@ const LIMIT: Duration = Duration::from_millis(2500);
 const SERVER: &str = r#"import { HttpRequest, HttpResponse, serveHttp } from "http-server";
 import { TEST_CERT, TEST_KEY } from "./_tls";
 
+import { delay } from "velt/time";
+
 // Every response names the client's address: one connection, one client port.
 async function handler(req: HttpRequest, res: HttpResponse) {
+  if (req.pathIs("/big")) {
+    res.sendBytes(new Array<u8>(3145728).fill(120));
+    return;
+  }
+  if (req.pathIs("/slow")) {
+    // timing: keeps the request pending; the client must stay alive for it
+    await delay(500);
+  }
   res.send(req.remoteAddr());
 }
 
@@ -62,12 +77,37 @@ async function main() {
 "#;
 
 const CLIENT: &str = r#"import { TEST_CA } from "./_tls";
+import { AbortController } from "velt/task";
 
-const url = process.argv[2];
-const a = await (await fetch(url, { ca: TEST_CA })).text();
-const b = await (await fetch(url, { ca: TEST_CA })).text();
-console.log(a == b ? "one connection" : `two connections: ${a} ${b}`);
+const base = process.argv[2];
+const mode = process.argv[3];
+const a = await (await fetch(base, { ca: TEST_CA })).text();
+if (mode == "unread") {
+  const r = await fetch(`${base}big`, { ca: TEST_CA });
+  console.log(`unread ${r.status}`);
+} else if (mode == "abort") {
+  const ac = new AbortController();
+  const p = fetch(`${base}slow`, { ca: TEST_CA, signal: ac.signal });
+  ac.abort();
+  try {
+    await p;
+    console.log("not aborted");
+  } catch (e) {
+    console.log("aborted");
+  }
+} else {
+  const b = await (await fetch(`${base}${mode == "slow" ? "slow" : ""}`, { ca: TEST_CA })).text();
+  console.log(a == b ? "one connection" : `two connections: ${a} ${b}`);
+}
 "#;
+
+/// The client's cases (its second argument) and what each prints.
+const CASES: &[(&str, &str)] = &[
+    ("two", "one connection\n"),
+    ("unread", "unread 200\n"),
+    ("slow", "one connection\n"),
+    ("abort", "aborted\n"),
+];
 
 /// The server, built and started: the process and its two ports (https, http).
 fn start_server(dir: &Path, tls: &str) -> (Child, String, String) {
@@ -104,9 +144,15 @@ fn start_server(dir: &Path, tls: &str) -> (Child, String, String) {
     }
 }
 
-/// `exe url` with `threads` workers (`stats`: with the counters): its stdout, its stderr and how
-/// long it ran (killed after a minute).
-fn run_client(exe: &Path, url: &str, threads: u32, stats: bool) -> (String, String, Duration) {
+/// `exe url case` with `threads` workers (`stats`: with the counters): its stdout, its stderr and
+/// how long it ran (killed after a minute).
+fn run_client(
+    exe: &Path,
+    url: &str,
+    case: &str,
+    threads: u32,
+    stats: bool,
+) -> (String, String, Duration) {
     let start = Instant::now();
     let mut cmd = command(exe);
     if stats {
@@ -114,6 +160,7 @@ fn run_client(exe: &Path, url: &str, threads: u32, stats: bool) -> (String, Stri
     }
     let mut child = cmd
         .arg(url)
+        .arg(case)
         .env("VELT_THREADS", threads.to_string())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -167,19 +214,23 @@ fn a_program_ends_once_its_last_fetch_is_done() {
         format!("https://localhost:{https_port}/"),
         format!("http://127.0.0.1:{http_port}/"),
     ] {
-        for threads in [1, 4, 8] {
-            let (out, _, took) = run_client(&client, &url, threads, false);
-            if out != "one connection\n" || took > LIMIT {
-                failures.push(format!("{url} (threads {threads}): {out:?} in {took:?}"));
+        for (case, want) in CASES {
+            for threads in [1, 4, 8] {
+                let (out, _, took) = run_client(&client, &url, case, threads, false);
+                if out != *want || took > LIMIT {
+                    failures.push(format!(
+                        "{url} {case} (threads {threads}): {out:?} in {took:?}"
+                    ));
+                }
             }
-        }
-        for threads in [1, 4] {
-            let (out, err, took) = run_client(&client, &url, threads, true);
-            let left = unfreed(&err).unwrap_or(0);
-            if out != "one connection\n" || took > LIMIT || left != 0 {
-                failures.push(format!(
-                    "{url} (threads {threads}, counted): {out:?} in {took:?}, {left} blocks left: {err}"
-                ));
+            for threads in [1, 4] {
+                let (out, err, took) = run_client(&client, &url, case, threads, true);
+                let left = unfreed(&err).unwrap_or(0);
+                if out != *want || took > LIMIT || left != 0 {
+                    failures.push(format!(
+                        "{url} {case} (threads {threads}, counted): {out:?} in {took:?}, {left} blocks left: {err}"
+                    ));
+                }
             }
         }
     }

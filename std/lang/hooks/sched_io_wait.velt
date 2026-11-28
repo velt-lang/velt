@@ -157,6 +157,11 @@ export function endIdle(): bool {
   return true;
 }
 
+/** Has a counted run's end given the idle waits back (`endIdle`)? */
+export function idleEnded(): bool {
+  return IDLE_END.load("acquire") !== 0;
+}
+
 /**
  * `waitFor` that also ends once heap future `also` completes (it owns `also`, polled after the
  * source with the same context and dropped with the wait): a wait for input that an abort signal

@@ -6,8 +6,8 @@
 // writes while handling one read or one call leave in one write (`writeBytesLater`). It closes
 // after `IDLE_MS` without streams, after a GOAWAY once its streams are done, or on an error.
 // As Node's, a session keeps the process alive only while it has streams (or requests waiting):
-// it holds one of the runtime's keep-alive references then (`hold`), and its wait while idle is
-// one that keeps nothing alive (`idleReadable`), so a program whose last `fetch` is done ends at
+// it holds one of the runtime's keep-alive references then (`hold`), and its waits for the server
+// keep nothing alive themselves (`idleReadable`), so a program whose last `fetch` is done ends at
 // once rather than after `IDLE_MS`.
 
 import { TcpStream } from "velt/net";
@@ -39,7 +39,7 @@ import { ClientStream } from "velt/net/http/fetch/client/h2/stream";
 import { frames } from "velt/net/http/fetch/client/h2/frames";
 import { startCall } from "velt/net/http/fetch/client/h2/outbound";
 import { copyBytes, writeUtf8 } from "velt/lang/bytes/copy";
-import { idleReadable } from "#fetch-dial";
+import { idleEnding, idleReadable } from "#fetch-dial";
 
 declare function velt_rt_keep_alive_acquire();
 declare function velt_rt_keep_alive_release();
@@ -87,6 +87,8 @@ export class ClientSession {
   inBatch: bool = false;
   /// The session holds a keep-alive reference (`hold`).
   held: bool = false;
+  /// When the session last went without streams (`Date.now()`).
+  idleSince: i64 = Date.now();
   /// Called once when the session stops taking requests (its registry entry goes).
   onClose: (() => void) | null = null;
 
@@ -124,14 +126,18 @@ export class ClientSession {
           if (idle && this.goingAway) {
             break;
           }
-          // Idle, the wait keeps the process alive no more than Node's unref'd socket does.
-          const ready =
-            idle ? await idleReadable(this.conn, IDLE_MS) : await this.conn.readableWithin(3600000);
-          if (!ready) {
-            if (!this.hold()) {
-              this.out.goaway(0, NO_ERROR, "idle");
-              break;
-            }
+          // Every wait keeps the process alive no more than Node's unref'd socket does: while
+          // there are streams, `hold` does. A wait while busy ends after `IDLE_MS` too, so a
+          // session that went idle meanwhile (its last stream cancelled by the request, with
+          // nothing more to come from the server) closes on time all the same.
+          const ms = idle ? this.idleLeft() : IDLE_MS;
+          if (ms > 0 && (await idleReadable(this.conn, ms))) {
+            continue;
+          }
+          // Idle long enough, or the program ends and gave the wait back (a counted run).
+          if (!this.hold() && (this.idleLeft() <= 0 || idleEnding())) {
+            this.out.goaway(0, NO_ERROR, "idle");
+            break;
           }
           continue;
         }
@@ -199,9 +205,15 @@ export class ClientSession {
         velt_rt_keep_alive_acquire();
       } else {
         velt_rt_keep_alive_release();
+        this.idleSince = Date.now();
       }
     }
     return busy;
+  }
+
+  /// The milliseconds left before an idle session closes (`IDLE_MS` after it went idle).
+  private idleLeft(): i64 {
+    return IDLE_MS - (Date.now() - this.idleSince);
   }
 
   /// Stops taking requests: the registry forgets the session, the channel is closed, and the
