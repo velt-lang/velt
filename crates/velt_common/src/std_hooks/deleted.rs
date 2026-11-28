@@ -179,4 +179,11 @@ pub const DELETED: &[&str] = &[
     "velt_rt_fnprop_key",
     "velt_rt_fnprop_identity",
     "velt_rt_fnprop_identity_of",
+    // #2196: `console.log`'s line breaking (std/lang/hooks/inspect_layout*.velt), with the pieces
+    // a custom inspect writes and the builder's length, which only std's `%s` and `JsonValue`
+    // printing still called.
+    "velt_rt_strbuf_inspect_layout",
+    "velt_rt_strbuf_inspect_begin",
+    "velt_rt_strbuf_inspect_atom",
+    "velt_rt_strbuf_len",
 ];

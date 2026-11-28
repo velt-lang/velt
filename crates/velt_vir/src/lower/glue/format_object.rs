@@ -215,7 +215,7 @@ impl FnLower<'_, '_> {
 
     /// `before`, then the key `n` and its `: `. A symbol key whose description holds what line
     /// breaking reads as structure (a quote, a bracket, `, `) is kept as one piece, as a custom
-    /// inspect's text is (`velt_rt_strbuf_inspect_atom`).
+    /// inspect's text is (std's `inspectAtom`).
     fn push_key(&mut self, buf: &Operand, before: &str, n: &str) {
         let special = |c: char| " ,:<'\"`{[()]}".contains(c);
         let kept = n

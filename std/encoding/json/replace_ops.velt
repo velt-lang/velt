@@ -135,6 +135,7 @@ export function jsonReplacerKept(r: JsonValue, view: JsonValue): bool {
 }
 
 /** `value` under `key` replaced, then its members in turn (a value with no `toJSON` left). */
+@noInline
 export function jsonReplaced(
   key: string,
   value: JsonValue,
