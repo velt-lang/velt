@@ -7,9 +7,9 @@
 // with keep-alive connections pooled per origin, HTTP/2 over TLS, redirects followed as the Fetch
 // standard says, bodies decoded by velt/compress, an `AbortSignal` that stops the request
 // where it is waiting and closes its connection, and the proxy the request's `proxy` option
-// names or, with `NODE_USE_ENV_PROXY=1` as in Node, the environment's (`HTTPS_PROXY`,
-// `NO_PROXY`; client/proxy.velt). On JS hosts (`wasm32-unknown-unknown`) it is the host's own
-// `fetch` (client/transport/js.velt), and the signal aborts that; the host chooses the proxy.
+// names or else the environment's, as in Bun (`HTTPS_PROXY`, `NO_PROXY`; client/proxy.velt).
+// On JS hosts (`wasm32-unknown-unknown`) it is the host's own `fetch` (client/transport/js.velt),
+// and the signal aborts that; the host chooses the proxy.
 
 import { IoError } from "velt/io/error";
 import { AbortError, AbortSignal } from "velt/task";

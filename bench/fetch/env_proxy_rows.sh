@@ -10,7 +10,7 @@ set -eu
 base_velt=$1 base_std=$2 head_velt=$3 head_std=$4 work=$5
 mkdir -p "$work"
 # No proxy variables: the rows measure a program that does not use a proxy.
-unset NODE_USE_ENV_PROXY http_proxy HTTP_PROXY https_proxy HTTPS_PROXY no_proxy NO_PROXY
+unset NODE_USE_ENV_PROXY http_proxy HTTP_PROXY https_proxy HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
 export VELT_THREADS=1
 # Every build compiles: the build cache would make a side count only a lookup.
 export VELT_BUILD_CACHE=off
