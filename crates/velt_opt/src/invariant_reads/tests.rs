@@ -38,6 +38,11 @@ enum Extra {
     Flag,
     /// The body runs only on even iterations (`i % 2 == 0`): a counter's test.
     Counter,
+    /// `*(ptradd (*bytes).data, 0) = i`: a store of a scalar element, as `xs[0] = i`.
+    ElementStore,
+    /// `*(ptradd bytes, 8) = i`: a store through a pointer computed from the header itself,
+    /// not its data: it writes the length the loop reads.
+    HeaderStore,
 }
 
 struct Aggs {
@@ -288,6 +293,27 @@ fn program(extra: Extra) -> (Program, Aggs) {
             fb.assign(tail, s, bin(BinOp::Add, copy_local(s), copy_place(first)));
         }
         Extra::LateCopy => fb.assign(tail, w, Rvalue::Use(copy_local(pv))),
+        Extra::ElementStore | Extra::HeaderStore => {
+            let e = fb.local(Ty::Ptr);
+            let base = match extra {
+                Extra::ElementStore => Place {
+                    local: ph,
+                    proj: vec![Proj::Deref(Ty::Agg(hdr)), Proj::Field(0)],
+                },
+                _ => Place::local(ph),
+            };
+            let off = if extra == Extra::ElementStore { 0 } else { 8 };
+            fb.assign(
+                tail,
+                e,
+                bin(BinOp::PtrAdd, copy_place(base), int(off, Ty::U64)),
+            );
+            let at = Place {
+                local: e,
+                proj: vec![Proj::Deref(Ty::U64)],
+            };
+            fb.push(tail, Stmt::Assign(at, Rvalue::Use(copy_local(i))));
+        }
         Extra::Nothing
         | Extra::EarlyCopy
         | Extra::AtomicOffset
@@ -539,5 +565,29 @@ fn a_counter_s_test_in_the_loop_still_lets_the_reads_out() {
     let mut after = before.clone();
     assert!(optimize(&mut after));
     assert_eq!(reads_in_loops(&after.funcs[1]), 0);
+    same_behaviour(&before, &after);
+}
+
+#[test]
+fn a_store_of_an_element_still_lets_the_reads_out() {
+    // `xs[0] = i` writes element memory, where no header or object lives: the view and the
+    // header's data pointer are read once in front of the loops.
+    let (before, _) = program(Extra::ElementStore);
+    assert_eq!(run_main(&before, 4, 3, false), Ok(3 * 4 * (7 + 3)));
+    assert_eq!(reads_in_loops(&before.funcs[1]), 3);
+    let mut after = before.clone();
+    assert!(optimize(&mut after));
+    assert_eq!(reads_in_loops(&after.funcs[1]), 0);
+    same_behaviour(&before, &after);
+}
+
+#[test]
+fn a_store_through_a_pointer_into_the_header_is_a_write() {
+    // `ptradd bytes, 8` is the header's length field, not element memory: the loop changes
+    // the length it reads, so it reads it in the loop.
+    let (before, _) = program(Extra::HeaderStore);
+    let mut after = before.clone();
+    assert!(!optimize(&mut after));
+    assert_eq!(reads_in_loops(&after.funcs[1]), 2);
     same_behaviour(&before, &after);
 }
