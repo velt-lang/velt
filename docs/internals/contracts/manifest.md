@@ -563,8 +563,13 @@ registry: "https://registry.example.com",
   any other path, such as a `velt.toml`, is rejected. Their checksum is the same content hash
   `velt.lock.json` records, and every download is verified against it before it enters the cache.
 - `https://` uses rustls (`velt_http::tls`) with Mozilla's roots (`webpki-roots`) plus the PEM
-  certificates in `$VELT_CA_FILE`; `http://` is plain TCP. No redirects, proxies (`HTTPS_PROXY`
-  is not honored) or HTTP/2. `velt registry serve` is plain HTTP; deployments beyond localhost
+  certificates in `$VELT_CA_FILE`; `http://` is plain TCP. Requests go through the proxy the
+  environment sets (`velt_http::proxy`, as curl reads it): `https_proxy` / `HTTPS_PROXY` for
+  `https://` (a `CONNECT` tunnel, TLS to the origin inside it), `http_proxy` for `http://` (the
+  uppercase `HTTP_PROXY` is ignored, "httpoxy"), else `all_proxy` / `ALL_PROXY`; only `http://`
+  proxies, with `user:password@` sent as `Proxy-Authorization: Basic`. `no_proxy` / `NO_PROXY`
+  (domains with their subdomains, IP addresses, CIDR ranges, `:port`, `*`) and this machine
+  (`localhost`, loopback addresses) are reached directly. No redirects or HTTP/2. `velt registry serve` is plain HTTP; deployments beyond localhost
   put a TLS-terminating reverse proxy in front of it.
 - Yanked but locked: `vpm::Resolution::yanked` / `vpm::Installed::yanked` list the
   selected registry versions that are yanked; the CLI prints `warning: `<name>` <version> is
