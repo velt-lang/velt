@@ -1,0 +1,12 @@
+using_cast_move.velt:23:10: error: cannot move `m` out of its `using` declaration
+  = note: `m` is disposed at the end of its block; pass it to a function that borrows it, or declare it with `const` to hand it over
+using_cast_move.velt:29:10: error: cannot move `s` out of its `using` declaration
+  = note: `s` is disposed at the end of its block; pass it to a function that borrows it, or declare it with `const` to hand it over
+using_cast_move.velt:34:10: error: cannot move `m` out of its `using` declaration
+  = note: `m` is disposed at the end of its block; pass it to a function that borrows it, or declare it with `const` to hand it over
+using_cast_move.velt:39:16: error: cannot move `m` out of its `using` declaration
+  = note: `m` is disposed at the end of its block; pass it to a function that borrows it, or declare it with `const` to hand it over
+using_cast_move.velt:47:16: error: cannot move `m` out of its `using` declaration
+  = note: `m` is disposed at the end of its block; pass it to a function that borrows it, or declare it with `const` to hand it over
+using_cast_move.velt:54:29: error: cannot move `m` out of its `using` declaration
+  = note: `m` is disposed at the end of its block; pass it to a function that borrows it, or declare it with `const` to hand it over

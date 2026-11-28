@@ -1,0 +1,65 @@
+// A `using` variable taken through a downcast (`m as Sub`, also to a union of subclasses) or an
+// array literal a pattern takes apart (`const [n] = [m]`) is still the variable itself: moving
+// it out of its declaration is an error, as `return m` is (#3451); so is moving a `const` naming
+// the cast (`const s = m as Sub; return s`). It was accepted, and the variable was disposed
+// when the value taken from it dropped, not at the end of its block.
+// What stays allowed is in tests/golden/lang/using_cast_borrow.velt.
+class Base {
+  [Symbol.dispose]() {
+    console.log("dispose");
+  }
+}
+
+class Sub extends Base {
+  hello() {
+    console.log("hello");
+  }
+}
+
+class Other extends Base {}
+
+function returned(): Sub {
+  using m: Base = new Sub();
+  return m as Sub;
+}
+
+function bound(): Sub {
+  using m: Base = new Sub();
+  const s = m as Sub;
+  return s;
+}
+
+function toUnion(): Sub | Other {
+  using m: Base = new Sub();
+  return m as Sub | Other;
+}
+
+function element(): Base {
+  using m = new Base();
+  const [n] = [m];
+  return n;
+}
+
+function second(): Base {
+  using m = new Base();
+  let n: Base;
+  let k: number;
+  [k, n] = [1, m];
+  console.log(k);
+  return n;
+}
+
+function defaulted(): Base {
+  using m = new Base();
+  const [n = new Base()] = [m];
+  return n;
+}
+
+function main() {
+  returned().hello();
+  bound().hello();
+  toUnion();
+  element();
+  second();
+  defaulted();
+}

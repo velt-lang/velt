@@ -173,7 +173,10 @@ impl Moves<'_> {
             }
             ExprKind::Match { scrutinee, arms } => self.match_arms(scrutinee, arms, st),
         }
-        if e.ty == self.never {
+        // A `never` member of an object converted from `any` (`{ ...w }` copying it, #3121) is
+        // a place with nothing in it, not a divergence: the code after it runs.
+        let member = matches!(e.kind, ExprKind::Field { .. });
+        if e.ty == self.never && !member {
             // Diverging (`panic`, a function that always throws): a throw point.
             self.record_throw(st);
             *st = None;

@@ -1,0 +1,20 @@
+// Reading the `never` member of an object converted from `any` (#3121): no local may hold a
+// `never`, so the read stops with a `TypeError` once the object is evaluated, as a failed cast
+// does (Node reads the property's value: Velt's types promise there is none). A pattern binding
+// it stops the same way (any_cast_never_field_pattern.velt); the cast is any_cast_never_field.velt.
+interface W {
+  tag: string;
+  n: never;
+}
+
+function read(w: W): void {
+  const v = w.n;
+  console.log("unreached", v);
+}
+
+const w = { tag: "t", n: 1 } as any as W;
+console.log(w.tag);
+// Printed, the member holds no value, so it shows as one the object lacks (Node prints its value).
+console.log(w, [w]);
+read(w);
+console.log("unreached");

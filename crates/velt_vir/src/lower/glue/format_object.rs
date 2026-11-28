@@ -148,6 +148,9 @@ impl FnLower<'_, '_> {
             .into_iter()
             .filter(|(_, n, t, private)| {
                 !n.starts_with('#') && !(*private && self.is_empty_struct(*t))
+                // A `never` member of an object converted from `any` holds no value (#3121):
+                // it shows as a member the object lacks.
+                && !self.cx.is_never(*t)
             })
             .filter_map(|(i, n, t, _)| self.field_prop(d, &n).map(|p| (i, p, t)))
             .collect();

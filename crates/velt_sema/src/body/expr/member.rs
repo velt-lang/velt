@@ -105,6 +105,9 @@ impl FnCx<'_, '_> {
         if let Some((d, _)) = self.adt_of(obj.ty) {
             self.cx.rec_ref(prop.span, Target::Field(d, index));
         }
+        if fty == self.cx.ty.never && !self.f.write_target {
+            return Some(self.never_field_read(obj, &prop.name, span));
+        }
         set_place_mode(&mut obj, base_mode(want));
         let mode = self.use_mode(fty, want);
         Some(self.mk(

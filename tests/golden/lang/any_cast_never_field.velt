@@ -1,0 +1,47 @@
+// A cast from `any` to an interface with a `never` member (#3121): no value is a `never`, so
+// the member promises nothing to check and the cast succeeds, as TypeScript's erased cast does.
+// The other members are converted as usual, here, nested in another object and in an array.
+// Node prints the same (any_cast_never_field.mjs); reading the `never` member itself is
+// any_cast_never_field_read.velt.
+interface W {
+  tag: string;
+  n: never;
+  m?: never;
+}
+
+interface Outer {
+  w: W;
+  k: number;
+}
+
+function tagOf(w: W): string {
+  return w.tag;
+}
+
+const raw: any = { tag: "t", n: { foo: 1 } };
+const w = raw as W;
+console.log(w.tag);
+console.log("after");
+
+const o = { w: raw, k: 2 } as any as Outer;
+console.log(o.w.tag, o.k);
+
+const list = [raw, { tag: "u", n: 0, m: "x" }] as any as W[];
+console.log(list.length, tagOf(list[0]), tagOf(list[1]));
+
+const { tag } = list[1];
+console.log(tag);
+
+const typed: W = { tag: "v" } as any;
+console.log(typed.tag);
+
+// A copy of the object, a comparison, an optional binding and an async call that take it: the
+// code after a copy of the `never` member runs on (each was a write after free).
+const c = { ...w };
+console.log(c.tag, w === w);
+const opt: W | undefined = w;
+console.log(opt !== undefined);
+async function later(x: W): Promise<string> {
+  return x.tag + "!";
+}
+later(w).then((s) => console.log(s));
