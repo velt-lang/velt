@@ -209,7 +209,8 @@ impl FnCx<'_, '_> {
         self.rec_frame_scopes();
         let parent = self.outer.pop().expect("ICE: closure frame");
         self.finish_using_shares();
-        let frame = std::mem::replace(&mut self.f, parent);
+        let mut frame = std::mem::replace(&mut self.f, parent);
+        crate::throws::drop_closed_not_fn_in(self.cx, def, &mut frame.uncaught);
         self.no_captured_generators(&frame);
         let captures = self.capture_modes(&frame, span);
         let clause = sig
