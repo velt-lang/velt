@@ -1,7 +1,7 @@
 // node's depth and maxArrayLength limits (#497) for std's Set, a prelude Record, a JsonValue
 // and template strings: each line is what node prints for the same JavaScript value
-// (`new Set`, an object, `JSON.parse(text)`), except that a template string prints a value
-// the way console.log does.
+// (`new Set`, an object, `JSON.parse(text)`); a template string converts a value as JS does
+// (`[object Object]` for an object, a JsonValue's included; #3118).
 
 import { Set } from "velt/collections";
 
