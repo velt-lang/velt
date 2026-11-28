@@ -95,7 +95,6 @@ pub(crate) const MACOS_PATHS: &[&str] = &[
     "crates/velt_vir/src/c_abi.rs",
     "crates/velt_vir/src/lower/c_call.rs",
     "crates/velt_vir/src/simd/",
-    "crates/velt_text/src/json_escape.rs",
     "std/simd/",
     // Native libraries are linked with Apple's flags and named `.dylib`.
     "crates/vpm/src/native/",
