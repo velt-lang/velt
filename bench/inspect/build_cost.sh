@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build cost of programs with one compiler against another: cachegrind instructions (children
-# counted) of `velt check`, `velt build` and `velt build --release`, each with an empty VELT_HOME,
-# the build cache on (so std's prebuilt hook objects are made in that home, as a first build makes
-# them) and one thread, and the size of each built binary. Linux only (valgrind).
+# counted) of `velt check`, `velt build` and `velt build --release`, each with an empty VELT_HOME
+# and an empty build cache of its own (on, so std's prebuilt hook objects are made there, as a first
+# build makes them), one thread, and the size of each built binary. Linux only (valgrind).
 #
 #   bench/inspect/build_cost.sh WORK NAME=TREE=VELT ... -- PROGRAM.velt ...
 #
@@ -40,7 +40,7 @@ for p in "$@"; do
         release) args=(build --release "$p" -o "$exe") ;;
       esac
       n=$(
-        export VELT_HOME="$home" VELT_STD="$tree/std" VELT_BUILD_STAMP=off VELT_THREADS=1
+        export VELT_HOME="$home" VELT_BUILD_CACHE="$home/cache" VELT_STD="$tree/std" VELT_BUILD_STAMP=off VELT_THREADS=1
         count "$velt" "${args[@]}"
       )
       rm -rf "$home"
