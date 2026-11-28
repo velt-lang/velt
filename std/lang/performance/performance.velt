@@ -53,12 +53,18 @@ export class Performance {
     startOrOptions?: string | PerformanceMeasureOptions,
     endMark?: string,
   ): PerformanceMeasure {
+    // The options are checked and give the times only with a start or an end, as on Node; a
+    // `detail` is taken from any options object.
+    let given: PerformanceMeasureOptions | undefined = undefined;
     let opts: PerformanceMeasureOptions | undefined = undefined;
     let startMark: string | undefined = undefined;
     if (typeof startOrOptions === "string") {
       startMark = startOrOptions;
-    } else if (startOrOptions !== undefined && hasOptions(startOrOptions)) {
-      opts = startOrOptions;
+    } else if (startOrOptions !== undefined) {
+      given = startOrOptions;
+      if (startOrOptions.start !== undefined || startOrOptions.end !== undefined) {
+        opts = startOrOptions;
+      }
     }
     if (opts !== undefined) {
       if (endMark !== undefined) {
@@ -88,7 +94,7 @@ export class Performance {
     } else if (opts !== undefined && opts.end !== undefined && opts.duration !== undefined) {
       start = end - timeOf(opts.duration);
     }
-    const detail: any = opts === undefined ? null : (opts.detail ?? null);
+    const detail: any = given === undefined ? null : (given.detail ?? null);
     const m = new PerformanceMeasure(name, start, end - start, detail);
     enqueue(m);
     timeline.buffer(m);
@@ -124,14 +130,6 @@ export class Performance {
   toString(): string {
     return "[object Performance]";
   }
-}
-
-/** Does `o` give any option (Node reads an empty object as none)? */
-function hasOptions(o: PerformanceMeasureOptions): bool {
-  return o.start !== undefined ||
-    o.end !== undefined ||
-    o.duration !== undefined ||
-    o.detail !== undefined;
 }
 
 /** The time a measure's start or end names: a time (0 or more), or the last mark's of a name. */

@@ -32,8 +32,12 @@ PerformanceMeasure {
 6
 5
 0
+0 10 null
+0 10 { q: 1 }
 [
   'o6:measure:0',
+  'od:measure:0',
+  'odet:measure:0',
   'o:measure:2',
   'a:mark:5',
   'ab:measure:5',
@@ -47,7 +51,12 @@ PerformanceMeasure {
 [] []
 [ 'b' ]
 SyntaxError: The "a" performance mark has not been set
-[ 'o6', 'o', 'o2', 'o5', 'o4', 'o3' ]
+[
+  'o6',   'od',
+  'odet', 'o',
+  'o2',   'o5',
+  'o4',   'o3'
+]
 0
 SyntaxError: The "nope" performance mark has not been set
 TypeError: -1 is not a valid timestamp
