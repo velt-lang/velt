@@ -705,10 +705,10 @@ fn a_spawned_task_awaits_a_shared_promise_while_microtasks_are_queued() {
     );
 }
 
-/// WASI has no thread to wake the worker and no OS wait to park it in: `VELT_SCHEDULER=std`
-/// does nothing there, and `main`'s root stays the runtime's.
+/// `main`'s root runs on the executor in Velt on WASI too (#3905 step 1), whose one thread waits
+/// in `poll_oneoff`; a JS host keeps the runtime's executor.
 #[test]
-fn the_variable_does_nothing_on_wasi() {
+fn wasi_runs_the_executor_in_velt_a_js_host_does_not() {
     let dir = test_dir::TestDir::new();
     std::fs::write(
         dir.path().join("main.velt"),
@@ -727,7 +727,8 @@ fn the_variable_does_nothing_on_wasi() {
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
         String::from_utf8_lossy(&o.stdout).into_owned()
     };
-    assert!(!ir(true, "wasm32-wasip1").contains("schedBlockOn"));
+    assert!(ir(true, "wasm32-wasip1").contains("schedBlockOn"));
+    assert!(!ir(true, "wasm32-unknown-unknown").contains("schedBlockOn"));
     assert!(ir(true, "aarch64-unknown-linux-gnu").contains("schedBlockOn"));
 }
 
