@@ -35,13 +35,14 @@ use globals::TS_GLOBALS;
 /// the prefix `std`): `(path in the package, text)`, sorted by path.
 pub fn type_package(inputs: &[Input], version: &str) -> Vec<(String, String)> {
     let widened = widen::widened(inputs);
+    let defaults = crate::ts_package::defaults(inputs);
     let mut modules: Vec<DocModule> = inputs
         .iter()
         .map(|i| {
             let stem = i.file.rsplit('/').next().unwrap_or("");
             DocModule {
                 index: stem.split('.').next() == Some("index"),
-                ..crate::extract::extract_widened(&i.module, &i.source, &widened)
+                ..crate::extract::extract_widened(&i.module, &i.source, &widened, &defaults)
             }
         })
         .collect();

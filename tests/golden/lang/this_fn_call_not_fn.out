@@ -1,0 +1,12 @@
+6 7 NaN
+arg long key
+o[1658206780088562.2] is not a function
+o.nope is not a function
+arg element
+arr[0] is not a function
+TypeError local[0] is not a function
+1 2
+undefined
+arg optional
+o.x is not a function
+top level: o[2] is not a function

@@ -14,6 +14,7 @@ use velt_syntax::ast::{self, Item, ItemKind};
 use crate::comment::{self, DocComment};
 use crate::sig::Printer;
 use crate::ts::{TsDecl, TsPrinter, Widened};
+use crate::ts_package::Defaults;
 
 /// The kind of a documented declaration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -151,13 +152,19 @@ pub struct ReExport {
 /// Extract the documentation of module `name` from its `source`. Syntax errors are tolerated:
 /// whatever the parser recovered is documented. Re-exports are recorded, not yet resolved.
 pub fn extract(name: &str, source: &str) -> DocModule {
-    extract_with(name, source, &Widened::new()).0
+    extract_with(name, source, &Widened::new(), &Defaults::new()).0
 }
 
 /// [`extract`], the TypeScript declarations with the bounds of `widened` widened
-/// ([`crate::ts::Widened`]; the type package's, [`crate::dts`]).
-pub(crate) fn extract_widened(name: &str, source: &str, widened: &Widened) -> DocModule {
-    extract_with(name, source, widened).0
+/// ([`crate::ts::Widened`]) and the interfaces' `defaults` in the classes implementing them (the
+/// type package's, [`crate::dts`]).
+pub(crate) fn extract_widened(
+    name: &str,
+    source: &str,
+    widened: &Widened,
+    defaults: &Defaults,
+) -> DocModule {
+    extract_with(name, source, widened, defaults).0
 }
 
 /// The declarations that [`extract`] documents without a doc comment although a plain comment
@@ -165,10 +172,15 @@ pub(crate) fn extract_widened(name: &str, source: &str, widened: &Widened) -> Do
 /// the doc comment syntax, such a comment was the documentation; std's tests use this to keep
 /// plain comments from hiding docs.
 pub fn plain_comments_above_docs(source: &str) -> Vec<u32> {
-    extract_with("", source, &Widened::new()).1
+    extract_with("", source, &Widened::new(), &Defaults::new()).1
 }
 
-fn extract_with(name: &str, source: &str, widened: &Widened) -> (DocModule, Vec<u32>) {
+fn extract_with(
+    name: &str,
+    source: &str,
+    widened: &Widened,
+    defaults: &Defaults,
+) -> (DocModule, Vec<u32>) {
     let (module, _) = velt_syntax::parse_file(FileId(0), source);
     let text = Source {
         printer: Printer { src: source },
@@ -178,6 +190,7 @@ fn extract_with(name: &str, source: &str, widened: &Widened) -> (DocModule, Vec<
             .collect(),
         plain_above: RefCell::default(),
         widened,
+        defaults,
         items: &module.items,
     };
     let mut imports = vec![];
@@ -305,6 +318,8 @@ struct Source<'a> {
     plain_above: RefCell<Vec<u32>>,
     /// The bounds the TypeScript declarations widen.
     widened: &'a Widened,
+    /// The interfaces' default methods.
+    defaults: &'a Defaults,
     /// The file's top-level items.
     items: &'a [Item],
 }
@@ -372,6 +387,7 @@ impl Source<'_> {
             keys: Default::default(),
             items: self.items,
             widened: self.widened,
+            defaults: self.defaults,
         };
         doc.ts = ts.decl(
             item,

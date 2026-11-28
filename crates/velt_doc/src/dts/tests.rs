@@ -261,3 +261,50 @@ fn weak_fields_are_their_read_type() {
     assert!(t.contains("parent: TreeNode | null;"), "{t}");
     assert!(!t.contains("weak"), "{t}");
 }
+
+/// A method returning `this` keeps TypeScript's polymorphic `this` type: it is no type name to
+/// declare (a `declare type this` is a syntax error in TypeScript).
+#[test]
+fn a_this_return_type_declares_nothing() {
+    let inputs = [input(
+        "bag/index.velt",
+        "export class Bag<T> {\n  items: T[] = [];\n  add(value: T): this {\n    this.items.push(value);\n    return this;\n  }\n}\n",
+    )];
+    let files: BTreeMap<String, String> = type_package(&inputs, "1.0.0").into_iter().collect();
+    let t = &files["bag/index.d.ts"];
+    assert!(t.contains("add(value: T): this;"), "{t}");
+    assert!(!t.contains("type this"), "{t}");
+}
+
+/// A class has the default methods of the interfaces it implements (also of those they extend)
+/// without declaring them; TypeScript has no defaults, so its declaration lists them, typed by
+/// the interface, and leaves out what it declares itself.
+#[test]
+fn a_class_declares_the_defaults_of_its_interfaces() {
+    let inputs = [
+        input(
+            "stream/byte.velt",
+            "export interface Stream {\n  close(): void;\n  peer(): string | null {\n    return null;\n  }\n  \
+             get open(): bool {\n    return true;\n  }\n  name(): string {\n    return \"\";\n  }\n}\n\n\
+             export interface Fast extends Stream {\n  quick<T>(x: T): T {\n    return x;\n  }\n}\n",
+        ),
+        input(
+            "stream/index.velt",
+            "export { Stream, Fast } from \"./byte\";\nexport { Pipe } from \"./pipe\";\n",
+        ),
+        input(
+            "stream/pipe.velt",
+            "import { Fast } from \"./byte\";\n\nexport class Pipe implements Fast {\n  close(): void {}\n  \
+             name(): string {\n    return \"pipe\";\n  }\n}\n",
+        ),
+    ];
+    let files: BTreeMap<String, String> = type_package(&inputs, "1.0.0").into_iter().collect();
+    let t = &files["stream/index.d.ts"];
+    let pipe = &t[t.find("class Pipe").expect(t)..];
+    let pipe = &pipe[..pipe.find("\n}").expect(t)];
+    assert!(pipe.contains("quick: Fast[\"quick\"];"), "{t}");
+    assert!(pipe.contains("peer: Fast[\"peer\"];"), "{t}");
+    assert!(pipe.contains("get open(): Fast[\"open\"];"), "{t}");
+    assert!(pipe.contains("name(): string;"), "{t}");
+    assert!(!pipe.contains("name: Fast"), "{t}");
+}

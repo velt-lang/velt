@@ -1,0 +1,66 @@
+// In a program with a function taking `this`, a member call whose function is a dynamic value
+// (`o[k](x)`, `a.b["m"](x)`, `o.m?.(x)`, `arr[0](x)`) reads its object first, then the member,
+// then the arguments, as JavaScript does: an argument that assigns the object's path, also
+// after an `await`, leaves the call's `this` the object read before. A computed key is
+// evaluated once, before the arguments. Before, `callOn` read the path again after the
+// arguments, so `this` was the new object.
+// Node twin: this_fn_call_object_order.mjs.
+const m = function (this: any, x: number): string {
+  return `${this.name}:${x}`;
+};
+
+let o: any = { name: "old", m: m, n: 5 };
+const a: any = { b: { name: "old b", m: m } };
+let arr: any[] = [m];
+
+function log(what: string, value: number): number {
+  console.log(what);
+  return value;
+}
+
+function swap(): number {
+  o = { name: "new", m: m };
+  return 1;
+}
+
+function swapB(): number {
+  a.b = { name: "new b", m: m };
+  return 2;
+}
+
+function swapArr(): number {
+  arr = [(x: number): string => `new arr:${x}`];
+  return 3;
+}
+
+function key(): string {
+  console.log("key");
+  return "m";
+}
+
+async function later(): Promise<number> {
+  await Promise.resolve(0);
+  o = { name: "after await", m: m };
+  return 4;
+}
+
+async function main(): Promise<void> {
+  console.log(o["m"](swap()));
+  o = { name: "old", m: m, n: 5 };
+  console.log(a.b["m"](swapB()));
+  console.log(o[key()](log("arg", 6)));
+  o = { name: "old", m: m, n: 5 };
+  console.log(o.m?.(swap()));
+  o = { name: "old", m: m, n: 5 };
+  console.log(o["m"](await later()));
+  console.log(o.name);
+  console.log(arr[0](swapArr()));
+  o = { name: "old", m: m, n: 5 };
+  try {
+    o["n"](swap());
+  } catch (e) {
+    console.log((e as Error).message, o.name);
+  }
+}
+
+main();
