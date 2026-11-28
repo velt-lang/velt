@@ -1,16 +1,18 @@
-// velt/process (internal): the command-line arguments (`argv`, `args`).
+// velt/process (internal): the command-line arguments (`argv`, `args`), read once per process
+// and kept by std/lang/hooks/process_argv.velt (the readers: std/process/args_read.velt); Node's
+// `process.argv` is std/lang/hooks/process.velt's `processArgv`.
 
-import { velt_rt_process_args } from "velt/process/rt";
 import { arrayRemove } from "velt/lang/intrinsics";
+import { argList } from "velt/lang/hooks/process";
 
 /** Every command-line argument, starting with the program path (like C's `argv`). */
 export function argv(): string[] {
-  return velt_rt_process_args();
+  return argList(0);
 }
 
 /** The arguments after the program path. */
 export function args(): string[] {
-  let all = velt_rt_process_args();
+  let all = argList(0);
   if (all.length > 0) {
     arrayRemove(all, 0);
   }

@@ -39,6 +39,7 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    pass_program_args(&opts.input, args);
     let mut sess = Session::new();
     sess.show_details = args.build.timings;
     sess.verbose = args.build.verbose;
@@ -104,14 +105,20 @@ pub fn host_command(args: &DevArgs) -> ExitCode {
     let Ok(loaded) = loaded else {
         return ExitCode::from(1);
     };
-    let mut argv = vec![opts.input.display().to_string()];
-    argv.extend(args.args.iter().map(|a| a.to_string_lossy().into_owned()));
-    velt_rt_host::process::set_args(argv);
-    // Node's `process.argv[1]`: the script (`argv[0]` is the running `velt`).
-    let script = vpm::relpath::absolute(&opts.input);
-    velt_rt_host::process::set_script(script.display().to_string());
     let code = velt_rt_host::entry::run_main(loaded.main());
     std::process::exit(code)
+}
+
+/// The program's arguments (`argv()`: the source file, then what follows it on the command
+/// line) and Node's `process.argv[1]` (the script; `argv[0]` is the running `velt`), in the
+/// variables std reads them from (std/process/args_read.velt): this process's own arguments are
+/// velt's. Set first, while this process has one thread.
+fn pass_program_args(input: &std::path::Path, args: &DevArgs) {
+    use crate::commands::{argv_env, ARGV_VAR, SCRIPT_VAR};
+    let mut argv = vec![input.display().to_string()];
+    argv.extend(args.args.iter().map(|a| a.to_string_lossy().into_owned()));
+    std::env::set_var(ARGV_VAR, argv_env(&argv));
+    std::env::set_var(SCRIPT_VAR, vpm::relpath::absolute(input));
 }
 
 /// Front end, then JIT; the JIT time is recorded as the `jit` stage, with its steps.

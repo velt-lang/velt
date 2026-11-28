@@ -36,6 +36,7 @@ use std::process::ExitCode;
 use crate::cli::{self, Command, DevMode};
 use crate::style;
 
+pub(crate) use build::{argv_env, ARGV_VAR, SCRIPT_VAR};
 pub use build::{build_options, exit_code, failure_code, report};
 
 /// Run `cmd` and return the process exit code (`velt run` exits directly with the program's code).

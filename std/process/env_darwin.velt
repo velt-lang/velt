@@ -4,6 +4,7 @@
 
 import { Ptr } from "velt/ffi/ptr";
 import { addressLoad } from "velt/lang/intrinsics";
+import { ARGV_C, hiddenVar, ownVar, SCRIPT_C, withoutHidden } from "./env_hidden";
 import * as posix from "./env_posix";
 
 /** `char ***_NSGetEnviron(void)` (<crt_externs.h>): where `environ` is. */
@@ -17,19 +18,37 @@ function table(): usize {
   return unsafe { addressLoad<usize>(at) };
 }
 
+/** The variable `name`, or undefined when it isn't set or is one velt passes (env_hidden.velt). */
 export function getEnv(name: string): string | undefined {
+  return hiddenVar(name, false) ? undefined : posix.getEnv(name);
+}
+
+/** The variable `name` as it is, the hidden ones included. */
+export function getEnvRaw(name: string): string | undefined {
   return posix.getEnv(name);
 }
 
-export function setEnv(name: string, value: string) {
-  posix.setEnv(name, value);
+/**
+ * `VELT_ARGV` (`argv`) or `VELT_SCRIPT`, which velt passes (std/process/args_read.velt), read
+ * without the lock: once, before any change of the environment (env_posix.velt `getEnvOnce`).
+ */
+export function passedVar(argv: bool): string | undefined {
+  return argv ? posix.getEnvOnce(ARGV_C) : posix.getEnvOnce(SCRIPT_C);
 }
 
+/** Sets the variable `name` (velt's two, too: the program's own from then on, env_hidden.velt). */
+export function setEnv(name: string, value: string) {
+  posix.setEnv(name, value);
+  ownVar(name, false);
+}
+
+/** Removes the variable `name`, as `setEnv`. */
 export function removeEnv(name: string) {
   posix.removeEnv(name);
+  ownVar(name, false);
 }
 
 /** Every variable as `[name, value, …]`, in the table's order. */
 export function envPairs(): string[] {
-  return posix.envPairs(table);
+  return withoutHidden(posix.envPairs(table), false);
 }

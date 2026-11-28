@@ -1,13 +1,20 @@
 // velt/lang/hooks (internal): the compiler's hooks for the builtin `process` namespace
 // (std-layout.md §10b): `process.stdout.write(s)` / `process.stderr.write(s)` (`processWrite`),
-// `process.env.NAME` / `process.env[name]` (`processEnv`), `process.argv` (`processArgv`) and
-// the mark of a top-level `await` (`topLevelAwaitAt`). The rest of Node's `process` is in
-// `velt/process` (https://veltlang.com/docs/std/process/). Also the mark of what this thread wrote
-// to standard output (`stdoutWritten`), which `console.log` and every std writer of stdout set and
-// velt/sync's hand-offs read (std/sync/output.velt, #2771).
+// `process.env.NAME` / `process.env[name]` (`processEnv`), `process.argv` (`processArgv`, its
+// list by role, `argList`) and the mark of a top-level `await` (`topLevelAwaitAt`). The rest of
+// Node's `process` is in `velt/process` (https://veltlang.com/docs/std/process/). Also the mark
+// of what this thread wrote to standard output (`stdoutWritten`), which `console.log` and every
+// std writer of stdout set and velt/sync's hand-offs read (std/sync/output.velt, #2771).
 
 import { processId } from "#process-pid";
-import { addressLoad, addressStore, inline, noInline } from "velt/lang/intrinsics";
+import {
+  addressLoad,
+  addressStore,
+  arrayWithCapacity,
+  hookCall,
+  inline,
+  noInline,
+} from "velt/lang/intrinsics";
 import { getEnv } from "#env-sys";
 
 declare function velt_rt_write_str(stream: u32, s: string);
@@ -103,14 +110,28 @@ export function processEnv(name: string): string | undefined {
   return getEnv(name);
 }
 
-declare function velt_rt_process_node_argv(): string[];
-
 /**
  * Node's `process.argv`: `[runtime, script, ...args]` (the running executable, the script under
  * `velt run` / `velt dev` or the executable again, then the arguments).
  */
 export function processArgv(): string[] {
-  return velt_rt_process_node_argv();
+  return argList(1);
+}
+
+/**
+ * A fresh array of the command-line arguments: Node's `process.argv` (`list` 1), or every
+ * argument from the program path on (0: velt/process `argv`). By role, one argument at a time
+ * (std/lang/hooks/process_argv.velt, which a native build may call in a prebuilt object): the
+ * readers load only where live code reads the arguments.
+ */
+@noInline
+export function argList(list: u32): string[] {
+  const n: u64 = hookCall("process_arg_count", list);
+  const out = arrayWithCapacity<string>(n as usize);
+  for (let i: u64 = 0; i < n; i++) {
+    out.push(hookCall("process_arg_at", list, i));
+  }
+  return out;
 }
 
 /** Node's `process.pid`: this process's id. */

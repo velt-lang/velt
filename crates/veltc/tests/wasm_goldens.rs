@@ -21,6 +21,10 @@ mod no_window;
 mod wasm_tools;
 mod work_dir;
 
+/// The command-line arguments on both WebAssembly targets.
+#[path = "wasm_goldens/args.rs"]
+mod args;
+
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 

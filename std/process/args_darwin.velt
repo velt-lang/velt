@@ -1,0 +1,40 @@
+// velt/process (internal): the arguments on macOS (`#args-sys`' darwin variant,
+// std/imports.velt): the C `main`'s `argc` and `argv`, which libSystem keeps for `_NSGetArgc` and
+// `_NSGetArgv`, and the executable's path (`_NSGetExecutablePath`, resolved).
+
+import { Ptr } from "velt/ffi/ptr";
+import { addressLoad, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+import { cStrings, resolvedC } from "./args_posix";
+
+export { keepArgs, keptArg, keptCount } from "./args_keep";
+
+/** `int *_NSGetArgc(void)` (<crt_externs.h>). */
+declare c("c") function _NSGetArgc(): Ptr<i32>;
+/** `char ***_NSGetArgv(void)`. */
+declare c("c") function _NSGetArgv(): Ptr<usize>;
+/** `int _NSGetExecutablePath(char *buf, uint32_t *bufsize)` (<mach-o/dyld.h>). */
+declare c("c") function _NSGetExecutablePath(buf: u8[], size: u32[]): i32;
+
+/** Every argument the process was started with, program path first. */
+export function osArgs(): string[] {
+  // SAFETY: no precondition; each returns the address of libSystem's word.
+  const argc = unsafe { addressLoad<i32>(Ptr.addressOf(_NSGetArgc())) };
+  // SAFETY: as above.
+  const argv = unsafe { addressLoad<usize>(Ptr.addressOf(_NSGetArgv())) };
+  return argc <= 0 || argv === 0 ? [] : cStrings(argv, argc as usize);
+}
+
+/** The running executable's path, its symbolic links followed (Node's `process.execPath`). */
+export function executablePath(): string {
+  const size: u32[] = [1024];
+  while (true) {
+    const room = size[0] as usize;
+    const buf = arrayWithCapacity<u8>(room);
+    arraySetLen(buf, room);
+    // SAFETY: `buf` holds `size[0]` bytes; on -1 `size[0]` says how many are needed.
+    // On 0 the path in `buf` is NUL-terminated.
+    if (unsafe { _NSGetExecutablePath(buf, size) } === 0) {
+      return resolvedC(buf);
+    }
+  }
+}

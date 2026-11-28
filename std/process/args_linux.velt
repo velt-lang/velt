@@ -1,0 +1,131 @@
+// velt/process (internal): the arguments on Linux (`#args-sys`' linux variant, std/imports.velt):
+// `/proc/self/cmdline`, the NUL-separated arguments the kernel keeps (glibc's and musl's alike;
+// the C library gives a program no way to reach `main`'s `argv` later), and the executable's
+// path (`/proc/self/exe`). Both work on bytes, the paths as NUL-terminated byte constants: no
+// string goes to C, so a program reading its arguments loads no conversion of text to C's.
+
+import { CVarArgs } from "velt/ffi/c_var_args";
+import { buffer, resolvedC } from "./args_posix";
+import { textOf } from "./args_text";
+
+export { keepArgs, keptArg, keptCount } from "./args_keep";
+
+declare c("c") function open$args(path: readonly u8[], flags: i32, ...args: CVarArgs): i32;
+declare c("c") function read$args(fd: i32, buf: u8[], n: usize): isize;
+declare c("c") function close$args(fd: i32): i32;
+declare c("c") function readlink$args(path: readonly u8[], buf: u8[], size: usize): isize;
+declare c("c") function access$args(path: readonly u8[], mode: i32): i32;
+
+/** `O_RDONLY | O_CLOEXEC`. */
+const READ_ONLY: i32 = 0o2000000;
+
+/** `/proc/self/cmdline`, NUL-terminated. */
+const CMDLINE: u8[] = [
+  47,
+  112,
+  114,
+  111,
+  99,
+  47,
+  115,
+  101,
+  108,
+  102,
+  47,
+  99,
+  109,
+  100,
+  108,
+  105,
+  110,
+  101,
+  0,
+];
+
+/** `/proc/self/exe`, NUL-terminated. */
+const EXE: u8[] = [47, 112, 114, 111, 99, 47, 115, 101, 108, 102, 47, 101, 120, 101, 0];
+
+/** ` (deleted)`: what the kernel adds to the link of a removed executable. */
+const GONE: u8[] = [32, 40, 100, 101, 108, 101, 116, 101, 100, 41];
+
+/** The bytes of the file at `path` (NUL-terminated), or none when it can't be read. */
+function readAll(path: readonly u8[]): u8[] {
+  // SAFETY: `path` is NUL-terminated.
+  const fd = unsafe { open$args(path, READ_ONLY) };
+  const out: u8[] = [];
+  if (fd < 0) {
+    return out;
+  }
+  const chunk = buffer(4096);
+  while (true) {
+    // SAFETY: `chunk` holds 4096 bytes.
+    const n = unsafe { read$args(fd, chunk, 4096) };
+    if (n <= 0) {
+      break;
+    }
+    for (let i: isize = 0; i < n; i++) {
+      out.push(chunk[i as usize]);
+    }
+  }
+  // SAFETY: `fd` is this function's, closed once.
+  unsafe {
+    close$args(fd);
+  }
+  return out;
+}
+
+/** Every argument the process was started with, program path first. */
+export function osArgs(): string[] {
+  const bytes = readAll(CMDLINE);
+  const out: string[] = [];
+  const n = bytes.length;
+  let start: usize = 0;
+  // Each argument ends at its NUL, the last one at the end if the kernel left its NUL out.
+  for (let i: usize = 0; i <= n; i++) {
+    if (i < n ? bytes[i] === 0 : start < n) {
+      out.push(textOf(bytes, start, i));
+      start = i + 1;
+    }
+  }
+  return out;
+}
+
+/** Whether the `n` bytes of `buf` end with ` (deleted)`. */
+function endsGone(buf: u8[], n: usize): bool {
+  if (n < GONE.length) {
+    return false;
+  }
+  const from = n - GONE.length;
+  for (let i: usize = 0; i < GONE.length; i++) {
+    if (buf[from + i] !== GONE[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * The running executable's path, its symbolic links followed (Node's `process.execPath`). The
+ * kernel adds " (deleted)" to it once the file was replaced or removed while running: the path
+ * the program was started as is without it.
+ */
+export function executablePath(): string {
+  let room: usize = 256;
+  while (true) {
+    const buf = buffer(room);
+    // SAFETY: `buf` holds `room` bytes; readlink writes no NUL.
+    const n = unsafe { readlink$args(EXE, buf, room) };
+    if (n < 0) {
+      return "";
+    }
+    if ((n as usize) < room) {
+      // `buf` was zeroed: its byte `n` ends the path. F_OK is 0.
+      // SAFETY: `buf` is NUL-terminated.
+      if (endsGone(buf, n as usize) && unsafe { access$args(buf, 0) } !== 0) {
+        buf[(n as usize) - GONE.length] = 0;
+      }
+      return resolvedC(buf);
+    }
+    room *= 2;
+  }
+}
