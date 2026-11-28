@@ -449,9 +449,10 @@ fn only_the_wasm_bindings_may_declare_what_velt_rt_lacks() {
 }
 
 /// `EXECUTOR_ONLY`'s exemption holds because lowering replaces every call of those externs: each
-/// is in velt_common's `SCHED_EXTERNS` (read as text: this crate doesn't depend on velt_common),
-/// and std binds none of them with `declare c`, a direct C call lowering keeps, which would link
-/// to nothing.
+/// is in velt_common's `SCHED_EXTERNS` (read as text: this crate doesn't depend on velt_common;
+/// an entry is a string literal or a `&str` constant of that file, as `SCHED_UNREF_DUE`), and std
+/// binds none of them with `declare c`, a direct C call lowering keeps, which would link to
+/// nothing.
 #[test]
 fn executor_only_externs_are_lowered_as_hooks() {
     let table =
@@ -461,9 +462,21 @@ fn executor_only_externs_are_lowered_as_hooks() {
         .find("pub const SCHED_EXTERNS")
         .expect("SCHED_EXTERNS");
     let list = &table[start..start + table[start..].find("];").expect("its end")];
+    let entries: Vec<String> = (list.lines().skip(1))
+        .map(|l| l.trim().trim_end_matches(','))
+        .filter(|e| !e.is_empty())
+        .map(|e| match e.strip_prefix('"') {
+            Some(lit) => lit.trim_end_matches('"').to_string(),
+            None => {
+                let def = format!("pub const {e}: &str = \"");
+                let at = table.find(&def).unwrap_or_else(|| panic!("constant {e}")) + def.len();
+                table[at..at + table[at..].find('"').expect("its end")].to_string()
+            }
+        })
+        .collect();
     for name in EXECUTOR_ONLY {
         assert!(
-            list.contains(&format!("\"{name}\"")),
+            entries.iter().any(|e| e == name),
             "{name} is not in velt_common's SCHED_EXTERNS: lowering would call it, and no runtime \
              defines it"
         );
