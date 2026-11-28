@@ -10,8 +10,9 @@
 use velt_common::Span;
 use velt_sema::hir::{self, TyId, TyKind};
 
-use super::{FnLower, ScopeKind};
-use crate::vir::Terminator;
+use super::any_member::ST_CLASS_CALL;
+use super::{cint, FnLower, ScopeKind};
+use crate::vir::{BinOp, Callee, Operand, Place, Rvalue, Terminator, Ty, STR_AGG};
 
 impl FnLower<'_, '_> {
     /// `TypeError: <text> is not a function`, thrown or stopping (module docs). Ends the block.
@@ -100,5 +101,44 @@ impl FnLower<'_, '_> {
             return self.member_variant(to, from).is_some() || self.dynamic_member(to).is_some();
         }
         self.cx.is_class(to) && self.cx.bases_of(from).contains(&to)
+    }
+
+    /// After a call through `any` whose status is `st`: `ST_CLASS_CALL` (a class object called
+    /// without `new`, `pc(1)`; any_glue.rs) leaves Node's message in the `any` at `out` (of type
+    /// `any_ty`). Its `TypeError` (std's `classCallError`) is thrown where a `catch` of this
+    /// function takes one, as `not_fn_error`'s; anywhere else the process stops with the message.
+    pub(super) fn class_call_check(&mut self, st: &Operand, out: Place, any_ty: TyId) {
+        if self.dead() {
+            return;
+        }
+        let is = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, st.clone(), cint(ST_CLASS_CALL, Ty::U8)),
+        );
+        let (yes, no) = (self.new_block(), self.new_block());
+        self.branch(is, yes, no);
+        self.switch_to(yes);
+        let hook = self
+            .cx
+            .std_hook_if_loaded(velt_common::std_hook!(class_call_error));
+        match (self.type_error_routed(), hook) {
+            (Some((_, te)), Some(h)) => {
+                let fid = self.cx.func_for(h, vec![]);
+                let unit = self.cx.intern(TyKind::Unit);
+                let oa = self.addr(out.clone());
+                self.finish_call(Callee::Func(fid), vec![oa], unit, Some(te));
+                self.drop_glue(out, any_ty);
+                self.terminate(Terminator::Unreachable);
+            }
+            _ => {
+                let str_ty = self.cx.intern(TyKind::Str);
+                let msg = self.any_unbox(&out, any_ty, str_ty);
+                let m = Place::local(self.copy_to_temp(msg, Ty::Agg(STR_AGG)));
+                let ma = self.addr(m);
+                self.panic_with_key("", &ma, "");
+                self.terminate(Terminator::Unreachable);
+            }
+        }
+        self.switch_to(no);
     }
 }

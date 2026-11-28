@@ -7,7 +7,7 @@
 
 use velt_sema::hir::{self, DefId, DynMember, DynMemberKind, Nothing, TyId, TyKind};
 
-use super::any_member::{SLOT_APPLY, ST_NOT_FN, ST_OK, ST_UNSUPPORTED};
+use super::any_member::{SLOT_APPLY, ST_CLASS_CALL, ST_NOT_FN, ST_OK, ST_UNSUPPORTED};
 use super::any_proxy::ProxyKey;
 use super::glue::Glue;
 use super::operand::proj;
@@ -178,6 +178,11 @@ impl FnLower<'_, '_> {
         if !self.cx.any_boxable(ret) || (promise && !field && !self.cx.boxing.any_applies) {
             self.any_drop_args(argv, 0, argc);
             return self.ret_status(ST_UNSUPPORTED);
+        }
+        // A class's object (velt/lang/hooks/class_object): called without `new`, Node's
+        // `TypeError`, whose message it keeps (any_not_fn.rs `class_call_check`).
+        if self.class_call_body(fp, fty, (argv, argc), out) {
+            return;
         }
         // What the function throws leaves the slot as uncaught (`finish_ready_call`): the
         // slot's status has no error to carry back to the caller's `catch` yet.
@@ -637,5 +642,39 @@ impl FnLower<'_, '_> {
                 self.ret_status(ST_NOT_FN);
             }
         }
+    }
+
+    /// In the apply slot of the function value at `fp` (of type `fty`): when it is a class's
+    /// object (`classObject` / `classObjectStatics`; not the `Number` kind's, which converts),
+    /// the arguments dropped, its message (the closure's second capture) into `*out` and
+    /// `ST_CLASS_CALL`. `false` for any other function.
+    fn class_call_body(
+        &mut self,
+        fp: &Place,
+        fty: TyId,
+        (argv, argc): (vir::Local, vir::Local),
+        out: &Place,
+    ) -> bool {
+        let Some(tag) = self.class_object_tag(fty) else {
+            return false;
+        };
+        let hook = match self.cx.kind(tag) {
+            TyKind::Bool => velt_common::std_hook!(class_object_statics),
+            TyKind::Str => velt_common::std_hook!(class_object),
+            _ => return false,
+        };
+        let Some(def) = self.prelude_closure(hook) else {
+            return false;
+        };
+        self.any_drop_args(argv, 0, argc);
+        let ea = self.cx.env_agg(def, &[]);
+        let env = proj(fp, Proj::Field(1));
+        let second = self.cx.env_header(def) + 1;
+        let msg = proj(&proj(&env, Proj::Deref(Ty::Agg(ea))), Proj::Field(second));
+        let str_ty = self.cx.intern(TyKind::Str);
+        let v = self.share_value(Operand::Copy(msg), str_ty);
+        self.any_box_into(v, str_ty, out);
+        self.ret_status(ST_CLASS_CALL);
+        true
     }
 }

@@ -22,6 +22,19 @@ export function classCall(msg: string): never {
 }
 
 /**
+ * A call of a class's object through `any` (`pc(1)`, also of a proxy of one): Node's `TypeError`,
+ * the message `msg` (a string) without its `TypeError: ` (velt_vir `any_not_fn.rs`), thrown
+ * where a `catch` of the caller takes it. A call that is not supported yet stops with `msg`.
+ */
+export function classCallError(msg: any): void {
+  const m = msg as string;
+  if (m.endsWith("(#926)")) {
+    panic(m);
+  }
+  throw new TypeError(m.startsWith("TypeError: ") ? m.slice(11) : m);
+}
+
+/**
  * The object of a class (or a kind of values) that prints as `printed`, stopping with `msg`
  * when called. One closure for every class, so one type and one descriptor: velt_vir's
  * `format.rs` reads `printed`, its first capture.

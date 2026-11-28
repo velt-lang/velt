@@ -10,6 +10,7 @@
 //! | `AnySet` / `AnySetIndex` | `[PROXY_SET](key, value, receiver)` |
 //! | `AnyHas` | `[PROXY_HAS](key)` |
 //! | `AnyKeys` | `[PROXY_KEYS]()` |
+//! | `AnyApply` | `[PROXY_APPLY](undefined, args)` where `[PROXY_CALLEE]()` is `null` (proxy_apply.rs) |
 //!
 //! When that method throws, such an operation in a user function first tests whether the value
 //! holds a `Proxy` (its descriptor is the `Proxy` class's table) and then calls the method
@@ -64,7 +65,7 @@ impl FnLower<'_, '_> {
 
     /// The `Proxy` class type and its method `name`, ready to call, when this body routes the
     /// errors of an operation on `any` that runs `name` on a proxy and that method throws.
-    fn proxy_route(&mut self, name: &str) -> Option<(TyId, Ready)> {
+    pub(super) fn proxy_route(&mut self, name: &str) -> Option<(TyId, Ready)> {
         if !self.proxy_routes || self.dead() {
             return None;
         }
@@ -114,7 +115,7 @@ impl FnLower<'_, '_> {
     /// Call the `Proxy` method `r` on the `Proxy` object `obj` (of type `pty`) with the owned
     /// `args`, as a call of a throwing function: an error goes to the innermost handler, after
     /// the arguments the method borrows are dropped. Its result, owned.
-    fn proxy_direct_call(
+    pub(super) fn proxy_direct_call(
         &mut self,
         r: &Ready,
         obj: vir::Local,

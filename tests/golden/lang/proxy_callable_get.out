@@ -1,0 +1,7 @@
+trap 1 trap 2,3
+call,apply
+o1 o2 NaN
+call,apply
+trap 4,5 o3
+o5 o6 o7
+inner o 1,2 inner o 3,4 inner o 5,6 function

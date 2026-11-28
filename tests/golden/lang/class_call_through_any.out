@@ -1,0 +1,5 @@
+use true Class constructor C cannot be invoked without 'new'
+member true Class constructor C cannot be invoked without 'new'
+statics true Class constructor D cannot be invoked without 'new'
+6
+function function

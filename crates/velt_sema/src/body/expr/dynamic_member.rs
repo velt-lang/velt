@@ -583,7 +583,7 @@ impl FnCx<'_, '_> {
         };
         all.extend(boxed);
         self.note_any_call();
-        Ok(self.intrinsic(Intrinsic::AnyApply, all, any, span))
+        Ok(self.any_op(Intrinsic::AnyApply, all, any, span))
     }
 
     /// The arguments of a dynamic call, each boxed as an `any` (moved into the call). With a

@@ -72,25 +72,18 @@ export function proxyFnMethod(p: Proxy, key: any, args: any[]): any {
   }
   const rest = args.slice(1);
   if (key === "bind") {
+    // A function that calls the proxy with `thisArg` and `rest` followed by its own arguments:
+    // its `apply` trap, or the first one on the chain of proxies it targets. The trap is the one
+    // the handler had when `bind` ran (Node reads it at each call).
     const trap = p.applyTrap();
     const t = p[PROXY_TARGET]();
-    if (trap == null) {
-      // A proxy without a trap of a proxy with one: the target's `bind`.
-      return t instanceof Proxy ? t[PROXY_FN_METHOD](key, args) : undefined;
-    }
-    return bound(trap, t, thisArg, rest);
+    return (...more: any[]): any => {
+      const all = rest.concat(more);
+      if (trap != null) {
+        return trap(t, thisArg, all);
+      }
+      return t instanceof Proxy ? t[PROXY_APPLY](thisArg, all) : undefined;
+    };
   }
   return proxyApply(p, thisArg, rest);
-}
-
-// `p.bind(thisArg, ...first)` of a proxy of `target` whose `apply` trap is `trap`: a function that
-// runs the trap with `thisArg` and `first` followed by its own arguments. The trap is the one the
-// handler had when `bind` ran (Node reads it at each call).
-function bound(
-  trap: (target: any, thisArg: any, argArray: any[]) => any,
-  target: any,
-  thisArg: any,
-  first: any[],
-): any {
-  return (...more: any[]): any => trap(target, thisArg, first.concat(more));
 }

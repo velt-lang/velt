@@ -424,6 +424,7 @@ fn lazy_std_checks_the_lowered_hooks_of_the_values_a_program_has() {
             "error_message",
             "host_ref_handle",
             "class_object",
+            "class_object_statics",
             // A `Mutex`'s count, lowered in a `velt dev` build only (`Construct::MutexHeld`).
             "mutex_held_locked",
             "mutex_held_unlocked",

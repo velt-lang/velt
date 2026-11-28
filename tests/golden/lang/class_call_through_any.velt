@@ -1,0 +1,42 @@
+// A class's object called without `new` through `any` (a class held as `any`, a proxy of one, a
+// member holding one) throws Node's `TypeError`, which a `catch` of the same function takes
+// (#3978; a proxy of a class used to stop the program, as a class held as `any` did).
+// `Number` converts. The Node twin is class_call_through_any.mjs.
+class C {
+  x: number;
+  constructor(x: number) {
+    this.x = x;
+  }
+}
+class D extends C {
+  static n = 1;
+}
+function use(f: any): any {
+  try {
+    return f(2);
+  } catch (e) {
+    return "use " + (e instanceof TypeError) + " " + (e as Error).message;
+  }
+}
+const pc: any = new Proxy(C, {});
+try {
+  console.log(use(pc));
+} catch (e) {
+  console.log("in fn", e instanceof TypeError, (e as Error).message);
+}
+const ck: any = C;
+const o: any = { k: ck };
+try {
+  o.k(3);
+} catch (e) {
+  console.log("member", e instanceof TypeError, (e as Error).message);
+}
+const pd: any = D;
+try {
+  pd();
+} catch (e) {
+  console.log("statics", e instanceof TypeError, (e as Error).message);
+}
+const N: any = Number;
+console.log(N("5") + 1);
+console.log(typeof pc, typeof o.k);
