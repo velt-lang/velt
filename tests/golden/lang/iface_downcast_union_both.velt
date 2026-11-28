@@ -1,0 +1,31 @@
+// A value made as an interface extending two members of a union (`Both extends Named, Sided`),
+// seen as a `Shape`, cast to the union and to each member (#3073): it converts to the union's
+// first member it implements, and keeps every member it has. Narrowing such a union by `in`
+// is refused while compiling (iface_union_in_ambiguous).
+interface Shape {
+  area(): number;
+}
+
+interface Named extends Shape {
+  name(): string;
+}
+
+interface Sided extends Shape {
+  sides: number;
+}
+
+interface Both extends Named, Sided {}
+
+function areaOf(s: Shape): number {
+  return s.area();
+}
+
+const both: Both = { area: () => 2, name: () => "b", sides: 3 };
+const b: Shape = both;
+const u = b as Named | Sided;
+console.log(u === undefined ? "none" : "converted", areaOf(b));
+console.log((b as Named).name(), (b as Sided).sides);
+const m = b as Sided | undefined;
+console.log(m?.sides);
+const n = b as Named | undefined;
+console.log(n?.name());

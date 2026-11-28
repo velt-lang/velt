@@ -196,6 +196,10 @@ impl FnCx<'_, '_> {
         (self.dynamic_raw, self.asserted_fn) = (saved, outer);
         // A cast gets past `readonly` (#3061).
         let inner = self.readonly_cast_operand(inner, target);
+        // A function value with a rest parameter as a type that passes it nothing (#2787).
+        if self.dropped_rest_value(inner.ty, target, span) {
+            return self.error_expr(span);
+        }
         // `v as Promise<T>` of a dynamic `v` may reject with anything (any_promise_cast.rs).
         let open = open && self.cx.dynamic(inner.ty).is_some();
         let target = match open {

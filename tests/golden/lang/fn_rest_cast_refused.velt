@@ -16,4 +16,11 @@ const k: (n: number) => number = h;
 const i = ((...args: unknown[]) => args.length) as Injectable<number>;
 const j = count as () => number;
 const one = ((a: number, ...rest: number[]) => a + rest.length) as (a: number) => number;
-console.log(h(), k(5), i(), j(), one(1));
+// Refused by the operand's type, whatever the expression: a field and a call's result.
+const holder = { f: (...xs: number[]) => xs.length };
+const field = holder.f as () => number;
+function make(): (...a: number[]) => number {
+  return (...a: number[]) => a.length;
+}
+const made = make() as () => number;
+console.log(h(), k(5), i(), j(), one(1), field(), made());

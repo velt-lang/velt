@@ -321,9 +321,10 @@ impl FnLower<'_, '_> {
     }
 
     /// The `any` at `p` as the first member of the union `ty` (of `n` variants) that is an
-    /// interface its value implements ([`Self::any_to_iface`]), in the members' order: `s as
-    /// Named | Sided` for a `Shape` value (#3073). On a match the variant goes into `out` and on
-    /// to `done`; otherwise the code goes on in the current block.
+    /// interface its value implements ([`Self::any_to_iface`]), in the union type's order of its
+    /// variants (not the order written in the source): `s as Named | Sided` for a `Shape` value
+    /// (#3073). On a match the variant goes into `out` and on to `done`; otherwise the code goes
+    /// on in the current block.
     pub(super) fn union_iface(
         &mut self,
         p: &Place,

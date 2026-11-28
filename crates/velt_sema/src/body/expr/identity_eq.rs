@@ -210,8 +210,11 @@ impl FnCx<'_, '_> {
     /// Is `from as to` a cast to a union of interfaces each checked as [`Self::checked_downcast`]
     /// checks one (`s as Named | Sided`), or to one or such a union with `undefined` (`s as Named
     /// | undefined`, also from a `Shape | undefined`, whose `undefined` passes through), outside
-    /// std's `lib.dom` (#3073)? The value converts to the first member it implements, in order
-    /// (velt_vir `union_iface`), and one implementing none stops the program with a `TypeError`.
+    /// std's `lib.dom` (#3073)? The value converts to the first member it implements, in the
+    /// union type's member order, not the order written (velt_vir `union_iface`), and one
+    /// implementing none stops the program with a `TypeError`. Narrowing it by `in` on a member
+    /// another implementation declares is refused (`other_holder_declaring`), as Node keeps the
+    /// object.
     fn checked_union_downcast(&mut self, from: TyId, to: TyId, span: velt_common::Span) -> bool {
         let (payload, optional) = match self.cx.ty.opt_payload(to) {
             Some(p) => (p, true),

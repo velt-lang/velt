@@ -1,0 +1,29 @@
+// `"sides" in u` on a `Named | Sided` when the program has `Both extends Named, Sided`: an
+// object made as a `Both` converts to `Named` (the union's first member it implements), and Node
+// keeps the object, so `"sides" in u` is true for it there. Velt's `Named` value cannot tell
+// whether its object has `sides`: refused while compiling, as for any interface value that may
+// hold an object of an extension declaring the member (#3073).
+interface Shape {
+  area(): number;
+}
+
+interface Named extends Shape {
+  name(): string;
+}
+
+interface Sided extends Shape {
+  sides: number;
+}
+
+interface Both extends Named, Sided {}
+
+function describe(s: Shape): string {
+  const u = s as Named | Sided;
+  if ("sides" in u) {
+    return "sided " + u.sides;
+  }
+  return "named " + u.name();
+}
+
+const both: Both = { area: () => 2, name: () => "b", sides: 3 };
+console.log(describe(both));

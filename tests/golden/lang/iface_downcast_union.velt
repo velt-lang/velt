@@ -1,5 +1,6 @@
 // An interface value cast to a union of interfaces extending its own, or to one with
-// `undefined` (#3073): the value is the member it implements, in the members' order.
+// `undefined` (#3073): the value is the member it implements. A value implementing two
+// members: iface_downcast_union_both; narrowing one by `in`: iface_union_in_ambiguous.
 interface Shape {
   area(): number;
 }
@@ -34,10 +35,3 @@ console.log(maybe(undefined));
 const s: Shape = n;
 const m = s as Named | undefined;
 console.log(m?.name());
-
-// A value made as an interface extending both, seen as a `Shape`: the first member.
-interface Both extends Named, Sided {}
-const both: Both = { area: () => 2, name: () => "b", sides: 3 };
-console.log(describe(both));
-const b: Shape = both;
-console.log((b as Sided).sides);

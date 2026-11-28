@@ -58,9 +58,13 @@ shaped like `J` fails the check, where Node goes on.
 
 `x as J | K` for extensions `J` and `K` of `I`, and `x as J | undefined` (also from an
 `I | undefined`, whose `undefined` passes through), are checked the same way: the value converts
-to the first member, in order, that its object implements (velt_vir `union_iface`, the glue
-`AnyIface` per member, which returns whether it converted), and one implementing none panics with
-the `TypeError`. Unions of std's `lib.dom` interfaces convert to the first member unchecked, as no
+to the first member its object implements, in the union type's order of its members (not the
+order written: `K | J` is the same type as `J | K`; velt_vir `union_iface`, the glue `AnyIface`
+per member, which returns whether it converted), and one implementing none panics with the
+`TypeError`. Node keeps the object, so a value implementing two members could tell the difference
+by `"k" in u` for a member `k` of the one not chosen: that narrowing is refused while compiling
+when an interface extending a member declares `k` (an object made as it may implement both), as
+for any interface value that may hold such an object (velt_sema `other_holder_declaring`). Unions of std's `lib.dom` interfaces convert to the first member unchecked, as no
 DOM value exists on a server.
 
 The casts that stay `cannot cast`:

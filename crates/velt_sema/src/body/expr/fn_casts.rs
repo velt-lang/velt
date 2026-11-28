@@ -310,13 +310,14 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// `e` without parentheses.
 impl FnCx<'_, '_> {
     /// `f as F` where `f` is an arrow or a named function taking a rest parameter and `F` a
     /// function type (or callable object type) without one whose parameters the rest parameter
     /// would take none of (`((...args) => …) as { (): T }`): reported, true. TypeScript keeps the
     /// function, so the arguments of a later call through a type with more parameters still
-    /// reach it in Node; Velt's function of type `F` would be called without them (#2787).
+    /// reach it in Node; Velt's function of type `F` would be called without them (#2787). An
+    /// arrow's type follows the cast's, so it is read off the syntax; any other operand is
+    /// checked by its type once checked ([`Self::dropped_rest_value`]).
     pub(super) fn dropped_rest_cast(&mut self, expr: &ast::Expr, target: TyId, span: Span) -> bool {
         let x = strip_parens(expr);
         let (own_fixed, own_rest) = match &x.kind {
@@ -330,7 +331,31 @@ impl FnCx<'_, '_> {
             },
             _ => return false,
         };
-        if !own_rest || self.cx.ty.has_error(target) {
+        own_rest && self.rest_dropped(own_fixed, target, span)
+    }
+
+    /// The checked operand of a cast to `target`, of type `from`, as [`Self::dropped_rest_cast`]
+    /// says for an arrow: a function (or callable object) value taking a rest parameter, such as
+    /// a field (`obj.f as () => T`) or a call's result (`make() as () => T`), as a function type
+    /// whose calls pass the rest parameter nothing: reported, true.
+    pub(super) fn dropped_rest_value(&mut self, from: TyId, target: TyId, span: Span) -> bool {
+        if from == target || self.cx.ty.has_error(from) {
+            return false;
+        }
+        let Some(f) = self.call_type(from) else {
+            return false;
+        };
+        let TyKind::FnPtr { params, rest, .. } = self.cx.ty.kind(f) else {
+            return false;
+        };
+        let (fixed, rest) = (params.len() - usize::from(*rest), *rest);
+        rest && self.rest_dropped(fixed, target, span)
+    }
+
+    /// Would a function taking `own_fixed` parameters and then a rest parameter be called with
+    /// nothing for its rest parameter through `target`? Reported, true.
+    fn rest_dropped(&mut self, own_fixed: usize, target: TyId, span: Span) -> bool {
+        if self.cx.ty.has_error(target) {
             return false;
         }
         let Some(f) = self.call_type(target) else {
@@ -354,6 +379,7 @@ impl FnCx<'_, '_> {
     }
 }
 
+/// `e` without parentheses.
 fn strip_parens(e: &ast::Expr) -> &ast::Expr {
     match &e.kind {
         ast::ExprKind::Paren(x) => strip_parens(x),

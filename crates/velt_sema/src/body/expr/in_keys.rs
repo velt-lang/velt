@@ -240,12 +240,26 @@ impl FnCx<'_, '_> {
 
     /// A type of the program that is not a class, implements interface type `t` and declares
     /// member `name` (its name): an interface value may hold one, and only classes can be
-    /// told apart at run time.
+    /// told apart at run time. An interface extending `t`'s that declares the member is one
+    /// too: an object made as it (`const b: Both = { … }`, `Both extends Named, Sided`) is held
+    /// by a `Named` value, and `"sides" in v` is true for it in Node.
     fn other_holder_declaring(&mut self, t: TyId, name: &str) -> Option<String> {
         let TyKind::Dyn(i, _) = self.cx.ty.kind(t).clone() else {
             return None;
         };
         for d in (0..self.cx.info.len() as u32).map(DefId) {
+            if let Some(x) = self.cx.iface(d) {
+                if d == i || self.cx.scopes[x.module].is_std {
+                    continue;
+                }
+                let declared = (x.fields.iter()).any(|f| f.name == name)
+                    || (x.methods.iter()).any(|m| m.name == name);
+                let shown = x.name.clone();
+                if declared && self.cx.iface_extends_def(d, i, 0) {
+                    return Some(shown);
+                }
+                continue;
+            }
             let Some(a) = self.cx.adt(d) else { continue };
             if a.kind == AdtKind::Class || self.cx.scopes[a.module].is_std {
                 continue;
