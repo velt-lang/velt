@@ -251,6 +251,10 @@ pub struct Program {
     /// hold it (`null!`, `null as any`; hir_encodings.md "A nothing in a slot"): the targets of
     /// `AnyTo` then hold it as a view of it, as in a program with `new Proxy`. Additive.
     pub nothing_slots: bool,
+    /// A call through `any` in a user module (`AnyApply`, `AnyCall`) throws `any`: the program
+    /// converts to `any` a function that throws (hir_encodings.md "Member reads and calls").
+    /// The member slots then return status 4 with the function's error, boxed, in `*out`.
+    pub any_calls_throw: bool,
     /// Interface upcasts (hir_encodings.md "Interface intersections and upcasts"): per
     /// interface whose values convert to other interfaces (`Upcast` of a `Dyn(A)` to a
     /// `Dyn(B)`), the targets, in table order. Additive.

@@ -1,0 +1,9 @@
+outer true TypeError: fin
+inner RangeError: body body
+result 2
+in catch RangeError: body catch
+outer true TypeError: fin after catch
+result Error: fin 0,Error: fin 1,Error: fin 2
+outer false RangeError: through any
+same function true TypeError: f is not a function
+result 3

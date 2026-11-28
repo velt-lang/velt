@@ -20,11 +20,8 @@ impl FnLower<'_, '_> {
         if self.dead() {
             return;
         }
-        let handler = self
-            .scopes
-            .iter()
-            .enumerate()
-            .rev()
+        let handler = (self.scopes.iter().enumerate().rev())
+            .filter(|(i, _)| !self.left_by_edge(*i))
             .find_map(|(i, s)| match s.kind {
                 ScopeKind::Try { handler, slot, ty } => Some(Some((i, handler, slot, ty))),
                 ScopeKind::Uncaught => Some(None),
@@ -57,7 +54,7 @@ impl FnLower<'_, '_> {
 
     /// An error that leaves a module state initializer (`ScopeKind::Uncaught`): print
     /// `Uncaught …` and end the process with 1.
-    fn uncaught_error(&mut self, err: Operand, from: TyId) {
+    pub(super) fn uncaught_error(&mut self, err: Operand, from: TyId) {
         let vt = self.cx.ty(from);
         let p = match vt {
             Ty::Unit => Place::local(self.temp(Ty::U8)),

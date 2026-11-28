@@ -53,8 +53,9 @@ impl FnLower<'_, '_> {
         argv: Vec<Operand>,
         r: &Ready,
     ) -> Operand {
-        if r.throws.is_none() {
-            return self.finish_call(callee, argv, r.ret, None);
+        if r.throws.is_none() || self.slot_catch {
+            // In a slot catching the error, the scope it pushed takes it (any_threw.rs).
+            return self.finish_call(callee, argv, r.ret, r.throws);
         }
         self.push_scope(ScopeKind::Uncaught);
         let v = self.finish_call(callee, argv, r.ret, r.throws);

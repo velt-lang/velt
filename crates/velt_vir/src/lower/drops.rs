@@ -50,6 +50,9 @@ impl FnLower<'_, '_> {
     pub(super) fn emit_drops_from(&mut self, depth: usize) {
         let kept = self.pad_kept(depth);
         for i in (depth..self.scopes.len()).rev() {
+            if self.left_by_edge(i) {
+                continue;
+            }
             self.emit_scope_drops(i);
             self.run_finally(i);
         }
@@ -99,20 +102,28 @@ impl FnLower<'_, '_> {
             return;
         };
         let Some(b) = fin.take() else { return };
+        // The edge has left the scopes from `i` on (their drops are emitted): an error thrown in
+        // the block goes past them, to a `catch` outside the `try` (`left_by_edge`).
+        self.finally_left.push((i, self.scopes.len()));
         self.finally_body(&b);
+        self.finally_left.pop();
         self.scopes[i].kind = ScopeKind::Finally(Some(b));
     }
 
-    /// Lower a `finally` block: only the scopes it pushes itself enclose the code in it
-    /// (`finally_floor`; the `try`s around it are left on this edge).
+    /// Has the exit edge whose `finally` block is being lowered left scope `j` (`run_finally`)?
+    /// Code in the block is outside it: no error goes to its `catch`, and no edge drops it again.
+    pub(super) fn left_by_edge(&self, j: usize) -> bool {
+        (self.finally_left.iter()).any(|&(lo, hi)| (lo..hi).contains(&j))
+    }
+
+    /// Lower a `finally` block (on an early exit, the scopes the edge leaves don't enclose the
+    /// code in it: `left_by_edge`).
     fn finally_body(&mut self, b: &velt_sema::hir::Block) {
-        let floor = std::mem::replace(&mut self.finally_floor, self.scopes.len());
         // On an early exit the scopes it leaves are still open, and quiet code ended there
         // (str_data.rs): this code wasn't checked, so it knows no string's pointer.
         let known = std::mem::take(&mut self.str_datas);
         self.block(b);
         self.str_datas = known;
-        self.finally_floor = floor;
     }
 
     fn innermost(&mut self) -> &mut Scope {

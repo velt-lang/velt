@@ -38,6 +38,11 @@ impl FnLower<'_, '_> {
         if self.cx.is_class(from) && self.cx.is_class(to) {
             return v;
         }
+        // `any` and `unknown` are one value (a function's error through `any` reaching an
+        // `unknown`, any_threw.rs).
+        if self.cx.is_dynamic(to) && self.cx.is_dynamic(from) {
+            return v;
+        }
         // Into `any` (or `unknown`): boxed through the implementation every type has, as a
         // conversion to `any` is (`throw(e: any)` of a generator, a `try` that throws an
         // `AppErr` and an `any`).

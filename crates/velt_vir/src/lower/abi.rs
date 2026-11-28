@@ -95,7 +95,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
             ref_loads: false,
             epoch_exempt: false,
             proxy_routes: false,
-            finally_floor: 0,
+            any_call_routes: false,
+            slot_catch: false,
+            finally_left: vec![],
             held_targets: vec![],
             user_body: false,
             record_fill: 0,
@@ -481,14 +483,16 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     pub(super) fn lower_body(&mut self, f: &FnDef) {
         self.user_body = !(f.name).starts_with(velt_common::std_modules::CANONICAL_PREFIX);
-        self.proxy_routes = !f
-            .name
-            .starts_with(velt_common::std_modules::CANONICAL_PREFIX)
-            || velt_common::std_modules::PROXY_MODULES.iter().any(|m| {
+        let in_module = |ms: &[&str]| {
+            ms.iter().any(|m| {
                 f.name
                     .strip_prefix(m)
                     .is_some_and(|rest| rest.starts_with("::"))
-            });
+            })
+        };
+        self.proxy_routes = self.user_body || in_module(&velt_common::std_modules::PROXY_MODULES);
+        self.any_call_routes =
+            self.user_body || in_module(&velt_common::std_modules::ANY_CALL_MODULES);
         // Outermost scope: owned params, dropped on every return.
         self.push_scope(ScopeKind::Block);
         for p in &f.params[f.captures.len()..] {

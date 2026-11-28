@@ -263,7 +263,7 @@ impl FnCx<'_, '_> {
             let text = s.mk(H::Lit(Lit::Str(text)), str_, span);
             let mut all = vec![read(s), text];
             all.extend(boxed);
-            s.intrinsic(Intrinsic::AnyApply, all, any, span)
+            s.any_call_op(Intrinsic::AnyApply, all, any, span)
         };
         let h = held(self);
         let called = self.promise_member_call(h, &prop.name, boxed, any, span, apply);

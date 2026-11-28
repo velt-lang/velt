@@ -1,0 +1,26 @@
+// In a program that converts a throwing function to `any`, a call through `any` throws `any`:
+// a function whose written `throws` clause doesn't allow it is reported (#1938; an arrow whose
+// function type allows no error compiles as before). A `catch` inside, or `throws any`, is fine.
+class MyErr extends Error {}
+
+const boom: any = (): number => {
+  throw new MyErr("boom");
+};
+
+function strict(f: any): number throws MyErr {
+  return f();
+}
+
+function wide(f: any): number throws any {
+  return f();
+}
+
+function inside(f: any): number throws MyErr {
+  try {
+    return f();
+  } catch (e) {
+    throw new MyErr(`${e}`);
+  }
+}
+
+console.log(strict(boom), wide(boom), inside(boom));

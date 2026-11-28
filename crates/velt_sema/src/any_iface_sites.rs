@@ -128,6 +128,40 @@ pub(crate) fn instantiated_conversions(cx: &mut Ctx) -> Vec<TyId> {
     out
 }
 
+/// The types of the values the program converts to `any` (`ToDyn`), as each site instantiating
+/// their definitions makes them (substituted, through the generic definitions in between), with
+/// no type parameters left (`throws::any_calls`). The standard library's conversions count only
+/// for what the program gives its type parameters: its own values held as `any` are its own.
+pub(crate) fn held_types(cx: &mut Ctx) -> Vec<TyId> {
+    let units = collect(cx);
+    let callers = callers_of(&units);
+    let mut start: Vec<(DefId, TyId, usize, Span)> = vec![];
+    for (d, u) in &units {
+        let std = std_def(cx, *d);
+        for &t in &u.held {
+            if !std || cx.has_type_params(t) {
+                start.push((*d, t, 0, Span::DUMMY));
+            }
+        }
+    }
+    let mut out = vec![];
+    carry(cx, &callers, start, &mut |_, t, _, _| out.push(t));
+    out.sort_unstable_by_key(|t| t.0);
+    out.dedup();
+    out
+}
+
+/// Is `d` (a function, a type or a module constant; a unit) defined in the standard library?
+pub(crate) fn std_def(cx: &Ctx, d: DefId) -> bool {
+    let module = match cx.info.get(d.0 as usize) {
+        Some(DefInfo::Fn(f)) => f.module,
+        Some(DefInfo::Adt(a)) => a.module,
+        Some(DefInfo::Global(g)) => g.module,
+        _ => return false,
+    };
+    cx.modules.get(module).is_some_and(|m| m.is_std)
+}
+
 /// The parameter types of the functions in a value of type `t`: itself, its options, elements
 /// and map values, and the fields of an object type (with its arguments).
 fn fn_params_in(cx: &mut Ctx, t: TyId) -> Vec<TyId> {

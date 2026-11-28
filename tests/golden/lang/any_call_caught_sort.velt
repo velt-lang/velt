@@ -1,0 +1,82 @@
+// Sort comparators calling through `any` in a program whose calls through `any` throw (it
+// converts a throwing function to `any`, #1938): a comparator of an `any[]` may throw, and its
+// error leaves `sort` to the caller's `catch`, as in JavaScript; a comparator of a typed array
+// (whose function type allows no error) compiles as in a program that converts none.
+function check(x: number): number {
+  if (x < 0) throw new RangeError("negative");
+  return x;
+}
+const table: any = { check };
+
+interface Row {
+  name: string;
+}
+
+const rows: any[] = [{ name: "b" }, { name: "a" }, { name: "c" }];
+rows.sort((a: any, b: any): number => a.name.localeCompare(b.name) as number);
+console.log(rows.map((r: any): string => r.name as string).join(","));
+const back = rows.toSorted((a: any, b: any): number => b.name.localeCompare(a.name) as number);
+console.log(back.map((r: any): string => r.name as string).join(","));
+
+function byName(a: any, b: any): number {
+  return a.name.localeCompare(b.name) as number;
+}
+rows.reverse();
+rows.sort(byName);
+console.log(rows.map((r: any): string => r.name as string).join(","));
+
+const typed: Row[] = [{ name: "y" }, { name: "x" }, { name: "z" }];
+const order: any = { rank: (r: Row): number => r.name.charCodeAt(0) };
+typed.sort((a: Row, b: Row): number => (order.rank(a) as number) - (order.rank(b) as number));
+console.log(typed.map((r: Row): string => r.name).join(","));
+const nums: number[] = [3, 1, 2];
+nums.sort((a: number, b: number): number => (table.check(a) as number) - (table.check(b) as number));
+console.log(nums.join(","));
+
+// Comparators named here (functions that call through `any`) of typed arrays.
+function byRank(a: Row, b: Row): number {
+  return (order.rank(b) as number) - (order.rank(a) as number);
+}
+function byCheck(a: number, b: number): number {
+  return (table.check(b) as number) - (table.check(a) as number);
+}
+typed.sort(byRank);
+console.log(typed.map((r: Row): string => r.name).join(","));
+nums.sort(byCheck);
+console.log(nums.join(","), nums.toSorted(byCheck).join(","));
+nums.sort(function (a: number, b: number): number {
+  return (table.check(a) as number) - b;
+});
+console.log(nums.join(","));
+const ints: i64[] = [3, 1, 2];
+ints.sort((a: i64, b: i64): i64 => a - b);
+console.log(ints.join(","));
+console.log(typed.toSorted(byRank).map((r: Row): string => r.name).join(","));
+
+// A comparator of a typed array that catches inside.
+nums.reverse();
+nums.sort((a: number, b: number): number => {
+  try {
+    return (table.check(-a) as number) - b;
+  } catch (e) {
+    return a - b;
+  }
+});
+console.log(nums.join(","));
+
+try {
+  table.check(-1);
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
+try {
+  rows.sort((a: any, b: any): number => table.check(-1) as number);
+} catch (e) {
+  console.log("sort caught", (e as Error).message);
+}
+console.log(rows.map((r: any): string => r.name as string).join(","));
+try {
+  rows.toSorted((a: any, b: any): number => table.check(-2) as number);
+} catch (e) {
+  console.log("toSorted caught", (e as Error).message);
+}

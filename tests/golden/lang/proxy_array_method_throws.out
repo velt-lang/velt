@@ -1,0 +1,33 @@
+push set: caught TypeError: set 3
+push again: ok 3
+raw 1,2,3
+pop delete: caught TypeError: deleteProperty 2
+pop again: ok 3
+raw 1,2,3
+shift get: caught TypeError: get 0
+join after: ok 2-3
+splice has: caught TypeError: has 1
+includes after: ok true
+raw 1,2,3
+raw arrays: ok 1,2,3,4 | 0,1,2,3 | 3,2,1 | 1,3
+proxies again: ok 4 0 2,1 2 true
+forEach: caught RangeError: cb 2
+map: caught RangeError: cb 2
+filter: caught RangeError: cb 2
+find: caught RangeError: cb 2
+some: caught RangeError: cb 2
+map after: ok 2,3,4
+sort: caught Error: cmp
+sort after: ok 1,2,3
+sort big: caught Error: late
+sort big after: ok 1,2,3
+string: caught plain 3
+nested: caught TypeError: set 3
+nested again: ok 3
+inner TypeError: set 3
+outer Error: from catch
+rethrowing RangeError: cb 2
+finally
+rethrown true RangeError: cb 2
+through a function: caught TypeError: set 3
+async RangeError: cb 2

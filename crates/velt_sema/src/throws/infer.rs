@@ -75,6 +75,7 @@ pub(crate) fn infer_all(cx: &mut Ctx) {
         }
     }
     super::checks::check_all(cx, &fns, &groups);
+    super::any_calls::note(cx);
     cx.record_recursion_hints(&fns);
 }
 
