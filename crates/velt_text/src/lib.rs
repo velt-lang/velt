@@ -1,11 +1,7 @@
-//! Text and JSON as Velt writes them, for the runtime (`velt_rt`): Velt's string encoding
-//! ([`wtf8`]), JavaScript's number formatting ([`fmt`]), JSON scanning and escaping, the
-//! database drivers' parameter and row JSON ([`db_json`]).
+//! Text as Velt writes it, for the runtime (`velt_rt`) and the compiler: Velt's string encoding
+//! ([`wtf8`]) and JavaScript's number formatting ([`fmt`]).
 
-pub mod db_json;
 pub mod fmt;
-pub mod json_escape;
-pub mod json_scan;
 pub mod wtf8;
 
 /// Where the encoders write.

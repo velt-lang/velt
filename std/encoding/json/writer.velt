@@ -8,7 +8,7 @@
 // the infinities), strings quoted, with `"`, `\`, control characters and lone surrogates
 // escaped (well-formed `JSON.stringify`).
 //
-// Port of velt_text's json_escape.rs and the JSON number path of fmt.rs.
+// Port of velt_text's json_escape.rs (since deleted) and the JSON number path of fmt.rs.
 
 import {
   arraySetLen,

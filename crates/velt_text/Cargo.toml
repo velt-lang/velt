@@ -2,7 +2,7 @@
 name = "velt_text"
 version.workspace = true
 edition.workspace = true
-description = "Velt's string encoding, number formatting and database JSON, for the runtime"
+description = "Velt's string encoding and number formatting, for the runtime and the compiler"
 
 [dependencies]
 memchr = "2.8.3"
