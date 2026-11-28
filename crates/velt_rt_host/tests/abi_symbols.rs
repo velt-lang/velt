@@ -53,7 +53,9 @@ fn table_covers_the_documented_abi() {
         .flat_map(|d| documented(d))
         .filter(|n| n != "velt_rt_wasm" && !wasm_only.contains(n))
         .collect();
-    assert!(documented.len() > 100, "found only {documented:?}");
+    // That the tables were read at all: the native ABI shrinks as std takes it over (99 with this
+    // change and the process lifetime's, #2196).
+    assert!(documented.len() > 60, "found only {documented:?}");
     let missing: Vec<&String> = documented
         .iter()
         .filter(|n| !table.contains(n.as_str()))
