@@ -1,0 +1,45 @@
+// A `using` variable read through a downcast or an array literal without taking it (#3451):
+// a call on `m as Sub`, a test, and patterns that take the element apart or leave it out are
+// reads, and the variable is disposed at the end of its block, as in Node
+// (using_cast_borrow.mjs prints the same). Taking it is an error
+// (tests/golden/lang/errors/using_cast_move.velt).
+class Base {
+  constructor(public name: string) {}
+  [Symbol.dispose]() {
+    console.log("dispose " + this.name);
+  }
+}
+
+class Sub extends Base {
+  hello(): string {
+    return "hello " + this.name;
+  }
+}
+
+function called(): string {
+  using m: Base = new Sub("a");
+  const s = (m as Sub).hello();
+  console.log("in called");
+  return s;
+}
+
+function tested(): boolean {
+  using m: Base = new Sub("b");
+  const yes = m instanceof Sub && (m as Sub).hello() === "hello b";
+  console.log("in tested");
+  return yes;
+}
+
+function parts(): string {
+  using m = new Base("c");
+  const [{ name }] = [m];
+  const [, k] = [m, 2];
+  console.log("in parts", k);
+  return name;
+}
+
+function main() {
+  console.log(called());
+  console.log(tested());
+  console.log(parts());
+}

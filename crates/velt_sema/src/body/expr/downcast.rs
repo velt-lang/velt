@@ -15,8 +15,9 @@
 
 use velt_common::{Diagnostic, Span};
 
-use crate::body::FnCx;
-use crate::hir::{self, DefId, PatKind as P, TyId, TyKind};
+use crate::body::places::set_place_mode;
+use crate::body::{FnCx, LocalKind, Want};
+use crate::hir::{self, DefId, LocalId, PatKind as P, TyId, TyKind, UseMode};
 
 /// How a (non-null) value of some type relates to a class.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -123,10 +124,7 @@ impl FnCx<'_, '_> {
         // The local stays usable after the cast, as after `instanceof`: a value taken is a
         // share of it, not a move.
         let value = self.expr(expr, None, crate::body::Want::Borrow);
-        let value = match want {
-            crate::body::Want::Move => self.share_if_place(value),
-            _ => value,
-        };
+        let value = self.downcast_value(value, l, want);
         let then = self.mk(hir::ExprKind::Downcast(Box::new(value)), target, span);
         let name = self.cx.display(target);
         let msg = format!("TypeError: type assertion failed: the value is not of type `{name}`");
@@ -187,10 +185,7 @@ impl FnCx<'_, '_> {
             let cond = self.class_test(test, class, span)?;
             // The local stays usable after the cast, as after `instanceof`.
             let value = self.expr(expr, None, crate::body::Want::Borrow);
-            let value = match want {
-                crate::body::Want::Move => self.share_if_place(value),
-                _ => value,
-            };
+            let value = self.downcast_value(value, l, want);
             let down = self.mk(hir::ExprKind::Downcast(Box::new(value)), member, span);
             let then = self.coerce(down, target);
             let kind = hir::ExprKind::If {
@@ -201,6 +196,21 @@ impl FnCx<'_, '_> {
             out = self.mk(kind, target, span);
         }
         Some(out)
+    }
+
+    /// The value of local `l` (`value`, a read of it) a downcast hands on, used per `want`: a
+    /// share when it is taken, so the local stays usable as after `instanceof`, except for a
+    /// `using` local, whose value is disposed at the end of its block: taking it is a move, an
+    /// error (`crate::moves`) like `return m` (#3451).
+    fn downcast_value(&mut self, mut value: hir::Expr, l: LocalId, want: Want) -> hir::Expr {
+        match want {
+            Want::Move if self.local_kind(l) == LocalKind::Using => {
+                set_place_mode(&mut value, UseMode::Move);
+                value
+            }
+            Want::Move => self.share_if_place(value),
+            _ => value,
+        }
     }
 
     /// Fills the open `slots` of class `class` (narrowed from a value of class `from`, its

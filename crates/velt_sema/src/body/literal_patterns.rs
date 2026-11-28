@@ -66,6 +66,16 @@ fn same_kind_literals(items: &[Expr]) -> bool {
     first.is_some() && items.iter().all(|x| kind(x) == first)
 }
 
+/// Does the element pattern `p` bind its element whole (a name, with or without a default),
+/// rather than take it apart or drop it?
+fn binds_whole(p: &P) -> bool {
+    match p {
+        P::Ident(_) => true,
+        P::Default { pattern, .. } => binds_whole(&pattern.kind),
+        P::Wildcard | P::Object { .. } | P::Array { .. } => false,
+    }
+}
+
 impl FnCx<'_, '_> {
     /// Evaluate the elements `items` into hidden temporaries, in order, and list each pattern
     /// of `elems` with the temporary it takes apart (`binds`). A nested array pattern without a
@@ -95,7 +105,12 @@ impl FnCx<'_, '_> {
                 }
             }
             let span = x.span;
-            let name = ident(&format!("#d{}", self.f.locals.len()), span);
+            // `#d` names a temporary a pattern takes apart (`crate::ownership::shares`: it reads
+            // parts of a `using` variable, which stays whole); one a name binds whole (`const
+            // [n] = [m]`) is `#e`, so it moves its value as `const n = m` does (#3451).
+            let whole = p.is_some_and(|p| binds_whole(&p.kind));
+            let prefix = if whole { "#e" } else { "#d" };
+            let name = ident(&format!("{prefix}{}", self.f.locals.len()), span);
             let d = VarDecl {
                 kind: VarKind::Const,
                 pattern: pat(P::Ident(name.clone()), span),
@@ -107,7 +122,10 @@ impl FnCx<'_, '_> {
             };
             self.var_decl(&d, span, out);
             if let Some(p) = p.filter(|p| !matches!(p.kind, P::Wildcard)) {
-                binds.push((p.clone(), mk(E::Ident(name), span)));
+                // Read at the pattern: at the element's span, the read would share with the
+                // element (soft moves go by span, `crate::ownership::shares`).
+                let read = ident(&name.name, p.span);
+                binds.push((p.clone(), mk(E::Ident(read), p.span)));
             }
         }
     }
