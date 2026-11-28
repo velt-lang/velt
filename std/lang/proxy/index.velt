@@ -222,6 +222,11 @@ export class Proxy {
     return this.#handler;
   }
 
+  // The `apply` trap, without a copy of the handler (std only: velt/lang/proxy/calls).
+  private applyTrap(): ((target: any, thisArg: any, argArray: any[]) => any) | undefined {
+    return this.#handler.apply;
+  }
+
   /** `receiver[key]` where the read reached this proxy: the `get` trap. */
   [PROXY_GET](key: any, receiver: any): any {
     const trap = this.#handler.get;

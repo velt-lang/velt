@@ -3,7 +3,13 @@
 // goes through JavaScript's `ToPrimitive` here first (`anyToPrimitive`), and the operator then
 // runs on the primitive it gives.
 
-import { anyIsList, anyIsPromise, anyPromise, anyToPrimitive } from "velt/lang/intrinsics";
+import {
+  anyIsList,
+  anyIsPromise,
+  anyMethodCalled,
+  anyPromise,
+  anyToPrimitive,
+} from "velt/lang/intrinsics";
 import { anyJoin, anyOwnFn, anyPrimText, anyText } from "./any_text";
 
 // Past this many arguments Node's stack is out, and past `ANY_LIST_MAX` its array is.
@@ -227,4 +233,12 @@ export function awaitAny(value: unknown): Promise<unknown, unknown> {
     return held;
   }
   return Promise.resolve(value);
+}
+
+/**
+ * Whether the program can call `call`, `apply` or `bind` through `any`: what a proxy of a
+ * function answers for them is compiled only then (velt/lang/proxy/calls).
+ */
+export function anyFnMethodCalled(): boolean {
+  return anyMethodCalled("call") || anyMethodCalled("apply") || anyMethodCalled("bind");
 }

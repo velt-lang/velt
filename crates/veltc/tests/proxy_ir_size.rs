@@ -42,10 +42,13 @@ const READ: &str = "const p = new Proxy({ a: 1 } as any, {});\nconsole.log(p.a a
 /// (velt/lang/hooks/number_shortest, from the build cache or the toolchain), but `--emit llvm`
 /// compiles it in. 57,117 since `charAt` and `slice` of non-ASCII text are std's (#2816):
 /// `Reflect.get`'s element read of an `any` target may index a string, and the position
-/// translation (velt/lang/string/positions, about 5,100 lines) is prebuilt the same way. A real
-/// need can raise the budget; a new dependency of `Proxy` on the array algorithms or on `sort`
-/// can't get past it.
-const READ_BUDGET: usize = 58_000;
+/// translation (velt/lang/string/positions, about 5,100 lines) is prebuilt the same way. 59,857
+/// since a proxy of a function is callable (#3978): the proxy's apply slot, its `call` / `apply`
+/// / `bind` keys and the walk to the `apply` trap or the target (velt/lang/proxy/calls, about
+/// 3,100 lines), which a program with a proxy can reach whenever it calls a value held as `any`
+/// (the proxy's own member calls do). A real need can raise the budget; a new dependency of
+/// `Proxy` on the array algorithms or on `sort` can't get past it.
+const READ_BUDGET: usize = 60_500;
 
 #[test]
 fn one_proxy_stays_within_its_budget() {
