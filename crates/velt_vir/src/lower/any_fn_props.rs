@@ -52,7 +52,7 @@ impl FnLower<'_, '_> {
     /// JS host, which has no leak counters (nor the C library that asks for them).
     pub(super) fn fn_props_exit(&mut self) {
         let name = velt_common::std_hook!(fn_props_exit);
-        let live = (self.cx.prelude_def(name)).is_some_and(|d| !self.cx.hir.unchecked.contains(&d));
+        let live = self.cx.std_hook_live(name).is_some();
         let js = super::host::js_host(&self.cx.target);
         if live && !js && (self.cx.boxing.any_writes || self.cx.fn_identity()) {
             self.fn_props_scoped(|lw| {

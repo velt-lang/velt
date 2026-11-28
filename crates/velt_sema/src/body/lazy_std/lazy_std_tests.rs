@@ -255,3 +255,52 @@ fn every_hook_lowering_calls_is_marked_lowered() {
         "mark `lowered` in velt_common std_hooks.rs: {unmarked:?}"
     );
 }
+
+/// A context over one std module `path`, with no definitions.
+fn empty_std_module(path: &str) -> crate::SourceModule {
+    let file = velt_common::FileId(0);
+    let (ast, diags) = velt_syntax::parse_file(file, "");
+    assert!(diags.is_empty());
+    crate::SourceModule {
+        path: path.to_string(),
+        is_std: true,
+        is_dependency: false,
+        file,
+        ast,
+        imports: vec![],
+        jsx_runtime: None,
+    }
+}
+
+/// A hook whose module the program has but that the module doesn't define is an internal error
+/// at the demand, naming both, not a hook dropped for lowering to miss later (#3745).
+#[test]
+fn a_demanded_hook_its_module_lacks_is_an_internal_error() {
+    let modules = [empty_std_module(velt_common::std_module!(lang_hooks_sched))];
+    let mut cx = Ctx::new(&modules, 0);
+    let mut found = vec![];
+    demanded::hooks(&mut cx, SCHED_HOOKS, &mut found);
+    assert!(found.is_empty());
+    let start = velt_common::std_hook!(sched_start);
+    let want = format!(
+        "ICE: std hook `{start}` demanded, but its module `std/lang/hooks/sched` doesn't define it"
+    );
+    assert!(
+        cx.diags.iter().any(|d| d.message == want),
+        "{:#?}",
+        cx.diags
+    );
+}
+
+/// A hook whose module the program doesn't have (no std, a load refused) is no error: the
+/// feature it serves is not in the program.
+#[test]
+fn a_hook_whose_module_is_not_loaded_is_not_found_and_no_error() {
+    let modules = [empty_std_module(velt_common::std_module!(lang_hooks_cpu))];
+    let mut cx = Ctx::new(&modules, 0);
+    assert_eq!(
+        demanded::hook(&mut cx, velt_common::std_hook!(sched_start)),
+        None
+    );
+    assert!(cx.diags.is_empty(), "{:#?}", cx.diags);
+}

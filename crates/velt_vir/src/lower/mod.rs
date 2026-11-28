@@ -185,6 +185,7 @@ mod spread_object;
 mod srcloc;
 mod stabilize;
 mod static_atomic;
+mod std_defs;
 mod stmt;
 mod str_data;
 mod strbuf;
@@ -271,9 +272,10 @@ struct Cx<'h> {
     /// The standard library's functions by qualified name, built on the first lookup of the
     /// JSON glue (json/reader.rs `json_std_fn`): one map, not a scan of every def per call.
     std_fns: std::cell::OnceCell<FxHashMap<&'h str, DefId>>,
-    /// The first function or class of each name, built on the first `prelude_def` lookup
-    /// (array_view.rs): one map, not a scan of every def per call (7% of a build's lowering).
-    prelude_defs: std::cell::OnceCell<FxHashMap<&'h str, DefId>>,
+    /// The first function or class of each name and their modules, built on the first lookup
+    /// of a std definition (std_defs.rs): one map, not a scan of every def per call (7% of a
+    /// build's lowering).
+    prelude_defs: std::cell::OnceCell<std_defs::StdDefs<'h>>,
     /// The class roots of the targets of `weak` fields, built on first use (weak_fields.rs
     /// `slot_target`).
     weak_targets: std::cell::OnceCell<FxHashSet<DefId>>,

@@ -514,10 +514,7 @@ impl FnLower<'_, '_> {
         if let Some(&d) = self.cx.ffi_hooks.get(qualified) {
             return d;
         }
-        let d = self
-            .cx
-            .prelude_def(qualified)
-            .unwrap_or_else(|| ice(format_args!("no `{qualified}` in velt/ffi")));
+        let d = self.cx.std_hook(qualified);
         self.cx.ffi_hooks.insert(qualified, d);
         d
     }

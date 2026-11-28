@@ -205,10 +205,34 @@ impl PB {
         self.add_fn(restore.build(vec![]));
     }
 
+    /// The `fallback` hooks of the modules the hooks above come from that they leave out, as
+    /// definitions sema left unchecked (`Program::unchecked`): lowering finds every hook of a
+    /// module the program has (lower/std_defs.rs) and writes its own glue for an unchecked one,
+    /// as for a program whose live types don't need them.
+    fn unchecked_fallbacks(&mut self) -> Vec<DefId> {
+        let defined: Vec<String> = (self.defs.iter().flatten())
+            .filter_map(|d| match d {
+                Def::Fn(f) => Some(f.name.clone()),
+                _ => None,
+            })
+            .collect();
+        let module = |name: &str| name.split_once("::").map(|(m, _)| m.to_string());
+        let modules: Vec<String> = defined.iter().filter_map(|n| module(n)).collect();
+        let mut out = vec![];
+        for h in velt_common::std_hooks::HOOKS.iter().filter(|h| h.fallback) {
+            let name = h.qualified();
+            if modules.contains(&h.module()) && !defined.contains(&name) {
+                out.push(self.add_fn(FB::new(&name, self.t.unit).build(vec![])));
+            }
+        }
+        out
+    }
+
     pub fn finish(mut self) -> Program {
         self.console_writers();
         self.float_hooks();
         self.inspect_hooks();
+        let unchecked = self.unchecked_fallbacks();
         // Sema demands the writers of a program that prints a number; a hand-built program says
         // so here, for the hooks it defines above.
         let mut hooks_demanded = velt_common::std_hooks::HookSet::default();
@@ -265,7 +289,7 @@ impl PB {
             dyn_bounds: Default::default(),
             lock_free_callbacks: Default::default(),
             any_fn_views: vec![],
-            unchecked: Default::default(),
+            unchecked: unchecked.into_iter().collect(),
             hooks_demanded,
             live: None,
             decorators: Default::default(),

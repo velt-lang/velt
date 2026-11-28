@@ -28,9 +28,10 @@ pub struct Hook {
     /// stays the runtime's job. A hook may also call an extern it replaces for some of its
     /// inputs: what counts is that the compiler no longer calls it in the hook's place.
     pub replaces: &'static [&'static str],
-    /// Lowering does without it when the hook is missing or left unchecked (it is one of
-    /// [`super::ON_DEMAND_FLOAT`], whose place `number_text` / `number_push` take, or of
-    /// [`super::INSPECT_SHAPES`], whose place lowering's own glue takes): its `velt_vir` builder
+    /// Lowering does without it when the program doesn't load its module or sema left it
+    /// unchecked (its module loaded without it is an internal error, `velt_vir` std_defs.rs). It
+    /// is one of [`super::ON_DEMAND_FLOAT`], whose place `number_text` / `number_push` take, or of
+    /// [`super::INSPECT_SHAPES`], whose place lowering's own glue takes. Its `velt_vir` builder
     /// returns an `Option`. Every other lowered hook missing is an internal compiler error.
     pub fallback: bool,
     /// The program of `bench/stdport/` (`int_to_string` for `bench/stdport/int_to_string.velt`)

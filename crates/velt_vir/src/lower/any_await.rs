@@ -61,10 +61,9 @@ impl Cx<'_> {
         if !velt_common::std_hooks::std_scheduler() || !self.runs_std_executor() {
             return true;
         }
-        let start = self.prelude_def(velt_common::std_hook!(sched_start));
         // Defined but unchecked: loaded with its module for something else (module state's
         // blocks, #3261), not run.
-        start.is_some_and(|d| !self.hir.unchecked.contains(&d))
+        (self.std_hook_live(velt_common::std_hook!(sched_start))).is_some()
     }
 
     /// `Promise<unknown, unknown>`, what a promise held as `any` is awaited as.
