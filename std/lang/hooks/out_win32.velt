@@ -16,6 +16,7 @@ declare c("c") function SwitchToThread$out(): i32;
 declare c("c") function FlsAlloc$out(callback: Ptr<u8> | null): u32;
 declare c("c") function FlsSetValue$out(slot: u32, value: Ptr<u8> | null): i32;
 declare c("c") function Sleep$out(ms: u32): void;
+declare c("c") function GetTickCount64$out(): u64;
 declare c("c") function GetConsoleMode$out(handle: Ptr<void> | null, mode: Ptr<u32> | null): i32;
 declare c("c") function WriteFile$out(
   handle: Ptr<void> | null,
@@ -48,12 +49,21 @@ const MAX_CALL: usize = 1 << 30;
 const CARRY = new Atomic<u64>(0);
 const CARRY_ERR = new Atomic<u64>(0);
 
-/** Waits about a millisecond (the exit flush's wait for the writer's lock). */
-export function pauseMs(): void {
+/**
+ * Waits a millisecond or more (the exit flush's wait for the writer's lock): the milliseconds
+ * waited, by the tick count. `Sleep(1)` lasts a timer period, 15.6 ms unless a process asked for
+ * a finer one, so a count of calls would wait up to 16 times as long as asked; the tick count
+ * moves by the period, so its steps add up to the time waited.
+ */
+export function pauseMs(): u32 {
+  // SAFETY: no precondition.
+  const from = unsafe { GetTickCount64$out() };
   // SAFETY: no precondition.
   unsafe {
     Sleep$out(1);
   }
+  // SAFETY: no precondition.
+  return (unsafe { GetTickCount64$out() } - from) as u32;
 }
 
 /** Gives the core to another thread that is ready to run, if any (a spin at the writer's lock). */

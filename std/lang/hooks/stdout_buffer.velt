@@ -103,12 +103,13 @@ function osOut(p: usize, n: usize): void {
   }
 }
 
-function lockShared(): void {
+/** Takes the shared buffer's lock (exported for the tests, stdout_buffer.test.velt). */
+export function lockShared(): void {
   mutexLock(atomicAddress(LOCK));
   HOLDS_SHARED.set(true);
 }
 
-function unlockShared(): void {
+export function unlockShared(): void {
   HOLDS_SHARED.set(false);
   mutexUnlock(atomicAddress(LOCK));
 }
@@ -403,7 +404,7 @@ export function flushIdle(): void {
  */
 export function flushForExit(): void {
   EXITING.store(true, "relaxed");
-  const locked = !HOLDS_SHARED.get() && tryLockFor(2000);
+  const locked = lockForExit(2000);
   if (locked) {
     writeShared();
   }
@@ -419,13 +420,23 @@ export function flushForExit(): void {
 }
 
 /**
- * Takes the shared lock if it comes free within about `ms` milliseconds: a hundred tries that give
- * the core away between them, then one a millisecond. Counted, not clocked: a clock's per-thread
- * buffer would be state the writer's prebuilt object shares with the program.
+ * Whether the flush on the way out takes the shared lock: not when this thread holds it already,
+ * else if it comes free within about `ms` milliseconds.
  */
-function tryLockFor(ms: u32): bool {
+export function lockForExit(ms: u32): bool {
+  return !HOLDS_SHARED.get() && tryLockFor(ms);
+}
+
+/**
+ * Takes the shared lock if it comes free within about `ms` milliseconds: a hundred tries that give
+ * the core away between them, then one after each pause (`#stdout-os`' `pauseMs`, which says how
+ * long it waited). Not by std's clock: its per-thread buffer would be state the writer's prebuilt
+ * object shares with the program.
+ */
+export function tryLockFor(ms: u32): bool {
   const a = atomicAddress(LOCK);
   let tries: u32 = 0;
+  let waited: u32 = 0;
   while (true) {
     // SAFETY: the lock's word, changed only atomically (velt/lang/hooks/mutex).
     if (unsafe { addressAtomicCas<u32>(a, 0, 1, "acquire", "relaxed") } === 0) {
@@ -434,12 +445,12 @@ function tryLockFor(ms: u32): bool {
     }
     if (tries < 100) {
       yieldThread();
-    } else if (tries - 100 < ms) {
-      pauseMs();
+      tries += 1;
+    } else if (waited < ms) {
+      waited += pauseMs();
     } else {
       return false;
     }
-    tries += 1;
   }
 }
 

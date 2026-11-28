@@ -47,12 +47,16 @@ export function stdoutIsTerminal(): bool {
   return unsafe { isatty$out(1) } === 1;
 }
 
-/** Waits about a millisecond (the exit flush's wait for the writer's lock). */
-export function pauseMs(): void {
+/**
+ * Waits about a millisecond (the exit flush's wait for the writer's lock): the milliseconds
+ * waited, 1 (`usleep`'s wait is that long, give or take its wake-up).
+ */
+export function pauseMs(): u32 {
   // SAFETY: no precondition.
   unsafe {
     usleep$out(1000);
   }
+  return 1;
 }
 
 /**
