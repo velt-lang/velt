@@ -1,0 +1,17 @@
+arrow o.ob is not a function
+decl TypeError true
+method TypeError true
+1
+async gen TypeError true
+await operand TypeError true
+nested TypeError true
+optional TypeError true
+try body
+finally TypeError true
+catch body TypeError true
+awaited 2
+after await TypeError true
+then TypeError true
+inner body
+outer catch o.ob is not a function
+2 3

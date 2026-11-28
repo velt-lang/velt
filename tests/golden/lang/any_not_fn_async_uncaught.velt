@@ -1,0 +1,11 @@
+// An async arrow whose call through `any` holds no function rejects its promise with Node's
+// `TypeError` (#3955); nothing awaits it, so the program ends with the unhandled rejection after
+// its synchronous code, with exit code 1 as Node does. Before, it stopped at the call (exit
+// 101) and never printed `after`.
+// Node twin: any_not_fn_async_uncaught.mjs.
+const o: any = { ob: 5 };
+console.log("before");
+(async () => {
+  o.ob();
+})();
+console.log("after");

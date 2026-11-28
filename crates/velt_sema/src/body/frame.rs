@@ -47,6 +47,9 @@ pub(crate) struct Frame {
     pub never_end: bool,
     /// Body of an `async` function / arrow: `await` is allowed.
     pub is_async: bool,
+    /// An arrow passed to a promise's `then` / `catch` / `finally`: what it throws rejects the
+    /// promise the call returns (`expr::catch_any`, `note_any_call`).
+    pub promise_callback: bool,
     /// The program's top-level statements (the root file's generated `async main`): its
     /// `await`s tell the runtime where they wait (`expr/top_level_await.rs`); the top-level
     /// `await`s whose operand is being checked (innermost last).
@@ -263,6 +266,7 @@ impl Frame {
             asserted_ret: false,
             never_end: false,
             is_async: false,
+            promise_callback: false,
             top_level: false,
             top_level_outer: vec![],
             yield_ty: None,

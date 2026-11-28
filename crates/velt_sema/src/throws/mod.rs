@@ -25,6 +25,7 @@ mod hints;
 mod infer;
 mod inits;
 mod method_sites;
+mod not_fn;
 mod promise_sites;
 mod promise_vars;
 mod recheck;
@@ -43,6 +44,7 @@ pub(crate) use fn_types::FnTypeSeeds;
 pub(crate) use groups::Groups;
 pub(crate) use infer::infer_all;
 pub(crate) use inits::InitsSeen;
+pub(crate) use not_fn::{drop_closed_not_fn, drop_closed_not_fn_in, not_fn_src};
 pub(crate) use promise_sites::written_init_type;
 pub(crate) use recheck::{adds_errors, first_check_only};
 

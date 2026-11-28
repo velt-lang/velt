@@ -249,6 +249,7 @@ impl FnCx<'_, '_> {
         frame.asserted_ret = ret.is_none() && self.asserted_fn == Some(e.span);
         frame.never_end = ret.is_none() && (exp.is_none() || promise_callback);
         frame.is_async = is_async;
+        frame.promise_callback = promise_callback;
         frame.return_site.ret_span = ret.filter(|_| !is_async).map(|t| t.span);
         frame.return_site.closure_at = Some(span);
         // Lowered in the same instantiation, so under the same type tests.
@@ -346,7 +347,8 @@ impl FnCx<'_, '_> {
         let body_ret = self.f.ret.unwrap_or(self.cx.ty.unit);
         let parent = self.outer.pop().expect("ICE: closure frame");
         self.finish_using_shares();
-        let frame = std::mem::replace(&mut self.f, parent);
+        let mut frame = std::mem::replace(&mut self.f, parent);
+        crate::throws::drop_closed_not_fn_in(self.cx, def, &mut frame.uncaught);
         if frame.widening_result > 0 {
             (self.cx.widening_values).insert(span, frame.widening_result.saturating_add(1));
         }
