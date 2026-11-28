@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Instructions (cachegrind, one thread) for the rows of #3978 / #3884 / #3965: two compilers
+# Instructions (cachegrind, one thread) for the rows of #3978 / #3884: two compilers
 # lowering hello and a generated 10,000-line application to VIR (`build --emit=vir`: no backend,
-# no linker), and the --release programs of the area run: a URL parse loop (domains, IPv4, IPv6
-# hosts), proxy member reads and `typeof` in a program that has `Proxy` (whose `typeof` now asks
-# a proxy whether it is a function), plain function calls through `any`, and calls through a
-# proxy (which the base cannot run: a proxy of a function was no function). Linux only.
+# no linker), and the --release programs of the area run: proxy member reads and `typeof` in a
+# program that has `Proxy` (whose `typeof` now asks a proxy whether it is a function), plain
+# function calls through `any`, and calls through a proxy (which the base cannot run: a proxy of
+# a function was no function). Linux only.
 #
 #   bench/compile/node_misc_instr.sh BASE_TREE BASE_VELT HEAD_TREE HEAD_VELT [WORK]
 #
@@ -42,7 +42,7 @@ row "hello vir" "$(instr "$bv" "$base" "$work" build --emit=vir hello.velt)" \
   "$(instr "$hv" "$head" "$work" build --emit=vir hello.velt)"
 row "app10k vir" "$(instr "$bv" "$base" "$work/app10k" build --emit=vir main.velt)" \
   "$(instr "$hv" "$head" "$work/app10k" build --emit=vir main.velt)"
-for p in url_domains_loop url_parse_loop proxy_get_typeof_loop any_call_loop proxy_call_loop; do
+for p in proxy_get_typeof_loop any_call_loop proxy_call_loop; do
   for side in base head; do
     if [ $side = base ]; then v=$bv t=$base; else v=$hv t=$head; fi
     (cd "$work" && VELT_STD="$t/std" "$v" build --release "$p.velt" -o "$p.$side" > /dev/null 2>&1)
