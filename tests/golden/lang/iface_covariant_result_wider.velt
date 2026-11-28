@@ -1,0 +1,155 @@
+// An implementation whose result is never null, or has fewer nothings, for a nullable
+// interface result (#3843): each is valid TypeScript (tsc --strict).
+interface Fluent {
+  total(): number;
+}
+
+class D implements Fluent {
+  constructor(public t: number) {}
+  total(): number {
+    return this.t;
+  }
+}
+
+interface Sub extends Fluent {
+  tag(): string;
+}
+
+class S implements Sub {
+  total(): number {
+    return 7;
+  }
+  tag(): string {
+    return "s";
+  }
+}
+
+class Sq {
+  name(): string {
+    return "sq";
+  }
+}
+
+class Big extends Sq {
+  override name(): string {
+    return "big";
+  }
+}
+
+interface Get {
+  n(): Fluent | null;
+  u(): Fluent | undefined;
+  b(): Fluent | null | undefined;
+  bn(k: number): Fluent | null | undefined;
+  bu(k: number): Fluent | null | undefined;
+  nul(): Fluent | null;
+  nulb(): Fluent | null | undefined;
+  undb(): Fluent | null | undefined;
+  und(): Fluent | undefined;
+  same(): Fluent | null;
+  sameb(k: number): Fluent | null | undefined;
+  sq(): Sq | null;
+  sqb(k: number): Sq | null | undefined;
+  sub(): Fluent | null;
+  subb(k: number): Fluent | null | undefined;
+}
+
+let calls = 0;
+
+class Impl implements Get {
+  n(): D {
+    return new D(1);
+  }
+  u(): D {
+    return new D(2);
+  }
+  b(): D {
+    return new D(3);
+  }
+  bn(k: number): D | null {
+    return k == 0 ? null : new D(4);
+  }
+  bu(k: number): D | undefined {
+    return k == 0 ? undefined : new D(5);
+  }
+  nul(): null {
+    calls++;
+    return null;
+  }
+  nulb(): null {
+    calls++;
+    return null;
+  }
+  undb(): undefined {
+    calls++;
+    return undefined;
+  }
+  und(): undefined {
+    calls++;
+    return undefined;
+  }
+  same(): Fluent {
+    return new D(6);
+  }
+  sameb(k: number): Fluent | null {
+    return k == 0 ? null : new D(8);
+  }
+  sq(): Big {
+    return new Big();
+  }
+  sqb(k: number): Big | undefined {
+    return k == 0 ? undefined : new Big();
+  }
+  sub(): S {
+    return new S();
+  }
+  subb(k: number): Sub | null {
+    return k == 0 ? null : new S();
+  }
+}
+
+function show(f: Fluent | null | undefined): string {
+  return f === null ? "null" : f === undefined ? "undefined" : "" + f.total();
+}
+
+function showSq(f: Sq | null | undefined): string {
+  return f === null ? "null" : f === undefined ? "undefined" : f.name();
+}
+
+interface Gen<T> {
+  next(k: number): T | null | undefined;
+  one(): T | null;
+}
+
+class GF implements Gen<Fluent> {
+  next(k: number): S | null {
+    return k == 0 ? null : new S();
+  }
+  one(): Sub {
+    return new S();
+  }
+}
+
+class GenG<T> implements Gen<T> {
+  constructor(public v: T) {}
+  next(k: number): T | null {
+    return k == 0 ? null : this.v;
+  }
+  one(): T {
+    return this.v;
+  }
+}
+
+function main() {
+  const g: Get = new Impl();
+  console.log(show(g.n()), show(g.u()), show(g.b()));
+  console.log(show(g.bn(0)), show(g.bn(1)), show(g.bu(0)), show(g.bu(1)));
+  console.log(show(g.nul()), show(g.nulb()), show(g.undb()), show(g.und()), calls);
+  console.log(show(g.same()), show(g.sameb(0)), show(g.sameb(1)));
+  console.log(showSq(g.sq()), showSq(g.sqb(0)), showSq(g.sqb(1)));
+  console.log(show(g.sub()), show(g.subb(0)), show(g.subb(1)));
+  const q: Gen<Fluent> = new GF();
+  console.log(q.next(0), q.next(1)?.total(), q.one()?.total());
+  const h: Gen<string> = new GenG<string>("x");
+  console.log(h.next(0), h.next(1), h.one());
+}
