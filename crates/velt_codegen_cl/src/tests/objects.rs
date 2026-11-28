@@ -238,8 +238,8 @@ fn rt_abi_calls() {
             None,
         ),
     ];
-    // ToInt32 is a statement (`math.to_int32`) whose cold path calls its runtime function,
-    // declared here.
+    // ToInt32 is a statement (`math.to_int32`) of an extern declared here, all inline, its cold
+    // path too: the object references no math symbol (#2196).
     pb.ext("velt_rt_math_to_int32", &[Ty::F64], Ty::I32, false);
     let to_int32 = velt_vir::vir::Intrinsic::Math(velt_vir::math::MathOp::ToInt32);
     let i = fb.local(Ty::I32);
@@ -272,6 +272,10 @@ fn rt_abi_calls() {
         for e in &program.externs {
             let name = obj_name(fmt, &e.symbol);
             let s = file.symbols().find(|s| s.name() == Ok(&name));
+            if velt_vir::math::MathOp::of_extern(e).is_some() {
+                assert!(s.is_none(), "{triple}: {} referenced", e.symbol);
+                continue;
+            }
             let s = s.unwrap_or_else(|| panic!("{triple}: {} not referenced", e.symbol));
             assert!(s.is_undefined(), "{triple}: {}", e.symbol);
         }

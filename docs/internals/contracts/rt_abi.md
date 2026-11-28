@@ -514,27 +514,28 @@ Which form runs:
 
 ## Math operations
 
-The scalar math functions `velt_rt_math_*` (`sqrt floor ceil round trunc fabs f64_bits bits_f64
-umulh to_int32 mul_int32 add_int32 clz32 clz64 ctz64 popcount64`) are runtime functions
-(velt_rt's `math.rs`, the reference for what each computes) that compiled code treats as
-operations: `velt_vir::math::MathOp` gives each symbol's operation and VIR signature, the
-verifier rejects one of these externs with another signature, and backends emit all of them
-inline (an instruction, or a helper whose slow path calls the runtime). `**` is no math
+The scalar math operations `velt_rt_math_*` (`sqrt floor ceil round trunc fabs f64_bits bits_f64
+umulh to_int32 mul_int32 add_int32 clz32 clz64 ctz64 popcount64`) have **no runtime function**
+(velt_rt defined them until #2196; the names stay, as sema and std call them by these names):
+`velt_vir::math::MathOp` gives each symbol's operation and VIR signature, the verifier rejects one
+of these externs with another signature, and every backend emits all of them inline (an
+instruction, or a short sequence: JS's `Math.round`, and ToInt32 whose cold path for |x| ≥ 2^63,
+NaN and ±Infinity reads the low 32 bits off the double's bits). `MathOp::eval` is the reference
+for what each computes. `**` is no math
 operation: lowering calls std's hooks, `powI64` on integers (std/lang/hooks/pow_int.velt) and
 `powF64` on floats (std/lang/hooks/pow.velt, which calls `pow` of std/lang/math/pow.velt).
 `velt_vir::math::effects` is the one list of what a runtime function may do to memory (none for
 every math operation; read-only, read-caching or cold for some string and array functions),
 which LLVM's declarations and `velt_opt` both read. `velt_opt` folds a call whose arguments are
-constants (`MathOp::eval`, which a test of veltc checks against the runtime's functions), except
+constants (`MathOp::eval`, which a test of velt_codegen_cl checks against Cranelift's code), except
 a double operation with a NaN argument or result, whose bits the hardware chooses. Lowering
 emits a math operation as `Rvalue::Intrinsic(Intrinsic::Math(op), …)` (vir.rs invariant 12), a
 statement that means the same as the call, and never as a direct call (the verifier rejects
-one); the extern stays declared, and backends call it on ToInt32's cold path.
+one); the extern stays declared but no backend calls it or links its symbol.
 
-The math operations named `velt_math_*` have **no runtime function**: like the SIMD externs,
-std declares them and every backend emits them inline, so no runtime defines them and nothing
-may call them. `MathOp::eval` is their reference, and `MathOp::has_runtime_function` tells the
-two kinds apart. They are `f32_bits bits_f32` (`x.toBits()` / `f32.fromBits(b)` on `f32`),
+The math operations named `velt_math_*`, the newer ones, have no runtime function either: like
+the SIMD externs, std declares them and every backend emits them inline, so no runtime defines
+them and nothing may call them. They are `f32_bits bits_f32` (`x.toBits()` / `f32.fromBits(b)` on `f32`),
 `f16_bits bits_f16 bf16_bits bits_bf16` (`(u16) -> u16`, the identity: an `f16` or `bf16` value
 is its bits) and the f16/bf16 conversions, each 16-bit value its bit pattern in a `u16`:
 `f16_to_f32(h: u16): f32`, `f32_to_f16(x: f32): u16`, `f64_to_f16(x: f64): u16`,
@@ -1276,8 +1277,8 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
   (`lower/str_data.rs`).
 - Numbers (`toFixed`, `toExponential`, `toPrecision` and `toString(radix)` are std's:
   velt/lang/number, velt/lang/hooks/number_digits):
-  `velt_rt_math_umulh(a: u64, b: u64): u64` (high 64 bits of the product),
+  the math operations `velt_rt_math_umulh(a: u64, b: u64): u64` (high 64 bits of the product),
   `velt_rt_math_f64_bits(x: f64): u64` and `velt_rt_math_bits_f64(b: u64): f64` (IEEE 754 bit
-  casts, `x.toBits()` / `f64.fromBits(b)`; both backends emit them inline).
+  casts, `x.toBits()` / `f64.fromBits(b)`; no runtime functions, "Math operations").
 - Binary stdio: `velt_rt_stdout_write_bytes(bytes: u8[])` (synchronous, ordered with
   `console.log`). Standard input is std code (rt_abi_async.md §14.4).

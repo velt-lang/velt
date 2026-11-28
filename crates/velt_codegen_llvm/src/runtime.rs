@@ -1,11 +1,11 @@
 //! What the backend knows about runtime functions (rt_abi.md / rt_abi_async.md), beyond their
 //! signatures:
-//! - the `velt_rt_math_*` primitives whose semantics are exactly an LLVM intrinsic are emitted
-//!   as that intrinsic (one instruction instead of an opaque call that clobbers memory);
-//!   `Math.round`, and on x86-64 `Math.floor`/`ceil`/`trunc`, are inline code (`rounding.rs`);
+//! - the math operations (`velt_vir::math`, no runtime functions) whose semantics are exactly an
+//!   LLVM intrinsic are emitted as that intrinsic; `Math.round`, and on x86-64
+//!   `Math.floor`/`ceil`/`trunc`, are inline code (`rounding.rs`);
 //! - JS's ToInt32, `Math.clz32` and `Math.umulh` are emitted through small `alwaysinline`
-//!   helpers defined in the module (`inline_helper`): a guarded conversion with the runtime call
-//!   only on a cold path, one `ctlz`, and the high half of a 128-bit multiply;
+//!   helpers defined in the module (`inline_helper`): a guarded conversion with a bit-level cold
+//!   path, one `ctlz`, and the high half of a 128-bit multiply;
 //! - pure or read-only functions get `memory(none)` / `memory(read)`, so values stay in
 //!   registers across them and loop-invariant code moves past them;
 //! - the allocator functions carry LLVM allocator attributes (`Allocator`), like rustc's
@@ -14,7 +14,7 @@
 use velt_vir::math::MathOp;
 use velt_vir::vir::Ty;
 
-/// LLVM intrinsic computing exactly what the runtime math function `op` of type `(f64) -> f64`
+/// LLVM intrinsic computing exactly what the math operation `op` of type `(f64) -> f64`
 /// computes, where `rounding::helper` has no inline code for it. `Math.round` is not here: JS
 /// rounds ties toward +Infinity, unlike `llvm.round`.
 pub(crate) fn math_intrinsic(op: MathOp) -> Option<&'static str> {
@@ -29,9 +29,12 @@ pub(crate) fn math_intrinsic(op: MathOp) -> Option<&'static str> {
 }
 
 /// JS ToInt32 (`velt_rt_math_to_int32`): for |x| < 2^63 one `fptosi` to `i64` and a truncation,
-/// which is exact (ToInt32 is the value modulo 2^32); NaN, ±Infinity and larger values take the
-/// cold call. The guard compares the double itself, so a value converted from a 32-bit integer
-/// folds to that integer.
+/// which is exact (ToInt32 is the value modulo 2^32). NaN, ±Infinity and larger values take the
+/// cold path, which reads the low 32 bits off the double's bits: |x| ≥ 2^63 is the 53-bit
+/// mantissa shifted left by `exponent - 1075` ≥ 11, whose low 32 bits are 0 from a shift of 32
+/// on, which also covers NaN and ±Infinity (exponent 2047); negated for a negative `x`. The
+/// guard compares the double itself, so a value converted from a 32-bit integer folds to that
+/// integer.
 const TO_INT32: &str = "define internal i32 @velt.to_int32(double %x) alwaysinline nounwind {
   %lo = fcmp oge double %x, 0xC3E0000000000000
   %hi = fcmp olt double %x, 0x43E0000000000000
@@ -42,7 +45,20 @@ fast:
   %r = trunc i64 %t to i32
   ret i32 %r
 slow:
-  %s = call i32 @velt_rt_math_to_int32(double %x)
+  %b = bitcast double %x to i64
+  %e = lshr i64 %b, 52
+  %ex = and i64 %e, 2047
+  %sh = sub i64 %ex, 1075
+  %f = and i64 %b, 4503599627370495
+  %m = or i64 %f, 4503599627370496
+  %sh5 = and i64 %sh, 31
+  %v = shl i64 %m, %sh5
+  %v32 = trunc i64 %v to i32
+  %gone = icmp sge i64 %sh, 32
+  %low = select i1 %gone, i32 0, i32 %v32
+  %neg = sub i32 0, %low
+  %minus = icmp slt i64 %b, 0
+  %s = select i1 %minus, i32 %neg, i32 %low
   ret i32 %s
 }";
 
@@ -166,7 +182,7 @@ alwaysinline nounwind {
   ret double %r
 }";
 
-/// A runtime math function the backend calls through a helper defined in the module instead:
+/// A math operation the backend emits as a call of a helper defined in the module:
 /// the helper's name and its definition (with what it declares). The helper has the
 /// operation's signature (`MathOp::signature`).
 pub(crate) fn inline_helper(op: MathOp) -> Option<InlineHelper> {
@@ -323,6 +339,10 @@ mod tests {
                 || crate::half::helper(op, crate::half::HalfNative::None).is_some()
                 || op.rounding().is_some();
             assert!(inline, "{op:?}");
+            // No helper calls a runtime function: there are none for math (#2196).
+            for def in inline_helper(op).map_or(&[][..], |(_, defs)| defs) {
+                assert!(!def.contains("@velt_rt_"), "{op:?}: {def}");
+            }
         }
         assert_eq!(
             Allocator::of("velt_rt_alloc", &[Ty::U64, Ty::U64], Ty::Ptr),

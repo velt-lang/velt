@@ -277,8 +277,9 @@ fn render((params, ret): &Sig) -> String {
 fn mismatches(defs: &BTreeMap<String, Vec<(Sig, PathBuf)>>, required: bool) -> Vec<String> {
     let mut out = vec![];
     for (name, (want, velt_path)) in velt_declarations() {
-        // The SIMD operations and the `velt_math_*` math operations are emitted inline by the
-        // backends (rt_abi.md "SIMD", "Math operations"): no runtime defines them. `velt_vir`'s
+        // The SIMD operations and the math operations (`velt_math_*`, and `velt_rt_math_*`, which
+        // keep the names they had in velt_rt) are emitted inline by the backends (rt_abi.md
+        // "SIMD", "Math operations"): no runtime defines them. `velt_vir`'s
         // `simd` tests and the verifier (math) check their declarations. The `velt_eh_*` family
         // (`velt_eh_try`, `velt_eh_catches`, `velt_eh_personality`) is defined by the backend in
         // each object (docs/internals/design/unwinding.md), never by a runtime. velt/arch's
@@ -290,6 +291,7 @@ fn mismatches(defs: &BTreeMap<String, Vec<(Sig, PathBuf)>>, required: bool) -> V
             || name.starts_with("velt_field_")
             || name.starts_with("velt_arch_")
             || name.starts_with("velt_math_")
+            || name.starts_with("velt_rt_math_")
             || name.starts_with("velt_eh_")
         {
             continue;

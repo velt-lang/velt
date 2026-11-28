@@ -2,7 +2,7 @@
 //! (libc `memcpy`/`memmove`/`memset` for runtime lengths), unary ops.
 
 use cranelift_codegen::ir::{self, types, InstBuilder};
-use velt_vir::vir::{AggId, Callee, ExternId, Intrinsic, Operand, Place, Rvalue, Stmt, Ty, UnOp};
+use velt_vir::vir::{AggId, Intrinsic, Operand, Place, Rvalue, Stmt, Ty, UnOp};
 
 use super::place::add_offset;
 use super::{Loc, Translator, Val};
@@ -88,12 +88,7 @@ impl Translator<'_, '_> {
                 for o in ops {
                     values.push(self.scalar(o)?.0);
                 }
-                let Some(id) = (self.program.externs.iter()).position(|e| e.symbol == op.symbol())
-                else {
-                    bail!("math operation {op:?} without its runtime function declared");
-                };
-                let callee = Callee::Extern(ExternId(id as u32));
-                Val::Scalar(self.math_value(*op, &callee, &values)?)
+                Val::Scalar(self.math_value(*op, &values))
             }
         };
         let loc = self.place(place)?;

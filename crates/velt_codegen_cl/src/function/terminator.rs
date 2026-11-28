@@ -365,51 +365,26 @@ impl Translator<'_, '_> {
         })
     }
 
-    /// The math operation `op` on `values`: inline where Cranelift has an instruction or a
-    /// sequence for it, otherwise (`pow`) a call of its runtime function `callee`, which the
-    /// inline ToInt32 also calls on its cold path.
-    pub(super) fn math_value(
-        &mut self,
-        op: MathOp,
-        callee: &Callee,
-        values: &[ir::Value],
-    ) -> CodegenResult<ir::Value> {
-        match op {
-            // ToInt32(x); the slow path calls the runtime with the same arguments.
-            MathOp::ToInt32 => self.inline_to_int32(callee, values[0], values),
-            // ToInt32(a + x), always through the double sum (`velt_rt_math_add_int32`).
-            MathOp::AddInt32 => {
-                let af = self.builder.ins().fcvt_from_sint(ir::types::F64, values[0]);
-                let sum = self.builder.ins().fadd(af, values[1]);
-                self.inline_to_int32(callee, sum, values)
-            }
-            _ => match self.inline_math(op, values) {
-                Some(v) => Ok(v),
-                None => {
-                    let inst = self.emit_call(callee, values)?;
-                    match self.builder.inst_results(inst).first() {
-                        Some(&v) => Ok(v),
-                        None => bail!("math operation {op:?} gave no value"),
-                    }
-                }
-            },
-        }
-    }
-
-    /// The runtime math operations that are exactly one Cranelift instruction
-    /// (rt_abi_async.md §9, `Math.clz32`, `Math.umulh`, JS's int32 multiply) or a short sequence
-    /// (the rounding functions, `rounding.rs`) are emitted inline instead of called; `None` for
-    /// the others, which stay calls (ToInt32 and the int32 add are inlined by the caller, with
-    /// the runtime call on their cold path).
-    fn inline_math(&mut self, op: MathOp, args: &[ir::Value]) -> Option<ir::Value> {
+    /// The math operation `op` on `args`, inline: one Cranelift instruction (rt_abi_async.md
+    /// §9, `Math.clz32`, `Math.umulh`, JS's int32 multiply) or a short sequence (the rounding
+    /// functions, `rounding.rs`; ToInt32 and the int32 add). No math operation has a runtime
+    /// function to call.
+    pub(super) fn math_value(&mut self, op: MathOp, args: &[ir::Value]) -> ir::Value {
         if let Some(how) = op.rounding() {
-            return Some(self.round_f64(args[0], how));
+            return self.round_f64(args[0], how);
         }
         if let Some(v) = self.half_conversion(op, args[0]) {
-            return Some(v);
+            return v;
         }
         let flags = ir::MemFlags::new();
-        Some(match op {
+        match op {
+            MathOp::ToInt32 => self.inline_to_int32(args[0]),
+            // ToInt32(a + x), always through the double sum.
+            MathOp::AddInt32 => {
+                let af = self.builder.ins().fcvt_from_sint(ir::types::F64, args[0]);
+                let sum = self.builder.ins().fadd(af, args[1]);
+                self.inline_to_int32(sum)
+            }
             MathOp::Sqrt | MathOp::SqrtF32 => self.builder.ins().sqrt(args[0]),
             // One instruction where the ISA has FMA, else a call of C's `fma`.
             MathOp::FmaF64 => self.builder.ins().fma(args[0], args[1], args[2]),
@@ -443,26 +418,23 @@ impl Translator<'_, '_> {
             | MathOp::F16Bits
             | MathOp::BitsF16
             | MathOp::Bf16Bits
-            | MathOp::BitsBf16 => unreachable!("ICE: half conversions are handled above"),
-            MathOp::ToInt32
-            | MathOp::AddInt32
+            | MathOp::BitsBf16
             | MathOp::Floor
             | MathOp::Ceil
             | MathOp::Trunc
-            | MathOp::Round => return None,
-        })
+            | MathOp::Round => unreachable!("ICE: rounding and half conversions are handled above"),
+        }
     }
 
     /// JS ToInt32 of `x` (`velt_rt_math_to_int32`): for |x| < 2^63 a conversion to `i64` and a
-    /// truncation, which is exact (ToInt32 is the value modulo 2^32); NaN, ±Infinity and larger
-    /// values call the runtime from a cold block.
-    fn inline_to_int32(
-        &mut self,
-        callee: &Callee,
-        x: ir::Value,
-        args: &[ir::Value],
-    ) -> CodegenResult<ir::Value> {
-        use ir::condcodes::FloatCC;
+    /// truncation, which is exact (ToInt32 is the value modulo 2^32). NaN, ±Infinity and larger
+    /// values take a cold block that reads the low 32 bits off the double's bits: |x| ≥ 2^63 is
+    /// the 53-bit mantissa shifted left by `exponent - 1075` ≥ 11, whose low 32 bits are 0 from a
+    /// shift of 32 on, which also covers NaN and ±Infinity (exponent 2047); negated for a
+    /// negative `x`.
+    fn inline_to_int32(&mut self, x: ir::Value) -> ir::Value {
+        use ir::condcodes::{FloatCC, IntCC};
+        use ir::types::{I32, I64};
         let fast = self.builder.create_block();
         let slow = self.builder.create_block();
         let done = self.builder.create_block();
@@ -479,11 +451,25 @@ impl Translator<'_, '_> {
         let low = self.builder.ins().ireduce(ir::types::I32, t);
         self.builder.ins().jump(done, &[low.into()]);
         self.builder.switch_to_block(slow);
-        let inst = self.emit_call(callee, args)?;
-        let called = self.builder.inst_results(inst)[0];
-        self.builder.ins().jump(done, &[called.into()]);
+        let b = &mut self.builder;
+        let bits = b.ins().bitcast(I64, ir::MemFlags::new(), x);
+        let exp = b.ins().ushr_imm(bits, 52);
+        let exp = b.ins().band_imm(exp, 0x7ff);
+        let shift = b.ins().iadd_imm(exp, -1075);
+        let frac = b.ins().band_imm(bits, (1i64 << 52) - 1);
+        let mantissa = b.ins().bor_imm(frac, 1i64 << 52);
+        // Cranelift takes the shift amount modulo 64; 32 and more give 0 (the `select`).
+        let shifted = b.ins().ishl(mantissa, shift);
+        let low = b.ins().ireduce(I32, shifted);
+        let zero = b.ins().iconst(I32, 0);
+        let gone = b.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, shift, 32);
+        let low = b.ins().select(gone, zero, low);
+        let negated = b.ins().ineg(low);
+        let negative = b.ins().icmp_imm(IntCC::SignedLessThan, bits, 0);
+        let slow_r = b.ins().select(negative, negated, low);
+        b.ins().jump(done, &[slow_r.into()]);
         self.builder.switch_to_block(done);
-        Ok(r)
+        r
     }
 
     fn emit_call(&mut self, callee: &Callee, args: &[ir::Value]) -> CodegenResult<ir::Inst> {
