@@ -508,6 +508,9 @@ export class @C@ extends TypedArray implements Iterable<number> {
         kept.push(x);
       }
     }
+    if (!isExactClass(this)) {
+      return this.speciesOf(kept);
+    }
     return @C@.ofArray(kept);
   }
 
@@ -618,6 +621,9 @@ export class @C@ extends TypedArray implements Iterable<number> {
 
   /** A new array of `f`'s results, converted. */
   map<E>(f: (x: number, i: number) => number throws E): @C@ throws E {
+    if (!isExactClass(this)) {
+      return this.speciesMap(f);
+    }
     const out = @C@.zeros(this.len);
     for (let i: usize = 0; i < this.len; i++) {
       out.put(i, f(this.get(i), i as number));
@@ -700,9 +706,72 @@ export class @C@ extends TypedArray implements Iterable<number> {
     const from = relative(toInteger(start), len);
     const stop = relative(toInteger(end), len);
     const n = stop > from ? stop - from : 0;
+    if (!isExactClass(this)) {
+      return this.speciesSlice(from, n);
+    }
     const o = (this.off + from * @N@) as i64;
     const bytes = this.buf.bytes.slice(o, o + ((n * @N@) as i64));
     return @C@.view(ArrayBuffer.adopt(bytes), 0, n);
+  }
+
+  // `slice` of an object of a subclass: the `n` elements from `from` in a new object of its class.
+  private speciesSlice(from: usize, n: usize): @C@ {
+    const out = this.speciesSized(n);
+    for (let i: usize = 0; i < n; i++) {
+      out.put(i, this.get(from + i));
+    }
+    return out;
+  }
+
+  // `map` of an object of a subclass: the new object of its class is made before `f` runs.
+  private speciesMap<E>(f: (x: number, i: number) => number throws E): @C@ throws E {
+    const out = this.speciesSized(this.len);
+    for (let i: usize = 0; i < this.len; i++) {
+      out.put(i, f(this.get(i), i as number));
+    }
+    return out;
+  }
+
+  // `filter` of an object of a subclass: the elements kept, in a new object of its class.
+  private speciesOf(kept: number[]): @C@ {
+    const out = this.speciesSized(kept.length);
+    for (let i: usize = 0; i < kept.length; i++) {
+      out.put(i, kept[i]);
+    }
+    return out;
+  }
+
+  // A subclass's `slice`, `map` and `filter` make their result with its own class, as JS does
+  // (TypedArraySpeciesCreate): `new C(n)` (`speciesNew`), which must be at least `n` long. What
+  // the class's constructor throws stops the program (JS: it passes to the caller), so these
+  // methods throw what they did.
+  private speciesSized(n: usize): @C@ {
+    const length = n as number;
+    let made: @C@ | null = null;
+    try {
+      made = speciesNew(this, length);
+    } catch (e) {
+      panic(String(e));
+    }
+    const out = made ?? @C@.zeros(n);
+    if (out.len < n) {
+      panic("TypeError: Derived TypedArray constructor created an array which was too small");
+    }
+    return out;
+  }
+
+  // A subclass's `subarray`: `new C(buffer, byteOffset, length)` of its own class.
+  private speciesView(at: usize, n: usize): @C@ {
+    const buffer = this.buf;
+    const byteOffset = at as number;
+    const length = n as number;
+    let made: @C@ | null = null;
+    try {
+      made = speciesNew(this, buffer, byteOffset, length);
+    } catch (e) {
+      panic(String(e));
+    }
+    return made ?? @C@.view(this.buf, at, n);
   }
 
   /**
@@ -736,6 +805,9 @@ export class @C@ extends TypedArray implements Iterable<number> {
     if (at > (this.buf.bytes.length as usize)) {
       // Not even the view's start is left: an empty view with a buffer of its own.
       return @C@.zeros(0);
+    }
+    if (!isExactClass(this)) {
+      return this.speciesView(at, n);
     }
     return @C@.view(this.buf, at, n);
   }
@@ -954,7 +1026,8 @@ def main():
                 + 'import { indexOutOfBounds } from "velt/lang/typed_array/out_of_bounds";\n'
                 + imports(t, KEY_NAMES, "velt/lang/hooks/keys")
                 + 'import { setBytes } from "velt/lang/bytes/copy";\n'
-                + ('import { inline } from "velt/lang/intrinsics";\n' if c == "Uint8Array" else ""))
+                + ('import { inline, isExactClass, speciesNew } from "velt/lang/intrinsics";\n' if c == "Uint8Array"
+                   else 'import { isExactClass, speciesNew } from "velt/lang/intrinsics";\n'))
         write(os.path.join(DIR, snake(c) + ".velt"), doc + GENERATED + "\n" + head + t)
 
     # Two globals: `Uint8Array` with `ArrayBuffer` and `DataView` (what `TextEncoder` and `fetch`

@@ -1,0 +1,34 @@
+// A class whose constructor can't take the arguments a built-in method makes its copy with
+// (#3817) gets a copy of the built-in class there, with a warning where it is declared
+// (species_copy_fallback.stderr): `Named` takes a `string` where `split` passes a `RegExp`,
+// `Sized` a `number` where `subarray` passes a buffer, an offset and a length. JavaScript calls
+// the constructor anyway (with arguments it doesn't expect), so Node prints other lines here: by
+// design there is no Node twin. Where the constructor takes them (`Sized`'s `slice`), the copy
+// is of the class.
+class Named extends RegExp {
+  constructor(p: string) {
+    console.log("Named ctor", p);
+    super(p, "g");
+  }
+  exec(s: string) {
+    console.log("Named exec");
+    return super.exec(s);
+  }
+}
+
+class Sized extends Uint8Array {
+  constructor(n: number) {
+    console.log("Sized", n);
+    super(n);
+  }
+}
+
+const n = new Named(",");
+console.log("a,b".split(n), n instanceof Named);
+console.log([..."a,b".matchAll(n)].length);
+const z = new Sized(3);
+z[1] = 7;
+console.log(z.slice(1).join(), z.slice(1) instanceof Sized);
+const v = z.subarray(1);
+v[0] = 9;
+console.log(v.join(), v instanceof Sized, z.join());

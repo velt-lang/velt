@@ -1,0 +1,18 @@
+// A typed array class whose constructor makes a shorter array than `slice` asks for (#3817):
+// Node throws `TypeError: Derived TypedArray constructor created an array which was too small`;
+// in Velt that stops the program with the same message (`slice` declares no throws), after
+// the constructor ran.
+class Tiny extends Int32Array {
+  constructor(n: number | number[] = 0) {
+    console.log("Tiny", Array.isArray(n) ? "list" : n);
+    if (typeof n === "number") {
+      super(1);
+    } else {
+      super(n);
+    }
+  }
+}
+
+const t = new Tiny([1, 2, 3]);
+console.log(t.length, t.slice(0, 1).join());
+console.log(t.slice(0).length);

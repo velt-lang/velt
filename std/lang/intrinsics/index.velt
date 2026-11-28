@@ -144,6 +144,7 @@ export {
   needsDrop,
   needsTransfer,
   nullAs,
+  speciesNew,
 } from "velt/lang/intrinsics/types";
 export {
   weakMapDelete,

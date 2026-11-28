@@ -22,12 +22,15 @@ pub(crate) enum DeclaredIntrinsic {
     /// `hookCall("role", args…)`: a call of the function hook `role` of velt_common's
     /// `std_hooks.rs`, its module demanded when the call is checked (`body::expr::hook_call`).
     HookCall,
+    /// `speciesNew(receiver, args…)`: `new C(args…)` of the receiver's own class `C` where its
+    /// constructor takes `args`, else of the receiver's static class (`body::expr::species`).
+    SpeciesNew,
     /// An `@intrinsic declare function` that names none, or one outside std/lang/intrinsics: the
     /// declaration was reported, and calls of it check their arguments and are errors.
     Invalid,
 }
 
-use DeclaredIntrinsic::{AnyToPrimitive, HookCall, Op};
+use DeclaredIntrinsic::{AnyToPrimitive, HookCall, Op, SpeciesNew};
 use Intrinsic as I;
 
 /// Every declared intrinsic: its name in `std/lang/intrinsics` and what a call of it is.
@@ -181,6 +184,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("fnCapturesNothing", Op(I::FnCapturesNothing)),
     ("holdsNull", Op(I::HoldsNull)),
     ("isExactClass", Op(I::IsExactClass)),
+    ("speciesNew", SpeciesNew),
     ("mayAlias", Op(I::MayAlias)),
     ("isUnique", Op(I::IsUnique)),
     ("needsDrop", Op(I::NeedsDrop)),

@@ -44,6 +44,7 @@ impl FnCx<'_, '_> {
             DeclaredIntrinsic::Op(i) => i,
             DeclaredIntrinsic::AnyToPrimitive => return self.primitive_dispatch(args, span),
             DeclaredIntrinsic::HookCall => return self.hook_call(type_args, args, exp, span),
+            DeclaredIntrinsic::SpeciesNew => return self.species_new(args, span),
             DeclaredIntrinsic::Invalid => {
                 self.check_args_loose(args);
                 return self.error_expr(span);

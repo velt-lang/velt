@@ -65,3 +65,45 @@ fn a_regexp_subclass_gets_the_exec_route() {
     assert!(v.contains("execOwn"), "`exec` of a subclass's object");
     assert!(v.contains("exec__calls"), "the specification's steps");
 }
+
+/// A typed array's `slice`, `map`, `filter` and `subarray` (#3817).
+const TYPED: &str = "const xs = new Int32Array([1, 2, 3]);
+console.log(xs.slice(1).join(), xs.map((x) => x + 1).join(), xs.filter((x) => x > 1).join());
+console.log(xs.subarray(1).join());
+";
+
+/// The lines of `vir` that name a function of a typed array's copy made with the receiver's own
+/// class (`speciesSized`, `speciesView`).
+fn species_route(vir: &str) -> Vec<&str> {
+    vir.lines().filter(|l| l.contains("species")).collect()
+}
+
+#[test]
+fn a_program_without_a_typed_array_subclass_has_no_species_copy() {
+    let v = vir(TYPED);
+    assert!(v.contains("Int32Array"), "the program uses `Int32Array`");
+    let route = species_route(&v);
+    assert!(route.is_empty(), "lowered for no subclass: {route:?}");
+    // A panic only a subclass's copy reaches doesn't make `slice` and `subarray` take their
+    // caller's location (as `map` and `filter` do for their own).
+    let located: Vec<&str> = (v.lines())
+        .filter(|l| l.starts_with("fn#") && l.contains("_LA("))
+        .filter(|l| l.contains("Int32ArrayM5slice") || l.contains("Int32ArrayM8subarray"))
+        .collect();
+    assert!(located.is_empty(), "{located:?}");
+}
+
+#[test]
+fn a_typed_array_subclass_gets_the_species_copy() {
+    let v = vir(&format!(
+        "class Mine extends Int32Array {{}}\nconsole.log(new Mine(2).length);\n{TYPED}"
+    ));
+    assert!(
+        v.contains("speciesSized"),
+        "`slice`, `map` and `filter` of a subclass's object"
+    );
+    assert!(
+        v.contains("speciesView"),
+        "`subarray` of a subclass's object"
+    );
+}

@@ -21,6 +21,18 @@ export declare function holdsNull<T>(probe: T): bool;
 export declare function isExactClass<T>(value: T): bool;
 
 /**
+ * `speciesNew(receiver, args…)`: a new object of `receiver`'s own class, made by its constructor
+ * with `args` (JavaScript's SpeciesConstructor, `new C(args…)`), as the class `T` of `receiver`
+ * (a class std declares), or `null` where std makes the copy itself, as a `T`: for `T`'s own
+ * objects, and for a subclass whose constructor can't take `args` (the compiler warns where it
+ * is declared). `args` are what `T`'s constructor takes, plain local variables or literals. It
+ * throws what a subclass's constructor throws. Sema writes it out as a test of the program's
+ * classes that extend `T`, deepest first (`body::expr::species`): with none, it is `null`.
+ */
+@intrinsic
+export declare function speciesNew<T>(receiver: T, ...args: any[]): T | null;
+
+/**
  * `null` as a `T` that holds null (`holdsNull`). For any other `T` it stops the program with an
  * internal error: std reaches it only behind a `holdsNull` test.
  */
