@@ -548,7 +548,8 @@ pub(super) fn demanded_for(present: ConstructSet) -> ConstructSet {
         | Construct::Transfer.bit()
         | Construct::FnProps.bit()
         | Construct::ErrorMessage.bit()
-        | Construct::CharCode.bit();
+        | Construct::CharCode.bit()
+        | Construct::DynamicNumber.bit();
     let (text, write) = (Construct::TextFloat.bit(), Construct::WriteFloat.bit());
     let own = alone | text | write;
     let integer = match present & !own {

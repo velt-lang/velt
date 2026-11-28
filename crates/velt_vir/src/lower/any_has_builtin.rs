@@ -335,7 +335,7 @@ impl FnLower<'_, '_> {
         let (index, other) = (self.new_block(), self.new_block());
         self.branch(digit, index, other);
         self.switch_to(index);
-        let n = hooks::str_to_number(self, Construct::Dynamic, ty::Str::arg(k.clone()))
+        let n = hooks::str_to_number(self, Construct::DynamicNumber, ty::Str::arg(k.clone()))
             .emit(self)
             .op();
         let lenf = self.rvalue_temp(Ty::F64, Rvalue::Cast(len, Ty::F64));

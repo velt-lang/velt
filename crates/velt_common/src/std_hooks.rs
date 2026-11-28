@@ -128,8 +128,8 @@ with_any_hooks! {
         replaces("velt_rt_parse_float"), prebuilt;
     /// `Number(s)` of a string held as `any` (`any` to number, a numeric key of an `any`'s
     /// array): velt/lang/number/parse's `toNumber`, which the prelude's `Number` calls too.
-    str_to_number => lang_number_parse, "toNumber", sig((&string) -> f64), lowered,
-        constructs(Dynamic), replaces("velt_rt_str_to_number"), bench("parse_float");
+    str_to_number => lang_hooks_string_number, "stringNumber", sig((&string) -> f64), lowered,
+        constructs(DynamicNumber), replaces("velt_rt_str_to_number"), bench("parse_float");
     /// The cycle guard of deep equality (std/lang/hooks/deep_eq.velt): lowering's `==` on an
     /// aggregate that can hold itself starts comparing a pair of objects with it.
     deep_eq_enter => lang_hooks_deep_eq, "deepEqEnter", sig((u64, u64) -> u8), lowered,

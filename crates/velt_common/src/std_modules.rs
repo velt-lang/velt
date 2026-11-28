@@ -144,6 +144,7 @@ table! {
     lang_hooks_sched_spawn => "lang/hooks/sched_spawn",
     lang_hooks_sched_yield => "lang/hooks/sched_yield",
     lang_hooks_string => "lang/hooks/string",
+    lang_hooks_string_number => "lang/hooks/string_number",
     lang_hooks_syntax => "lang/hooks/syntax",
     lang_hooks_transfer => "lang/hooks/transfer",
     lang_hooks_tuple_elements => "lang/hooks/tuple_elements",
@@ -164,7 +165,6 @@ table! {
     /// The prelude `Map`'s internals (std/lang/map/*.velt).
     lang_map => "lang/map",
     lang_math_fma_check => "lang/math/fma_check",
-    lang_number_parse => "lang/number/parse",
     lang_record => "lang/record",
     lang_sort => "lang/sort",
     lang_sort_stable => "lang/sort/stable",

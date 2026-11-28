@@ -1,0 +1,11 @@
+// velt/lang/hooks (internal): `Number(s)` of a string held as `any` (std-layout.md §10b), which
+// lowering calls for an `any` that holds a string where JavaScript converts it to a number
+// (`ToNumber`: arithmetic and `==` with a number) and for a numeric key `in` an array held as
+// `any` (`velt_vir` `lower/any.rs`, `any_has_builtin.rs`). It is the prelude's `Number(s)`.
+
+import { toNumber } from "velt/lang/number/parse";
+
+/** `Number(s)`: the whole string (whitespace trimmed) as a numeric literal; `""` is 0; else NaN. */
+export function stringNumber(s: string): f64 {
+  return toNumber(s);
+}

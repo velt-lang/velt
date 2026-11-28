@@ -298,7 +298,7 @@ impl FnLower<'_, '_> {
         let r = match self.cx.kind(ty) {
             TyKind::Str => {
                 let a = self.addr(p);
-                hooks::str_to_number(self, Construct::Dynamic, ty::Str::arg(a))
+                hooks::str_to_number(self, Construct::DynamicNumber, ty::Str::arg(a))
                     .emit(self)
                     .op()
             }

@@ -221,6 +221,7 @@ fn a_program_with_every_construct_keeps_them_all() {
         Construct::Weak,
         Construct::Mutex,
         Construct::CharCode,
+        Construct::DynamicNumber,
     ] {
         assert!(
             present & c.bit() != 0,
