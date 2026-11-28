@@ -149,7 +149,7 @@ const WINDOWS_PACKAGE_TESTS: &[&str] = &[
     "std/net/",
     "std/test/",
     "std/prelude/timers.velt",
-    "crates/velt_rt/src/net/",
+    "std/dev/",
     "crates/velt_rt/src/tls.rs",
     "crates/velt_rt/src/timer.rs",
     "crates/veltc/src/commands/test/",
@@ -343,7 +343,7 @@ mod tests {
         for every in [
             "std/net/tcp_stream.velt",
             "std/test/run.velt",
-            "crates/velt_rt/src/dev/handover/mod.rs",
+            "std/dev/handover_win32.velt",
             "crates/veltc/src/commands/test/mod.rs",
         ] {
             assert_eq!(p(&["packages/sqlite/src/db.velt", every]), "all", "{every}");

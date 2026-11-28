@@ -98,9 +98,10 @@ function roundTrip(b: usize): i32 {
   const n = m.ld(b + B_OUT_LEN);
   let sent: usize = 0;
   while (sent < n) {
+    const rest = m.ptrTo<void>(b + B_OUT + sent);
+    const count = (n - sent) as u32;
     // SAFETY: the rest of the request line in the block; a synchronous pipe handle.
-    const ok =
-      unsafe { WriteFile(pipe, m.ptrTo<void>(b + B_OUT + sent), (n - sent) as u32, moved, null) };
+    const ok = unsafe { WriteFile(pipe, rest, count, moved, null) };
     if (ok === 0) {
       return failed(b);
     }
@@ -162,16 +163,10 @@ function finish(b: usize): IoResult<u64> {
     const what = `velt dev: malformed listener record (${hex.length} chars)`;
     return fs.failed<u64>({ code: 99, message: what }, 0);
   }
+  const record = m.ptrTo<u8>(b + B_RECORD);
+  const from = FROM_PROTOCOL_INFO;
   // SAFETY: the record `WSADuplicateSocketW` made for this process, in the block.
-  const s =
-    unsafe { WSASocketW(
-      FROM_PROTOCOL_INFO,
-      FROM_PROTOCOL_INFO,
-      FROM_PROTOCOL_INFO,
-      m.ptrTo<u8>(b + B_RECORD),
-      0,
-      FLAGS,
-    ) };
+  const s = unsafe { WSASocketW(from, from, from, record, 0, FLAGS) };
   if (s === INVALID_SOCKET) {
     return fs.failed<u64>(fs.osError(r.errno()), 0);
   }
