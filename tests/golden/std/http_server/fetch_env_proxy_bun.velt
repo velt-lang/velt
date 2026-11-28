@@ -1,0 +1,286 @@
+// `fetch` and the environment's proxy where Velt reads it as Bun (`src/dotenv/env_loader.rs`,
+// `src/dotenv/no_proxy.rs`) and not as Node 22 (fetch_env_proxy.velt has the rest): an empty
+// lowercase variable reads the uppercase one, a lowercase `""` or `''` is taken and is no proxy,
+// `ALL_PROXY` when the scheme's variable is unset (one naming a SOCKS proxy ignored), the
+// variables read again after `setEnv`, `NO_PROXY` entries as Bun reads them (a domain with its
+// subdomains, `.name` with the name, bare IPv6 addresses, CIDR blocks), and `https://` proxies
+// (TLS to the proxy, and for `https:` TLS to the origin within it). Each run is this program
+// again with its own environment ("child"); servers, proxies and their log are here.
+// fetch_env_proxy_bun.mjs is its twin for Bun, which prints the same (a proxy logs the host it
+// is asked for, by `CONNECT` or, as Bun asks for `http:`, by an absolute URL). Where Bun
+// differs (a SOCKS proxy in the scheme's variable: Bun fails the request, Velt goes directly) is
+// tests/std/fetch/proxy.test.velt's.
+import { serve } from "http-server";
+import { connect, listen, listenTls, TcpListener, TcpStream } from "velt/net";
+import { utf8DecodeLossy } from "velt/encoding";
+import { platform } from "velt/os";
+import { envAll, setEnv } from "velt/process";
+import { exec } from "velt/process/child";
+import { Channel, channel } from "velt/sync";
+import { TEST_CA, TEST_CERT, TEST_KEY } from "../_tls";
+
+const WINDOWS = platform() == "win32";
+
+const PROXY_VARS = [
+  "NODE_USE_ENV_PROXY",
+  "http_proxy",
+  "HTTP_PROXY",
+  "https_proxy",
+  "HTTPS_PROXY",
+  "all_proxy",
+  "ALL_PROXY",
+  "no_proxy",
+  "NO_PROXY",
+];
+
+async function child(urls: string[]) {
+  for (const url of urls) {
+    // `env:NAME=VALUE` sets a variable between two requests.
+    if (url.startsWith("env:")) {
+      const eq = url.indexOf("=");
+      setEnv(url.slice(4, eq), url.slice(eq + 1));
+      console.log(url);
+      continue;
+    }
+    try {
+      const res = await fetch(url, { ca: TEST_CA });
+      console.log(`${url} ${res.status} ${await res.text()}`);
+    } catch (e) {
+      console.log(`${url} failed`);
+    }
+  }
+}
+
+/** Copies `from` to `to` until `from` ends, then ends `to`'s writing side. */
+async function pipe(from: TcpStream, to: TcpStream) {
+  try {
+    while (true) {
+      const bytes = await from.read();
+      if (bytes.length == 0) {
+        break;
+      }
+      await to.writeBytes(bytes);
+    }
+    to.shutdown();
+  } catch (e) {
+    to.close();
+  }
+}
+
+/** The connections `listener` accepts, each `proxyOne`'s, logged as `name`'s. */
+function serveProxy(listener: TcpListener, log: Channel<string>, name: string) {
+  spawn(async () => {
+    while (true) {
+      let conn: TcpStream;
+      try {
+        conn = await listener.accept();
+      } catch (e) {
+        return;
+      }
+      spawn(proxyGuarded(conn, log, name));
+    }
+  });
+}
+
+/** `proxyOne`, closing `conn` on an error (a TLS handshake that failed). */
+async function proxyGuarded(conn: TcpStream, log: Channel<string>, name: string) {
+  try {
+    await proxyOne(conn, log, name);
+  } catch (e) {
+    conn.close();
+  }
+}
+
+/** One connection to the proxy: `CONNECT` logged, then tunneled to 127.0.0.1 or refused. */
+async function proxyOne(conn: TcpStream, log: Channel<string>, name: string) {
+  let input: u8[] = [];
+  let text = "";
+  while (text.indexOf("\r\n\r\n") < 0) {
+    const more = await conn.read();
+    if (more.length == 0) {
+      conn.close();
+      return;
+    }
+    input = input.concat(more);
+    text = utf8DecodeLossy(input);
+  }
+  const end = text.indexOf("\r\n\r\n");
+  const lines = text.slice(0, end).split("\r\n");
+  const [method, target] = lines[0].split(" ");
+  if (method != "CONNECT") {
+    await log.send(`proxy: ${method} ${target}`);
+    await conn.write("HTTP/1.1 400 Bad Request\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+    conn.close();
+    return;
+  }
+  let auth = "-";
+  for (const line of lines.slice(1)) {
+    if (line.toLowerCase().startsWith("proxy-authorization:")) {
+      auth = line.slice(20).trim();
+    }
+  }
+  await log.send(`${name}: ${target}`);
+  if (target.startsWith("refuse.test:")) {
+    await conn.write("HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\n\r\n");
+    conn.close();
+    return;
+  }
+  // Not 200: undici takes no other answer, 2xx neither, and the tunnel would work.
+  const answer =
+    target.startsWith("nocontent.test:")
+      ? "HTTP/1.1 204 No Content\r\n\r\n"
+      : "HTTP/1.1 200 Connection established\r\n\r\n";
+  let origin: TcpStream;
+  try {
+    origin = await connect(`127.0.0.1:${target.slice(target.lastIndexOf(":") + 1)}`);
+  } catch (e) {
+    conn.close();
+    return;
+  }
+  await conn.write(answer);
+  const rest = input.slice(end + 4);
+  if (rest.length > 0) {
+    await origin.writeBytes(rest);
+  }
+  spawn(pipe(origin, conn));
+  await pipe(conn, origin);
+}
+
+async function main() {
+  const log = channel<string>(256);
+
+  const plain = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const url = new URL(req.url);
+    if (url.pathname == "/to-https") {
+      return new Response(null, {
+        status: 302,
+        headers: { location: `https://localhost:${url.searchParams.get("to")}/landed` },
+      });
+    }
+    return new Response(`http ${req.headers.get("host")}${url.pathname}`);
+  });
+  const secure = await serve({ port: 0, tls: { cert: TEST_CERT, key: TEST_KEY } }, async (
+    req: Request,
+  ): Promise<Response> => {
+    const url = new URL(req.url);
+    if (url.pathname == "/to-http") {
+      return new Response(null, {
+        status: 302,
+        headers: { location: `http://r2.test:${url.searchParams.get("to")}/back` },
+      });
+    }
+    return new Response(`https ${req.headers.get("host")}${url.pathname}`);
+  });
+
+  const listener = await listen("127.0.0.1:0");
+  serveProxy(listener, log, "proxy");
+  // An `https://` proxy, with the test certificate (localhost's).
+  const tlsListener = await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: TEST_KEY });
+  serveProxy(tlsListener, log, "tls proxy");
+  const proxyPort = listener.port as number;
+  const tlsPort = tlsListener.port as number;
+  const P = `http://127.0.0.1:${proxyPort}`;
+  const TP = `https://localhost:${tlsPort}`;
+  const H = plain.port as number;
+  const S = secure.port as number;
+
+  const hide = (text: string): string => text
+    .split(`:${H}`)
+    .join(":<http>")
+    .split(`:${S}`)
+    .join(":<https>")
+    .split(`=${H}`)
+    .join("=<http>")
+    .split(`=${S}`)
+    .join("=<https>")
+    .split(`:${proxyPort}`)
+    .join(":<proxy>")
+    .split(`:${tlsPort}`)
+    .join(":<tls proxy>");
+
+  async function run(name: string, vars: Record<string, string>, urls: string[]) {
+    console.log(`== ${name}`);
+    const env = new Map<string, string>();
+    const all = envAll();
+    for (const k of Object.keys(all)) {
+      if (!PROXY_VARS.includes(k)) {
+        env.set(k, all[k]);
+      }
+    }
+    for (const k of Object.keys(vars)) {
+      // Windows has one variable for both spellings: the lowercase one is set, or the uppercase
+      // one when the lowercase is empty (which reads the uppercase one elsewhere).
+      const lower = k.toLowerCase();
+      const pair = k == lower ? k.toUpperCase() : lower;
+      const keep =
+        !WINDOWS ||
+        !Object.keys(vars).includes(pair) ||
+        (k == lower ? vars[k] != "" : vars[lower] == "");
+      if (keep) {
+        env.set(k, vars[k]);
+      }
+    }
+    const r = await exec(process.argv[0], ["child", ...urls], { env, clearEnv: true });
+    console.log(hide(r.stdout.trimEnd()));
+    for (let line = log.tryReceive(); line != null; line = log.tryReceive()) {
+      console.log(hide(line));
+    }
+  }
+
+  await run("an empty http_proxy reads HTTP_PROXY", { http_proxy: "", HTTP_PROXY: P }, [
+    `http://g.test:${H}/`,
+  ]);
+  await run(
+    "'' is empty; ALL_PROXY when the scheme's is unset",
+    { http_proxy: "''", ALL_PROXY: P },
+    [`http://al.test:${H}/`, `https://localhost:${S}/al`],
+  );
+  await run("ALL_PROXY naming a SOCKS proxy is ignored", { ALL_PROXY: "socks5://127.0.0.1:1" }, [
+    `http://localhost:${H}/so`,
+  ]);
+  // A lowercase `""` is taken, and is no proxy: no `HTTP_PROXY`.
+  await run("a lowercase \"\" is no proxy", { http_proxy: `""`, HTTP_PROXY: P }, [
+    `http://127.0.0.1:${H}/g5`,
+  ]);
+  // TLS to the proxy; for `https:` TLS to the origin within it.
+  await run("an https:// proxy", { http_proxy: TP, https_proxy: TP }, [
+    `http://t1.test:${H}/`,
+    `https://localhost:${S}/t2`,
+    `https://127.0.0.1:${S}/t3`,
+  ]);
+  await run("an https:// ALL_PROXY", { ALL_PROXY: TP }, [`http://t4.test:${H}/`]);
+  await run("the variables read at each request", { http_proxy: P }, [
+    `http://o1.test:${H}/a`,
+    "env:http_proxy=",
+    `http://o2.test:${H}/b`,
+    `env:http_proxy=${P}`,
+    "env:NO_PROXY=o3.test",
+    `http://o3.test:${H}/c`,
+    `http://o4.test:${H}/d`,
+  ]);
+  await run("NO_PROXY", { HTTP_PROXY: P, NO_PROXY: `n1.test,.n2.test ::1 127.0.0.0/8 n3.test.` }, [
+    `http://x.n1.test:${H}/`,
+    `http://n2.test:${H}/`,
+    `http://xn1.test:${H}/`,
+    `http://[::1]:${H}/`,
+    `http://127.0.0.1:${H}/block`,
+    `http://n3.test:${H}/`,
+  ]);
+  await run(
+    "an empty no_proxy reads NO_PROXY",
+    { HTTP_PROXY: P, no_proxy: "", NO_PROXY: "h.test" },
+    [`http://h.test:${H}/`],
+  );
+  listener.close();
+  tlsListener.close();
+  await plain.shutdown();
+  await secure.shutdown();
+}
+
+if (process.argv.length > 2 && process.argv[2] == "child") {
+  await child(process.argv.slice(3));
+  // Done: a pooled TLS connection would keep the program waiting for a while.
+  process.exit(0);
+} else {
+  await main();
+}
