@@ -3,6 +3,7 @@
 // any_raw.velt writes it, then its members, each at its own key.
 
 import { StringBuilder } from "velt/text/string_builder";
+import { JsonHookResults } from "velt/encoding/json/hook_results";
 import { holdsJsonValue, jsonPresent, recordOrder } from "velt/encoding/json/any";
 import { writeJsonAnyRaw } from "velt/encoding/json/any_raw";
 import {
@@ -35,20 +36,36 @@ export function replaceJsonAny(
   depth: i64,
   hook: bool,
 ): JsonValue | undefined {
+  return replaceAny(v, key, raw, replacer, depth, hook, null);
+}
+
+/**
+ * `replaceJsonAny`, a `toJSON` that ran while the replacer's result being walked was written
+ * taken from `hooks` (`replaceJsonResult`) instead of being called again.
+ */
+function replaceAny(
+  v: any,
+  key: string,
+  raw: JsonValue | null,
+  replacer: JsonReplacer,
+  depth: i64,
+  hook: bool,
+  hooks: JsonHookResults | null,
+): JsonValue | undefined {
   jsonReplacerDepth(depth);
   const t = typeOf(v);
   const kind = t.kind;
   if (kind == "shared") {
-    return replaceJsonAny(entryValue(v, 0), key, raw, replacer, depth, hook);
+    return replaceAny(entryValue(v, 0), key, raw, replacer, depth, hook, hooks);
   }
   if (kind == "proxy") {
     // A typed proxy converts to the value it stands for: no hook of the program's.
-    return replaceJsonAny(callToJSON(v, key), key, raw, replacer, depth, hook);
+    return replaceAny(callToJSON(v, key), key, raw, replacer, depth, hook, hooks);
   }
   const hooked = jsonPresent(v) && kind == "class" && t.hasHook("toJSON") && !holdsJsonValue(v);
   if (hook && hooked) {
     // What it returns is written as it is: its own `toJSON` isn't called (`return this` too).
-    return replaceJsonAny(callToJSON(v, key), key, null, replacer, depth, false);
+    return replaceAny(toJSONOnce(v, key, hooks), key, null, replacer, depth, false, hooks);
   }
   let text = "";
   if (raw == null && !hook && hooked && t.name == "Date") {
@@ -68,7 +85,18 @@ export function replaceJsonAny(
   if (!jsonPresent(v) || !jsonReplacerKept(r, view)) {
     return jsonReplacedMembers(r, replacer, depth);
   }
-  return replaceKept(v, t, view, replacer, depth);
+  return replaceKept(v, t, view, replacer, depth, hooks);
+}
+
+/** What `v`'s `toJSON(key)` returns: what it returned already, if `hooks` kept that. */
+function toJSONOnce(v: any, key: string, hooks: JsonHookResults | null): any {
+  if (hooks != null) {
+    const i = hooks.find(identity(v), key);
+    if (i >= 0) {
+      return hooks.result(i);
+    }
+  }
+  return callToJSON(v, key);
 }
 
 /**
@@ -77,7 +105,12 @@ export function replaceJsonAny(
  * Node's circular-structure `TypeError` only when the replacer keeps it (a member it leaves out
  * or replaces is no cycle). `r`'s own `toJSON` isn't called (that ran before the replacer).
  */
-export function replaceJsonResult(r: any, key: string, replacer: JsonReplacer): JsonValue {
+export function replaceJsonResult(
+  r: any,
+  key: string,
+  replacer: JsonReplacer,
+  hooks: JsonHookResults,
+): JsonValue {
   // Inside the replacer's call, with the frames of that call and of this walk on the stack: a
   // replacer that returns a new cycle at every level reaches the depth limit in fewer levels.
   const depth = jsonReplacerDepthNow() + RESULT_WALK_DEPTH;
@@ -89,7 +122,7 @@ export function replaceJsonResult(r: any, key: string, replacer: JsonReplacer): 
   }
   const w = new StringBuilder();
   writeJsonAnyRaw(w, v, key);
-  return replaceKept(v, t, jsonReplacerView(null, w.take()), replacer, depth);
+  return replaceKept(v, t, jsonReplacerView(null, w.take()), replacer, depth, hooks);
 }
 
 /** The members of `v` (of type `t`) at `depth`, whose view (`view`) the replacer kept, replaced. */
@@ -99,6 +132,7 @@ function replaceKept(
   view: JsonValue,
   replacer: JsonReplacer,
   depth: i64,
+  hooks: JsonHookResults | null,
 ): JsonValue {
   const kind = t.kind;
   if (kind == "array" || kind == "tuple") {
@@ -108,7 +142,8 @@ function replaceKept(
     const out = JsonValue.array();
     const n = entryCount(v);
     for (let i: i64 = 0; i < n; i++) {
-      const e = replaceJsonAny(entryValue(v, i), `${i}`, view.at(i), replacer, depth + 1, true);
+      const x = entryValue(v, i);
+      const e = replaceAny(x, `${i}`, view.at(i), replacer, depth + 1, true, hooks);
       pushRevived(out, e);
     }
     jsonWalkLeave(identity(v));
@@ -120,7 +155,8 @@ function replaceKept(
     t.name != "Date";
   if ((members || kind == "record") && entryCount(v) >= 0) {
     jsonWalkEnter(identity(v));
-    const out = replaceMembers(v, view, kind == "record" ? recordOrder(v) : null, replacer, depth);
+    const order = kind == "record" ? recordOrder(v) : null;
+    const out = replaceMembers(v, view, order, replacer, depth, hooks);
     jsonWalkLeave(identity(v));
     return out;
   }
@@ -135,6 +171,7 @@ function replaceMembers(
   order: i64[] | null,
   replacer: JsonReplacer,
   depth: i64,
+  hooks: JsonHookResults | null,
 ): JsonValue {
   const out = JsonValue.object();
   const n = entryCount(v);
@@ -146,7 +183,7 @@ function replaceMembers(
       continue;
     }
     const name = entryName(v, i);
-    const e = replaceJsonAny(x, name, view.get(name), replacer, depth + 1, true);
+    const e = replaceAny(x, name, view.get(name), replacer, depth + 1, true, hooks);
     setRevived(out, name, e);
   }
   return out;

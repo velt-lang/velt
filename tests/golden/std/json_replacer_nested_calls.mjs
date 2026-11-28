@@ -46,6 +46,22 @@ class Failing {
   }
 }
 
+// A `toJSON` that counts its calls: each runs once.
+let calls = 0;
+class Counted {
+  toJSON(key) {
+    calls = calls + 1;
+    return { key: key, inner: new Inner() };
+  }
+}
+
+class Inner {
+  toJSON(key) {
+    calls = calls + 1;
+    return [key];
+  }
+}
+
 function keep(k, v) {
   return k === "" ? { a: c, t: new T() } : v;
 }
@@ -66,6 +82,26 @@ function dropFailing(k, v) {
 
 function keepFailing(k, v) {
   return k === "" ? { a: c, f: new Failing() } : v;
+}
+
+function dropCounted(k, v) {
+  if (k === "self") {
+    return undefined;
+  }
+  if (k === "") {
+    return { a: c, n: new Counted(), list: [new Counted(), c] };
+  }
+  return v;
+}
+
+function replaceCounted(k, v) {
+  if (k === "self") {
+    return undefined;
+  }
+  if (k === "inner") {
+    return "replaced";
+  }
+  return k === "" ? { a: c, n: new Counted() } : v;
 }
 
 function endless(k, v) {
@@ -94,6 +130,10 @@ function endlessCalling(k, v) {
 
 attempt("kept:", () => JSON.stringify({ x: 1 }, keep));
 attempt("dropped:", () => JSON.stringify({ x: 1 }, drop));
+attempt("toJSON once:", () => JSON.stringify({ x: 1 }, dropCounted));
+console.log("calls:", calls);
+attempt("toJSON replaced:", () => JSON.stringify({ x: 1 }, replaceCounted));
+console.log("calls:", calls);
 attempt("inner throws, dropped:", () => JSON.stringify({ x: 1 }, dropFailing));
 attempt("inner throws, kept:", () => JSON.stringify({ x: 1 }, keepFailing));
 attempt("after:", () => JSON.stringify({ x: 1 }, drop));

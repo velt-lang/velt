@@ -12,6 +12,7 @@ import { StringBuilder } from "velt/text/string_builder";
 import { appendJsonNumber, appendJsonString, appendJsonUint } from "velt/encoding/json/append";
 import { JsonValue } from "velt/prelude/json/json_value";
 import { anyIsPromise } from "velt/lang/intrinsics";
+import { JsonHookResults } from "velt/encoding/json/hook_results";
 import {
   beginVisit,
   callToJSON,
@@ -51,6 +52,11 @@ function circular(): never {
  * to `w`: `null` for a value without a JSON form.
  */
 export function writeJsonAny(w: StringBuilder, v: any, key: string): void {
+  writeAny(w, v, key, null);
+}
+
+/** `writeJsonAny`, each `toJSON` result kept in `hooks` (when not null) as it runs. */
+function writeAny(w: StringBuilder, v: any, key: string, hooks: JsonHookResults | null): void {
   if (!jsonPresent(v)) {
     w.append("null");
     return;
@@ -66,7 +72,7 @@ export function writeJsonAny(w: StringBuilder, v: any, key: string): void {
   } else if (kind == "string") {
     appendJsonString(w, v as string);
   } else if (kind == "proxy") {
-    writeJsonAny(w, callToJSON(v, key), key);
+    writeAny(w, callToJSON(v, key), key, hooks);
   } else if (holdsJsonValue(v)) {
     // Its text, through its `toJSON()` hook: a `JsonValue` here (narrowed by `instanceof`)
     // would check all of its methods in every program that writes an `any`, where one holds
@@ -76,16 +82,16 @@ export function writeJsonAny(w: StringBuilder, v: any, key: string): void {
     if (!enter(w, v)) {
       return;
     }
-    writeElements(w, v);
+    writeElements(w, v, hooks);
     endVisit();
   } else if (kind == "shared") {
     if (!enter(w, v)) {
       return;
     }
-    writeJsonAny(w, entryValue(v, 0), key);
+    writeAny(w, entryValue(v, 0), key, hooks);
     endVisit();
   } else if (kind == "class" && t.hasHook("toJSON")) {
-    writeHooked(w, v, key);
+    writeHooked(w, v, key, hooks);
   } else if (kind == "map" || kind == "set") {
     // No enumerable own properties, as in Node.
     w.append("{}");
@@ -93,13 +99,13 @@ export function writeJsonAny(w: StringBuilder, v: any, key: string): void {
     if (!enter(w, v)) {
       return;
     }
-    writeMembers(w, v, null);
+    writeMembers(w, v, null, hooks);
     endVisit();
   } else if (kind == "record") {
     if (!enter(w, v)) {
       return;
     }
-    writeMembers(w, v, recordOrder(v));
+    writeMembers(w, v, recordOrder(v), hooks);
     endVisit();
   } else if (anyIsPromise(v)) {
     // An object with no own enumerable members, as Node writes it (#924).
@@ -213,8 +219,12 @@ function writeNumber(w: StringBuilder, v: any, repr: string): void {
 }
 
 /** What a class instance's `toJSON(key)` returns, written ([`writeJsonResult`]). */
-function writeHooked(w: StringBuilder, v: any, key: string): void {
-  writeJsonResult(w, callToJSON(v, key), key);
+function writeHooked(w: StringBuilder, v: any, key: string, hooks: JsonHookResults | null): void {
+  const r = callToJSON(v, key);
+  if (hooks != null) {
+    hooks.add(identity(v), key, r);
+  }
+  writeResult(w, r, key, hooks);
 }
 
 /**
@@ -223,6 +233,23 @@ function writeHooked(w: StringBuilder, v: any, key: string): void {
  * `return this`, or another) is written by its members (a `Date` has none: `{}`); anything else as `writeJsonAny` writes it.
  */
 export function writeJsonResult(w: StringBuilder, r: any, key: string): void {
+  writeResult(w, r, key, null);
+}
+
+/**
+ * `writeJsonResult` of what a replacer returned, each `toJSON` result kept in `hooks` as it runs
+ * (for `replaceJsonResult`, any_replace.velt).
+ */
+export function writeJsonResultKeeping(
+  w: StringBuilder,
+  r: any,
+  key: string,
+  hooks: JsonHookResults,
+): void {
+  writeResult(w, r, key, hooks);
+}
+
+function writeResult(w: StringBuilder, r: any, key: string, hooks: JsonHookResults | null): void {
   if (jsonPresent(r) && !holdsJsonValue(r)) {
     const t = typeOf(r);
     if (t.kind == "class" && t.hasHook("toJSON")) {
@@ -234,15 +261,15 @@ export function writeJsonResult(w: StringBuilder, r: any, key: string): void {
       if (!enter(w, r)) {
         return;
       }
-      writeMembers(w, r, null);
+      writeMembers(w, r, null, hooks);
       endVisit();
       return;
     }
   }
-  writeJsonAny(w, r, key);
+  writeAny(w, r, key, hooks);
 }
 
-function writeElements(w: StringBuilder, v: any): void {
+function writeElements(w: StringBuilder, v: any, hooks: JsonHookResults | null): void {
   const n = entryCount(v);
   if (n < 0) {
     unsupported();
@@ -252,13 +279,18 @@ function writeElements(w: StringBuilder, v: any): void {
     if (i > 0) {
       w.append(",");
     }
-    writeJsonAny(w, entryValue(v, i), `${i}`);
+    writeAny(w, entryValue(v, i), `${i}`, hooks);
   }
   w.append("]");
 }
 
 /** The members of an object, a class instance, a struct or a record, in `order`. */
-function writeMembers(w: StringBuilder, v: any, order: i64[] | null): void {
+function writeMembers(
+  w: StringBuilder,
+  v: any,
+  order: i64[] | null,
+  hooks: JsonHookResults | null,
+): void {
   const n = entryCount(v);
   if (n < 0) {
     // std's `WeakMap` and `WeakSet` keep their entries out of sight: `{}`, as in Node.
@@ -285,7 +317,7 @@ function writeMembers(w: StringBuilder, v: any, order: i64[] | null): void {
     const name = entryName(v, i);
     appendJsonString(w, name);
     w.append(":");
-    writeJsonAny(w, x, name);
+    writeAny(w, x, name, hooks);
   }
   w.append("}");
 }

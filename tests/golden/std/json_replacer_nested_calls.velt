@@ -4,7 +4,8 @@
 // replacer keeping the back reference is a `TypeError`, one leaving it out writes the rest), an
 // error the inner call throws and its `toJSON` catches changes nothing outside, and the depth
 // limit still counts the outer call's levels, so a new cycle at every level is the `RangeError`
-// (#3871). The Node twin is json_replacer_nested_calls.mjs.
+// (#3871). Each `toJSON` in such a result runs once. The Node twin is
+// json_replacer_nested_calls.mjs.
 
 class C {
   a = 1;
@@ -55,6 +56,22 @@ class Failing {
   }
 }
 
+// A `toJSON` that counts its calls: each runs once.
+let calls = 0;
+class Counted {
+  toJSON(key: string): any {
+    calls = calls + 1;
+    return { key: key, inner: new Inner() };
+  }
+}
+
+class Inner {
+  toJSON(key: string): any {
+    calls = calls + 1;
+    return [key];
+  }
+}
+
 function keep(k: string, v: any): any {
   return k === "" ? { a: c, t: new T() } : v;
 }
@@ -75,6 +92,26 @@ function dropFailing(k: string, v: any): any {
 
 function keepFailing(k: string, v: any): any {
   return k === "" ? { a: c, f: new Failing() } : v;
+}
+
+function dropCounted(k: string, v: any): any {
+  if (k === "self") {
+    return undefined;
+  }
+  if (k === "") {
+    return { a: c, n: new Counted(), list: [new Counted(), c] };
+  }
+  return v;
+}
+
+function replaceCounted(k: string, v: any): any {
+  if (k === "self") {
+    return undefined;
+  }
+  if (k === "inner") {
+    return "replaced";
+  }
+  return k === "" ? { a: c, n: new Counted() } : v;
 }
 
 // A new cycle at every level, each result holding a `T`: Node's stack overflow `RangeError`.
@@ -106,6 +143,10 @@ function endlessCalling(k: string, v: any): any {
 function main(): void {
   attempt("kept:", () => JSON.stringify({ x: 1 }, keep));
   attempt("dropped:", () => JSON.stringify({ x: 1 }, drop));
+  attempt("toJSON once:", () => JSON.stringify({ x: 1 }, dropCounted));
+  console.log("calls:", calls);
+  attempt("toJSON replaced:", () => JSON.stringify({ x: 1 }, replaceCounted));
+  console.log("calls:", calls);
   attempt("inner throws, dropped:", () => JSON.stringify({ x: 1 }, dropFailing));
   attempt("inner throws, kept:", () => JSON.stringify({ x: 1 }, keepFailing));
   attempt("after:", () => JSON.stringify({ x: 1 }, drop));
