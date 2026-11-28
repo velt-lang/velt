@@ -14,7 +14,8 @@
 //!
 //! | operation on a view | done as |
 //! |---|---|
-//! | `r[k]`, `k in r` | the source's own entry `k`, through `any` |
+//! | `r[k]`, `Object.hasOwn(r, k)` | the source's own entry `k`, through `any` |
+//! | `k in r` | `k in` the source, through `any`: what it inherits too (a class's methods) |
 //! | `Object.keys` / `values` / `entries`, `size`, the glue that reads field 0 | the mirror rebuilt from the source, in its order, then the mirror's |
 //! | `r[k] = v`, `delete r[k]` | written to the source, or deleted from it, through `any` |
 //! | a spread or `Object.assign` into it | the mirror's, then the spread's keys written to the source |
