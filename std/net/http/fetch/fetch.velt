@@ -5,9 +5,11 @@
 // when it is read. The transport is a conditional import (`#http-transport`, std/imports.velt).
 // Natively and under WASI it is Velt code on velt/net (std/net/http/fetch/client/): HTTP/1.1
 // with keep-alive connections pooled per origin, HTTP/2 over TLS, redirects followed as the Fetch
-// standard says, bodies decoded by velt/compress, and an `AbortSignal` that stops the request
-// where it is waiting and closes its connection. On JS hosts (`wasm32-unknown-unknown`) it is
-// the host's own `fetch` (client/transport/js.velt), and the signal aborts that.
+// standard says, bodies decoded by velt/compress, an `AbortSignal` that stops the request
+// where it is waiting and closes its connection, and the proxy the request's `proxy` option
+// names or, with `NODE_USE_ENV_PROXY=1` as in Node, the environment's (`HTTPS_PROXY`,
+// `NO_PROXY`; client/proxy.velt). On JS hosts (`wasm32-unknown-unknown`) it is the host's own
+// `fetch` (client/transport/js.velt), and the signal aborts that; the host chooses the proxy.
 
 import { IoError } from "velt/io/error";
 import { AbortError, AbortSignal } from "velt/task";
@@ -102,6 +104,7 @@ async function fetchWith(
     o.ca,
     tls,
   );
+  out.proxy = init.proxy ?? null;
   try {
     return Response.adopt(await send(out), signal, o.method == "HEAD");
   } catch (e) {

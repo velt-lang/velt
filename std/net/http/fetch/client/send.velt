@@ -17,6 +17,7 @@ import { acceptEncoding } from "velt/net/http/fetch/client/decode";
 import { Fetched } from "velt/net/http/fetch/client/fetched";
 import { ClientRequest, ERROR, MANUAL } from "velt/net/http/fetch/client/client_request";
 import { ofUrl, Target, target } from "velt/net/http/fetch/client/target";
+import { proxyFor } from "velt/net/http/fetch/client/proxy";
 import { encode, Encoded } from "velt/net/http/fetch/client/wire";
 import { BODY_LENGTH, BODY_NONE, Head, headEnd, parseHead } from "velt/net/http/fetch/client/head";
 
@@ -39,8 +40,7 @@ function unknown(message: string): IoError {
 
 /** Sends `o`, following redirects as `o.redirect` says, and resolves with the response. */
 export async function send(o: ClientRequest): Promise<Fetched, IoError | AbortError> {
-  let t = target(o.url);
-  t.tls = o.tls;
+  let t = route(o, target(o.url));
   let redirected = false;
   for (let hop: i64 = 0; hop <= MAX_REDIRECTS; hop++) {
     // Recomputed for each hop, as undici does: `br` is offered over HTTPS only (#606).
@@ -102,10 +102,16 @@ function next(o: ClientRequest, t: Target, location: string, status: i64): Targe
   if (p != "http:" && p != "https:") {
     throw unknown("redirect to a URL that is not http: or https:");
   }
-  const n = ofUrl(u);
-  n.tls = o.tls;
+  const n = route(o, ofUrl(u));
   follow(o, t, n, status);
   return n;
+}
+
+/** `t` with `o`'s TLS client and the proxy it goes through. */
+function route(o: ClientRequest, t: Target): Target throws IoError {
+  t.tls = o.tls;
+  t.proxy = proxyFor(t.https, t.hostname, t.port, o.proxy);
+  return t;
 }
 
 /** The request body as bytes (HTTP/2 sends it from the session's task). */

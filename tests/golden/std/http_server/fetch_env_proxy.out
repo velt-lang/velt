@@ -1,0 +1,72 @@
+== NODE_USE_ENV_PROXY unset: direct
+http://localhost:<http>/a 200 http localhost:<http>/a
+http://a.test:<http>/ failed
+== NODE_USE_ENV_PROXY=true: direct
+http://b.test:<http>/ failed
+== http_proxy with credentials, for https: too
+http://c.test:<http>/c 200 http c.test:<http>/c
+http://127.0.0.1:<http>/loopback 200 http 127.0.0.1:<http>/loopback
+https://localhost:<https>/s 200 https localhost:<https>/s
+proxy: CONNECT c.test:<http> auth=Basic dTpwQHNz
+proxy: CONNECT 127.0.0.1:<http> auth=Basic dTpwQHNz
+proxy: CONNECT localhost:<https> auth=Basic dTpwQHNz
+== a proxy URL with only a user
+http://u1.test:<http>/ 200 http u1.test:<http>/
+proxy: CONNECT u1.test:<http> auth=-
+== a proxy URL with only a password
+http://u2.test:<http>/ 200 http u2.test:<http>/
+proxy: CONNECT u2.test:<http> auth=-
+== the proxy variables read once, NO_PROXY at each request
+http://o1.test:<http>/a 200 http o1.test:<http>/a
+env:http_proxy=
+http://o2.test:<http>/b 200 http o2.test:<http>/b
+env:NO_PROXY=o3.test
+http://o3.test:<http>/c failed
+proxy: CONNECT o1.test:<http> auth=-
+proxy: CONNECT o2.test:<http> auth=-
+== uppercase HTTP_PROXY
+http://d.test:<http>/ 200 http d.test:<http>/
+proxy: CONNECT d.test:<http> auth=-
+== HTTPS_PROXY alone
+https://localhost:<https>/e 200 https localhost:<https>/e
+http://e.test:<http>/ failed
+proxy: CONNECT localhost:<https> auth=-
+== http_proxy over HTTP_PROXY
+http://f.test:<http>/ 200 http f.test:<http>/
+proxy: CONNECT f.test:<http> auth=-
+== an empty http_proxy over HTTP_PROXY
+http://g.test:<http>/ failed
+== NO_PROXY
+http://n1.test:<http>/ failed
+http://x.n1.test:<http>/ 200 http x.n1.test:<http>/
+http://n2.test:<http>/ 200 http n2.test:<http>/
+http://x.n2.test:<http>/ failed
+http://x.n3.test:<http>/ failed
+http://n4.test:<http>/ 200 http n4.test:<http>/
+http://n5.test:<http>/ failed
+http://[::1]:<http>/ failed
+http://[::5]:<http>/ 200 http [::5]:<http>/
+http://n6.test:<http>/ failed
+proxy: CONNECT x.n1.test:<http> auth=-
+proxy: CONNECT n2.test:<http> auth=-
+proxy: CONNECT n4.test:<http> auth=-
+proxy: CONNECT [::5]:<http> auth=-
+== no_proxy over NO_PROXY, even empty
+http://h.test:<http>/ 200 http h.test:<http>/
+proxy: CONNECT h.test:<http> auth=-
+== NO_PROXY=*
+http://i.test:<http>/ failed
+== redirects between http: and https:
+http://r1.test:<http>/to-https?to=<https> 200 https localhost:<https>/landed
+https://127.0.0.1:<https>/to-http?to=<http> 200 http r2.test:<http>/back
+proxy: CONNECT r1.test:<http> auth=-
+proxy: CONNECT 127.0.0.1:<https> auth=-
+proxy: CONNECT r2.test:<http> auth=-
+== a proxy that refuses
+http://refuse.test:<http>/ failed
+proxy: CONNECT refuse.test:<http> auth=-
+== a proxy that answers 204
+http://nocontent.test:<http>/ failed
+proxy: CONNECT nocontent.test:<http> auth=-
+== no proxy there
+http://k.test:<http>/ failed

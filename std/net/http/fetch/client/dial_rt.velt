@@ -25,6 +25,14 @@ export async function dialPlain(
 }
 
 /** Not reached in this build. */
+export async function dialFd(
+  addr: string,
+  signal: AbortSignal | null,
+): Promise<u64, IoError | AbortError> {
+  panic("ICE: fetch dials on the reactor only with the executor in Velt");
+}
+
+/** Not reached in this build. */
 export async function dialTls(
   addr: string,
   serverName: string,

@@ -43,6 +43,14 @@ export async function dialPlain(
   return TcpStream.ofHandle(await dialSocket(addr, signal));
 }
 
+/** `dialPlain`'s socket handle (a connection to a proxy, which a tunnel may go through). */
+export async function dialFd(
+  addr: string,
+  signal: AbortSignal | null,
+): Promise<u64, IoError | AbortError> {
+  return await dialSocket(addr, signal);
+}
+
 /**
  * A new TLS connection to `addr` on the reactor (`fetch`'s `https:`): the socket as `dialPlain`'s,
  * then the TLS client's handshake, checking the certificate against the built-in roots and the

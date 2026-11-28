@@ -14,6 +14,7 @@
 import { IoError } from "velt/io/error";
 import { URL } from "velt/net/url";
 import { AbortError, AbortSignal } from "velt/task";
+import { Via } from "velt/net/http/fetch/client/proxy";
 
 /**
  * The TLS client's handshake for `https:` on connected socket `fd` to `addr`, resolving to the
@@ -44,6 +45,8 @@ export class Target {
   origin: string;
   /** The TLS client for `https:` (`TlsOn`); null in a program that fetches only `http:` URLs. */
   tls: TlsOn | null = null;
+  /** The proxy the request goes through (proxy.velt), or null to connect directly. */
+  proxy: Via | null = null;
 
   constructor(
     href: string,
