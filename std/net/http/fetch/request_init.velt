@@ -22,6 +22,15 @@ export type RequestInit = {
   signal?: AbortSignal;
   /** Velt: extra trusted CA certificates (PEM) for `https://`, e.g. a private or test CA. */
   ca?: string;
+  /**
+   * Velt (as Bun's): the proxy for this request and its redirects,
+   * `http://[user:password@]host[:port]`, or `""` to connect directly. Without it, `fetch` uses
+   * the environment's when `NODE_USE_ENV_PROXY=1`, as Node 22 does: `https_proxy` /
+   * `HTTPS_PROXY` for `https:`, `http_proxy` / `HTTP_PROXY` for `http:` (and for `https:` when
+   * no `https:` one is set), except for the hosts `NO_PROXY` lists. Only `fetch` reads it, not
+   * `new Request`; on `wasm32-unknown-unknown` the host's `fetch` runs and this is ignored.
+   */
+  proxy?: string;
 };
 
 /** The method as the Fetch standard normalizes it (std only: `fetch` uses it too). */

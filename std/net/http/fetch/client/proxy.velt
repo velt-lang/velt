@@ -1,0 +1,287 @@
+// velt/net/http (internal): the proxy a `fetch` goes through (#3693). The request's `proxy`
+// option, when it has one, decides: a proxy URL, or "" for none. Otherwise, as in Node 22.21+,
+// the environment's proxy is used only when `NODE_USE_ENV_PROXY=1` (read once, at the first
+// request: `envProxyOn`), and then as undici's `EnvHttpProxyAgent` reads it (`fromEnv`):
+// `http_proxy`, else `HTTP_PROXY`, for `http:`; `https_proxy`, else `HTTPS_PROXY`, for `https:`,
+// and the `http:` one when neither is set. A lowercase variable that is set wins even when it is
+// empty, and an empty value means no proxy. `no_proxy`, else `NO_PROXY`, lists the hosts reached
+// directly (`noProxy`); this machine is not special (Node sends `localhost` to the proxy too).
+// The proxy variables are read once, at that first request (`envVars`), as Node reads them once
+// when it starts; `NO_PROXY` is read for each request and redirect hop, as undici re-reads it.
+//
+// A proxy is `http://[user:password@]host[:port][/]` (port 80 by default); its user and password,
+// when it has both, become `proxy-authorization: Basic …` (with only one of them, none, as in
+// undici). Every request goes through a `CONNECT` tunnel to the
+// origin's host and port (tunnel.velt), `http:` too, as undici does; for `https:` TLS to the
+// origin runs inside it, as without a proxy. Where Node differs: it starts no program whose
+// proxy variable is not a URL (Velt also takes `host:port`, and rejects a `fetch` through any
+// other proxy with `EINVAL`), and it speaks TLS to an `https://` proxy, which Velt refuses.
+// Node also starts no program whose proxy URL has a path, query or fragment; a `fetch` through
+// it fails with `EINVAL` here. A program that sets a proxy variable before its first `fetch`
+// goes through that proxy here, where Node keeps the one it started with.
+
+import { IoError } from "velt/io/error";
+import { base64Encode, utf8Encode } from "velt/encoding";
+import { URL } from "velt/net/url";
+import { decodeLenient } from "velt/net/url/encode";
+import { getEnv } from "#env-sys";
+
+/** A proxy to send requests through. */
+export class Via {
+  /** `host:port` to connect to (IPv6 in brackets). */
+  addr: string;
+  /** The `proxy-authorization` header's value; "" for none. */
+  authorization: string;
+
+  constructor(addr: string, authorization: string) {
+    this.addr = addr;
+    this.authorization = authorization;
+  }
+}
+
+/**
+ * Whether `NODE_USE_ENV_PROXY` is `1`: -1 before the first request reads it, then 0 or 1. Starts
+ * at a literal: an atomic started at a constant's name is built anew at every use.
+ */
+const ENV_PROXY = new Atomic<i32>(-1);
+
+/** Whether the environment's proxy is used (`NODE_USE_ENV_PROXY=1`, read once per process). */
+function envProxyOn(): bool {
+  let on = ENV_PROXY.load("relaxed");
+  if (on < 0) {
+    on = getEnv("NODE_USE_ENV_PROXY") == "1" ? 1 : 0;
+    ENV_PROXY.store(on, "relaxed");
+  }
+  return on == 1;
+}
+
+/** The proxy variables, each with the name it was read from (proxy.velt module comment). */
+class EnvVars {
+  /** `http_proxy`, else `HTTP_PROXY`; undefined when neither is set. */
+  http: string | undefined;
+  httpName: string;
+  /** `https_proxy`, else `HTTPS_PROXY`; undefined when neither is set. */
+  https: string | undefined;
+  httpsName: string;
+
+  constructor(
+    http: string | undefined,
+    httpName: string,
+    https: string | undefined,
+    httpsName: string,
+  ) {
+    this.http = http;
+    this.httpName = httpName;
+    this.https = https;
+    this.httpsName = httpsName;
+  }
+}
+
+/** The proxy variables as the first request that used them read them. */
+let readOnce: EnvVars | null = null;
+
+/** The proxy variables, read at the first call (Node reads them once, when it starts). */
+function envVars(): EnvVars {
+  const known = readOnce;
+  if (known != null) {
+    return known;
+  }
+  const vars = readEnvVars();
+  readOnce = vars;
+  return vars;
+}
+
+/** The proxy variables as they are now. */
+function readEnvVars(): EnvVars {
+  let httpName = "http_proxy";
+  let http = getEnv(httpName);
+  if (http == null) {
+    httpName = "HTTP_PROXY";
+    http = getEnv(httpName);
+  }
+  let httpsName = "https_proxy";
+  let https = getEnv(httpsName);
+  if (https == null) {
+    httpsName = "HTTPS_PROXY";
+    https = getEnv(httpsName);
+  }
+  return new EnvVars(http, httpName, https, httpsName);
+}
+
+/**
+ * The proxy of a request to `hostname` (as the URL parser serializes it: IPv6 in brackets) on
+ * `port`: the request's `given` one ("" for none), or when it is null the environment's, if
+ * `NODE_USE_ENV_PROXY=1`. Throws `EINVAL` for a proxy URL that is not `http:`, naming where it
+ * came from, never its value (which may hold a password).
+ */
+export function proxyFor(
+  https: bool,
+  hostname: string,
+  port: i64,
+  given: string | null,
+): Via | null throws IoError {
+  if (given != null) {
+    return given.length == 0 ? null : parseProxy(given, "the proxy option");
+  }
+  return envProxyOn() ? fromVars(envVars(), https, hostname, port) : null;
+}
+
+/** The environment's proxy, its variables read now, for a request to `hostname` on `port`. */
+export function fromEnv(https: bool, hostname: string, port: i64): Via | null throws IoError {
+  return fromVars(readEnvVars(), https, hostname, port);
+}
+
+/**
+ * The proxy `vars` give a request to `hostname` on `port`, as `EnvHttpProxyAgent`'s: `NO_PROXY`
+ * read now.
+ */
+function fromVars(
+  vars: EnvVars,
+  https: bool,
+  hostname: string,
+  port: i64,
+): Via | null throws IoError {
+  let name = vars.httpName;
+  let value = vars.http;
+  if (https) {
+    const secure = vars.https;
+    if (secure != null && secure.length > 0) {
+      name = vars.httpsName;
+      value = secure;
+    }
+  }
+  if (value == null || value.length == 0) {
+    return null;
+  }
+  let list = getEnv("no_proxy");
+  if (list == null) {
+    list = getEnv("NO_PROXY");
+  }
+  if (list != null && noProxy(list, hostname, port)) {
+    return null;
+  }
+  return parseProxy(value, `$${name}`);
+}
+
+/** The proxy `value` names; `what` says where it came from in an error. */
+export function parseProxy(value: string, what: string): Via throws IoError {
+  let text = value.trim();
+  const sep = text.indexOf("://");
+  if (sep < 0) {
+    text = `http://${text}`;
+  } else {
+    const scheme = text.slice(0, sep).toLowerCase();
+    if (scheme != "http") {
+      throw invalid(what, `\`${scheme}://\` proxies are not supported (only \`http://\`)`);
+    }
+  }
+  const u = URL.parse(text);
+  if (u == null || u.hostname.length == 0) {
+    throw invalid(what, "not a URL with a host");
+  }
+  // undici's `parseOrigin`: only an origin, with or without a `/`.
+  if (u.pathname != "/" || u.search.length > 0 || u.hash.length > 0) {
+    throw invalid(what, "a path, query or fragment after the host");
+  }
+  const port = u.port.length > 0 ? u.port : "80";
+  let authorization = "";
+  // As undici's `ProxyAgent`: only with both a user and a password.
+  if (u.username.length > 0 && u.password.length > 0) {
+    const plain = `${decodeLenient(u.username, false)}:${decodeLenient(u.password, false)}`;
+    for (let i: i64 = 0; i < (plain.length as i64); i++) {
+      const c = plain.charCodeAt(i);
+      if (c < 32 || c == 127) {
+        throw invalid(what, "a control character in the user or password");
+      }
+    }
+    authorization = `Basic ${base64Encode(utf8Encode(plain))}`;
+  }
+  return new Via(`${u.hostname}:${port}`, authorization);
+}
+
+function invalid(what: string, why: string): IoError {
+  return new IoError("EINVAL", `fetch failed: invalid proxy in ${what}: ${why}`);
+}
+
+/**
+ * Whether `list` names `hostname` on `port`, as `EnvHttpProxyAgent` reads it: entries separated
+ * by commas and white space, each `host` or `host:port` (a port only covers that port), compared
+ * without case. A host that starts with `.` or `*` names every host ending in it (after the `*`):
+ * `.example.com` and `*.example.com` its subdomains, `*` everything; any other is that host
+ * alone. IPv6 addresses are written in brackets, as in URLs (`[::1]`, `[::1]:8080`).
+ */
+export function noProxy(list: string, hostname: string, port: i64): bool {
+  const host = hostname.toLowerCase();
+  const n = list.length as i64;
+  let start: i64 = 0;
+  for (let i: i64 = 0; i <= n; i++) {
+    if (i < n && !separator(list.charCodeAt(i))) {
+      continue;
+    }
+    if (i > start && listed(list.slice(start, i).toLowerCase(), host, port)) {
+      return true;
+    }
+    start = i + 1;
+  }
+  return false;
+}
+
+/** Whether `entry` (lowercase) of a `NO_PROXY` list names `host` (lowercase) on `port`. */
+function listed(entry: string, host: string, port: i64): bool {
+  let name = entry;
+  // `host:port`, as undici's `/^(.+):(\d+)$/` reads it: the last colon, only digits after it.
+  const colon = entry.lastIndexOf(":");
+  if (colon > 0 && colon + 1 < (entry.length as i64)) {
+    const want = digits(entry.slice(colon + 1));
+    if (want >= 0) {
+      // A port of 0 (`host:0`) is no port, as in undici.
+      if (want != 0 && want != port) {
+        return false;
+      }
+      name = entry.slice(0, colon);
+    }
+  }
+  if (name.startsWith(".") || name.startsWith("*")) {
+    return host.endsWith(name.startsWith("*") ? name.slice(1) : name);
+  }
+  return host == name;
+}
+
+/** A separator of `NO_PROXY` entries: a comma, or white space as a regex's `\s` is. */
+function separator(c: i64): bool {
+  return (
+    c == 44 ||
+    c == 32 ||
+    (c >= 9 && c <= 13) ||
+    c == 0xa0 ||
+    c == 0x1680 ||
+    (c >= 0x2000 && c <= 0x200a) ||
+    c == 0x2028 ||
+    c == 0x2029 ||
+    c == 0x202f ||
+    c == 0x205f ||
+    c == 0x3000 ||
+    c == 0xfeff
+  );
+}
+
+/**
+ * The decimal number `s` (digits only), or -1. It stops growing past nine digits, still no port
+ * (as undici's `parseInt` of a long one).
+ */
+function digits(s: string): i64 {
+  if (s.length == 0) {
+    return -1;
+  }
+  let n: i64 = 0;
+  for (let i: i64 = 0; i < (s.length as i64); i++) {
+    const c = s.charCodeAt(i) - 48;
+    if (c < 0 || c > 9) {
+      return -1;
+    }
+    if (n < 1000000000) {
+      n = n * 10 + c;
+    }
+  }
+  return n;
+}
