@@ -1,0 +1,962 @@
+// R-tree benchmark driver: a case-by-case port of the benchmark's C# driver (Driver.cs),
+// printing the same "checksum" and "verify" values. usage: driver <case|all> <n> <reps> <warmup>
+import {
+  FOLD_INIT,
+  Result,
+  fail,
+  fold,
+  maxU64,
+  minU64,
+  mix64,
+  nowNs,
+  rnd,
+  runDriver,
+  since,
+} from "../_common";
+import { RTree } from "./_rtree";
+
+// ------------------------------------------------------------------ helpers
+
+// Coordinates are integers in [0, W).
+const W: i64 = 1048576;
+
+// The id of the i-th workload entry: a bijection from i < 2^30 onto the even numbers in
+// [0, 2^31). Odd ids are left for the edge cases of verifyFull.
+function idOf(i: u64): i32 {
+  return (((i * 0x9e3779b1) & 0x3fffffff) << 1) as i32;
+}
+
+// 32-bit mix of an id, for the checksums of the timed loops.
+function idMix(a: u32): u32 {
+  return a * 0x9e3779b1;
+}
+
+// The two 32-bit halves of a timed loop's checksum.
+class Acc {
+  lo: u32 = 0;
+  hi: u32 = 0;
+}
+
+// Fold the ids a search returned (the j-th search of a timed loop) into the checksum,
+// independently of their order.
+function takeSet(acc: Acc, j: u32, ids: i32[], t: i32) {
+  let s: u32 = 0;
+  let x: u32 = 0;
+  for (let i: i32 = 0; i < t; i++) {
+    s += idMix(ids[i] as u32);
+    x ^= ids[i] as u32;
+  }
+  acc.lo += s ^ j;
+  acc.hi += x + (t as u32);
+}
+
+// Fold the ids nearest() returned (in order) into the checksum.
+function takeList(acc: Acc, j: u32, ids: i32[], c: i32) {
+  for (let i: i32 = 0; i < c; i++) {
+    acc.lo += idMix((ids[i] as u32) ^ (i as u32));
+    acc.hi += (ids[i] as u32) ^ j;
+  }
+  acc.hi += c as u32;
+}
+
+function halves(acc: Acc): u64 {
+  return ((acc.hi as u64) << 32) | (acc.lo as u64);
+}
+
+function clamp(v: i64, lo: i64, hi: i64): i64 {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+function minI64(a: i64, b: i64): i64 {
+  return a < b ? a : b;
+}
+
+function clampU64(v: u64, lo: u64, hi: u64): u64 {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+// floor(sqrt(v)) for v < 2^62, by bisection.
+function isqrt(v: u64): u64 {
+  let lo: u64 = 0;
+  let hi: u64 = 1 << 31;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) / 2;
+    if (mid * mid <= v) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return lo;
+}
+
+// The side of a square window that holds about `per` entries' worth of area when n entries are
+// spread over the whole domain (clamped to [1, W]).
+function sideFor(per: u64, n: u64): i64 {
+  return clamp(isqrt((per * (1 << 40)) / n) as i64, 1, W);
+}
+
+// ------------------------------------------------------------- workload data
+//
+// Data: rectangles of mixed sizes (20% points, 70% small with sides below 128, 9.8% medium with
+// sides below 1024, 0.2% large with sides below 2^14), 70% of them around 4096 cluster centres
+// (each with a spread between 2^11 and 2^15) and 30% spread uniformly, and 1% exact copies of an
+// earlier rectangle (under a different id). 64 square holes of side 2^14, on a grid of pitch
+// 2^17, are kept empty: a rectangle that would overlap a hole is moved to the right of it. The
+// search_miss queries lie inside the holes.
+
+const CLUSTERS: u64 = 4096;
+const HOLE_PITCH: i64 = 131072;
+const HOLE_SIDE: i64 = 16384;
+const HOLE_OFF: i64 = 57344; // (HOLE_PITCH - HOLE_SIDE) / 2: the start of a hole in its cell
+
+class Rects {
+  x0: i32[];
+  y0: i32[];
+  x1: i32[];
+  y1: i32[];
+  id: i32[];
+
+  constructor(count: u64) {
+    this.x0 = new Array<i32>(count).fill(0);
+    this.y0 = new Array<i32>(count).fill(0);
+    this.x1 = new Array<i32>(count).fill(0);
+    this.y1 = new Array<i32>(count).fill(0);
+    this.id = new Array<i32>(count).fill(0);
+  }
+
+  clone(): Rects {
+    const n = this.x0.length as u64;
+    const r = new Rects(n);
+    for (let i: u64 = 0; i < n; i++) {
+      r.x0[i] = this.x0[i];
+      r.y0[i] = this.y0[i];
+      r.x1[i] = this.x1[i];
+      r.y1[i] = this.y1[i];
+      r.id[i] = this.id[i];
+    }
+    return r;
+  }
+}
+
+// Does [lo, hi] (at most 2^15 long) overlap a hole on one axis? Only the last hole starting at
+// or before hi can overlap it.
+function holeAxis(lo: i64, hi: i64): boolean {
+  if (hi < HOLE_OFF) {
+    return false;
+  }
+  const start = ((hi - HOLE_OFF) / HOLE_PITCH) * HOLE_PITCH + HOLE_OFF;
+  return lo <= start + HOLE_SIDE - 1;
+}
+
+// The rectangle of width w and height h (both below 2^15) centred on (cx, cy), clipped to the
+// domain and moved out of the holes.
+function makeRect(cx: i64, cy: i64, w: i64, h: i64, o: i32[], at: i32) {
+  let x0 = clamp(cx - w / 2, 0, W - 1);
+  let x1 = minI64(x0 + w, W - 1);
+  const y0 = clamp(cy - h / 2, 0, W - 1);
+  const y1 = minI64(y0 + h, W - 1);
+  if (holeAxis(x0, x1) && holeAxis(y0, y1)) {
+    x0 += HOLE_SIDE + w; // just right of the hole, before the next one
+    x1 = minI64(x0 + w, W - 1);
+  }
+  o[at] = x0 as i32;
+  o[at + 1] = y0 as i32;
+  o[at + 2] = x1 as i32;
+  o[at + 3] = y1 as i32;
+}
+
+// A point from the data's spatial distribution: 70% near a cluster centre, 30% uniform. r is a
+// random number. Returns px | py << 32 (both are in [0, W)).
+function samplePoint(r: u64): u64 {
+  const b = mix64(r);
+  let px: i64 = 0;
+  let py: i64 = 0;
+  if (r % 10 < 7) {
+    const c = rnd(1, (r >> 8) % CLUSTERS); // the cluster's centre and spread
+    const spread: i64 = (2048 as i64) << (((c >> 40) % 5) as i64);
+    const d = mix64(b);
+    const us = spread as u64;
+    px = clamp(((c % (W as u64)) as i64) + ((b % us) as i64) - (((b >> 32) % us) as i64), 0, W - 1);
+    py = clamp(
+      (((c >> 20) % (W as u64)) as i64) + ((d % us) as i64) - (((d >> 32) % us) as i64),
+      0,
+      W - 1,
+    );
+  } else {
+    px = (b % (W as u64)) as i64;
+    py = ((b >> 32) % (W as u64)) as i64;
+  }
+  return (px as u64) | ((py as u64) << 32);
+}
+
+function ptX(p: u64): i64 {
+  return (p & 0xffffffff) as i64;
+}
+
+function ptY(p: u64): i64 {
+  return (p >> 32) as i64;
+}
+
+// Entries first .. first + count - 1 of the workload (entry i gets idOf(i)). Copies refer to
+// earlier entries of the same call.
+function genEntries(d: Rects, first: u64, count: u64) {
+  const o = new Array<i32>(4).fill(0);
+  for (let k: u64 = 0; k < count; k++) {
+    const i = first + k;
+    const r = rnd(2, i);
+    const a = mix64(r);
+    d.id[k] = idOf(i);
+    if (k > 0 && (r >> 40) % 100 == 0) {
+      // an exact copy of an earlier rectangle
+      const src = (r >> 48) % k;
+      d.x0[k] = d.x0[src];
+      d.y0[k] = d.y0[src];
+      d.x1[k] = d.x1[src];
+      d.y1[k] = d.y1[src];
+      continue;
+    }
+    const kind = r % 1000;
+    let w: i64 = 0;
+    let h: i64 = 0;
+    if (kind < 200) {
+      // a point
+    } else if (kind < 900) {
+      w = (a % 128) as i64;
+      h = ((a >> 16) % 128) as i64;
+    } else if (kind < 998) {
+      w = (a % 1024) as i64;
+      h = ((a >> 16) % 1024) as i64;
+    } else {
+      w = (a % 16384) as i64;
+      h = ((a >> 16) % 16384) as i64;
+    }
+    const p = samplePoint(mix64(a));
+    makeRect(ptX(p), ptY(p), w, h, o, 0);
+    d.x0[k] = o[0];
+    d.y0[k] = o[1];
+    d.x1[k] = o[2];
+    d.y1[k] = o[3];
+  }
+}
+
+function insertAll(t: RTree, d: Rects, count: u64) {
+  for (let i: u64 = 0; i < count; i++) {
+    t.insert(d.x0[i], d.y0[i], d.x1[i], d.y1[i], d.id[i]);
+  }
+}
+
+// A query window of about side s (each side between s/2 and 3s/2) around a point of the data
+// distribution.
+function makeWindow(r: u64, s: i64, o: i32[], at: i32) {
+  const p = samplePoint(r);
+  const a = mix64(r ^ 0x5555555555555555);
+  const w = s / 2 + ((a % ((s + 1) as u64)) as i64);
+  const h = s / 2 + (((a >> 32) % ((s + 1) as u64)) as i64);
+  const x0 = clamp(ptX(p) - w / 2, 0, W - 1);
+  const y0 = clamp(ptY(p) - h / 2, 0, W - 1);
+  o[at] = x0 as i32;
+  o[at + 1] = y0 as i32;
+  o[at + 2] = minI64(x0 + w, W - 1) as i32;
+  o[at + 3] = minI64(y0 + h, W - 1) as i32;
+}
+
+// A query window inside one of the 64 holes (so it matches nothing), with sides between 1 and
+// 2^13.
+function makeMiss(r: u64, o: i32[], at: i32) {
+  const a = mix64(r);
+  const hx = ((r % 8) as i64) * HOLE_PITCH + HOLE_OFF;
+  const hy = (((r >> 3) % 8) as i64) * HOLE_PITCH + HOLE_OFF;
+  const w = 1 + ((a % ((HOLE_SIDE / 2) as u64)) as i64);
+  const h = 1 + (((a >> 16) % ((HOLE_SIDE / 2) as u64)) as i64);
+  const x0 = hx + (((a >> 32) % ((HOLE_SIDE - w) as u64)) as i64);
+  const y0 = hy + (((a >> 48) % ((HOLE_SIDE - h) as u64)) as i64);
+  o[at] = x0 as i32;
+  o[at + 1] = y0 as i32;
+  o[at + 2] = (x0 + w - 1) as i32;
+  o[at + 3] = (y0 + h - 1) as i32;
+}
+
+// A point query (as a degenerate window) at a random point inside a random one of the first n
+// entries of d, so that it matches at least that entry while it is in the tree.
+function stabPoint(r: u64, d: Rects, n: u64, o: i32[], at: i32) {
+  const e = r % n;
+  const a = mix64(r);
+  const px = d.x0[e] + ((a % ((d.x1[e] - d.x0[e] + 1) as u64)) as i32);
+  const py = d.y0[e] + (((a >> 32) % ((d.y1[e] - d.y0[e] + 1) as u64)) as i32);
+  o[at] = px;
+  o[at + 2] = px;
+  o[at + 1] = py;
+  o[at + 3] = py;
+}
+
+// Z-order (Morton) code of a point: the bits of x and y interleaved.
+function morton(x: u64, y: u64): u64 {
+  let z: u64 = 0;
+  for (let b: u64 = 0; b < 20; b++) {
+    z |= ((x >> b) & 1) << (2 * b);
+    z |= ((y >> b) & 1) << (2 * b + 1);
+  }
+  return z;
+}
+
+// -------------------------------------------------------------- verification
+
+// The legal range of height() and nodeCount() for a tree of `len` entries with at most 16 and
+// (except the root) at least 6 entries per node, and an internal root with at least 2 children.
+function checkShape(caseName: string, n: u64, t: RTree) {
+  const len = (t.count as i64) as u64;
+  const ht = (t.height() as i64) as u64;
+  const nc = (t.nodeCount() as i64) as u64;
+  if (len == 0) {
+    if (ht != 0) {
+      fail(caseName, n, `height() of an empty tree is ${ht}, not 0`);
+    }
+    if (nc != 0) {
+      fail(caseName, n, `node_count() of an empty tree is ${nc}, not 0`);
+    }
+    return;
+  }
+  // Fewest levels: a node holds at most 16 entries, so h levels hold at most 16^h. Most levels:
+  // 2 * 6^(h-1) entries are needed for h >= 2.
+  let hmin: u64 = 1;
+  let cap: u64 = 16;
+  while (cap < len) {
+    cap *= 16;
+    hmin++;
+  }
+  let hmax: u64 = 1;
+  let need: u64 = 12;
+  while (need <= len) {
+    need *= 6;
+    hmax++;
+  }
+  if (ht < hmin || ht > hmax) {
+    fail(
+      caseName,
+      n,
+      `height() = ${ht} is impossible for ${len} entries (it must be between ${hmin} and ${hmax})`,
+    );
+  }
+  // Fewest nodes: every level has at least ceil(below / 16) nodes. Most nodes: every level below
+  // the root has at most floor(below / 6), plus the root.
+  let nlo: u64 = 0;
+  let c = len;
+  do {
+    c = (c + 15) / 16;
+    nlo += c;
+  } while (c > 1);
+  let nhi: u64 = 1;
+  c = len / 6;
+  while (c > 0) {
+    nhi += c;
+    c /= 6;
+  }
+  if (nc < nlo || nc > nhi) {
+    fail(
+      caseName,
+      n,
+      `node_count() = ${nc} is impossible for ${len} entries (it must be between ${nlo} and ${nhi})`,
+    );
+  }
+}
+
+// Hash a set of ids independently of their order.
+function foldSet(h0: u64, ids: i32[], t: u64): u64 {
+  let s: u64 = 0;
+  let x: u64 = 0;
+  for (let i: u64 = 0; i < t; i++) {
+    const e = mix64((ids[i] as u32) as u64);
+    s += e;
+    x ^= e;
+  }
+  let h = fold(h0, t);
+  h = fold(h, s);
+  return fold(h, x);
+}
+
+// The running hash of verifyFull.
+class Hash {
+  constructor(public h: u64) {}
+}
+
+// Run one search through a buffer large enough for any answer, check that the answer fits, and
+// hash it.
+function searchFold(
+  caseName: string,
+  n: u64,
+  t: RTree,
+  hs: Hash,
+  buf: i32[],
+  x0: i64,
+  y0: i64,
+  x1: i64,
+  y1: i64,
+): u64 {
+  const cap = buf.length as i32;
+  const got = (t.search(x0 as i32, y0 as i32, x1 as i32, y1 as i32, buf, cap) as i64) as u64;
+  if (got > ((t.count as i64) as u64)) {
+    fail(caseName, n, "search() reports more matches than len()");
+  }
+  hs.h = foldSet(hs.h, buf, got);
+  return got;
+}
+
+// Rectangles inserted (and removed again) by verifyFull, with odd ids: x0, y0, x1, y1, id.
+const EDGE: i32[][] = [
+  [0, 0, 0, 0, 1], // the smallest point
+  [1048575, 1048575, 1048575, 1048575, 2147483647], // the largest point, the largest id
+  [0, 0, 1048575, 1048575, 3], // the whole domain
+  [5, 100, 5, 900000, 5], // a vertical line
+  [777777, 333333, 777800, 333400, 7], // the same rectangle ...
+  [777777, 333333, 777800, 333400, 9], // ... twice
+];
+
+function b(x: boolean): u64 {
+  return x ? 1 : 0;
+}
+
+// Is v in the sorted array a?
+function contains(a: i32[], v: i32): boolean {
+  let lo: i64 = 0;
+  let hi = (a.length as i64) - 1;
+  while (lo <= hi) {
+    const mid = lo + (hi - lo) / 2;
+    const m = a[mid];
+    if (m == v) {
+      return true;
+    }
+    if (m < v) {
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return false;
+}
+
+function foldNearest(hs: Hash, near: i32[], c: u64) {
+  hs.h = fold(hs.h, c);
+  for (let i: u64 = 0; i < c; i++) {
+    hs.h = fold(hs.h, (near[i] as u32) as u64);
+  }
+}
+
+// Hash the observable state of the tree: its length, the set of all ids, the answers to window,
+// point and nearest queries, then the effect of inserting and removing some special entries.
+// Checks height() and nodeCount() against the bounds every legal tree meets, and that search()
+// respects its cap. The tree is left with the entries it had.
+function verifyFull(caseName: string, n: u64, t: RTree): u64 {
+  const hs = new Hash(FOLD_INIT);
+  const len = (t.count as i64) as u64;
+  hs.h = fold(hs.h, len);
+  checkShape(caseName, n, t);
+  const buf = new Array<i32>(len + 16).fill(0);
+
+  // Every entry, through a search of the whole domain.
+  let got = searchFold(caseName, n, t, hs, buf, 0, 0, W - 1, W - 1);
+  if (got != len) {
+    fail(caseName, n, `a search of the whole domain finds ${got} entries, but len() = ${len}`);
+  }
+  const all = new Array<i32>(len).fill(0);
+  for (let i: u64 = 0; i < len; i++) {
+    all[i] = buf[i];
+  }
+  all.sort();
+  for (let i: u64 = 1; i < len; i++) {
+    if (all[i] == all[i - 1]) {
+      fail(caseName, n, "a search reports the same id twice");
+    }
+  }
+
+  // The cap: nothing is written with cap 0, and with cap 3 three distinct ids of the answer are
+  // written. Either way the total is returned.
+  buf[0] = -1;
+  got = (t.search(0, 0, (W - 1) as i32, (W - 1) as i32, buf, 0) as i64) as u64;
+  if (got != len || buf[0] != -1) {
+    fail(caseName, n, "search() with cap 0 must write nothing and return the total");
+  }
+  if (len >= 3) {
+    got = (t.search(0, 0, (W - 1) as i32, (W - 1) as i32, buf, 3) as i64) as u64;
+    if (got != len) {
+      fail(caseName, n, "search() with a small cap must still return the total");
+    }
+    for (let i: i32 = 0; i < 3; i++) {
+      if (!contains(all, buf[i]) || (i > 0 && buf[i] == buf[0]) || (i > 1 && buf[i] == buf[1])) {
+        fail(caseName, n, "search() with a small cap must write distinct ids of the answer");
+      }
+    }
+  }
+
+  // A grid of 8 x 8 tiles.
+  for (let ty: i64 = 0; ty < 8; ty++) {
+    for (let tx: i64 = 0; tx < 8; tx++) {
+      const s = W / 8;
+      searchFold(caseName, n, t, hs, buf, tx * s, ty * s, tx * s + s - 1, ty * s + s - 1);
+    }
+  }
+  // Windows of three sizes, points, and windows in the holes.
+  const sides: i64[] = [sideFor(2, n), sideFor(100, n), sideFor(1000, n)];
+  const q = new Array<i32>(4).fill(0);
+  for (let j: u64 = 0; j < 48; j++) {
+    makeWindow(rnd(20, j), sides[j % 3], q, 0);
+    searchFold(caseName, n, t, hs, buf, q[0] as i64, q[1] as i64, q[2] as i64, q[3] as i64);
+  }
+  for (let j: u64 = 0; j < 32; j++) {
+    const p = samplePoint(rnd(21, j));
+    searchFold(caseName, n, t, hs, buf, ptX(p), ptY(p), ptX(p), ptY(p));
+  }
+  for (let j: u64 = 0; j < 8; j++) {
+    makeMiss(rnd(22, j), q, 0);
+    searchFold(caseName, n, t, hs, buf, q[0] as i64, q[1] as i64, q[2] as i64, q[3] as i64);
+  }
+
+  // Nearest neighbours: k = 1, 8 and more than len, and k = 0.
+  const near = new Array<i32>(32).fill(0);
+  for (let j: u64 = 0; j < 24; j++) {
+    const p = samplePoint(rnd(23, j));
+    const k: u64 = j % 3 == 0 ? 1 : j % 3 == 1 ? 8 : 17;
+    const cn = (t.nearest(ptX(p) as i32, ptY(p) as i32, k as i32, near) as i64) as u64;
+    if (cn != minU64(k, len)) {
+      fail(caseName, n, "nearest() must return min(k, len()) ids");
+    }
+    foldNearest(hs, near, cn);
+  }
+  if (t.nearest(0, 0, 0, near) != 0) {
+    fail(caseName, n, "nearest() with k = 0 must return 0");
+  }
+
+  // Special entries: extreme coordinates and ids, the whole domain, a line, and one rectangle
+  // twice.
+  for (let e: i32 = 0; e < 6; e++) {
+    const g = EDGE[e];
+    t.insert(g[0], g[1], g[2], g[3], g[4]);
+  }
+  hs.h = fold(hs.h, (t.count as i64) as u64);
+  checkShape(caseName, n, t);
+  const big = new Array<i32>(len + 32).fill(0);
+  searchFold(caseName, n, t, hs, big, 0, 0, 0, 0);
+  searchFold(caseName, n, t, hs, big, W - 1, W - 1, W - 1, W - 1);
+  searchFold(caseName, n, t, hs, big, 777777, 333333, 777800, 333400);
+  searchFold(caseName, n, t, hs, big, 5, 900000, 5, 900000);
+  searchFold(caseName, n, t, hs, big, 0, 950000, 4, 1000000); // just misses the line ...
+  searchFold(caseName, n, t, hs, big, 6, 0, 6, 99); // ... and so does this
+  let c = (t.nearest((W - 1) as i32, (W - 1) as i32, 3, near) as i64) as u64;
+  foldNearest(hs, near, c);
+  c = (t.nearest(777790, 333350, 2, near) as i64) as u64;
+  foldNearest(hs, near, c);
+
+  // Removal: only an entry with exactly that rectangle and id goes.
+  hs.h = fold(hs.h, b(t.remove(0, 0, 0, 0, 3))); // wrong id
+  hs.h = fold(hs.h, b(t.remove(0, 0, 0, 1, 1))); // wrong rectangle
+  hs.h = fold(hs.h, b(t.remove(0, 0, 0, 0, 1)));
+  hs.h = fold(hs.h, b(t.remove(0, 0, 0, 0, 1))); // already gone
+  hs.h = fold(hs.h, b(t.remove(777777, 333333, 777800, 333400, 7)));
+  searchFold(caseName, n, t, hs, big, 777777, 333333, 777800, 333400);
+  for (let e: i32 = 1; e < 6; e++) {
+    if (e == 4) {
+      continue;
+    }
+    const g = EDGE[e];
+    hs.h = fold(hs.h, b(t.remove(g[0], g[1], g[2], g[3], g[4])));
+  }
+  hs.h = fold(hs.h, (t.count as i64) as u64);
+  checkShape(caseName, n, t);
+  if (((t.count as i64) as u64) != len) {
+    fail(caseName, n, "len() is wrong after inserting and removing entries");
+  }
+  got = searchFold(caseName, n, t, hs, buf, 0, 0, W - 1, W - 1);
+  if (got != len) {
+    fail(caseName, n, "a search of the whole domain disagrees with len()");
+  }
+  if (len == 0) {
+    hs.h = fold(hs.h, b(t.remove(0, 0, 0, 0, 1))); // remove from an empty tree
+    hs.h = fold(hs.h, (t.nearest(5, 5, 4, near) as i64) as u64);
+  }
+  return hs.h;
+}
+
+// ---------------------------------------------------------------------- cases
+
+// insert_random: 3 rounds that each insert the n entries, in the order they were generated
+//                (spatially random), into an empty tree.
+// insert_sorted: 4 rounds of the same with the entries in Z-order of their centres.
+// Below 1,000,000 entries there are fewer rounds (at least 1).
+function caseInsert(name: string, n: u64, sorted: boolean): Result {
+  const rounds = sorted ? clampU64(n / 250000, 1, 4) : clampU64(n / 330000, 1, 3);
+  let d = new Rects(n);
+  genEntries(d, 0, n);
+  if (sorted) {
+    const key = new Array<u64>(n).fill(0);
+    for (let i: u64 = 0; i < n; i++) {
+      const cx = (((d.x0[i] as u32) as u64) + ((d.x1[i] as u32) as u64)) / 2;
+      const cy = (((d.y0[i] as u32) as u64) + ((d.y1[i] as u32) as u64)) / 2;
+      key[i] = (morton(cx, cy) << 24) | i; // distinct keys: n < 2^24
+    }
+    key.sort();
+    const s = new Rects(n);
+    for (let j: u64 = 0; j < n; j++) {
+      const i = key[j] & 0xffffff;
+      s.x0[j] = d.x0[i];
+      s.y0[j] = d.y0[i];
+      s.x1[j] = d.x1[i];
+      s.y1[j] = d.y1[i];
+      s.id[j] = d.id[i];
+    }
+    d = s;
+  }
+  const len = n as i32;
+  const x0 = d.x0;
+  const y0 = d.y0;
+  const x1 = d.x1;
+  const y1 = d.y1;
+  const id = d.id;
+  let acc: u64 = 0;
+  let ns: u64 = 0;
+  let h = FOLD_INIT;
+  for (let round: u64 = 0; round < rounds; round++) {
+    const t = new RTree();
+    const t0 = nowNs();
+    for (let i: i32 = 0; i < len; i++) {
+      t.insert(x0[i], y0[i], x1[i], y1[i], id[i]);
+    }
+    ns += since(t0);
+    acc += (t.count as i64) as u64;
+    if (round + 1 == rounds) {
+      h = fold(h, verifyFull(name, n, t));
+    }
+  }
+  return new Result(rounds * n, ns, acc, h);
+}
+
+// All on a tree of the n entries:
+// search_small: n windows around points of the data distribution, sized to match about 10
+//               entries each.
+// search_large: n / 16 windows sized to match about 1000 entries each.
+// search_miss:  2n windows inside the empty holes, which match nothing but overlap the bounding
+//               rectangles of nearby nodes.
+// point:        n points, each inside a random entry (stabbing queries).
+const Q_SMALL: u8 = 0;
+const Q_LARGE: u8 = 1;
+const Q_MISS: u8 = 2;
+const Q_POINT: u8 = 3;
+
+function caseSearch(name: string, n: u64, kind: u8): Result {
+  const count = kind == Q_LARGE ? maxU64(1, n / 16) : kind == Q_MISS ? 2 * n : n;
+  const d = new Rects(n);
+  genEntries(d, 0, n);
+  const t = new RTree();
+  insertAll(t, d, n);
+  const q = new Array<i32>(4 * count).fill(0);
+  const s = kind == Q_LARGE ? sideFor(1000, n) : sideFor(2, n);
+  for (let j: u64 = 0; j < count; j++) {
+    const r = rnd(10 + (kind as u64), j);
+    if (kind == Q_MISS) {
+      makeMiss(r, q, (4 * j) as i32);
+    } else if (kind == Q_POINT) {
+      stabPoint(r, d, n, q, (4 * j) as i32);
+    } else {
+      makeWindow(r, s, q, (4 * j) as i32);
+    }
+  }
+  const cap = (n + 16) as i32;
+  const o = new Array<i32>(cap).fill(0);
+  const cnt = count as i32;
+  const acc = new Acc();
+  const t0 = nowNs();
+  for (let j: i32 = 0; j < cnt; j++) {
+    const bq = 4 * j;
+    const got = t.search(q[bq], q[bq + 1], q[bq + 2], q[bq + 3], o, cap);
+    if ((got as u32) > (cap as u32)) {
+      fail(name, n, "search() reports more matches than the tree holds");
+    }
+    takeSet(acc, j as u32, o, got);
+  }
+  const ns = since(t0);
+  return new Result(count, ns, halves(acc), verifyFull(name, n, t));
+}
+
+// nearest: n / 4 queries for the 8 entries nearest to a point of the data distribution, on a
+// tree of the n entries.
+function caseNearest(name: string, n: u64): Result {
+  const k: i32 = 8;
+  const count = maxU64(1, n / 4);
+  const d = new Rects(n);
+  genEntries(d, 0, n);
+  const t = new RTree();
+  insertAll(t, d, n);
+  const px = new Array<i32>(count).fill(0);
+  const py = new Array<i32>(count).fill(0);
+  for (let j: u64 = 0; j < count; j++) {
+    const p = samplePoint(rnd(14, j));
+    px[j] = ptX(p) as i32;
+    py[j] = ptY(p) as i32;
+  }
+  const o = new Array<i32>(8).fill(0);
+  const cnt = count as i32;
+  const acc = new Acc();
+  const t0 = nowNs();
+  for (let j: i32 = 0; j < cnt; j++) {
+    const c = t.nearest(px[j], py[j], k, o);
+    takeList(acc, j as u32, o, c);
+  }
+  const ns = since(t0);
+  return new Result(count, ns, halves(acc), verifyFull(name, n, t));
+}
+
+// remove: remove all n entries of a tree in random order, which empties it. The emptied tree is
+// verified, refilled with a few entries and verified again.
+function caseRemove(name: string, n: u64): Result {
+  const d = new Rects(n);
+  genEntries(d, 0, n);
+  const order = new Array<u64>(n).fill(0);
+  for (let j: u64 = 0; j < n; j++) {
+    order[j] = j;
+  }
+  for (let j = n - 1; j > 0; j--) {
+    // a random permutation (Fisher-Yates)
+    const k = rnd(15, j) % (j + 1);
+    const tmp = order[j];
+    order[j] = order[k];
+    order[k] = tmp;
+  }
+  const r = new Rects(n);
+  for (let j: u64 = 0; j < n; j++) {
+    const i = order[j];
+    r.x0[j] = d.x0[i];
+    r.y0[j] = d.y0[i];
+    r.x1[j] = d.x1[i];
+    r.y1[j] = d.y1[i];
+    r.id[j] = d.id[i];
+  }
+  const t = new RTree();
+  insertAll(t, d, n);
+  const len = n as i32;
+  const x0 = r.x0;
+  const y0 = r.y0;
+  const x1 = r.x1;
+  const y1 = r.y1;
+  const id = r.id;
+  const acc = new Acc();
+  const t0 = nowNs();
+  for (let j: i32 = 0; j < len; j++) {
+    const ok = t.remove(x0[j], y0[j], x1[j], y1[j], id[j]);
+    acc.lo += ok ? (j as u32) : 1;
+    acc.hi += ok ? 1 : 0;
+  }
+  const ns = since(t0);
+  let h = FOLD_INIT;
+  h = fold(h, verifyFull(name, n, t));
+  const again = minU64(n, 100); // an emptied tree must be usable again
+  insertAll(t, d, again);
+  h = fold(h, verifyFull(name, n, t));
+  return new Result(n, ns, halves(acc), h);
+}
+
+// move: n steps of a moving-objects simulation on a tree of n entries: each step removes a
+// random entry and inserts it again (same id and size) up to 1024 units away from where it was.
+function caseMove(name: string, n: u64): Result {
+  const count = n;
+  const d = new Rects(n);
+  genEntries(d, 0, n);
+  const t = new RTree();
+  insertAll(t, d, n);
+  const cur = d.clone();
+  const from = new Rects(count);
+  const to = new Rects(count);
+  const o = new Array<i32>(4).fill(0);
+  for (let j: u64 = 0; j < count; j++) {
+    const r = rnd(16, j);
+    const e = r % n;
+    const w = (cur.x1[e] - cur.x0[e]) as i64;
+    const h = (cur.y1[e] - cur.y0[e]) as i64;
+    const cx = ((cur.x0[e] as i64) + (cur.x1[e] as i64)) / 2 + (((r >> 32) % 2049) as i64) - 1024;
+    const cy = ((cur.y0[e] as i64) + (cur.y1[e] as i64)) / 2 + (((r >> 44) % 2049) as i64) - 1024;
+    from.x0[j] = cur.x0[e];
+    from.y0[j] = cur.y0[e];
+    from.x1[j] = cur.x1[e];
+    from.y1[j] = cur.y1[e];
+    from.id[j] = cur.id[e];
+    makeRect(cx, cy, w, h, o, 0);
+    cur.x0[e] = o[0];
+    cur.y0[e] = o[1];
+    cur.x1[e] = o[2];
+    cur.y1[e] = o[3];
+    to.x0[j] = o[0];
+    to.y0[j] = o[1];
+    to.x1[j] = o[2];
+    to.y1[j] = o[3];
+    to.id[j] = cur.id[e];
+  }
+  const cnt = count as i32;
+  const fx0 = from.x0;
+  const fy0 = from.y0;
+  const fx1 = from.x1;
+  const fy1 = from.y1;
+  const fid = from.id;
+  const tx0 = to.x0;
+  const ty0 = to.y0;
+  const tx1 = to.x1;
+  const ty1 = to.y1;
+  const tid = to.id;
+  const acc = new Acc();
+  const t0 = nowNs();
+  for (let j: i32 = 0; j < cnt; j++) {
+    const ok = t.remove(fx0[j], fy0[j], fx1[j], fy1[j], fid[j]);
+    t.insert(tx0[j], ty0[j], tx1[j], ty1[j], tid[j]);
+    acc.lo += ok ? (j as u32) : 1;
+    acc.hi += ok ? 1 : 0;
+  }
+  const ns = since(t0);
+  return new Result(2 * count, ns, halves(acc), verifyFull(name, n, t));
+}
+
+const OP_SEARCH: u8 = 0;
+const OP_POINT: u8 = 1;
+const OP_NEAR1: u8 = 2;
+const OP_NEAR8: u8 = 3;
+const OP_INSERT: u8 = 4;
+const OP_REMOVE: u8 = 5;
+
+// mixed: a read-heavy stream of 2n operations on a small tree that stays in the CPU caches
+// (m = n / 16 entries, the same density of queries): 40% small-window searches, 20% point
+// queries, 15% nearest with k = 1, 5% nearest with k = 8, 10% inserts of new entries and 10%
+// removals of random entries. The driver keeps the indexes of the live entries in an array to
+// choose what to remove.
+function caseMixed(name: string, n: u64): Result {
+  const m = maxU64(1, n / 16);
+  const count = 2 * n;
+  const d = new Rects(m + count); // entries m .. m + count - 1 are inserted by the stream
+  genEntries(d, 0, m + count);
+  const op = new Array<u8>(count).fill(0);
+  const q = new Array<i32>(5 * count).fill(0);
+  const live = new Array<u64>(m + count).fill(0);
+  for (let i: u64 = 0; i < m; i++) {
+    live[i] = i;
+  }
+  let nlive = m;
+  let added = m;
+  const s = sideFor(2, m);
+  for (let j: u64 = 0; j < count; j++) {
+    const r = rnd(17, j);
+    const p = r % 100;
+    const x = (5 * j) as i32;
+    if (p < 40) {
+      op[j] = OP_SEARCH;
+      makeWindow(r >> 8, s, q, x);
+    } else if (p < 60) {
+      op[j] = OP_POINT;
+      stabPoint(r >> 8, d, m, q, x);
+    } else if (p < 80) {
+      const pt = samplePoint(r >> 8);
+      op[j] = p < 75 ? OP_NEAR1 : OP_NEAR8;
+      q[x] = ptX(pt) as i32;
+      q[x + 2] = ptX(pt) as i32;
+      q[x + 1] = ptY(pt) as i32;
+      q[x + 3] = ptY(pt) as i32;
+    } else if (p < 90 || nlive == 0) {
+      op[j] = OP_INSERT;
+      const e = added;
+      added++;
+      q[x] = d.x0[e];
+      q[x + 1] = d.y0[e];
+      q[x + 2] = d.x1[e];
+      q[x + 3] = d.y1[e];
+      q[x + 4] = d.id[e];
+      live[nlive] = e;
+      nlive++;
+    } else {
+      op[j] = OP_REMOVE;
+      const at = (r >> 8) % nlive;
+      const e = live[at];
+      q[x] = d.x0[e];
+      q[x + 1] = d.y0[e];
+      q[x + 2] = d.x1[e];
+      q[x + 3] = d.y1[e];
+      q[x + 4] = d.id[e];
+      nlive--;
+      live[at] = live[nlive];
+    }
+  }
+  const t = new RTree();
+  insertAll(t, d, m);
+  const cap = (m + count + 16) as i32;
+  const o = new Array<i32>(cap).fill(0);
+  const cnt = count as i32;
+  const acc = new Acc();
+  const t0 = nowNs();
+  for (let j: i32 = 0; j < cnt; j++) {
+    const x = 5 * j;
+    switch (op[j]) {
+      case OP_SEARCH:
+      case OP_POINT: {
+        const got = t.search(q[x], q[x + 1], q[x + 2], q[x + 3], o, cap);
+        if ((got as u32) > (cap as u32)) {
+          fail(name, n, "search() reports more matches than the tree holds");
+        }
+        takeSet(acc, j as u32, o, got);
+        break;
+      }
+      case OP_NEAR1:
+      case OP_NEAR8: {
+        const c = t.nearest(q[x], q[x + 1], op[j] == OP_NEAR1 ? 1 : 8, o);
+        takeList(acc, j as u32, o, c);
+        break;
+      }
+      case OP_INSERT:
+        t.insert(q[x], q[x + 1], q[x + 2], q[x + 3], q[x + 4]);
+        break;
+      default: {
+        const ok = t.remove(q[x], q[x + 1], q[x + 2], q[x + 3], q[x + 4]);
+        acc.lo += ok ? (j as u32) : 1;
+        break;
+      }
+    }
+  }
+  const ns = since(t0);
+  return new Result(count, ns, halves(acc), verifyFull(name, n, t));
+}
+
+// ---------------------------------------------------------------------- main
+
+const CASES = [
+  "insert_random",
+  "insert_sorted",
+  "search_small",
+  "search_large",
+  "search_miss",
+  "point",
+  "nearest",
+  "remove",
+  "move",
+  "mixed",
+];
+
+function runCase(name: string, n: u64): Result {
+  switch (name) {
+    case "insert_random":
+      return caseInsert(name, n, false);
+    case "insert_sorted":
+      return caseInsert(name, n, true);
+    case "search_small":
+      return caseSearch(name, n, Q_SMALL);
+    case "search_large":
+      return caseSearch(name, n, Q_LARGE);
+    case "search_miss":
+      return caseSearch(name, n, Q_MISS);
+    case "point":
+      return caseSearch(name, n, Q_POINT);
+    case "nearest":
+      return caseNearest(name, n);
+    case "remove":
+      return caseRemove(name, n);
+    case "move":
+      return caseMove(name, n);
+    default:
+      return caseMixed(name, n);
+  }
+}
+
+// The C# driver's limits: mixed allocates 5 * 2n query values in int-indexed arrays, and
+// insert_sorted packs the entry index into 24 bits.
+runDriver(CASES, runCase, minU64((2147483647 - 64) / 10, (1 << 24) - 1));

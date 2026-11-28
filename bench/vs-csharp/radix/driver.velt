@@ -1,0 +1,1139 @@
+// Radix tree benchmark driver: a case-by-case port of the benchmark's C# driver (Driver.cs),
+// printing the same "checksum" and "verify" values. usage: driver <case|all> <n> <reps> <warmup>
+//
+// Keys are byte strings. All the keys of a workload live in one contiguous byte buffer with an
+// array of offsets (class KeyList), built in setup; the tree receives each key as the buffer,
+// an offset and a length, and must copy whatever it keeps.
+import {
+  FOLD_INIT,
+  Result,
+  fail,
+  fold,
+  minU64,
+  mix64,
+  nowNs,
+  rnd,
+  runDriver,
+  since,
+} from "../_common";
+import { RadixTree } from "./_radix";
+
+const I64_MAX: i64 = 9223372036854775807;
+const I64_MIN: i64 = -I64_MAX - 1;
+
+// The value first stored for workload key i (any i64, also negative).
+function valAt(i: u64): i64 {
+  return mix64(i ^ 0x5deece66d) as i64;
+}
+
+function b(x: boolean): u64 {
+  return x ? 1 : 0;
+}
+
+// An int (Count, NodeCount, Height, PrefixCount, PrefixValues, the match length) as u64,
+// sign-extended.
+function w(x: i32): u64 {
+  return (x as i64) as u64;
+}
+
+// A growable byte string (the C++ std::vector<u8>).
+class ByteBuf {
+  a: u8[];
+  len: i32 = 0;
+
+  constructor(capacity: i32 = 16) {
+    this.a = new Array<u8>(capacity > 1 ? capacity : 1).fill(0);
+  }
+
+  push(x: u8) {
+    if (this.len == this.a.length) {
+      const na = new Array<u8>(this.a.length * 2).fill(0);
+      for (let i: i32 = 0; i < this.len; i++) {
+        na[i] = this.a[i];
+      }
+      this.a = na;
+    }
+    this.a[this.len++] = x;
+  }
+
+  append(s: u8[]) {
+    for (const x of s) {
+      this.push(x);
+    }
+  }
+
+  popBack() {
+    this.len--;
+  }
+
+  // Only ever shrinks.
+  resize(len: i32) {
+    this.len = len;
+  }
+
+  copy(): ByteBuf {
+    const c = new ByteBuf(this.len);
+    for (let i: i32 = 0; i < this.len; i++) {
+      c.a[i] = this.a[i];
+    }
+    c.len = this.len;
+    return c;
+  }
+}
+
+// ------------------------------------------------------- workload keys
+//
+// Workload key i (any u64 i) is a path of '/'-separated segments with an optional decimal
+// tail, built from the digits of i (see Driver.cs): d0 = i % 16 picks the first segment,
+// d0 % 4 further segments follow, groups 3 and 14 are binary, and r = i / 16 / 32^m > 0 is
+// appended in decimal.
+
+// SEG[bin][level][d]: the segments, made by makeSegments().
+let SEG: u8[][][][] = [];
+
+function makeSegments() {
+  SEG = [];
+  for (let bin: u64 = 0; bin < 2; bin++) {
+    const levels: u8[][][] = [];
+    for (let level: u64 = 0; level < 4; level++) {
+      const count: u64 = level == 0 ? 16 : 32;
+      const segs: u8[][] = [];
+      for (let d: u64 = 0; d < 32; d++) {
+        segs.push([]);
+      }
+      for (let d: u64 = 0; d < count; d++) {
+        const r = rnd(100 + level, d);
+        const len = 2 + (r % 7);
+        const s = new Array<u8>(len).fill(0);
+        for (let k: u64 = 0; k < len; k++) {
+          const x = k == 0 ? d >> 3 : k == 1 ? d & 7 : (r >> (5 * k + 3)) % 26;
+          let v: u8;
+          if (bin == 1) {
+            v = (x % 2 == 0 ? x / 2 : 255 - x / 2) as u8;
+          } else {
+            v = (97 + x) as u8;
+          }
+          s[k] = v;
+        }
+        segs[d] = s;
+      }
+      levels.push(segs);
+    }
+    SEG.push(levels);
+  }
+}
+
+const SLASH: u8 = 47;
+
+// Append v in decimal (no leading zeros; "0" for 0).
+function appendDecimal(o: ByteBuf, v0: u64) {
+  const digits = new Array<u8>(20).fill(0);
+  let v = v0;
+  let c: i32 = 0;
+  do {
+    digits[c++] = (48 + (v % 10)) as u8;
+    v /= 10;
+  } while (v > 0);
+  while (c > 0) {
+    o.push(digits[--c]);
+  }
+}
+
+// Append workload key i.
+function appendKey(o: ByteBuf, i: u64) {
+  const d0 = i % 16;
+  let r = i / 16;
+  const m = d0 % 4;
+  const bin: u64 = d0 == 3 || d0 == 14 ? 1 : 0;
+  o.append(SEG[bin][0][d0]);
+  for (let level: u64 = 1; level <= m; level++) {
+    o.push(SLASH);
+    o.append(SEG[bin][level][r % 32]);
+    r /= 32;
+  }
+  if (r > 0) {
+    o.push(SLASH);
+    appendDecimal(o, r);
+  }
+}
+
+// Many keys in one contiguous buffer: key j is bytes.a[off[j] .. off[j + 1]). Append a key's
+// bytes to `bytes`, then call close().
+class KeyList {
+  bytes: ByteBuf = new ByteBuf(1024);
+  off: i32[] = new Array<i32>(1024).fill(0);
+  private nOff: i32 = 1; // off[0] = 0
+
+  close() {
+    if (this.nOff == this.off.length) {
+      const no = new Array<i32>(this.off.length * 2).fill(0);
+      for (let i: i32 = 0; i < this.nOff; i++) {
+        no[i] = this.off[i];
+      }
+      this.off = no;
+    }
+    this.off[this.nOff++] = this.bytes.len;
+  }
+
+  get count(): u64 {
+    return (this.nOff - 1) as u64;
+  }
+
+  get back(): i32 {
+    return this.off[this.nOff - 1];
+  }
+
+  // Of the key being built.
+  get lastLen(): u64 {
+    return (this.bytes.len - this.back) as u64;
+  }
+
+  start(j: u64): i32 {
+    return this.off[j];
+  }
+
+  length(j: u64): i32 {
+    return this.off[j + 1] - this.off[j];
+  }
+}
+
+// Workload keys 0 .. count-1.
+function workloadKeys(count: u64): KeyList {
+  const kl = new KeyList();
+  for (let i: u64 = 0; i < count; i++) {
+    appendKey(kl.bytes, i);
+    kl.close();
+  }
+  return kl;
+}
+
+// Insert keys[i] with valAt(i) for every i, in index order (untimed setup).
+function fillTree(t: RadixTree, keys: KeyList) {
+  for (let i: u64 = 0; i < keys.count; i++) {
+    t.insert(keys.bytes.a, keys.start(i), keys.length(i), valAt(i));
+  }
+}
+
+// A pseudo-random permutation of 0 .. n-1 (Fisher-Yates driven by `salt`).
+function permutation(n: u64, salt: u64): i32[] {
+  const p = new Array<i32>(n).fill(0);
+  for (let i: u64 = 0; i < n; i++) {
+    p[i] = i as i32;
+  }
+  for (let i = n; i > 1; i--) {
+    const j = rnd(salt, i) % i;
+    const tmp = p[i - 1];
+    p[i - 1] = p[j];
+    p[j] = tmp;
+  }
+  return p;
+}
+
+// ------------------------------------------------------------ checking
+
+function bytesOf(s: string): ByteBuf {
+  const bb = new ByteBuf(s.length as i32);
+  for (let i: i32 = 0; i < (s.length as i32); i++) {
+    bb.push(s.charCodeAt(i as i64) as u8);
+  }
+  return bb;
+}
+
+function repeatByte(v: u8, count: i32): ByteBuf {
+  const bb = new ByteBuf(count);
+  for (let i: i32 = 0; i < count; i++) {
+    bb.push(v);
+  }
+  return bb;
+}
+
+// The tree calls on a whole ByteBuf.
+function get(t: RadixTree, k: ByteBuf): boolean {
+  return t.tryGet(k.a, 0, k.len);
+}
+
+function longest(t: RadixTree, k: ByteBuf): boolean {
+  return t.tryLongestPrefix(k.a, 0, k.len);
+}
+
+function pcount(t: RadixTree, k: ByteBuf): i32 {
+  return t.prefixCount(k.a, 0, k.len);
+}
+
+function pvalues(t: RadixTree, k: ByteBuf, o: i64[], limit: i32): i32 {
+  return t.prefixValues(k.a, 0, k.len, o, limit);
+}
+
+function ins(t: RadixTree, k: ByteBuf, v: i64): boolean {
+  return t.insert(k.a, 0, k.len, v);
+}
+
+function rem(t: RadixTree, k: ByteBuf): boolean {
+  return t.remove(k.a, 0, k.len);
+}
+
+// nodeCount() and height() must be possible for a compressed trie of len keys: it has the
+// root plus at most 2 * len - 1 further nodes, at least one node per key, and every edge
+// consumes at least one byte of a key of at most 255 bytes, and at least one key below each
+// step.
+function checkShape(caseName: string, n: u64, len: u64, nodes: u64, height: u64) {
+  const lo = len > 1 ? len : 1;
+  const hi = 2 * len > 1 ? 2 * len : 1;
+  if (nodes < lo || nodes > hi) {
+    fail(
+      caseName,
+      n,
+      `node_count() = ${nodes} is impossible for a compressed trie of ${len} keys (it must lie between ${lo} and ${hi})`,
+    );
+  }
+  if (height > len || height > 255) {
+    fail(
+      caseName,
+      n,
+      `height() = ${height} is impossible for a compressed trie of ${len} keys of at most 255 bytes`,
+    );
+  }
+}
+
+function expect(caseName: string, n: u64, ok: boolean, what: string) {
+  if (!ok) {
+    fail(caseName, n, "small tree: " + what);
+  }
+}
+
+function expectShape(
+  caseName: string,
+  n: u64,
+  s: RadixTree,
+  len: u64,
+  nodes: u64,
+  height: u64,
+  after: string,
+) {
+  const where = " after " + after;
+  expect(caseName, n, w(s.count) == len, `len() = ${s.count}, expected ${len}${where}`);
+  expect(
+    caseName,
+    n,
+    w(s.nodeCount()) == nodes,
+    `node_count() = ${s.nodeCount()}, expected ${nodes}${where}`,
+  );
+  expect(
+    caseName,
+    n,
+    w(s.height()) == height,
+    `height() = ${s.height()}, expected ${height}${where}`,
+  );
+}
+
+const WORDS = ["romane", "romanus", "romulus", "rubens", "ruber", "rubicon", "rubicundus"];
+
+// A small tree with known shape, built and taken apart again: checks nodeCount() and height()
+// exactly against the definition in the specification, including the splits and merges.
+function checkSmallTree(caseName: string, n: u64): u64 {
+  let h = FOLD_INIT;
+  const s = new RadixTree();
+  const e = new ByteBuf();
+  const o = new Array<i64>(16).fill(0);
+  expectShape(caseName, n, s, 0, 1, 0, "new()");
+  expect(caseName, n, !get(s, e), 'get("") on an empty tree found a value');
+  expect(caseName, n, pcount(s, e) == 0, 'prefix_count("") on an empty tree');
+  expect(caseName, n, pvalues(s, e, o, 16) == 0, 'prefix_values("") on an empty tree');
+  expect(caseName, n, !longest(s, bytesOf("rom")), "longest_prefix on an empty tree found a key");
+  expect(caseName, n, !rem(s, bytesOf("rom")), "remove on an empty tree");
+
+  for (let j: i32 = 0; j < 7; j++) {
+    expect(
+      caseName,
+      n,
+      ins(s, bytesOf(WORDS[j]), (j as i64) + 1),
+      `insert("${WORDS[j]}") of a new key returned false`,
+    );
+  }
+  // root, r, rom, roman, romane, romanus, romulus, rub, rube, rubens, ruber, rubic, rubicon,
+  // rubicundus
+  expectShape(
+    caseName,
+    n,
+    s,
+    7,
+    14,
+    4,
+    "inserting romane romanus romulus rubens ruber rubicon rubicundus",
+  );
+  ins(s, bytesOf("rom"), 10); // a key at an existing branching node
+  expectShape(caseName, n, s, 8, 14, 4, "inserting rom");
+  ins(s, bytesOf("ro"), 11); // splits the edge r -> rom
+  expectShape(caseName, n, s, 9, 15, 5, "inserting ro");
+  expect(caseName, n, !ins(s, bytesOf("ro"), 12), 'insert("ro") of a present key returned true');
+
+  let mt = longest(s, bytesOf("romanesque"));
+  expect(
+    caseName,
+    n,
+    mt && s.outLength == 6 && s.outValue == 1,
+    'longest_prefix("romanesque") should be romane (length 6, value 1)',
+  );
+  mt = longest(s, bytesOf("romb"));
+  expect(
+    caseName,
+    n,
+    mt && s.outLength == 3 && s.outValue == 10,
+    'longest_prefix("romb") should be rom (length 3, value 10)',
+  );
+  mt = longest(s, bytesOf("r"));
+  expect(caseName, n, !mt, 'longest_prefix("r") should be absent');
+  expect(caseName, n, pcount(s, bytesOf("rom")) == 4, 'prefix_count("rom") != 4');
+  expect(caseName, n, pcount(s, bytesOf("ru")) == 4, 'prefix_count("ru") != 4');
+  expect(caseName, n, pcount(s, bytesOf("rubi")) == 2, 'prefix_count("rubi") != 2');
+  expect(caseName, n, pcount(s, bytesOf("romanes")) == 0, 'prefix_count("romanes") != 0');
+  expect(caseName, n, pcount(s, e) == 9, 'prefix_count("") != 9');
+  let c = w(pvalues(s, bytesOf("r"), o, 16));
+  expect(caseName, n, c == 9, 'prefix_values("r", limit 16) did not return 9 values');
+  // ro rom romane romanus romulus rubens ruber rubicon rubicundus
+  const order: i64[] = [12, 10, 1, 2, 3, 4, 5, 6, 7];
+  for (let x: i32 = 0; x < 9; x++) {
+    expect(
+      caseName,
+      n,
+      o[x] == order[x],
+      'prefix_values("r") did not return the values in key order',
+    );
+  }
+  c = w(pvalues(s, bytesOf("rub"), o, 3));
+  expect(
+    caseName,
+    n,
+    c == 3 && o[0] == 4 && o[1] == 5 && o[2] == 6,
+    'prefix_values("rub", limit 3) should be the values of rubens ruber rubicon',
+  );
+  expect(
+    caseName,
+    n,
+    pvalues(s, bytesOf("rub"), o, 0) == 0,
+    "prefix_values with limit 0 returned values",
+  );
+
+  expect(caseName, n, rem(s, bytesOf("romulus")), 'remove("romulus") returned false');
+  expectShape(caseName, n, s, 8, 14, 5, "removing romulus");
+  rem(s, bytesOf("rom")); // rom is left with one child: merged
+  expectShape(caseName, n, s, 7, 13, 4, "removing rom");
+  rem(s, bytesOf("ro")); // ro is left with one child: merged
+  expectShape(caseName, n, s, 6, 12, 4, "removing ro");
+  rem(s, bytesOf("ruber"));
+  expectShape(caseName, n, s, 5, 10, 4, "removing ruber");
+  rem(s, bytesOf("romane"));
+  expectShape(caseName, n, s, 4, 8, 4, "removing romane");
+  rem(s, bytesOf("romanus")); // r is left with one child: merged
+  expectShape(caseName, n, s, 3, 6, 3, "removing romanus");
+  expect(
+    caseName,
+    n,
+    !rem(s, bytesOf("romanus")),
+    'remove("romanus") of an absent key returned true',
+  );
+  expect(
+    caseName,
+    n,
+    !rem(s, bytesOf("rub")),
+    'remove("rub") of a key that is only a branching point returned true',
+  );
+  rem(s, bytesOf("rubens"));
+  expectShape(caseName, n, s, 2, 4, 2, "removing rubens");
+  rem(s, bytesOf("rubicon"));
+  expectShape(caseName, n, s, 1, 2, 1, "removing rubicon");
+  mt = longest(s, bytesOf("rubicundusx"));
+  expect(
+    caseName,
+    n,
+    mt && s.outLength == 10 && s.outValue == 7,
+    'longest_prefix("rubicundusx") should be rubicundus (length 10, value 7)',
+  );
+  rem(s, bytesOf("rubicundus"));
+  expectShape(caseName, n, s, 0, 1, 0, "removing every key");
+
+  // The empty key lives at the root.
+  expect(caseName, n, ins(s, e, I64_MIN), 'insert("") of a new key returned false');
+  expectShape(caseName, n, s, 1, 1, 0, "inserting the empty key into an empty tree");
+  ins(s, bytesOf("a"), I64_MAX);
+  expectShape(caseName, n, s, 2, 2, 1, 'inserting "" and "a"');
+  mt = longest(s, bytesOf("b"));
+  expect(
+    caseName,
+    n,
+    mt && s.outLength == 0 && s.outValue == I64_MIN,
+    'longest_prefix("b") should be the empty key',
+  );
+  rem(s, e);
+  expectShape(caseName, n, s, 1, 2, 1, 'removing the empty key from {"", "a"}');
+  const vb = get(s, bytesOf("a"));
+  expect(caseName, n, vb && s.outValue == I64_MAX, 'get("a") lost its value');
+  h = fold(h, w(s.count));
+  return h;
+}
+
+// Keys inserted during verification. None of them is a workload key.
+function specialKeys(): ByteBuf[] {
+  const alt = new ByteBuf();
+  for (let x: i32 = 0; x < 32; x++) {
+    alt.push(x % 2 == 0 ? 0x00 : 0xff);
+  }
+  const ext = new ByteBuf(); // a workload key extended by a 0x00 byte
+  appendKey(ext, 0);
+  ext.push(0x00);
+  const one = new ByteBuf(); // the first byte of a workload key alone
+  appendKey(one, 0);
+  one.resize(1);
+  return [
+    repeatByte(0x00, 1),
+    repeatByte(0xff, 1),
+    repeatByte(0x00, 64),
+    repeatByte(0x00, 255),
+    repeatByte(0xff, 255),
+    alt,
+    ext,
+    one,
+  ];
+}
+
+const SPECIAL_VALS: i64[] = [I64_MIN, I64_MAX, -1, 0, 1, I64_MIN + 1, 42, -42];
+
+function foldMatch(h0: u64, t: RadixTree, key: ByteBuf): u64 {
+  let h = h0;
+  const mt = longest(t, key);
+  h = fold(h, b(mt));
+  h = fold(h, mt ? w(t.outLength) : 0);
+  h = fold(h, mt ? (t.outValue as u64) : 0);
+  return h;
+}
+
+// Hash the observable state of the tree: its length and shape, every value in key order,
+// point lookups and prefix queries; then insert and remove special keys (the empty key, long
+// runs of 0x00 and 0xFF bytes, extreme values) and check that the shape returns to what it
+// was; check that the tree copies its keys; and check a small tree of known shape. The tree is
+// left with the keys it had.
+function verifyFull(caseName: string, n: u64, t: RadixTree): u64 {
+  let h = FOLD_INIT;
+  const len = w(t.count);
+  h = fold(h, len);
+  const nodes0 = w(t.nodeCount());
+  const height0 = w(t.height());
+  checkShape(caseName, n, len, nodes0, height0);
+  h = fold(h, nodes0);
+  h = fold(h, height0);
+
+  // Every value, in key order.
+  const e = new ByteBuf();
+  const all = new Array<i64>(len + 1).fill(0);
+  let c = w(pvalues(t, e, all, (len + 1) as i32));
+  if (c != len) {
+    fail(caseName, n, `prefix_values("") returned ${c} values but len() = ${len}`);
+  }
+  for (let x: u64 = 0; x < c; x++) {
+    h = fold(h, all[x] as u64);
+  }
+  const pc = w(pcount(t, e));
+  if (pc != len) {
+    fail(caseName, n, `prefix_count("") = ${pc} but len() = ${len}`);
+  }
+
+  // Point lookups and prefix queries around workload keys.
+  const o = new Array<i64>(4097).fill(0);
+  for (let j: u64 = 0; j < 64; j++) {
+    const k = new ByteBuf();
+    appendKey(k, rnd(101, j) % (2 * n));
+    const vb = get(t, k);
+    h = fold(h, b(vb));
+    h = fold(h, vb ? (t.outValue as u64) : 0);
+
+    const q = k.copy();
+    q.push(SLASH);
+    appendDecimal(q, rnd(102, j) % 1000);
+    h = foldMatch(h, t, q);
+
+    const p = k.copy();
+    p.resize((rnd(103, j) % ((k.len as u64) + 1)) as i32);
+    const cnt = w(pcount(t, p));
+    h = fold(h, cnt);
+    let got = w(pvalues(t, p, o, 16));
+    if (got != minU64(cnt, 16)) {
+      fail(
+        caseName,
+        n,
+        `prefix_values with limit 16 returned ${got} values for a prefix with prefix_count() = ${cnt}`,
+      );
+    }
+    for (let x: u64 = 0; x < got; x++) {
+      h = fold(h, o[x] as u64);
+    }
+    if (cnt < 4096) {
+      got = w(pvalues(t, p, o, 4097));
+      if (got != cnt) {
+        fail(
+          caseName,
+          n,
+          `prefix_values returned ${got} values for a prefix with prefix_count() = ${cnt}`,
+        );
+      }
+      for (let x: u64 = 0; x < got; x++) {
+        h = fold(h, o[x] as u64);
+      }
+    }
+  }
+
+  // The empty key.
+  let has = get(t, e);
+  h = fold(h, b(has));
+  h = fold(h, b(ins(t, e, I64_MIN)));
+  h = fold(h, b(ins(t, e, I64_MAX))); // replaces the value
+  has = get(t, e);
+  h = fold(h, has ? (t.outValue as u64) : 0);
+  const probe = new ByteBuf();
+  appendKey(probe, n);
+  probe.push(126); // '~'
+  h = foldMatch(h, t, probe); // at least the empty key
+  h = foldMatch(h, t, e);
+  h = fold(h, w(pcount(t, e)));
+  h = fold(h, w(t.count));
+  h = fold(h, b(rem(t, e)));
+  h = fold(h, b(rem(t, e))); // already removed
+  has = get(t, e);
+  h = fold(h, b(has));
+
+  // Special keys: runs of 0x00 and 0xFF up to the longest key, keys that are prefixes of each
+  // other, a key that extends a workload key and a one-byte key that splits an edge near the
+  // root.
+  const sk = specialKeys();
+  for (let j: i32 = 0; j < (sk.length as i32); j++) {
+    h = fold(h, b(ins(t, sk[j], SPECIAL_VALS[j])));
+  }
+  const len1 = w(t.count);
+  const nodes1 = w(t.nodeCount());
+  const height1 = w(t.height());
+  checkShape(caseName, n, len1, nodes1, height1);
+  h = fold(h, len1);
+  h = fold(h, nodes1);
+  h = fold(h, height1);
+  for (let j: i32 = 0; j < (sk.length as i32); j++) {
+    has = get(t, sk[j]);
+    h = fold(h, b(has));
+    h = fold(h, has ? (t.outValue as u64) : 0);
+  }
+  h = foldMatch(h, t, repeatByte(0x00, 255));
+  h = foldMatch(h, t, repeatByte(0x00, 200));
+  h = foldMatch(h, t, repeatByte(0xff, 254));
+  const zf = new ByteBuf();
+  zf.push(0x00);
+  zf.push(0x01);
+  h = foldMatch(h, t, zf);
+  const z = repeatByte(0x00, 1);
+  const f = repeatByte(0xff, 1);
+  h = fold(h, w(pcount(t, z)));
+  h = fold(h, w(pcount(t, f)));
+  h = fold(h, w(pcount(t, repeatByte(0x00, 64))));
+  h = fold(h, w(pcount(t, repeatByte(0x00, 65))));
+  c = w(pvalues(t, z, o, 8));
+  h = fold(h, c);
+  for (let x: u64 = 0; x < c; x++) {
+    h = fold(h, o[x] as u64);
+  }
+  c = w(pvalues(t, f, o, 8));
+  h = fold(h, c);
+  for (let x: u64 = 0; x < c; x++) {
+    h = fold(h, o[x] as u64);
+  }
+  for (let j: i32 = 0; j < (sk.length as i32); j++) {
+    h = fold(h, b(ins(t, sk[j], j as i64)));
+  }
+  for (let j: i32 = 0; j < (sk.length as i32); j++) {
+    h = fold(h, b(rem(t, sk[j])));
+  }
+  for (let j: i32 = 0; j < (sk.length as i32); j++) {
+    h = fold(h, b(rem(t, sk[j])));
+  }
+  const len2 = w(t.count);
+  const nodes2 = w(t.nodeCount());
+  const height2 = w(t.height());
+  if (len2 != len || nodes2 != nodes0 || height2 != height0) {
+    fail(
+      caseName,
+      n,
+      `after inserting and removing again some keys, len() = ${len2}, node_count() = ${nodes2}, height() = ${height2}, but they were ${len}, ${nodes0}, ${height0} before (removal must merge nodes back)`,
+    );
+  }
+
+  // The tree must copy the keys it keeps: the caller's buffer is reused.
+  const buf = new ByteBuf();
+  appendKey(buf, 1);
+  buf.push(33); // '!'
+  const same = buf.copy();
+  h = fold(h, b(ins(t, buf, 77)));
+  for (let i: i32 = 0; i < buf.len; i++) {
+    buf.a[i] = 120; // 'x'
+  }
+  has = get(t, same);
+  if (!has || t.outValue != 77) {
+    fail(caseName, n, "the tree does not keep its own copy of a key");
+  }
+  h = fold(h, b(rem(t, same)));
+
+  h = fold(h, checkSmallTree(caseName, n));
+  return h;
+}
+
+// -------------------------------------------------------------- cases
+
+// insert: n inserts of the workload keys in random order into an empty tree, which splits
+// edges as it grows.
+function caseInsert(name: string, n: u64): Result {
+  const keys = workloadKeys(n);
+  const order = permutation(n, 1);
+  const len = n as i32;
+  const vals = new Array<i64>(len).fill(0);
+  for (let j: i32 = 0; j < len; j++) {
+    vals[j] = valAt(order[j] as u64);
+  }
+  const kb = keys.bytes.a;
+  const ko = keys.off;
+  const t = new RadixTree();
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let j: i32 = 0; j < len; j++) {
+    const i = order[j];
+    acc += t.insert(kb, ko[i], ko[i + 1] - ko[i], vals[j]) ? 1 : 0;
+  }
+  const ns = since(t0);
+  return new Result(n, ns, acc, verifyFull(name, n, t));
+}
+
+// get_hit: n lookups of present keys, in random order.
+function caseGetHit(name: string, n: u64): Result {
+  const keys = workloadKeys(n);
+  const t = new RadixTree();
+  fillTree(t, keys);
+  const len = n as i32;
+  const q = new Array<i32>(len).fill(0);
+  for (let j: i32 = 0; j < len; j++) {
+    q[j] = (rnd(3, j as u64) % n) as i32;
+  }
+  const kb = keys.bytes.a;
+  const ko = keys.off;
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let j: i32 = 0; j < len; j++) {
+    const i = q[j];
+    if (t.tryGet(kb, ko[i], ko[i + 1] - ko[i])) {
+      acc += (t.outValue as u64) + 1;
+    }
+  }
+  const ns = since(t0);
+  return new Result(n, ns, acc, verifyFull(name, n, t));
+}
+
+// get_miss: n lookups of absent keys that share long prefixes with present ones, on a tree of
+// n keys. For query j, with r = rnd(4, j) and i = r % n:
+//   (r >> 32) % 3 == 0: key i followed by "/0" (extends a present key)
+//   (r >> 32) % 3 == 1: key i with its last byte replaced by '.'
+//   (r >> 32) % 3 == 2: key n + i (the same path as key i, another tail)
+function caseGetMiss(name: string, n: u64): Result {
+  const keys = workloadKeys(n);
+  const t = new RadixTree();
+  fillTree(t, keys);
+  const q = new KeyList();
+  for (let j: u64 = 0; j < n; j++) {
+    const r = rnd(4, j);
+    const i = r % n;
+    const kind = (r >> 32) % 3;
+    if (kind == 0) {
+      appendKey(q.bytes, i);
+      q.bytes.push(SLASH);
+      q.bytes.push(48); // '0'
+    } else if (kind == 1) {
+      appendKey(q.bytes, i);
+      q.bytes.a[q.bytes.len - 1] = 46; // '.'
+    } else {
+      appendKey(q.bytes, n + i);
+    }
+    q.close();
+  }
+  const len = n as i32;
+  const qb = q.bytes.a;
+  const qo = q.off;
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let j: i32 = 0; j < len; j++) {
+    if (t.tryGet(qb, qo[j], qo[j + 1] - qo[j])) {
+      acc += (t.outValue as u64) + 1;
+    }
+  }
+  const ns = since(t0);
+  return new Result(n, ns, acc, verifyFull(name, n, t));
+}
+
+// longest_prefix: n longest-prefix queries on a tree of n keys. Query j, with r = rnd(5, j),
+// is workload key r % (2n) (present or absent) followed by, depending on (r >> 40) % 4:
+// nothing; three more digits (100 + (r >> 48) % 900); '/' and two digits (10 + (r >> 48) %
+// 90); or the bytes 0x00 0xFF.
+function caseLongestPrefix(name: string, n: u64): Result {
+  const keys = workloadKeys(n);
+  const t = new RadixTree();
+  fillTree(t, keys);
+  const q = new KeyList();
+  for (let j: u64 = 0; j < n; j++) {
+    const r = rnd(5, j);
+    appendKey(q.bytes, r % (2 * n));
+    const ext = (r >> 40) % 4;
+    if (ext == 1) {
+      appendDecimal(q.bytes, 100 + ((r >> 48) % 900));
+    } else if (ext == 2) {
+      q.bytes.push(SLASH);
+      appendDecimal(q.bytes, 10 + ((r >> 48) % 90));
+    } else if (ext == 3) {
+      q.bytes.push(0x00);
+      q.bytes.push(0xff);
+    }
+    q.close();
+  }
+  const len = n as i32;
+  const qb = q.bytes.a;
+  const qo = q.off;
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let j: i32 = 0; j < len; j++) {
+    if (t.tryLongestPrefix(qb, qo[j], qo[j + 1] - qo[j])) {
+      acc += (t.outValue as u64) + (w(t.outLength) << 40);
+    }
+  }
+  const ns = since(t0);
+  return new Result(n, ns, acc, verifyFull(name, n, t));
+}
+
+// prefix_count: 4 passes of n counts on a tree of n keys. Prefix j, with r = rnd(6, j), is
+// workload key r % n cut to (r >> 32) % (len + 1) bytes, so answers range from 1 key to the
+// whole tree.
+function casePrefixCount(name: string, n: u64): Result {
+  const passes: u64 = 4;
+  const keys = workloadKeys(n);
+  const t = new RadixTree();
+  fillTree(t, keys);
+  const q = new KeyList();
+  for (let j: u64 = 0; j < n; j++) {
+    const r = rnd(6, j);
+    appendKey(q.bytes, r % n);
+    const len = q.lastLen;
+    q.bytes.resize(q.back + (((r >> 32) % (len + 1)) as i32));
+    q.close();
+  }
+  const cnt = n as i32;
+  const qb = q.bytes.a;
+  const qo = q.off;
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let pass: u64 = 0; pass < passes; pass++) {
+    for (let j: i32 = 0; j < cnt; j++) {
+      acc += w(t.prefixCount(qb, qo[j], qo[j + 1] - qo[j]));
+    }
+  }
+  const ns = since(t0);
+  return new Result(passes * n, ns, acc, verifyFull(name, n, t));
+}
+
+// autocomplete: 2 passes of n prefixValues queries with limit 8 on a tree of n keys (the first
+// 8 completions of a typed prefix). Prefix j, with r = rnd(7, j), is workload key r % n cut to
+// 1 + (r >> 32) % len bytes.
+function caseAutocomplete(name: string, n: u64): Result {
+  const passes: u64 = 2;
+  const limit: i32 = 8;
+  const keys = workloadKeys(n);
+  const t = new RadixTree();
+  fillTree(t, keys);
+  const q = new KeyList();
+  for (let j: u64 = 0; j < n; j++) {
+    const r = rnd(7, j);
+    appendKey(q.bytes, r % n);
+    const len = q.lastLen;
+    q.bytes.resize(q.back + ((1 + ((r >> 32) % len)) as i32));
+    q.close();
+  }
+  const o = new Array<i64>(limit).fill(0);
+  const cnt = n as i32;
+  const qb = q.bytes.a;
+  const qo = q.off;
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let pass: u64 = 0; pass < passes; pass++) {
+    for (let j: i32 = 0; j < cnt; j++) {
+      const c = t.prefixValues(qb, qo[j], qo[j + 1] - qo[j], o, limit);
+      acc += w(c);
+      for (let x: i32 = 0; x < c; x++) {
+        acc += (o[x] as u64) ^ (x as u64);
+      }
+    }
+  }
+  const ns = since(t0);
+  return new Result(passes * n, ns, acc, verifyFull(name, n, t));
+}
+
+// scan: 8 passes that read every value of large subtrees in key order with prefixValues (no
+// limit): the whole tree (prefix ""), each of the 16 subtrees of a first segment, and each of
+// the 384 subtrees of a first and second segment. A pass makes 401 calls and reads about 2.75n
+// values.
+function caseScan(name: string, n: u64): Result {
+  const passes: u64 = 8;
+  const keys = workloadKeys(n);
+  const t = new RadixTree();
+  fillTree(t, keys);
+  const q = new KeyList();
+  q.close(); // the empty prefix
+  for (let d0: u64 = 0; d0 < 16; d0++) {
+    const bin: u64 = d0 == 3 || d0 == 14 ? 1 : 0;
+    q.bytes.append(SEG[bin][0][d0]);
+    q.close();
+  }
+  for (let d0: u64 = 0; d0 < 16; d0++) {
+    const bin: u64 = d0 == 3 || d0 == 14 ? 1 : 0;
+    if (d0 % 4 == 0) {
+      continue; // keys of this group have no second segment
+    }
+    for (let d1: u64 = 0; d1 < 32; d1++) {
+      q.bytes.append(SEG[bin][0][d0]);
+      q.bytes.push(SLASH);
+      q.bytes.append(SEG[bin][1][d1]);
+      q.close();
+    }
+  }
+  const count = q.count;
+  const cnt = count as i32;
+  const lim = n as i32;
+  const o = new Array<i64>(n).fill(0);
+  const qb = q.bytes.a;
+  const qo = q.off;
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let pass: u64 = 0; pass < passes; pass++) {
+    for (let j: i32 = 0; j < cnt; j++) {
+      const c = t.prefixValues(qb, qo[j], qo[j + 1] - qo[j], o, lim);
+      acc += w(c);
+      for (let x: i32 = 0; x < c; x++) {
+        acc += (o[x] as u64) ^ (x as u64);
+      }
+    }
+  }
+  const ns = since(t0);
+  return new Result(passes * count, ns, acc, verifyFull(name, n, t));
+}
+
+// remove: n removes that take all n keys out of a tree in random order, merging nodes all the
+// way back to an empty tree, which must still be usable.
+function caseRemove(name: string, n: u64): Result {
+  const keys = workloadKeys(n);
+  const order = permutation(n, 8);
+  const t = new RadixTree();
+  fillTree(t, keys);
+  const len = n as i32;
+  const kb = keys.bytes.a;
+  const ko = keys.off;
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let j: i32 = 0; j < len; j++) {
+    const i = order[j];
+    acc += t.remove(kb, ko[i], ko[i + 1] - ko[i]) ? 1 : 0;
+  }
+  const ns = since(t0);
+
+  let h = verifyFull(name, n, t);
+  const again = minU64(n, 100); // an emptied tree must be usable again
+  for (let i: u64 = 0; i < again; i++) {
+    h = fold(h, b(t.insert(kb, keys.start(i), keys.length(i), valAt(i))));
+  }
+  h = fold(h, verifyFull(name, n, t));
+  return new Result(n, ns, acc, h);
+}
+
+const OP_GET: u8 = 0;
+const OP_LONGEST: u8 = 1;
+const OP_COUNT: u8 = 2;
+const OP_VALUES: u8 = 3;
+const OP_INSERT: u8 = 4;
+const OP_REMOVE: u8 = 5;
+
+// mixed: a read-heavy stream of n operations on a tree that starts with n keys, over a domain
+// of the 2n workload keys 0 .. 2n-1, where op j has r = rnd(9, j), p = r % 100 and key
+// k = (r >> 8) % (2n):
+//   p < 60  get(key k)
+//   p < 70  longest_prefix(key k + '/' + two digits 10 + (r >> 48) % 90)
+//   p < 75  prefix_count(key k without its last byte)
+//   p < 80  prefix_values(key k without its last byte, limit 4)
+//   p < 90  insert(key k, value (i64)mix64(r))
+//   else    remove(key k)
+function caseMixed(name: string, n: u64): Result {
+  const limit: i32 = 4;
+  const domain = 2 * n;
+  const count = n;
+  const keys = workloadKeys(domain);
+  const t = new RadixTree();
+  for (let i: u64 = 0; i < n; i++) {
+    t.insert(keys.bytes.a, keys.start(i), keys.length(i), valAt(i));
+  }
+  const op = new Array<u8>(count).fill(0);
+  const a = new Array<i32>(count).fill(0);
+  const bv = new Array<i64>(count).fill(0);
+  const q = new KeyList(); // the derived keys of longest_prefix, prefix_count and prefix_values
+  for (let j: u64 = 0; j < count; j++) {
+    const r = rnd(9, j);
+    const p = r % 100;
+    const k = (r >> 8) % domain;
+    a[j] = k as i32;
+    bv[j] = 0;
+    if (p < 60) {
+      op[j] = OP_GET;
+    } else if (p < 80) {
+      op[j] = p < 70 ? OP_LONGEST : p < 75 ? OP_COUNT : OP_VALUES;
+      appendKey(q.bytes, k);
+      if (p < 70) {
+        q.bytes.push(SLASH);
+        appendDecimal(q.bytes, 10 + ((r >> 48) % 90));
+      } else {
+        q.bytes.popBack();
+      }
+      q.close();
+      a[j] = (q.count - 1) as i32; // index into q
+    } else if (p < 90) {
+      op[j] = OP_INSERT;
+      bv[j] = mix64(r) as i64;
+    } else {
+      op[j] = OP_REMOVE;
+    }
+  }
+  const o = new Array<i64>(limit).fill(0);
+  const cnt = count as i32;
+  const kb = keys.bytes.a;
+  const qb = q.bytes.a;
+  const ko = keys.off;
+  const qo = q.off;
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let j: i32 = 0; j < cnt; j++) {
+    const i = a[j];
+    switch (op[j]) {
+      case OP_GET:
+        if (t.tryGet(kb, ko[i], ko[i + 1] - ko[i])) {
+          acc += (t.outValue as u64) + 1;
+        }
+        break;
+      case OP_LONGEST:
+        if (t.tryLongestPrefix(qb, qo[i], qo[i + 1] - qo[i])) {
+          acc += (t.outValue as u64) + (w(t.outLength) << 40);
+        }
+        break;
+      case OP_COUNT:
+        acc += w(t.prefixCount(qb, qo[i], qo[i + 1] - qo[i]));
+        break;
+      case OP_VALUES: {
+        const c = t.prefixValues(qb, qo[i], qo[i + 1] - qo[i], o, limit);
+        acc += w(c);
+        for (let x: i32 = 0; x < c; x++) {
+          acc += (o[x] as u64) ^ (x as u64);
+        }
+        break;
+      }
+      case OP_INSERT:
+        acc += t.insert(kb, ko[i], ko[i + 1] - ko[i], bv[j]) ? 1 : 0;
+        break;
+      default:
+        acc += t.remove(kb, ko[i], ko[i + 1] - ko[i]) ? 1 : 0;
+        break;
+    }
+  }
+  const ns = since(t0);
+  return new Result(count, ns, acc, verifyFull(name, n, t));
+}
+
+// churn: 3n inserts and removes on a small tree that stays inside the CPU caches. The domain
+// is the workload keys 0 .. D-1 with D = 2 * min(n, 16384); the tree starts with keys
+// 0 .. D/2 - 1. Op j, with r = rnd(10, j), works on key (r >> 1) % D: an insert with value
+// (i64)mix64(r) if r is odd, else a remove. Inserts of absent keys split edges, removes merge
+// nodes again.
+function caseChurn(name: string, n: u64): Result {
+  const domain = 2 * minU64(n, 16384);
+  const count = 3 * n;
+  const keys = workloadKeys(domain);
+  const t = new RadixTree();
+  for (let i: u64 = 0; i < domain / 2; i++) {
+    t.insert(keys.bytes.a, keys.start(i), keys.length(i), valAt(i));
+  }
+  const op = new Array<u8>(count).fill(0);
+  const a = new Array<i32>(count).fill(0);
+  const bv = new Array<i64>(count).fill(0);
+  for (let j: u64 = 0; j < count; j++) {
+    const r = rnd(10, j);
+    a[j] = ((r >> 1) % domain) as i32;
+    if ((r & 1) != 0) {
+      op[j] = OP_INSERT;
+      bv[j] = mix64(r) as i64;
+    } else {
+      op[j] = OP_REMOVE;
+      bv[j] = 0;
+    }
+  }
+  const cnt = count as i32;
+  const kb = keys.bytes.a;
+  const ko = keys.off;
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let j: i32 = 0; j < cnt; j++) {
+    const i = a[j];
+    if (op[j] == OP_INSERT) {
+      acc += t.insert(kb, ko[i], ko[i + 1] - ko[i], bv[j]) ? 1 : 0;
+    } else {
+      acc += t.remove(kb, ko[i], ko[i + 1] - ko[i]) ? 1 : 0;
+    }
+  }
+  const ns = since(t0);
+  return new Result(count, ns, acc, verifyFull(name, n, t));
+}
+
+// --------------------------------------------------------------- main
+
+const CASES = [
+  "insert",
+  "get_hit",
+  "get_miss",
+  "longest_prefix",
+  "prefix_count",
+  "autocomplete",
+  "scan",
+  "remove",
+  "mixed",
+  "churn",
+];
+
+function runCase(name: string, n: u64): Result {
+  switch (name) {
+    case "insert":
+      return caseInsert(name, n);
+    case "get_hit":
+      return caseGetHit(name, n);
+    case "get_miss":
+      return caseGetMiss(name, n);
+    case "longest_prefix":
+      return caseLongestPrefix(name, n);
+    case "prefix_count":
+      return casePrefixCount(name, n);
+    case "autocomplete":
+      return caseAutocomplete(name, n);
+    case "scan":
+      return caseScan(name, n);
+    case "remove":
+      return caseRemove(name, n);
+    case "mixed":
+      return caseMixed(name, n);
+    default:
+      return caseChurn(name, n);
+  }
+}
+
+makeSegments();
+// Key buffers are i32-indexed: mixed holds 2n keys of at most 40 bytes, and churn 3n
+// operations (the C# driver's limit).
+runDriver(CASES, runCase, (2147483647 - 64) / 80);

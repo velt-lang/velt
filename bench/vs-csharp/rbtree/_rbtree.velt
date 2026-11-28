@@ -1,0 +1,534 @@
+// Red-black tree of i64 keys and values without parent pointers: a port of the benchmark's C#
+// solution (RBTree.cs). Insert and remove record the search path and rebalance bottom-up.
+//
+// Every node is 4 i64 words of the `nodes` arena (32 bytes, as in the C# struct):
+//   nodes[u + KEY]   the key
+//   nodes[u + LEFT]  the left child | color (bit 0: 1 = red, 0 = black)
+//   nodes[u + RIGHT] the right child (also the free-list link of a freed node)
+//   nodes[u + VAL]   the value
+// A node is named by the index of its first word, a multiple of 4, so bit 0 of a child is free
+// for the color; 0 is "no node" (the arena's first node is never used).
+
+const KEY = 0;
+const LEFT = 1;
+const RIGHT = 2;
+const VAL = 3;
+const WORDS = 4;
+const INITIAL_CHUNK_NODES: i64 = 64;
+const MAX_CHUNK_NODES: i64 = 262144;
+// Deeper than any path of a red-black tree whose nodes fit in memory.
+const MAX_DEPTH = 68;
+
+export class RBTree {
+  private nodes: i64[];
+  private root: i64 = 0;
+  private freeHead: i64 = 0;
+  private bumpCur: i64 = WORDS;
+  private bumpEnd: i64 = WORDS;
+  private nextChunkNodes: i64 = INITIAL_CHUNK_NODES;
+  private len: i32 = 0;
+  private path: i64[];
+  // The value tryGet() found.
+  value: i64 = 0;
+
+  constructor() {
+    this.nodes = new Array<i64>(WORDS).fill(0);
+    this.path = new Array<i64>(MAX_DEPTH).fill(0);
+  }
+
+  get count(): i32 {
+    return this.len;
+  }
+
+  private allocNode(): i64 {
+    const node = this.freeHead;
+    if (node != 0) {
+      this.freeHead = this.nodes[node + RIGHT];
+      return node;
+    }
+    const b = this.bumpCur;
+    if (b != this.bumpEnd) {
+      this.bumpCur = b + WORDS;
+      return b;
+    }
+    return this.allocFromNewChunk();
+  }
+
+  // Room for the next chunk of nodes (64, then doubling up to 262144 nodes at a time).
+  private allocFromNewChunk(): i64 {
+    const n = this.nextChunkNodes;
+    const old = this.nodes;
+    const grown = new Array<i64>(old.length + n * WORDS).fill(0);
+    for (let i = 0; i < old.length; i++) {
+      grown[i] = old[i];
+    }
+    this.nodes = grown;
+    if (n < MAX_CHUNK_NODES) {
+      this.nextChunkNodes = n << 1;
+    }
+    const chunk = old.length as i64;
+    this.bumpCur = chunk + WORDS;
+    this.bumpEnd = grown.length as i64;
+    return chunk;
+  }
+
+  // Whether `key` is present; if so, its value is left in `value`.
+  tryGet(key: i64): boolean {
+    const nd = this.nodes;
+    let cur = this.root;
+    while (cur != 0) {
+      const k = nd[cur + KEY];
+      const left = nd[cur + LEFT] & -2;
+      const right = nd[cur + RIGHT];
+      if (key == k) {
+        this.value = nd[cur + VAL];
+        return true;
+      }
+      cur = key < k ? left : right;
+    }
+    this.value = 0;
+    return false;
+  }
+
+  // Inserts `key` or replaces its value; true if the key was new.
+  insert(key: i64, value: i64): boolean {
+    let cur = this.root;
+    if (cur == 0) {
+      const n = this.allocNode();
+      const nd = this.nodes;
+      nd[n + KEY] = key;
+      nd[n + VAL] = value;
+      nd[n + LEFT] = 0; // black, no left child
+      nd[n + RIGHT] = 0;
+      this.root = n;
+      this.len = 1;
+      return true;
+    }
+
+    const path = this.path;
+    let nd = this.nodes;
+    let depth: i32 = 0;
+    let dirs: u64 = 0;
+
+    for (;;) {
+      const k = nd[cur + KEY];
+      if (key == k) {
+        nd[cur + VAL] = value;
+        return false;
+      }
+      path[depth++] = cur;
+      const left = nd[cur + LEFT] & -2;
+      const right = nd[cur + RIGHT];
+      const goRight = key > k;
+      dirs = (dirs << 1) | (goRight ? 1 : 0);
+      const next = goRight ? right : left;
+      if (next == 0) {
+        break;
+      }
+      cur = next;
+    }
+
+    let node = this.allocNode();
+    nd = this.nodes;
+    nd[node + KEY] = key;
+    nd[node + VAL] = value;
+    nd[node + LEFT] = 1; // red, no left child
+    nd[node + RIGHT] = 0;
+    this.len++;
+
+    // cur == path[depth - 1] is the parent
+    if ((dirs & 1) != 0) {
+      nd[cur + RIGHT] = node;
+    } else {
+      // cur had no left child, so OR keeps its color
+      nd[cur + LEFT] |= node;
+    }
+
+    // Fast exit: the parent is black
+    if ((nd[cur + LEFT] & 1) == 0) {
+      return true;
+    }
+
+    // Rebalance upward: `node` is red, `parent` (cur) is red, so `gp` exists and is black.
+    let parent = cur;
+    for (;;) {
+      const gp = path[depth - 2];
+      let newSub: i64 = 0;
+      if ((dirs & 2) == 0) {
+        // parent is the left child of gp
+        const uncle = nd[gp + RIGHT];
+        if (uncle != 0 && (nd[uncle + LEFT] & 1) != 0) {
+          // Case 1: the uncle is red -> recolor and move up 2 levels
+          nd[parent + LEFT] &= -2;
+          nd[uncle + LEFT] &= -2;
+          nd[gp + LEFT] |= 1;
+          depth -= 2;
+          if (depth == 0) {
+            nd[gp + LEFT] &= -2; // the root is always black
+            return true;
+          }
+          dirs >>= 2;
+          parent = path[depth - 1];
+          if ((nd[parent + LEFT] & 1) == 0) {
+            return true;
+          }
+          node = gp;
+          continue;
+        }
+        if ((dirs & 1) != 0) {
+          // Case 2 (LR): fused left-right double rotation
+          const b = nd[node + LEFT] & -2;
+          const c = nd[node + RIGHT];
+          nd[parent + RIGHT] = b;
+          nd[gp + LEFT] = c | 1; // gp becomes red
+          nd[node + LEFT] = parent; // node becomes black
+          nd[node + RIGHT] = gp;
+          newSub = node;
+        } else {
+          // Case 3 (LL): single right rotation at gp
+          const b = nd[parent + RIGHT];
+          nd[gp + LEFT] = b | 1; // gp becomes red
+          nd[parent + LEFT] &= -2; // parent becomes black
+          nd[parent + RIGHT] = gp;
+          newSub = parent;
+        }
+      } else {
+        // parent is the right child of gp
+        const uncle = nd[gp + LEFT] & -2;
+        if (uncle != 0 && (nd[uncle + LEFT] & 1) != 0) {
+          // Case 1: the uncle is red -> recolor and move up 2 levels
+          nd[parent + LEFT] &= -2;
+          nd[uncle + LEFT] &= -2;
+          nd[gp + LEFT] |= 1;
+          depth -= 2;
+          if (depth == 0) {
+            nd[gp + LEFT] &= -2; // the root is always black
+            return true;
+          }
+          dirs >>= 2;
+          parent = path[depth - 1];
+          if ((nd[parent + LEFT] & 1) == 0) {
+            return true;
+          }
+          node = gp;
+          continue;
+        }
+        if ((dirs & 1) == 0) {
+          // Case 2 (RL): fused right-left double rotation
+          const a = nd[node + LEFT] & -2;
+          const b = nd[node + RIGHT];
+          nd[gp + RIGHT] = a;
+          nd[gp + LEFT] |= 1; // gp becomes red
+          nd[parent + LEFT] = b | 1; // parent stays red
+          nd[node + LEFT] = gp; // node becomes black
+          nd[node + RIGHT] = parent;
+          newSub = node;
+        } else {
+          // Case 3 (RR): single left rotation at gp
+          const b = nd[parent + LEFT] & -2;
+          nd[gp + RIGHT] = b;
+          nd[gp + LEFT] |= 1; // gp becomes red
+          nd[parent + LEFT] = gp; // parent becomes black
+          newSub = parent;
+        }
+      }
+      if (depth == 2) {
+        this.root = newSub;
+      } else {
+        this.setChild(path[depth - 3], (dirs & 4) != 0, newSub);
+      }
+      return true;
+    }
+  }
+
+  // Makes `child` the right (or left) child of `p`, keeping p's color.
+  private setChild(p: i64, right: boolean, child: i64) {
+    const nd = this.nodes;
+    if (right) {
+      nd[p + RIGHT] = child;
+    } else {
+      nd[p + LEFT] = (nd[p + LEFT] & 1) | child;
+    }
+  }
+
+  // Removes `key`; true if it was present.
+  remove(key: i64): boolean {
+    let cur = this.root;
+    if (cur == 0) {
+      return false;
+    }
+
+    const path = this.path;
+    const nd = this.nodes;
+    let depth: i32 = 0;
+    let dirs: u64 = 0;
+
+    for (;;) {
+      const k = nd[cur + KEY];
+      if (key == k) {
+        break;
+      }
+      path[depth++] = cur;
+      const left = nd[cur + LEFT] & -2;
+      const right = nd[cur + RIGHT];
+      const goRight = key > k;
+      dirs = (dirs << 1) | (goRight ? 1 : 0);
+      cur = goRight ? right : left;
+      if (cur == 0) {
+        return false;
+      }
+    }
+
+    const leftChild = nd[cur + LEFT] & -2;
+    const rightChild = nd[cur + RIGHT];
+    let x: i64 = 0;
+
+    if (leftChild != 0 && rightChild != 0) {
+      const target = cur;
+      path[depth++] = cur;
+      dirs = (dirs << 1) | 1;
+      cur = rightChild;
+      for (;;) {
+        const l = nd[cur + LEFT] & -2;
+        if (l == 0) {
+          break;
+        }
+        path[depth++] = cur;
+        dirs <<= 1;
+        cur = l;
+      }
+      nd[target + KEY] = nd[cur + KEY];
+      nd[target + VAL] = nd[cur + VAL];
+      x = nd[cur + RIGHT];
+    } else {
+      x = leftChild != 0 ? leftChild : rightChild;
+    }
+
+    const removedRed = (nd[cur + LEFT] & 1) != 0;
+    nd[cur + RIGHT] = this.freeHead;
+    this.freeHead = cur;
+    this.len--;
+
+    if (depth == 0) {
+      this.root = x;
+      if (x != 0) {
+        nd[x + LEFT] &= -2;
+      }
+      return true;
+    }
+
+    let parent = path[depth - 1];
+    if ((dirs & 1) != 0) {
+      nd[parent + RIGHT] = x;
+    } else {
+      nd[parent + LEFT] = (nd[parent + LEFT] & 1) | x;
+    }
+
+    if (removedRed) {
+      return true;
+    }
+
+    if (x != 0 && (nd[x + LEFT] & 1) != 0) {
+      nd[x + LEFT] &= -2;
+      return true;
+    }
+
+    // Double-black fixup
+    for (;;) {
+      parent = path[depth - 1];
+      if ((dirs & 1) == 0) {
+        // The double black is parent's left child
+        let w = nd[parent + RIGHT];
+        if ((nd[w + LEFT] & 1) != 0) {
+          // Case 1: the sibling w is red
+          const wLeft = nd[w + LEFT] & -2;
+          nd[parent + RIGHT] = wLeft;
+          nd[parent + LEFT] |= 1; // parent becomes red
+          nd[w + LEFT] = parent; // w becomes black
+          this.replaceSub(depth, dirs, w);
+          path[depth - 1] = w;
+          path[depth] = parent;
+          depth++;
+          dirs <<= 1;
+          w = wLeft;
+        }
+
+        const wr = nd[w + RIGHT];
+        if (wr != 0 && (nd[wr + LEFT] & 1) != 0) {
+          // Case 4: w's right child is red -> left rotation at parent
+          const parentColor = nd[parent + LEFT] & 1;
+          const wl = nd[w + LEFT] & -2;
+          nd[parent + RIGHT] = wl;
+          nd[parent + LEFT] &= -2; // parent becomes black
+          nd[w + LEFT] = parent | parentColor;
+          nd[wr + LEFT] &= -2; // wr becomes black
+          this.replaceSub(depth, dirs, w);
+          return true;
+        }
+
+        const wLeftNode = nd[w + LEFT] & -2;
+        if (wLeftNode != 0 && (nd[wLeftNode + LEFT] & 1) != 0) {
+          // Case 3+4: fused right-left double rotation
+          const parentColor = nd[parent + LEFT] & 1;
+          const a = nd[wLeftNode + LEFT] & -2;
+          const b = nd[wLeftNode + RIGHT];
+          nd[parent + RIGHT] = a;
+          nd[parent + LEFT] &= -2; // parent becomes black
+          nd[w + LEFT] = b; // w stays black
+          nd[wLeftNode + LEFT] = parent | parentColor;
+          nd[wLeftNode + RIGHT] = w;
+          this.replaceSub(depth, dirs, wLeftNode);
+          return true;
+        }
+
+        // Case 2: both of w's children are black
+        nd[w + LEFT] |= 1; // w becomes red
+      } else {
+        // The double black is parent's right child
+        let w = nd[parent + LEFT] & -2;
+        if ((nd[w + LEFT] & 1) != 0) {
+          // Case 1: the sibling w is red
+          const wRight = nd[w + RIGHT];
+          nd[parent + LEFT] = wRight | 1; // parent becomes red
+          nd[w + LEFT] &= -2; // w becomes black
+          nd[w + RIGHT] = parent;
+          this.replaceSub(depth, dirs, w);
+          path[depth - 1] = w;
+          path[depth] = parent;
+          depth++;
+          dirs = (dirs << 1) | 1;
+          w = wRight;
+        }
+
+        const wl = nd[w + LEFT] & -2;
+        if (wl != 0 && (nd[wl + LEFT] & 1) != 0) {
+          // Case 4: w's left child is red -> right rotation at parent
+          const parentColor = nd[parent + LEFT] & 1;
+          const wr = nd[w + RIGHT];
+          nd[parent + LEFT] = wr; // parent becomes black
+          nd[w + LEFT] = wl | parentColor;
+          nd[w + RIGHT] = parent;
+          nd[wl + LEFT] &= -2; // wl becomes black
+          this.replaceSub(depth, dirs, w);
+          return true;
+        }
+
+        const wRightNode = nd[w + RIGHT];
+        if (wRightNode != 0 && (nd[wRightNode + LEFT] & 1) != 0) {
+          // Case 3+4: fused left-right double rotation
+          const parentColor = nd[parent + LEFT] & 1;
+          const a = nd[wRightNode + LEFT] & -2;
+          const b = nd[wRightNode + RIGHT];
+          nd[parent + LEFT] = b; // parent becomes black
+          nd[w + RIGHT] = a; // w stays black
+          nd[wRightNode + LEFT] = w | parentColor;
+          nd[wRightNode + RIGHT] = parent;
+          this.replaceSub(depth, dirs, wRightNode);
+          return true;
+        }
+
+        // Case 2: both of w's children are black
+        nd[w + LEFT] |= 1; // w becomes red
+      }
+      if ((nd[parent + LEFT] & 1) != 0) {
+        nd[parent + LEFT] &= -2;
+        return true;
+      }
+      depth--;
+      if (depth == 0) {
+        return true;
+      }
+      dirs >>= 1;
+    }
+  }
+
+  // Puts `sub` where path[depth - 1] was: the root, or a child of path[depth - 2].
+  private replaceSub(depth: i32, dirs: u64, sub: i64) {
+    if (depth == 1) {
+      this.root = sub;
+    } else {
+      this.setChild(this.path[depth - 2], (dirs & 2) != 0, sub);
+    }
+  }
+
+  // Copies the entries with lo <= key <= hi, in key order, into outKeys/outVals, at most
+  // `limit` of them; returns how many.
+  range(lo: i64, hi: i64, outKeys: i64[], outVals: i64[], limit: i32): i32 {
+    let cur = this.root;
+    if (cur == 0 || limit <= 0 || lo > hi) {
+      return 0;
+    }
+    if ((limit as i64) > outKeys.length || (limit as i64) > outVals.length) {
+      throw new RangeError("range: limit is larger than the output arrays");
+    }
+
+    const nd = this.nodes;
+    const stack = this.path;
+    let sp: i32 = 0;
+    const span = (hi - lo) as u64;
+
+    while (cur != 0) {
+      const k = nd[cur + KEY];
+      const left = nd[cur + LEFT] & -2;
+      const right = nd[cur + RIGHT];
+      if (((k - lo) as u64) <= span) {
+        stack[sp++] = cur;
+        if (k == lo) {
+          break;
+        }
+      }
+      cur = k < lo ? right : left;
+    }
+
+    if (sp == 0) {
+      return 0;
+    }
+
+    let count: i32 = 0;
+    cur = stack[--sp];
+    for (;;) {
+      const k = nd[cur + KEY];
+      if (k > hi) {
+        break;
+      }
+      outKeys[count] = k;
+      outVals[count] = nd[cur + VAL];
+      if (++count == limit) {
+        break;
+      }
+
+      const r = nd[cur + RIGHT];
+      if (r != 0) {
+        cur = r;
+        for (;;) {
+          const l = nd[cur + LEFT] & -2;
+          if (l == 0) {
+            break;
+          }
+          stack[sp++] = cur;
+          cur = l;
+        }
+      } else {
+        if (sp == 0) {
+          break;
+        }
+        cur = stack[--sp];
+      }
+    }
+
+    return count;
+  }
+
+  height(): i32 {
+    return heightOf(this.nodes, this.root);
+  }
+}
+
+function heightOf(nd: i64[], n: i64): i32 {
+  if (n == 0) {
+    return 0;
+  }
+  const lh = heightOf(nd, nd[n + LEFT] & -2);
+  const rh = heightOf(nd, nd[n + RIGHT]);
+  return (lh > rh ? lh : rh) + 1;
+}

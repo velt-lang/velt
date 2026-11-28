@@ -1,0 +1,1445 @@
+// R-tree (Guttman, quadratic split, M = 16, m = 6): a port of the benchmark's C# solution
+// (RTree.cs), with its scalar code paths in place of its Vector<int> ones.
+//
+// Nodes live in pools indexed by node number: the rectangles of node n are rects[64n ..
+// 64n + 63] in AoSoA-4 blocks (block b holds entries 4b .. 4b + 3 as x0[4], x1[4], y0[4],
+// y1[4]), its child node numbers (internal nodes) or entry ids (leaves) are data[16n .. 16n +
+// 15], and counts[n] is its number of entries. Unused slots hold sentinel rectangles that fail
+// every intersection, containment and exact-match test. Freed nodes form a list through
+// data[16n].
+
+const M: i32 = 16;
+const MIN_FILL: i32 = 6;
+const MAX_HEIGHT: i32 = 32;
+
+// Valid coordinates are in [0, 2^20 - 1].
+const SENTINEL_LO: i32 = 4194304;
+const SENTINEL_HI: i32 = -1;
+
+const I64_MAX: i64 = 9223372036854775807;
+const I64_MIN: i64 = -9223372036854775807 - 1;
+const I32_MAX: i32 = 2147483647;
+
+// The offset of entry `slot` in its node's 64 rectangle ints (its x0; x1, y0, y1 follow at +4,
+// +8, +12).
+function slotOffset(slot: i32): i32 {
+  return ((slot & ~3) << 2) | (slot & 3);
+}
+
+function area(x0: i32, y0: i32, x1: i32, y1: i32): i64 {
+  return ((x1 - x0) as i64) * ((y1 - y0) as i64);
+}
+
+// The squared distance from (px, py) to the rectangle at `off` of `r`.
+function distSq(r: i32[], off: i32, px: i32, py: i32): i64 {
+  let dx = r[off] - px;
+  let t = px - r[off + 4];
+  if (t > dx) {
+    dx = t;
+  }
+  if (dx < 0) {
+    dx = 0;
+  }
+  let dy = r[off + 8] - py;
+  t = py - r[off + 12];
+  if (t > dy) {
+    dy = t;
+  }
+  if (dy < 0) {
+    dy = 0;
+  }
+  return (dx as i64) * (dx as i64) + (dy as i64) * (dy as i64);
+}
+
+// 4-ary min-heap of (key, node), key = dist << 4 | level.
+function pqPush(keys: u64[], nodes: i32[], count: i32, key: u64, node: i32) {
+  let i = count;
+  while (i > 0) {
+    const parent = (i - 1) >> 2;
+    if (key >= keys[parent]) {
+      break;
+    }
+    keys[i] = keys[parent];
+    nodes[i] = nodes[parent];
+    i = parent;
+  }
+  keys[i] = key;
+  nodes[i] = node;
+}
+
+// After the caller took the minimum (keys[0], nodes[0]) and shrank the heap to n entries, move
+// the last entry (at n) into place.
+function pqFix(keys: u64[], nodes: i32[], n: i32) {
+  if (n == 0) {
+    return;
+  }
+  const lastKey = keys[n];
+  const lastNode = nodes[n];
+  let i: i32 = 0;
+  for (;;) {
+    const c0 = (i << 2) + 1;
+    if (c0 >= n) {
+      break;
+    }
+    let minC = c0;
+    let minK = keys[c0];
+    let end = c0 + 4;
+    if (end > n) {
+      end = n;
+    }
+    for (let c = c0 + 1; c < end; c++) {
+      const k = keys[c];
+      if (k < minK) {
+        minK = k;
+        minC = c;
+      }
+    }
+    if (lastKey <= minK) {
+      break;
+    }
+    keys[i] = minK;
+    nodes[i] = nodes[minC];
+    i = minC;
+  }
+  keys[i] = lastKey;
+  nodes[i] = lastNode;
+}
+
+// Binary max-heap of results ordered by (dist, id).
+function resHeapPush(dists: i64[], ids: i32[], count: i32, dist: i64, id: i32) {
+  let i = count;
+  while (i > 0) {
+    const parent = (i - 1) >> 1;
+    const pd = dists[parent];
+    if (dist < pd || (dist == pd && id <= ids[parent])) {
+      break;
+    }
+    dists[i] = pd;
+    ids[i] = ids[parent];
+    i = parent;
+  }
+  dists[i] = dist;
+  ids[i] = id;
+}
+
+function resHeapReplaceRoot(dists: i64[], ids: i32[], count: i32, dist: i64, id: i32) {
+  let i: i32 = 0;
+  for (;;) {
+    const left = (i << 1) + 1;
+    if (left >= count) {
+      break;
+    }
+    let best = left;
+    let bd = dists[left];
+    let bi = ids[left];
+    const right = left + 1;
+    if (right < count) {
+      const rd = dists[right];
+      const ri = ids[right];
+      if (rd > bd || (rd == bd && ri > bi)) {
+        best = right;
+        bd = rd;
+        bi = ri;
+      }
+    }
+    if (dist > bd || (dist == bd && id >= bi)) {
+      break;
+    }
+    dists[i] = bd;
+    ids[i] = bi;
+    i = best;
+  }
+  dists[i] = dist;
+  ids[i] = id;
+}
+
+export class RTree {
+  private rects: i32[];
+  private data: i32[];
+  private counts: u8[];
+  private poolCap: i32;
+  private poolUsed: i32;
+  private freeHead: i32;
+
+  private root: i32;
+  private ht: i32;
+  private len: i32;
+  private nodes: i32;
+
+  // Scratch space for nearest() (4-ary min-heap, result max-heap for k > 32).
+  private pqKey: u64[];
+  private pqNode: i32[];
+  private pqCap: i32;
+  private resDist: i64[];
+  private resId: i32[];
+  private resCap: i32;
+  private smallDist: i64[];
+  private smallId: i32[];
+
+  // Scratch space the C# version allocates on the stack.
+  private insPathNode: i32[];
+  private insPathSlot: i32[];
+  private rmPathNode: i32[];
+  private rmPathSlot: i32[];
+  private elimNode: i32[];
+  private elimLevel: i32[];
+  private ex0: i32[];
+  private ey0: i32[];
+  private ex1: i32[];
+  private ey1: i32[];
+  private edata: i32[];
+  private sx0: i32[];
+  private sx1: i32[];
+  private sy0: i32[];
+  private sy1: i32[];
+  private sdata: i32[];
+  private sarea: i64[];
+  private srem: i32[];
+  private d1Arr: i64[];
+  private d2Arr: i64[];
+  private searchStack: i32[];
+  private collectStack: i32[];
+
+  // The bounding boxes of the two groups splitNode() made.
+  private g1x0: i32;
+  private g1y0: i32;
+  private g1x1: i32;
+  private g1y1: i32;
+  private g2x0: i32;
+  private g2y0: i32;
+  private g2x1: i32;
+  private g2y1: i32;
+  // The bounding box computeNodeBBox() found.
+  private bx0: i32;
+  private by0: i32;
+  private bx1: i32;
+  private by1: i32;
+
+  constructor() {
+    this.rects = [];
+    this.data = [];
+    this.counts = [];
+    this.poolCap = 0;
+    this.poolUsed = 0;
+    this.freeHead = -1;
+    this.root = -1;
+    this.ht = 0;
+    this.len = 0;
+    this.nodes = 0;
+    this.pqKey = [];
+    this.pqNode = [];
+    this.pqCap = 0;
+    this.resDist = [];
+    this.resId = [];
+    this.resCap = 0;
+    this.smallDist = new Array<i64>(32).fill(0);
+    this.smallId = new Array<i32>(32).fill(0);
+    this.insPathNode = new Array<i32>(MAX_HEIGHT).fill(0);
+    this.insPathSlot = new Array<i32>(MAX_HEIGHT).fill(0);
+    this.rmPathNode = new Array<i32>(MAX_HEIGHT).fill(0);
+    this.rmPathSlot = new Array<i32>(MAX_HEIGHT).fill(0);
+    this.elimNode = new Array<i32>(MAX_HEIGHT).fill(0);
+    this.elimLevel = new Array<i32>(MAX_HEIGHT).fill(0);
+    this.ex0 = new Array<i32>(MIN_FILL).fill(0);
+    this.ey0 = new Array<i32>(MIN_FILL).fill(0);
+    this.ex1 = new Array<i32>(MIN_FILL).fill(0);
+    this.ey1 = new Array<i32>(MIN_FILL).fill(0);
+    this.edata = new Array<i32>(MIN_FILL).fill(0);
+    this.sx0 = new Array<i32>(17).fill(0);
+    this.sx1 = new Array<i32>(17).fill(0);
+    this.sy0 = new Array<i32>(17).fill(0);
+    this.sy1 = new Array<i32>(17).fill(0);
+    this.sdata = new Array<i32>(17).fill(0);
+    this.sarea = new Array<i64>(17).fill(0);
+    this.srem = new Array<i32>(15).fill(0);
+    this.d1Arr = new Array<i64>(15).fill(0);
+    this.d2Arr = new Array<i64>(15).fill(0);
+    this.searchStack = new Array<i32>(256).fill(0);
+    this.collectStack = new Array<i32>(256).fill(0);
+    this.g1x0 = 0;
+    this.g1y0 = 0;
+    this.g1x1 = 0;
+    this.g1y1 = 0;
+    this.g2x0 = 0;
+    this.g2y0 = 0;
+    this.g2x1 = 0;
+    this.g2y1 = 0;
+    this.bx0 = 0;
+    this.by0 = 0;
+    this.bx1 = 0;
+    this.by1 = 0;
+  }
+
+  get count(): i32 {
+    return this.len;
+  }
+
+  height(): i32 {
+    return this.ht;
+  }
+
+  nodeCount(): i32 {
+    return this.nodes;
+  }
+
+  // ------------------------------------------------------------- pool management
+
+  private growPool() {
+    const newCap = this.poolCap == 0 ? 16 : this.poolCap * 2;
+    const nr = new Array<i32>(newCap * 64).fill(0);
+    const nd = new Array<i32>(newCap * 16).fill(0);
+    const nc = new Array<u8>(newCap).fill(0);
+    const old = this.poolCap;
+    const r = this.rects;
+    const d = this.data;
+    const c = this.counts;
+    for (let i: i32 = 0; i < old * 64; i++) {
+      nr[i] = r[i];
+    }
+    for (let i: i32 = 0; i < old * 16; i++) {
+      nd[i] = d[i];
+    }
+    for (let i: i32 = 0; i < old; i++) {
+      nc[i] = c[i];
+    }
+    this.rects = nr;
+    this.data = nd;
+    this.counts = nc;
+    this.poolCap = newCap;
+  }
+
+  private allocNode(): i32 {
+    let idx: i32 = 0;
+    if (this.freeHead >= 0) {
+      idx = this.freeHead;
+      this.freeHead = this.data[idx << 4];
+    } else {
+      if (this.poolUsed == this.poolCap) {
+        this.growPool();
+      }
+      idx = this.poolUsed;
+      this.poolUsed++;
+    }
+    this.nodes++;
+    this.initNodeSentinels(idx);
+    return idx;
+  }
+
+  private freeNode(idx: i32) {
+    this.data[idx << 4] = this.freeHead;
+    this.freeHead = idx;
+    this.nodes--;
+  }
+
+  private initNodeSentinels(idx: i32) {
+    const p = this.rects;
+    const base = idx << 6;
+    for (let b: i32 = 0; b < 64; b += 16) {
+      for (let l: i32 = 0; l < 4; l++) {
+        p[base + b + l] = SENTINEL_LO;
+        p[base + b + 4 + l] = SENTINEL_HI;
+        p[base + b + 8 + l] = SENTINEL_LO;
+        p[base + b + 12 + l] = SENTINEL_HI;
+      }
+    }
+    this.counts[idx] = 0;
+  }
+
+  private writeSlot(node: i32, slot: i32, x0: i32, y0: i32, x1: i32, y1: i32, data: i32) {
+    const p = this.rects;
+    const off = (node << 6) + slotOffset(slot);
+    p[off] = x0;
+    p[off + 4] = x1;
+    p[off + 8] = y0;
+    p[off + 12] = y1;
+    this.data[(node << 4) + slot] = data;
+  }
+
+  private removeSlot(node: i32, slot: i32) {
+    const last = (this.counts[node] as i32) - 1;
+    const r = this.rects;
+    const d = this.data;
+    const rb = node << 6;
+    const db = node << 4;
+    const lastOff = rb + slotOffset(last);
+    if (slot != last) {
+      const slotOff = rb + slotOffset(slot);
+      r[slotOff] = r[lastOff];
+      r[slotOff + 4] = r[lastOff + 4];
+      r[slotOff + 8] = r[lastOff + 8];
+      r[slotOff + 12] = r[lastOff + 12];
+      d[db + slot] = d[db + last];
+    }
+    r[lastOff] = SENTINEL_LO;
+    r[lastOff + 4] = SENTINEL_HI;
+    r[lastOff + 8] = SENTINEL_LO;
+    r[lastOff + 12] = SENTINEL_HI;
+    this.counts[node] = last as u8;
+  }
+
+  // Sets bx0, by0, bx1, by1 to the bounding box of the node's entries.
+  private computeNodeBBox(node: i32) {
+    const p = this.rects;
+    const base = node << 6;
+    const cnt = this.counts[node] as i32;
+    let bx0 = SENTINEL_LO;
+    let by0 = SENTINEL_LO;
+    let bx1 = SENTINEL_HI;
+    let by1 = SENTINEL_HI;
+    for (let i: i32 = 0; i < cnt; i++) {
+      const off = base + slotOffset(i);
+      let v = p[off];
+      if (v < bx0) {
+        bx0 = v;
+      }
+      v = p[off + 4];
+      if (v > bx1) {
+        bx1 = v;
+      }
+      v = p[off + 8];
+      if (v < by0) {
+        by0 = v;
+      }
+      v = p[off + 12];
+      if (v > by1) {
+        by1 = v;
+      }
+    }
+    this.bx0 = bx0;
+    this.by0 = by0;
+    this.bx1 = bx1;
+    this.by1 = by1;
+  }
+
+  // ------------------------------------------------------------------- insert
+
+  insert(x0: i32, y0: i32, x1: i32, y1: i32, id: i32) {
+    if (this.root < 0) {
+      const r = this.allocNode();
+      this.writeSlot(r, 0, x0, y0, x1, y1, id);
+      this.counts[r] = 1;
+      this.root = r;
+      this.ht = 1;
+      this.len = 1;
+      return;
+    }
+    this.len++;
+    this.insertAtLevel(x0, y0, x1, y1, id, 0);
+  }
+
+  private insertAtLevel(x0: i32, y0: i32, x1: i32, y1: i32, data: i32, targetLevel: i32) {
+    const pathNode = this.insPathNode;
+    const pathSlot = this.insPathSlot;
+    let cur = this.root;
+    let level = this.ht - 1;
+
+    while (level > targetLevel) {
+      const r = this.rects;
+      const base = cur << 6;
+      const cnt = this.counts[cur] as i32;
+      let bestEnl = I64_MAX;
+      let bestArea = I64_MAX;
+      let bestIdx: i32 = 0;
+      for (let i: i32 = 0; i < cnt; i++) {
+        const off = base + slotOffset(i);
+        const ex0 = r[off];
+        const ex1 = r[off + 4];
+        const ey0 = r[off + 8];
+        const ey1 = r[off + 12];
+        const a = area(ex0, ey0, ex1, ey1);
+        const nx0 = ex0 < x0 ? ex0 : x0;
+        const nx1 = ex1 > x1 ? ex1 : x1;
+        const ny0 = ey0 < y0 ? ey0 : y0;
+        const ny1 = ey1 > y1 ? ey1 : y1;
+        const enl = area(nx0, ny0, nx1, ny1) - a;
+        if (enl < bestEnl || (enl == bestEnl && a < bestArea)) {
+          bestEnl = enl;
+          bestArea = a;
+          bestIdx = i;
+        }
+      }
+      pathNode[level] = cur;
+      pathSlot[level] = bestIdx;
+
+      // Expand the chosen entry's box on the way down; a split below overwrites it with the
+      // exact box.
+      const bp = base + slotOffset(bestIdx);
+      if (x0 < r[bp]) {
+        r[bp] = x0;
+      }
+      if (x1 > r[bp + 4]) {
+        r[bp + 4] = x1;
+      }
+      if (y0 < r[bp + 8]) {
+        r[bp + 8] = y0;
+      }
+      if (y1 > r[bp + 12]) {
+        r[bp + 12] = y1;
+      }
+      cur = this.data[(cur << 4) + bestIdx];
+      level--;
+    }
+
+    const curCnt = this.counts[cur] as i32;
+    if (curCnt < M) {
+      this.writeSlot(cur, curCnt, x0, y0, x1, y1, data);
+      this.counts[cur] = (curCnt + 1) as u8;
+      return;
+    }
+
+    // Node overflow: quadratic split and propagate upward.
+    let newNode = this.splitNode(cur, x0, y0, x1, y1, data);
+    let curLevel = targetLevel;
+    for (;;) {
+      if (curLevel == this.ht - 1) {
+        const newRoot = this.allocNode();
+        this.writeSlot(newRoot, 0, this.g1x0, this.g1y0, this.g1x1, this.g1y1, cur);
+        this.writeSlot(newRoot, 1, this.g2x0, this.g2y0, this.g2x1, this.g2y1, newNode);
+        this.counts[newRoot] = 2;
+        this.root = newRoot;
+        this.ht++;
+        return;
+      }
+      const parent = pathNode[curLevel + 1];
+      const slot = pathSlot[curLevel + 1];
+      const pr = this.rects;
+      const pp = (parent << 6) + slotOffset(slot);
+      pr[pp] = this.g1x0;
+      pr[pp + 4] = this.g1x1;
+      pr[pp + 8] = this.g1y0;
+      pr[pp + 12] = this.g1y1;
+
+      const pCnt = this.counts[parent] as i32;
+      if (pCnt < M) {
+        this.writeSlot(parent, pCnt, this.g2x0, this.g2y0, this.g2x1, this.g2y1, newNode);
+        this.counts[parent] = (pCnt + 1) as u8;
+        return;
+      }
+      newNode = this.splitNode(parent, this.g2x0, this.g2y0, this.g2x1, this.g2y1, newNode);
+      cur = parent;
+      curLevel++;
+    }
+  }
+
+  // Splits the 16 entries of `node` plus the added one between `node` and a new node, which it
+  // returns; their bounding boxes go to g1* and g2*.
+  private splitNode(node: i32, addX0: i32, addY0: i32, addX1: i32, addY1: i32, addData: i32): i32 {
+    const sx0 = this.sx0;
+    const sx1 = this.sx1;
+    const sy0 = this.sy0;
+    const sy1 = this.sy1;
+    const sdata = this.sdata;
+    const sarea = this.sarea;
+
+    // Unpack the 16 entries into contiguous arrays.
+    {
+      const nr = this.rects;
+      const nd = this.data;
+      const rb = node << 6;
+      const db = node << 4;
+      for (let b: i32 = 0; b < 4; b++) {
+        const bp = rb + (b << 4);
+        const dst = b << 2;
+        for (let l: i32 = 0; l < 4; l++) {
+          const x0 = nr[bp + l];
+          const x1 = nr[bp + 4 + l];
+          const y0 = nr[bp + 8 + l];
+          const y1 = nr[bp + 12 + l];
+          sx0[dst + l] = x0;
+          sx1[dst + l] = x1;
+          sy0[dst + l] = y0;
+          sy1[dst + l] = y1;
+          sdata[dst + l] = nd[db + dst + l];
+          sarea[dst + l] = area(x0, y0, x1, y1);
+        }
+      }
+    }
+    sx0[16] = addX0;
+    sx1[16] = addX1;
+    sy0[16] = addY0;
+    sy1[16] = addY1;
+    sdata[16] = addData;
+    sarea[16] = area(addX0, addY0, addX1, addY1);
+
+    // 1. PickSeeds: maximize area(J) - area(E1) - area(E2) over all 136 pairs.
+    let bestD = I64_MIN;
+    let seed1: i32 = 0;
+    let seed2: i32 = 1;
+    for (let i: i32 = 0; i < 16; i++) {
+      const ix0 = sx0[i];
+      const ix1 = sx1[i];
+      const iy0 = sy0[i];
+      const iy1 = sy1[i];
+      const ia = sarea[i];
+      for (let j = i + 1; j < 17; j++) {
+        const jx0 = sx0[j];
+        const jx1 = sx1[j];
+        const jy0 = sy0[j];
+        const jy1 = sy1[j];
+        const ux0 = ix0 < jx0 ? ix0 : jx0;
+        const ux1 = ix1 > jx1 ? ix1 : jx1;
+        const uy0 = iy0 < jy0 ? iy0 : jy0;
+        const uy1 = iy1 > jy1 ? iy1 : jy1;
+        const d = area(ux0, uy0, ux1, uy1) - ia - sarea[j];
+        if (d > bestD) {
+          bestD = d;
+          seed1 = i;
+          seed2 = j;
+        }
+      }
+    }
+
+    // Initialize the groups with the two seeds.
+    const newNode = this.allocNode();
+    this.initNodeSentinels(node);
+    const r = this.rects;
+    const dd = this.data;
+    const n1r = node << 6;
+    const n1d = node << 4;
+    const n2r = newNode << 6;
+    const n2d = newNode << 4;
+
+    r[n1r] = sx0[seed1];
+    r[n1r + 4] = sx1[seed1];
+    r[n1r + 8] = sy0[seed1];
+    r[n1r + 12] = sy1[seed1];
+    dd[n1d] = sdata[seed1];
+    let g1x0 = sx0[seed1];
+    let g1y0 = sy0[seed1];
+    let g1x1 = sx1[seed1];
+    let g1y1 = sy1[seed1];
+    let g1Area = sarea[seed1];
+    let g1Cnt: i32 = 1;
+
+    r[n2r] = sx0[seed2];
+    r[n2r + 4] = sx1[seed2];
+    r[n2r + 8] = sy0[seed2];
+    r[n2r + 12] = sy1[seed2];
+    dd[n2d] = sdata[seed2];
+    let g2x0 = sx0[seed2];
+    let g2y0 = sy0[seed2];
+    let g2x1 = sx1[seed2];
+    let g2y1 = sy1[seed2];
+    let g2Area = sarea[seed2];
+    let g2Cnt: i32 = 1;
+
+    // The 15 remaining entries, with the enlargement each group needs to take them.
+    const rem = this.srem;
+    const d1Arr = this.d1Arr;
+    const d2Arr = this.d2Arr;
+    let remCnt: i32 = 0;
+    for (let i: i32 = 0; i < 17; i++) {
+      if (i == seed1 || i == seed2) {
+        continue;
+      }
+      rem[remCnt] = i;
+      const ex0 = sx0[i];
+      const ex1 = sx1[i];
+      const ey0 = sy0[i];
+      const ey1 = sy1[i];
+      let ux0 = g1x0 < ex0 ? g1x0 : ex0;
+      let ux1 = g1x1 > ex1 ? g1x1 : ex1;
+      let uy0 = g1y0 < ey0 ? g1y0 : ey0;
+      let uy1 = g1y1 > ey1 ? g1y1 : ey1;
+      d1Arr[remCnt] = area(ux0, uy0, ux1, uy1) - g1Area;
+      ux0 = g2x0 < ex0 ? g2x0 : ex0;
+      ux1 = g2x1 > ex1 ? g2x1 : ex1;
+      uy0 = g2y0 < ey0 ? g2y0 : ey0;
+      uy1 = g2y1 > ey1 ? g2y1 : ey1;
+      d2Arr[remCnt] = area(ux0, uy0, ux1, uy1) - g2Area;
+      remCnt++;
+    }
+
+    // 2. PickNext, updating d1/d2 when a group's box grows.
+    while (remCnt > 0) {
+      if (g1Cnt + remCnt == MIN_FILL) {
+        for (let k: i32 = 0; k < remCnt; k++) {
+          const e = rem[k];
+          const ex0 = sx0[e];
+          const ex1 = sx1[e];
+          const ey0 = sy0[e];
+          const ey1 = sy1[e];
+          const off = n1r + slotOffset(g1Cnt);
+          r[off] = ex0;
+          r[off + 4] = ex1;
+          r[off + 8] = ey0;
+          r[off + 12] = ey1;
+          dd[n1d + g1Cnt] = sdata[e];
+          g1Cnt++;
+          if (ex0 < g1x0) {
+            g1x0 = ex0;
+          }
+          if (ex1 > g1x1) {
+            g1x1 = ex1;
+          }
+          if (ey0 < g1y0) {
+            g1y0 = ey0;
+          }
+          if (ey1 > g1y1) {
+            g1y1 = ey1;
+          }
+        }
+        break;
+      }
+      if (g2Cnt + remCnt == MIN_FILL) {
+        for (let k: i32 = 0; k < remCnt; k++) {
+          const e = rem[k];
+          const ex0 = sx0[e];
+          const ex1 = sx1[e];
+          const ey0 = sy0[e];
+          const ey1 = sy1[e];
+          const off = n2r + slotOffset(g2Cnt);
+          r[off] = ex0;
+          r[off + 4] = ex1;
+          r[off + 8] = ey0;
+          r[off + 12] = ey1;
+          dd[n2d + g2Cnt] = sdata[e];
+          g2Cnt++;
+          if (ex0 < g2x0) {
+            g2x0 = ex0;
+          }
+          if (ex1 > g2x1) {
+            g2x1 = ex1;
+          }
+          if (ey0 < g2y0) {
+            g2y0 = ey0;
+          }
+          if (ey1 > g2y1) {
+            g2y1 = ey1;
+          }
+        }
+        break;
+      }
+
+      let maxDiff: i64 = -1;
+      let bestK: i32 = 0;
+      for (let k: i32 = 0; k < remCnt; k++) {
+        let diff = d1Arr[k] - d2Arr[k];
+        if (diff < 0) {
+          diff = -diff;
+        }
+        if (diff > maxDiff) {
+          maxDiff = diff;
+          bestK = k;
+        }
+      }
+
+      const pick = rem[bestK];
+      const d1 = d1Arr[bestK];
+      const d2 = d2Arr[bestK];
+
+      // Swap-remove bestK from the remaining list.
+      remCnt--;
+      if (bestK != remCnt) {
+        rem[bestK] = rem[remCnt];
+        d1Arr[bestK] = d1Arr[remCnt];
+        d2Arr[bestK] = d2Arr[remCnt];
+      }
+
+      const toGroup1 =
+        d1 < d2 || (d1 == d2 && (g1Area < g2Area || (g1Area == g2Area && g1Cnt <= g2Cnt)));
+
+      const px0 = sx0[pick];
+      const px1 = sx1[pick];
+      const py0 = sy0[pick];
+      const py1 = sy1[pick];
+      if (toGroup1) {
+        const off = n1r + slotOffset(g1Cnt);
+        r[off] = px0;
+        r[off + 4] = px1;
+        r[off + 8] = py0;
+        r[off + 12] = py1;
+        dd[n1d + g1Cnt] = sdata[pick];
+        g1Cnt++;
+        let changed = false;
+        if (px0 < g1x0) {
+          g1x0 = px0;
+          changed = true;
+        }
+        if (px1 > g1x1) {
+          g1x1 = px1;
+          changed = true;
+        }
+        if (py0 < g1y0) {
+          g1y0 = py0;
+          changed = true;
+        }
+        if (py1 > g1y1) {
+          g1y1 = py1;
+          changed = true;
+        }
+        if (changed) {
+          g1Area = area(g1x0, g1y0, g1x1, g1y1);
+          for (let k: i32 = 0; k < remCnt; k++) {
+            const e = rem[k];
+            const ux0 = g1x0 < sx0[e] ? g1x0 : sx0[e];
+            const ux1 = g1x1 > sx1[e] ? g1x1 : sx1[e];
+            const uy0 = g1y0 < sy0[e] ? g1y0 : sy0[e];
+            const uy1 = g1y1 > sy1[e] ? g1y1 : sy1[e];
+            d1Arr[k] = area(ux0, uy0, ux1, uy1) - g1Area;
+          }
+        }
+      } else {
+        const off = n2r + slotOffset(g2Cnt);
+        r[off] = px0;
+        r[off + 4] = px1;
+        r[off + 8] = py0;
+        r[off + 12] = py1;
+        dd[n2d + g2Cnt] = sdata[pick];
+        g2Cnt++;
+        let changed = false;
+        if (px0 < g2x0) {
+          g2x0 = px0;
+          changed = true;
+        }
+        if (px1 > g2x1) {
+          g2x1 = px1;
+          changed = true;
+        }
+        if (py0 < g2y0) {
+          g2y0 = py0;
+          changed = true;
+        }
+        if (py1 > g2y1) {
+          g2y1 = py1;
+          changed = true;
+        }
+        if (changed) {
+          g2Area = area(g2x0, g2y0, g2x1, g2y1);
+          for (let k: i32 = 0; k < remCnt; k++) {
+            const e = rem[k];
+            const ux0 = g2x0 < sx0[e] ? g2x0 : sx0[e];
+            const ux1 = g2x1 > sx1[e] ? g2x1 : sx1[e];
+            const uy0 = g2y0 < sy0[e] ? g2y0 : sy0[e];
+            const uy1 = g2y1 > sy1[e] ? g2y1 : sy1[e];
+            d2Arr[k] = area(ux0, uy0, ux1, uy1) - g2Area;
+          }
+        }
+      }
+    }
+
+    this.counts[node] = g1Cnt as u8;
+    this.counts[newNode] = g2Cnt as u8;
+    this.g1x0 = g1x0;
+    this.g1y0 = g1y0;
+    this.g1x1 = g1x1;
+    this.g1y1 = g1y1;
+    this.g2x0 = g2x0;
+    this.g2y0 = g2y0;
+    this.g2x1 = g2x1;
+    this.g2y1 = g2y1;
+    return newNode;
+  }
+
+  // ------------------------------------------------------------------- remove
+
+  remove(x0: i32, y0: i32, x1: i32, y1: i32, id: i32): boolean {
+    if (this.root < 0) {
+      return false;
+    }
+    const pathNode = this.rmPathNode;
+    const pathSlot = this.rmPathSlot;
+    const foundSlot = this.findLeaf(this.root, this.ht - 1, x0, y0, x1, y1, id, pathNode, pathSlot);
+    if (foundSlot < 0) {
+      return false;
+    }
+
+    this.len--;
+    const leaf = pathNode[0];
+    this.removeSlot(leaf, foundSlot);
+
+    // Special case: the root is a leaf.
+    if (this.ht == 1) {
+      if (this.counts[leaf] == 0) {
+        this.root = -1;
+        this.ht = 0;
+        this.nodes = 0;
+        this.poolUsed = 0;
+        this.freeHead = -1;
+      }
+      return true;
+    }
+
+    // CondenseTree: walk from the leaf up to the root's children.
+    const elimNode = this.elimNode;
+    const elimLevel = this.elimLevel;
+    let elimCount: i32 = 0;
+
+    // The removed or shrunk rectangle, to skip recomputing parent boxes that cannot change.
+    let modX0 = x0;
+    let modY0 = y0;
+    let modX1 = x1;
+    let modY1 = y1;
+    let checkBoundary = true;
+
+    let cur = leaf;
+    for (let level: i32 = 0; level < this.ht - 1; level++) {
+      const parent = pathNode[level + 1];
+      const slot = pathSlot[level + 1];
+      const r = this.rects;
+      const pp = (parent << 6) + slotOffset(slot);
+      const ox0 = r[pp];
+      const ox1 = r[pp + 4];
+      const oy0 = r[pp + 8];
+      const oy1 = r[pp + 12];
+
+      if ((this.counts[cur] as i32) < MIN_FILL) {
+        // Take the underflowing node out of its parent and set it aside.
+        elimNode[elimCount] = cur;
+        elimLevel[elimCount] = level;
+        elimCount++;
+        this.removeSlot(parent, slot);
+        modX0 = ox0;
+        modY0 = oy0;
+        modX1 = ox1;
+        modY1 = oy1;
+        checkBoundary = true;
+      } else {
+        // The node did not underflow: tighten its box in the parent if it could have shrunk.
+        if (checkBoundary && modX0 > ox0 && modX1 < ox1 && modY0 > oy0 && modY1 < oy1) {
+          // A strictly interior change: no box above can shrink.
+          break;
+        }
+        this.computeNodeBBox(cur);
+        const nx0 = this.bx0;
+        const ny0 = this.by0;
+        const nx1 = this.bx1;
+        const ny1 = this.by1;
+        if (nx0 == ox0 && nx1 == ox1 && ny0 == oy0 && ny1 == oy1) {
+          // The box is unchanged: no ancestor can change either.
+          break;
+        }
+        r[pp] = nx0;
+        r[pp + 4] = nx1;
+        r[pp + 8] = ny0;
+        r[pp + 12] = ny1;
+        // Only edges that actually shrank can shrink the parent's box.
+        modX0 = nx0 > ox0 ? ox0 : ox0 + 1;
+        modX1 = nx1 < ox1 ? ox1 : ox1 - 1;
+        modY0 = ny0 > oy0 ? oy0 : oy0 + 1;
+        modY1 = ny1 < oy1 ? oy1 : oy1 - 1;
+        checkBoundary = true;
+      }
+      cur = parent;
+    }
+
+    // Reinsert the set-aside entries at their original levels (higher levels first).
+    if (elimCount > 0) {
+      const ex0 = this.ex0;
+      const ey0 = this.ey0;
+      const ex1 = this.ex1;
+      const ey1 = this.ey1;
+      const edata = this.edata;
+      for (let e = elimCount - 1; e >= 0; e--) {
+        const en = elimNode[e];
+        const el = elimLevel[e];
+        const ec = this.counts[en] as i32;
+        const er = this.rects;
+        const ed = this.data;
+        const rb = en << 6;
+        const db = en << 4;
+        for (let i: i32 = 0; i < ec; i++) {
+          const off = rb + slotOffset(i);
+          ex0[i] = er[off];
+          ex1[i] = er[off + 4];
+          ey0[i] = er[off + 8];
+          ey1[i] = er[off + 12];
+          edata[i] = ed[db + i];
+        }
+        this.freeNode(en);
+        for (let i: i32 = 0; i < ec; i++) {
+          this.insertAtLevel(ex0[i], ey0[i], ex1[i], ey1[i], edata[i], el);
+        }
+      }
+    }
+
+    // Shrink the tree while the root is an internal node with one child.
+    while (this.ht > 1 && this.counts[this.root] == 1) {
+      const oldRoot = this.root;
+      this.root = this.data[oldRoot << 4];
+      this.freeNode(oldRoot);
+      this.ht--;
+    }
+    return true;
+  }
+
+  // The slot of the entry (rect, id) in the leaf under `node`, which goes to pathNode[0] (and
+  // the path to pathNode/pathSlot), or -1.
+  private findLeaf(
+    node: i32,
+    level: i32,
+    rx0: i32,
+    ry0: i32,
+    rx1: i32,
+    ry1: i32,
+    id: i32,
+    pathNode: i32[],
+    pathSlot: i32[],
+  ): i32 {
+    const r = this.rects;
+    const d = this.data;
+    const rb = node << 6;
+    const db = node << 4;
+    const cnt = this.counts[node] as i32;
+
+    if (level == 0) {
+      for (let i: i32 = 0; i < cnt; i++) {
+        const off = rb + slotOffset(i);
+        if (
+          r[off] == rx0 &&
+          r[off + 4] == rx1 &&
+          r[off + 8] == ry0 &&
+          r[off + 12] == ry1 &&
+          d[db + i] == id
+        ) {
+          pathNode[0] = node;
+          return i;
+        }
+      }
+      return -1;
+    }
+
+    for (let i: i32 = 0; i < cnt; i++) {
+      const off = rb + slotOffset(i);
+      if (r[off] <= rx0 && r[off + 4] >= rx1 && r[off + 8] <= ry0 && r[off + 12] >= ry1) {
+        const found = this.findLeaf(
+          d[db + i],
+          level - 1,
+          rx0,
+          ry0,
+          rx1,
+          ry1,
+          id,
+          pathNode,
+          pathSlot,
+        );
+        if (found >= 0) {
+          pathNode[level] = node;
+          pathSlot[level] = i;
+          return found;
+        }
+      }
+    }
+    return -1;
+  }
+
+  // ------------------------------------------------------------------- search
+
+  // Writes the ids of the entries that intersect the window to outIds (at most cap of them) and
+  // returns how many there are.
+  search(x0: i32, y0: i32, x1: i32, y1: i32, outIds: i32[], cap: i32): i32 {
+    if (this.root < 0) {
+      return 0;
+    }
+    let total: i32 = 0;
+    if (this.ht == 1) {
+      return this.scanLeaf(this.root, x0, y0, x1, y1, outIds, cap, total);
+    }
+
+    // Explicit DFS stack of (level << 27) | node.
+    const stack = this.searchStack;
+    let sp: i32 = 0;
+    stack[sp] = ((this.ht - 1) << 27) | this.root;
+    sp++;
+    const checkContain = x0 < x1 || y0 < y1;
+    const r = this.rects;
+    const d = this.data;
+    const counts = this.counts;
+    while (sp > 0) {
+      sp--;
+      const packed = stack[sp];
+      const node = packed & 0x07ffffff;
+      const level = packed >> 27;
+      const rb = node << 6;
+      const db = node << 4;
+      const cnt = counts[node] as i32;
+      for (let i: i32 = 0; i < cnt; i++) {
+        const off = rb + slotOffset(i);
+        const ex0 = r[off];
+        const ex1 = r[off + 4];
+        const ey0 = r[off + 8];
+        const ey1 = r[off + 12];
+        if (ex0 <= x1 && ex1 >= x0 && ey0 <= y1 && ey1 >= y0) {
+          const child = d[db + i];
+          if (checkContain && x0 <= ex0 && ex1 <= x1 && y0 <= ey0 && ey1 <= y1) {
+            total = this.collectAll(child, level - 1, outIds, cap, total);
+          } else if (level == 1) {
+            total = this.scanLeaf(child, x0, y0, x1, y1, outIds, cap, total);
+          } else {
+            stack[sp] = ((level - 1) << 27) | child;
+            sp++;
+          }
+        }
+      }
+    }
+    return total;
+  }
+
+  private scanLeaf(
+    leaf: i32,
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+    outIds: i32[],
+    cap: i32,
+    total: i32,
+  ): i32 {
+    const r = this.rects;
+    const d = this.data;
+    const rb = leaf << 6;
+    const db = leaf << 4;
+    const cnt = this.counts[leaf] as i32;
+    let t = total;
+    for (let i: i32 = 0; i < cnt; i++) {
+      const off = rb + slotOffset(i);
+      if (r[off] <= x1 && r[off + 4] >= x0 && r[off + 8] <= y1 && r[off + 12] >= y0) {
+        if (t < cap) {
+          outIds[t] = d[db + i];
+        }
+        t++;
+      }
+    }
+    return t;
+  }
+
+  // Copies (up to cap) the ids of the leaf `leaf` to outIds from position t; returns the new
+  // total.
+  private copyLeaf(leaf: i32, outIds: i32[], cap: i32, t: i32): i32 {
+    const lCnt = this.counts[leaf] as i32;
+    const avail = cap - t;
+    if (avail > 0) {
+      const toCopy = lCnt < avail ? lCnt : avail;
+      const d = this.data;
+      const db = leaf << 4;
+      for (let i: i32 = 0; i < toCopy; i++) {
+        outIds[t + i] = d[db + i];
+      }
+    }
+    return t + lCnt;
+  }
+
+  // Collects every entry of a subtree contained in the query window; reads only counts and data.
+  private collectAll(startNode: i32, startLevel: i32, outIds: i32[], cap: i32, total: i32): i32 {
+    let t = total;
+    if (startLevel == 0) {
+      return this.copyLeaf(startNode, outIds, cap, t);
+    }
+    const stack = this.collectStack;
+    let sp: i32 = 0;
+    stack[sp] = (startLevel << 27) | startNode;
+    sp++;
+    const d = this.data;
+    const counts = this.counts;
+    while (sp > 0) {
+      sp--;
+      const packed = stack[sp];
+      const node = packed & 0x07ffffff;
+      const level = packed >> 27;
+      const cnt = counts[node] as i32;
+      const db = node << 4;
+      if (level == 1) {
+        for (let i: i32 = 0; i < cnt; i++) {
+          t = this.copyLeaf(d[db + i], outIds, cap, t);
+        }
+      } else {
+        const nextShift = (level - 1) << 27;
+        for (let i: i32 = 0; i < cnt; i++) {
+          stack[sp] = nextShift | d[db + i];
+          sp++;
+        }
+      }
+    }
+    return t;
+  }
+
+  // ------------------------------------------------------------------ nearest
+
+  private ensurePqCap(needed: i32) {
+    if (needed <= this.pqCap) {
+      return;
+    }
+    let newCap = this.pqCap == 0 ? 256 : this.pqCap * 2;
+    while (newCap < needed) {
+      newCap *= 2;
+    }
+    const nk = new Array<u64>(newCap).fill(0);
+    const nn = new Array<i32>(newCap).fill(0);
+    const ok = this.pqKey;
+    const on = this.pqNode;
+    for (let i: i32 = 0; i < this.pqCap; i++) {
+      nk[i] = ok[i];
+      nn[i] = on[i];
+    }
+    this.pqKey = nk;
+    this.pqNode = nn;
+    this.pqCap = newCap;
+  }
+
+  private ensureResCap(needed: i32) {
+    if (needed <= this.resCap) {
+      return;
+    }
+    let newCap = this.resCap == 0 ? 64 : this.resCap * 2;
+    while (newCap < needed) {
+      newCap *= 2;
+    }
+    const nd = new Array<i64>(newCap).fill(0);
+    const ni = new Array<i32>(newCap).fill(0);
+    const od = this.resDist;
+    const oi = this.resId;
+    for (let i: i32 = 0; i < this.resCap; i++) {
+      nd[i] = od[i];
+      ni[i] = oi[i];
+    }
+    this.resDist = nd;
+    this.resId = ni;
+    this.resCap = newCap;
+  }
+
+  // Writes the ids of the k entries nearest to (x, y), ordered by (distance, id), to outIds and
+  // returns how many there are (min(k, count)).
+  nearest(x: i32, y: i32, k: i32, outIds: i32[]): i32 {
+    if (k <= 0 || this.root < 0) {
+      return 0;
+    }
+    if (k == 1) {
+      return this.nearest1(x, y, outIds);
+    }
+    return this.nearestK(x, y, k, outIds);
+  }
+
+  // Best-first search for k = 1 that descends directly into the nearest child while it is no
+  // farther than the head of the queue.
+  private nearest1(px: i32, py: i32, outIds: i32[]): i32 {
+    let bestDist = I64_MAX;
+    let bestId = I32_MAX;
+
+    if (this.pqCap < 64) {
+      this.ensurePqCap(64);
+    }
+    let pqKey = this.pqKey;
+    let pqNode = this.pqNode;
+    let pqCount: i32 = 0;
+
+    let cur = this.root;
+    let level = this.ht - 1;
+    let curDist: i64 = 0;
+    const r = this.rects;
+    const d = this.data;
+
+    for (;;) {
+      if (curDist > bestDist) {
+        break;
+      }
+      const rb = cur << 6;
+      const db = cur << 4;
+      const cnt = this.counts[cur] as i32;
+
+      if (level == 0) {
+        for (let i: i32 = 0; i < cnt; i++) {
+          const dist = distSq(r, rb + slotOffset(i), px, py);
+          if (dist <= bestDist) {
+            const id = d[db + i];
+            if (dist < bestDist || id < bestId) {
+              bestDist = dist;
+              bestId = id;
+            }
+          }
+        }
+        if (bestDist == 0 && bestId == 0) {
+          break;
+        }
+        if (pqCount == 0) {
+          break;
+        }
+        const nextKey = pqKey[0];
+        cur = pqNode[0];
+        pqCount--;
+        pqFix(pqKey, pqNode, pqCount);
+        curDist = (nextKey >> 4) as i64;
+        level = (nextKey & 0xf) as i32;
+      } else {
+        if (pqCount + cnt > this.pqCap) {
+          this.ensurePqCap(pqCount + cnt);
+          pqKey = this.pqKey;
+          pqNode = this.pqNode;
+        }
+        const childLevel = (level - 1) as u64;
+        let directChild: i32 = -1;
+        let directDist = I64_MAX;
+        for (let i: i32 = 0; i < cnt; i++) {
+          const dist = distSq(r, rb + slotOffset(i), px, py);
+          if (dist > bestDist) {
+            continue;
+          }
+          const child = d[db + i];
+          if (dist < directDist) {
+            if (directChild >= 0) {
+              pqPush(pqKey, pqNode, pqCount, ((directDist as u64) << 4) | childLevel, directChild);
+              pqCount++;
+            }
+            directChild = child;
+            directDist = dist;
+          } else {
+            pqPush(pqKey, pqNode, pqCount, ((dist as u64) << 4) | childLevel, child);
+            pqCount++;
+          }
+        }
+
+        if (directChild >= 0) {
+          const directKey = ((directDist as u64) << 4) | childLevel;
+          if (pqCount == 0 || directKey <= pqKey[0]) {
+            cur = directChild;
+            curDist = directDist;
+            level = childLevel as i32;
+            continue;
+          }
+          pqPush(pqKey, pqNode, pqCount, directKey, directChild);
+          pqCount++;
+        }
+
+        if (pqCount == 0) {
+          break;
+        }
+        const nextKey = pqKey[0];
+        cur = pqNode[0];
+        pqCount--;
+        pqFix(pqKey, pqNode, pqCount);
+        curDist = (nextKey >> 4) as i64;
+        level = (nextKey & 0xf) as i32;
+      }
+    }
+
+    outIds[0] = bestId;
+    return 1;
+  }
+
+  private nearestK(px: i32, py: i32, k: i32, outIds: i32[]): i32 {
+    const target = k < this.len ? k : this.len;
+    let resDist = this.smallDist;
+    let resId = this.smallId;
+    if (target > 32) {
+      this.ensureResCap(target);
+      resDist = this.resDist;
+      resId = this.resId;
+    }
+
+    let resCount: i32 = 0;
+    let worstDist = I64_MAX;
+    let worstId = I32_MAX;
+
+    if (this.pqCap < 64) {
+      this.ensurePqCap(64);
+    }
+    let pqKey = this.pqKey;
+    let pqNode = this.pqNode;
+    let pqCount: i32 = 0;
+
+    let cur = this.root;
+    let level = this.ht - 1;
+    let curDist: i64 = 0;
+    const r = this.rects;
+    const d = this.data;
+
+    for (;;) {
+      if (curDist > worstDist) {
+        break;
+      }
+      const rb = cur << 6;
+      const db = cur << 4;
+      const cnt = this.counts[cur] as i32;
+
+      if (level == 0) {
+        for (let i: i32 = 0; i < cnt; i++) {
+          const dist = distSq(r, rb + slotOffset(i), px, py);
+          if (resCount < target) {
+            resHeapPush(resDist, resId, resCount, dist, d[db + i]);
+            resCount++;
+            if (resCount == target) {
+              worstDist = resDist[0];
+              worstId = resId[0];
+            }
+          } else if (dist <= worstDist) {
+            const id = d[db + i];
+            if (dist < worstDist || id < worstId) {
+              resHeapReplaceRoot(resDist, resId, target, dist, id);
+              worstDist = resDist[0];
+              worstId = resId[0];
+            }
+          }
+        }
+        if (pqCount == 0) {
+          break;
+        }
+        const nextKey = pqKey[0];
+        cur = pqNode[0];
+        pqCount--;
+        pqFix(pqKey, pqNode, pqCount);
+        curDist = (nextKey >> 4) as i64;
+        level = (nextKey & 0xf) as i32;
+      } else {
+        if (pqCount + cnt > this.pqCap) {
+          this.ensurePqCap(pqCount + cnt);
+          pqKey = this.pqKey;
+          pqNode = this.pqNode;
+        }
+        const childLevel = (level - 1) as u64;
+        let directChild: i32 = -1;
+        let directDist = I64_MAX;
+        for (let i: i32 = 0; i < cnt; i++) {
+          const dist = distSq(r, rb + slotOffset(i), px, py);
+          if (dist > worstDist) {
+            continue;
+          }
+          const child = d[db + i];
+          if (dist < directDist) {
+            if (directChild >= 0) {
+              pqPush(pqKey, pqNode, pqCount, ((directDist as u64) << 4) | childLevel, directChild);
+              pqCount++;
+            }
+            directChild = child;
+            directDist = dist;
+          } else {
+            pqPush(pqKey, pqNode, pqCount, ((dist as u64) << 4) | childLevel, child);
+            pqCount++;
+          }
+        }
+
+        if (directChild >= 0) {
+          const directKey = ((directDist as u64) << 4) | childLevel;
+          if (pqCount == 0 || directKey <= pqKey[0]) {
+            cur = directChild;
+            curDist = directDist;
+            level = childLevel as i32;
+            continue;
+          }
+          pqPush(pqKey, pqNode, pqCount, directKey, directChild);
+          pqCount++;
+        }
+
+        if (pqCount == 0) {
+          break;
+        }
+        const nextKey = pqKey[0];
+        cur = pqNode[0];
+        pqCount--;
+        pqFix(pqKey, pqNode, pqCount);
+        curDist = (nextKey >> 4) as i64;
+        level = (nextKey & 0xf) as i32;
+      }
+    }
+
+    // Take the max-heap apart from the back to get ascending (dist, id) order.
+    const n = resCount;
+    for (let outPos = n - 1; outPos >= 0; outPos--) {
+      outIds[outPos] = resId[0];
+      resCount--;
+      const last = resCount;
+      if (last > 0) {
+        resHeapReplaceRoot(resDist, resId, last, resDist[last], resId[last]);
+      }
+    }
+    return n;
+  }
+}

@@ -1,0 +1,459 @@
+// Red-black tree benchmark driver: a case-by-case port of the benchmark's C# driver (Driver.cs),
+// printing the same "checksum" and "verify" values. usage: driver <case|all> <n> <reps> <warmup>
+import {
+  FOLD_INIT,
+  Result,
+  fail,
+  fold,
+  maxU64,
+  minU64,
+  mix64,
+  nowNs,
+  rnd,
+  runDriver,
+  since,
+} from "../_common";
+import { RBTree } from "./_rbtree";
+
+const I64_MIN: i64 = -9223372036854775808;
+const I64_MAX: i64 = 9223372036854775807;
+
+// The i-th workload key. Distinct i give distinct keys.
+function keyAt(i: u64): i64 {
+  return mix64(i) as i64;
+}
+
+// The value first stored for a key. Always odd, so never I64_MIN.
+function valOf(k: i64): i64 {
+  return (mix64((k as u64) ^ 0xa5a5a5a5a5a5a5a5) | 1) as i64;
+}
+
+function satAdd(a: i64, span: i64): i64 {
+  return a > I64_MAX - span ? I64_MAX : a + span;
+}
+
+function b(x: boolean): u64 {
+  return x ? 1 : 0;
+}
+
+// A count or length as C# widens it: (ulong)(long)x.
+function w(x: i32): u64 {
+  return (x as i64) as u64;
+}
+
+// A red-black tree holding `len` keys has a bounded number of levels: at least as many as a
+// perfectly balanced binary tree, and at most twice its largest possible black-height,
+// 2 * floor(log2(len + 1)). Anything outside the bounds is not a valid red-black tree.
+function checkHeight(caseName: string, n: u64, len: u64, height: u64) {
+  let lo: u64 = 0;
+  let hi: u64 = 0;
+  if (len > 0) {
+    lo = 1;
+    let cap: u64 = 1; // max keys in a tree of `lo` levels
+    while (cap < len) {
+      lo++;
+      cap = cap * 2 + 1;
+    }
+    hi = 1;
+    let need: u64 = 3; // min keys in a tree of black-height `hi + 1`
+    while (need <= len) {
+      hi++;
+      need = need * 2 + 1;
+    }
+    hi *= 2;
+  }
+  if (height < lo || height > hi) {
+    fail(
+      caseName,
+      n,
+      `height() = ${height} but a red-black tree with ${len} keys must have between ${lo} and ${hi} levels`,
+    );
+  }
+}
+
+function foldEntries(h0: u64, c: u64, ks: i64[], vs: i64[]): u64 {
+  let h = fold(h0, c);
+  for (let i: u64 = 0; i < c; i++) {
+    h = fold(h, ks[i] as u64);
+    h = fold(h, vs[i] as u64);
+  }
+  return h;
+}
+
+// Hash the observable state of the tree: its length, a full in-order scan, some point lookups,
+// and some range queries with arbitrary bounds.
+function verifyFull(caseName: string, n: u64, t: RBTree): u64 {
+  let h = FOLD_INIT;
+  const len = w(t.count);
+  h = fold(h, len);
+  checkHeight(caseName, n, len, w(t.height()));
+
+  const bk = new Array<i64>(len + 1).fill(0);
+  const bv = new Array<i64>(len + 1).fill(0);
+  let c = w(t.range(I64_MIN, I64_MAX, bk, bv, (len + 1) as i32));
+  h = foldEntries(h, c, bk, bv);
+
+  for (let j: u64 = 0; j < 64; j++) {
+    const k = keyAt(rnd(101, j) % (2 * n));
+    const found = t.tryGet(k);
+    h = fold(h, b(found));
+    h = fold(h, found ? (t.value as u64) : 0);
+  }
+
+  const pk = new Array<i64>(8).fill(0);
+  const pv = new Array<i64>(8).fill(0);
+  const span = (I64_MAX / ((len + 64) as i64)) * 16;
+  for (let j: u64 = 0; j < 32; j++) {
+    const lo = rnd(102, j) as i64;
+    const hi = satAdd(lo, span);
+    c = w(t.range(lo, hi, pk, pv, 8));
+    h = foldEntries(h, c, pk, pv);
+  }
+
+  c = w(t.range(-5, 5, pk, pv, 8));
+  h = foldEntries(h, c, pk, pv);
+  h = fold(h, w(t.range(5, 4, pk, pv, 8))); // lo > hi
+  h = fold(h, w(t.range(I64_MIN, I64_MAX, pk, pv, 0))); // limit 0
+  return h;
+}
+
+// Insert keyAt(0..n) with their initial values (untimed setup).
+function fillTree(t: RBTree, n: u64) {
+  for (let i: u64 = 0; i < n; i++) {
+    const k = keyAt(i);
+    t.insert(k, valOf(k));
+  }
+}
+
+// insert_sequential: 4 rounds of n inserts of ascending keys into an empty tree.
+// insert_random:     n inserts of random keys into an empty tree.
+// Each round builds a new tree; the previous one is destroyed outside the timed region.
+function caseInsert(name: string, n: u64, sequential: boolean): Result {
+  const rounds: u64 = sequential ? 4 : 1;
+  const len = n as i32;
+  const ks = new Array<i64>(len).fill(0);
+  const vs = new Array<i64>(len).fill(0);
+  for (let i: i32 = 0; i < len; i++) {
+    ks[i] = sequential ? (i as i64) - ((n / 2) as i64) : keyAt(i as u64);
+    vs[i] = valOf(ks[i]);
+  }
+  let acc: u64 = 0;
+  let ns: u64 = 0;
+  let h = FOLD_INIT;
+  for (let round: u64 = 0; round < rounds; round++) {
+    const t = new RBTree();
+    const t0 = nowNs();
+    for (let i: i32 = 0; i < len; i++) {
+      acc += t.insert(ks[i], vs[i]) ? 1 : 0;
+    }
+    ns += since(t0);
+    h = fold(h, w(t.count));
+    if (round + 1 == rounds) {
+      h = fold(h, verifyFull(name, n, t));
+    }
+  }
+  return new Result(rounds * n, ns, acc, h);
+}
+
+// get_hit:  2 passes of n lookups of keys that are present, in random order.
+// get_miss: 2 passes of n lookups of keys that are absent.
+function caseGet(name: string, n: u64, hit: boolean): Result {
+  const passes: u64 = 2;
+  const t = new RBTree();
+  fillTree(t, n);
+  const len = n as i32;
+  const q = new Array<i64>(len).fill(0);
+  for (let j: i32 = 0; j < len; j++) {
+    q[j] = hit ? keyAt(rnd(3, j as u64) % n) : keyAt(n + (j as u64));
+  }
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let pass: u64 = 0; pass < passes; pass++) {
+    for (let j: i32 = 0; j < len; j++) {
+      if (t.tryGet(q[j])) {
+        acc += (t.value as u64) + 1;
+      }
+    }
+  }
+  const ns = since(t0);
+  return new Result(passes * n, ns, acc, verifyFull(name, n, t));
+}
+
+// range_short: n/8 range queries that each return 100 entries.
+// range_long:  200 range queries that each return n/10 entries.
+function caseRange(name: string, n: u64, isShort: boolean): Result {
+  const t = new RBTree();
+  fillTree(t, n);
+  const sorted = new Array<i64>(n).fill(0);
+  for (let i: i32 = 0; i < (n as i32); i++) {
+    sorted[i] = keyAt(i as u64);
+  }
+  sorted.sort(); // signed order
+
+  const span = isShort ? minU64(100, n) : maxU64(1, n / 10);
+  const q = (isShort ? maxU64(1, n / 8) : 200) as i32;
+  const limit = (isShort ? 128 : span) as i32;
+  const lo = new Array<i64>(q).fill(0);
+  const hi = new Array<i64>(q).fill(0);
+  for (let j: i32 = 0; j < q; j++) {
+    const start = rnd(isShort ? 5 : 6, j as u64) % (n - span + 1);
+    lo[j] = sorted[start as i32];
+    hi[j] = sorted[(start + span - 1) as i32];
+  }
+  const bk = new Array<i64>(limit).fill(0);
+  const bv = new Array<i64>(limit).fill(0);
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let j: i32 = 0; j < q; j++) {
+    const c = t.range(lo[j], hi[j], bk, bv, limit);
+    acc += w(c);
+    for (let x: i32 = 0; x < c; x++) {
+      acc += (bk[x] as u64) + (bv[x] as u64);
+    }
+  }
+  const ns = since(t0);
+  return new Result(q as u64, ns, acc, verifyFull(name, n, t));
+}
+
+// delete_random: 2 rounds that each remove half of the keys of a tree of n keys, in random
+// order. Between rounds the removed keys are inserted again (untimed).
+function caseDeleteRandom(name: string, n: u64): Result {
+  const rounds: u64 = 2;
+  const t = new RBTree();
+  fillTree(t, n);
+  const m = (n / 2) as i32;
+  const d = new Array<i64>(m).fill(0);
+  const dv = new Array<i64>(m).fill(0);
+  for (let j: i32 = 0; j < m; j++) {
+    d[j] = keyAt(2 * (j as u64) + 1);
+    dv[j] = valOf(d[j]);
+  }
+  let acc: u64 = 0;
+  let ns: u64 = 0;
+  for (let round: u64 = 0; round < rounds; round++) {
+    if (round > 0) {
+      // put the removed keys back (untimed)
+      for (let j: i32 = 0; j < m; j++) {
+        t.insert(d[j], dv[j]);
+      }
+    }
+    const t0 = nowNs();
+    for (let j: i32 = 0; j < m; j++) {
+      acc += t.remove(d[j]) ? 1 : 0;
+    }
+    ns += since(t0);
+  }
+
+  let h = verifyFull(name, n, t);
+  for (let i: u64 = 0; i < n; i++) {
+    // removed keys are gone, the rest remain
+    const found = t.tryGet(keyAt(i));
+    h = fold(h, b(found));
+    h = fold(h, found ? (t.value as u64) : 0);
+  }
+  for (let j: u64 = 0; j < 16; j++) {
+    // removing keys that were never present
+    h = fold(h, b(t.remove(keyAt(n + j))));
+  }
+  if (n >= 2) {
+    h = fold(h, b(t.remove(keyAt(1)))); // already removed
+  }
+  h = fold(h, w(t.count));
+  return new Result(rounds * w(m), ns, acc, h);
+}
+
+// delete_sequential: 5 rounds that each remove every key of a tree of n keys in ascending
+// order, leaving an empty tree. The tree is filled before each round (untimed): the first time
+// from new, after that by refilling the emptied tree, always in the same random order.
+function caseDeleteSequential(name: string, n: u64): Result {
+  const rounds: u64 = 5;
+  const t = new RBTree();
+  const len = n as i32;
+  const ks = new Array<i64>(len).fill(0);
+  const vs = new Array<i64>(len).fill(0);
+  const sorted = new Array<i64>(len).fill(0);
+  for (let i: i32 = 0; i < len; i++) {
+    ks[i] = keyAt(i as u64);
+    vs[i] = valOf(ks[i]);
+    sorted[i] = ks[i];
+  }
+  sorted.sort();
+  let acc: u64 = 0;
+  let ns: u64 = 0;
+  for (let round: u64 = 0; round < rounds; round++) {
+    for (let i: i32 = 0; i < len; i++) {
+      t.insert(ks[i], vs[i]); // (re)fill, untimed
+    }
+    const t0 = nowNs();
+    for (let i: i32 = 0; i < len; i++) {
+      acc += t.remove(sorted[i]) ? 1 : 0;
+    }
+    ns += since(t0);
+  }
+
+  let h = verifyFull(name, n, t);
+  const m = minU64(n, 100); // an emptied tree must be usable again
+  for (let i: u64 = 0; i < m; i++) {
+    const k = keyAt(i);
+    h = fold(h, b(t.insert(k, valOf(k))));
+  }
+  h = fold(h, verifyFull(name, n, t));
+  return new Result(rounds * n, ns, acc, h);
+}
+
+const OP_GET: u8 = 0;
+const OP_INSERT: u8 = 1;
+const OP_REMOVE: u8 = 2;
+const OP_RANGE: u8 = 3;
+
+// Run a precomputed operation stream; shared by `mixed` and `churn`.
+function runOps(t: RBTree, op: u8[], a: i64[], bb: i64[], bk: i64[], bv: i64[], limit: i32): u64 {
+  let acc: u64 = 0;
+  const n = op.length as i32;
+  for (let j: i32 = 0; j < n; j++) {
+    switch (op[j]) {
+      case OP_GET:
+        if (t.tryGet(a[j])) {
+          acc += (t.value as u64) + 1;
+        }
+        break;
+      case OP_INSERT:
+        acc += t.insert(a[j], bb[j]) ? 1 : 0;
+        break;
+      case OP_REMOVE:
+        acc += t.remove(a[j]) ? 1 : 0;
+        break;
+      default: {
+        const c = t.range(a[j], bb[j], bk, bv, limit);
+        acc += w(c);
+        for (let x: i32 = 0; x < c; x++) {
+          acc += (bk[x] as u64) + (bv[x] as u64);
+        }
+        break;
+      }
+    }
+  }
+  return acc;
+}
+
+// mixed: n operations on a tree of n keys: 70% get, 12% insert, 12% remove, 6% range (about 32
+// entries each). Keys are drawn from a domain of 2n keys, half of which start out present.
+function caseMixed(name: string, n: u64): Result {
+  const t = new RBTree();
+  fillTree(t, n);
+  const len = n as i32;
+  const op = new Array<u8>(len).fill(0);
+  const a = new Array<i64>(len).fill(0);
+  const bb = new Array<i64>(len).fill(0);
+  const span = (I64_MAX / ((n + 64) as i64)) * 64;
+  for (let j: i32 = 0; j < len; j++) {
+    const r = rnd(9, j as u64);
+    const p = r % 100;
+    const k = keyAt((r >> 8) % (2 * n));
+    a[j] = k;
+    if (p < 70) {
+      op[j] = OP_GET;
+      bb[j] = 0;
+    } else if (p < 82) {
+      op[j] = OP_INSERT;
+      bb[j] = (mix64(r) | 1) as i64;
+    } else if (p < 94) {
+      op[j] = OP_REMOVE;
+      bb[j] = 0;
+    } else {
+      op[j] = OP_RANGE;
+      bb[j] = satAdd(k, span);
+    }
+  }
+  const bk = new Array<i64>(64).fill(0);
+  const bv = new Array<i64>(64).fill(0);
+  const t0 = nowNs();
+  const acc = runOps(t, op, a, bb, bk, bv, 64);
+  const ns = since(t0);
+  return new Result(n, ns, acc, verifyFull(name, n, t));
+}
+
+// churn: 3 passes over a stream of n write-heavy operations on an initially empty tree, over a
+// domain of n/16 keys. The stream alternates between growing phases (75% insert, 5% remove)
+// and shrinking phases (5% insert, 75% remove); the rest is 15% get and 5% range. Each pass
+// starts from the tree the previous one left behind.
+function caseChurn(name: string, n: u64): Result {
+  const passes: u64 = 3;
+  const t = new RBTree();
+  const domain = maxU64(1, n / 16);
+  const len = n as i32;
+  const op = new Array<u8>(len).fill(0);
+  const a = new Array<i64>(len).fill(0);
+  const bb = new Array<i64>(len).fill(0);
+  const span = (I64_MAX / ((domain + 64) as i64)) * 16;
+  for (let j: i32 = 0; j < len; j++) {
+    const r = rnd(10, j as u64);
+    const p = r % 100;
+    const k = keyAt((r >> 8) % domain);
+    const grow = (((j as u64) * 8) / n) % 2 == 0;
+    const insertBelow: u64 = grow ? 75 : 5;
+    a[j] = k;
+    if (p < insertBelow) {
+      op[j] = OP_INSERT;
+      bb[j] = (mix64(r) | 1) as i64;
+    } else if (p < 80) {
+      op[j] = OP_REMOVE;
+      bb[j] = 0;
+    } else if (p < 95) {
+      op[j] = OP_GET;
+      bb[j] = 0;
+    } else {
+      op[j] = OP_RANGE;
+      bb[j] = satAdd(k, span);
+    }
+  }
+  const bk = new Array<i64>(64).fill(0);
+  const bv = new Array<i64>(64).fill(0);
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let pass: u64 = 0; pass < passes; pass++) {
+    acc += runOps(t, op, a, bb, bk, bv, 64);
+  }
+  const ns = since(t0);
+  return new Result(passes * n, ns, acc, verifyFull(name, n, t));
+}
+
+const CASES = [
+  "insert_sequential",
+  "insert_random",
+  "get_hit",
+  "get_miss",
+  "range_short",
+  "range_long",
+  "delete_random",
+  "delete_sequential",
+  "mixed",
+  "churn",
+];
+
+function runCase(name: string, n: u64): Result {
+  switch (name) {
+    case "insert_sequential":
+      return caseInsert(name, n, true);
+    case "insert_random":
+      return caseInsert(name, n, false);
+    case "get_hit":
+      return caseGet(name, n, true);
+    case "get_miss":
+      return caseGet(name, n, false);
+    case "range_short":
+      return caseRange(name, n, true);
+    case "range_long":
+      return caseRange(name, n, false);
+    case "delete_random":
+      return caseDeleteRandom(name, n);
+    case "delete_sequential":
+      return caseDeleteSequential(name, n);
+    case "mixed":
+      return caseMixed(name, n);
+    default:
+      return caseChurn(name, n);
+  }
+}
+
+runDriver(CASES, runCase, 2147483647 - 64);

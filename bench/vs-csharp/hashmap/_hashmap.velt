@@ -1,0 +1,351 @@
+// Open-addressing hash map with linear probing: a port of the benchmark's C# solution
+// (HashMap.cs). Entries are (key, value) pairs stored interleaved in one i64 array, slot e at
+// [2e] and [2e + 1]. Key 0 marks an empty slot; the key 0 itself, when present, lives in one
+// slot whose key is 0, remembered in `zero` (NONE when absent). Fibonacci hashing (the high
+// bits of key * MUL), a 7/8 maximum load factor, and backward-shift deletion.
+
+const MUL: u64 = 0x9e3779b97f4a7c15;
+const INITIAL_CAPACITY: u64 = 16;
+const INITIAL_SHIFT: u64 = 60; // 64 - 4
+const INITIAL_THRESHOLD: i32 = 14; // 16 * 7 / 8
+const NONE: u64 = 0xffffffffffffffff;
+
+function home(key: i64, shift: u64): u64 {
+  return ((key as u64) * MUL) >> shift;
+}
+
+export class HashMap {
+  private slots: i64[];
+  private end: u64; // the number of slots
+  private zero: u64; // the slot holding key 0, or NONE
+  private mask: u64;
+  private shift: u64;
+  private len: i32;
+  private threshold: i32;
+  // The value TryGet's out parameter receives: set by tryGet when it returns true.
+  value: i64;
+
+  constructor() {
+    this.slots = new Array<i64>(2 * INITIAL_CAPACITY).fill(0);
+    this.end = INITIAL_CAPACITY;
+    this.zero = NONE;
+    this.mask = INITIAL_CAPACITY - 1;
+    this.shift = INITIAL_SHIFT;
+    this.len = 0;
+    this.threshold = INITIAL_THRESHOLD;
+    this.value = 0;
+  }
+
+  count(): i32 {
+    return this.len;
+  }
+
+  capacity(): i32 {
+    return (this.mask + 1) as i32;
+  }
+
+  // Looks `key` up; on success stores its value in `value`.
+  tryGet(key: i64): boolean {
+    if (key == 0) {
+      return this.tryGetZero();
+    }
+    const slots = this.slots;
+    const end = this.end;
+    let e = home(key, this.shift);
+    for (;;) {
+      const sk = slots[2 * e];
+      if (sk == key) {
+        this.value = slots[2 * e + 1];
+        return true;
+      }
+      if (sk == 0) {
+        if (e != this.zero) {
+          return false;
+        }
+      }
+      e++;
+      if (e == end) {
+        e = 0;
+      }
+    }
+  }
+
+  private tryGetZero(): boolean {
+    const zp = this.zero;
+    if (zp != NONE) {
+      this.value = this.slots[2 * zp + 1];
+      return true;
+    }
+    return false;
+  }
+
+  // Inserts or replaces; true if `key` is new.
+  insert(key: i64, value: i64): boolean {
+    if (key == 0) {
+      return this.insertZero(value);
+    }
+    const slots = this.slots;
+    const end = this.end;
+    let e = home(key, this.shift);
+    for (;;) {
+      const sk = slots[2 * e];
+      if (sk == key) {
+        slots[2 * e + 1] = value;
+        return false;
+      }
+      if (sk == 0) {
+        if (e != this.zero) {
+          if (this.len == this.threshold) {
+            this.growAndInsert(key, value);
+            return true;
+          }
+          slots[2 * e] = key;
+          slots[2 * e + 1] = value;
+          this.len++;
+          return true;
+        }
+      }
+      e++;
+      if (e == end) {
+        e = 0;
+      }
+    }
+  }
+
+  private insertZero(value: i64): boolean {
+    const zp = this.zero;
+    if (zp != NONE) {
+      this.slots[2 * zp + 1] = value;
+      return false;
+    }
+    if (this.len == this.threshold) {
+      this.grow();
+    }
+    const slots = this.slots;
+    let dst: u64 = 0;
+    while (slots[2 * dst] != 0) {
+      dst++;
+    }
+    slots[2 * dst] = 0;
+    slots[2 * dst + 1] = value;
+    this.zero = dst;
+    this.len++;
+    return true;
+  }
+
+  private growAndInsert(key: i64, value: i64) {
+    this.grow();
+    const slots = this.slots;
+    const end = this.end;
+    const zero = this.zero;
+    let e = home(key, this.shift);
+    while (slots[2 * e] != 0 || e == zero) {
+      e++;
+      if (e == end) {
+        e = 0;
+      }
+    }
+    slots[2 * e] = key;
+    slots[2 * e + 1] = value;
+    this.len++;
+  }
+
+  private grow() {
+    const oldSlots = this.slots;
+    const oldEnd = this.end;
+    const oldZero = this.zero;
+    const newCap = (this.mask + 1) << 1;
+    const newShift = this.shift - 1;
+
+    const newSlots = new Array<i64>(2 * newCap).fill(0);
+
+    for (let src: u64 = 0; src < oldEnd; src++) {
+      const k = oldSlots[2 * src];
+      if (k == 0) {
+        continue;
+      }
+      let dst = home(k, newShift);
+      while (newSlots[2 * dst] != 0) {
+        dst++;
+        if (dst == newCap) {
+          dst = 0;
+        }
+      }
+      newSlots[2 * dst] = k;
+      newSlots[2 * dst + 1] = oldSlots[2 * src + 1];
+    }
+
+    let newZero = NONE;
+    if (oldZero != NONE) {
+      let dst: u64 = 0;
+      while (newSlots[2 * dst] != 0) {
+        dst++;
+      }
+      newSlots[2 * dst] = 0;
+      newSlots[2 * dst + 1] = oldSlots[2 * oldZero + 1];
+      newZero = dst;
+    }
+
+    this.slots = newSlots;
+    this.end = newCap;
+    this.mask = newCap - 1;
+    this.shift = newShift;
+    this.threshold = ((newCap >> 3) * 7) as i32;
+    this.zero = newZero;
+  }
+
+  // Removes `key`; true if it was present.
+  remove(key: i64): boolean {
+    if (key == 0) {
+      return this.removeZero();
+    }
+    const slots = this.slots;
+    const end = this.end;
+    let e = home(key, this.shift);
+    for (;;) {
+      const sk = slots[2 * e];
+      if (sk == key) {
+        this.len--;
+        let next = e + 1;
+        if (next == end) {
+          next = 0;
+        }
+        if (slots[2 * next] == 0 && next != this.zero) {
+          slots[2 * e] = 0;
+          return true;
+        }
+        this.backwardShift(slots, e, next);
+        return true;
+      }
+      if (sk == 0) {
+        if (e != this.zero) {
+          return false;
+        }
+      }
+      e++;
+      if (e == end) {
+        e = 0;
+      }
+    }
+  }
+
+  private removeZero(): boolean {
+    const zp = this.zero;
+    if (zp == NONE) {
+      return false;
+    }
+    this.zero = NONE;
+    this.len--;
+    const slots = this.slots;
+    const hole = zp;
+    const curr = (hole + 1) & this.mask;
+    if (slots[2 * curr] == 0) {
+      return true;
+    }
+    this.backwardShift(slots, hole, curr);
+    return true;
+  }
+
+  // Closes the hole at slot `hole0` left by a removal, starting the search at `curr0`.
+  private backwardShift(slots: i64[], hole0: u64, curr0: u64) {
+    const mask = this.mask;
+    const shift = this.shift;
+    let zero = this.zero;
+    let hole = hole0;
+    let curr = curr0;
+    for (;;) {
+      const ck = slots[2 * curr];
+      if (ck == 0) {
+        if (curr != zero) {
+          slots[2 * hole] = 0;
+          return;
+        }
+        if (curr >= ((curr - hole) & mask)) {
+          slots[2 * hole] = 0;
+          slots[2 * hole + 1] = slots[2 * curr + 1];
+          this.zero = hole;
+          zero = hole;
+          hole = curr;
+        }
+        curr = (curr + 1) & mask;
+        continue;
+      }
+      const h = home(ck, shift);
+      if (((curr - h) & mask) >= ((curr - hole) & mask)) {
+        slots[2 * hole] = ck;
+        slots[2 * hole + 1] = slots[2 * curr + 1];
+        hole = curr;
+      }
+      curr = (curr + 1) & mask;
+    }
+  }
+
+  // Writes every entry to outKeys/outVals (which need room for count() entries); returns the
+  // number written. Key 0 comes first, then the slots in order, four at a time, each entry
+  // written unconditionally and the output position advanced only past full slots.
+  scan(outKeys: i64[], outVals: i64[]): i32 {
+    const count = this.len;
+    if (count == 0) {
+      return 0;
+    }
+    const slots = this.slots;
+    let outIdx: u64 = 0;
+    const uCount = count as u64;
+
+    const zp = this.zero;
+    if (zp != NONE) {
+      outKeys[0] = 0;
+      outVals[0] = slots[2 * zp + 1];
+      outIdx = 1;
+      if (outIdx == uCount) {
+        return count;
+      }
+    }
+
+    let p: u64 = 0;
+    if (uCount >= 4) {
+      const safeEnd = uCount - 3;
+      while (outIdx < safeEnd) {
+        const k0 = slots[2 * p];
+        const v0 = slots[2 * p + 1];
+        const k1 = slots[2 * p + 2];
+        const v1 = slots[2 * p + 3];
+        const k2 = slots[2 * p + 4];
+        const v2 = slots[2 * p + 5];
+        const k3 = slots[2 * p + 6];
+        const v3 = slots[2 * p + 7];
+
+        const m0: u64 = k0 != 0 ? 1 : 0;
+        const m1: u64 = k1 != 0 ? 1 : 0;
+        const m2: u64 = k2 != 0 ? 1 : 0;
+        const m3: u64 = k3 != 0 ? 1 : 0;
+
+        const m01 = m0 + m1;
+        const i1 = outIdx + m0;
+        const i2 = outIdx + m01;
+        const i3 = i2 + m2;
+
+        outKeys[outIdx] = k0;
+        outVals[outIdx] = v0;
+        outKeys[i1] = k1;
+        outVals[i1] = v1;
+        outKeys[i2] = k2;
+        outVals[i2] = v2;
+        outKeys[i3] = k3;
+        outVals[i3] = v3;
+
+        outIdx = i2 + (m2 + m3);
+        p += 4;
+      }
+    }
+
+    while (outIdx < uCount) {
+      const k = slots[2 * p];
+      outKeys[outIdx] = k;
+      outVals[outIdx] = slots[2 * p + 1];
+      outIdx += k != 0 ? 1 : 0;
+      p++;
+    }
+    return count;
+  }
+}

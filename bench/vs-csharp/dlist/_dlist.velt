@@ -1,0 +1,215 @@
+// Doubly linked list over a node pool: a port of the benchmark's C# solution (DList.cs).
+// Nodes live in growable arrays and a handle is a node's index; node 0 is the sentinel
+// (its next is the first node, its prev the last, 0 when the list is empty). Removed nodes
+// go on a free list threaded through `next`. The C# node is a 16-byte struct
+// { next: u32, prev: u32, value: i64 }; here the two links of node i sit side by side in
+// `links` (next at 2i, prev at 2i + 1) and its value in `values[i]`.
+
+const INITIAL_CAPACITY: u32 = 64;
+const FAST_GROWTH_THRESHOLD: u32 = 4 * 1024 * 1024;
+const MAX_CAPACITY: u32 = 2147483647;
+
+export class DList {
+  private links: u32[];
+  private values: i64[];
+  private capacity: u32;
+  private allocated: u32;
+  private freeHead: u32;
+  private size: i32;
+  // The value of the last successful tryPopFront/tryPopBack (0 after a failed one): the
+  // C# version's `out long value`.
+  popped: i64;
+
+  constructor() {
+    this.links = new Array<u32>(2 * INITIAL_CAPACITY).fill(0);
+    this.values = new Array<i64>(INITIAL_CAPACITY).fill(0);
+    this.capacity = INITIAL_CAPACITY;
+    this.allocated = 1;
+    this.freeHead = 0;
+    this.size = 0;
+    this.popped = 0;
+  }
+
+  get count(): i32 {
+    return this.size;
+  }
+
+  private allocNode(): u32 {
+    const idx = this.freeHead;
+    if (idx != 0) {
+      this.freeHead = this.links[2 * idx];
+      return idx;
+    }
+    const a = this.allocated;
+    if (a < this.capacity) {
+      this.allocated = a + 1;
+      return a;
+    }
+    return this.growAndAlloc();
+  }
+
+  private growAndAlloc(): u32 {
+    const oldCap = this.capacity;
+    let newCap = oldCap < FAST_GROWTH_THRESHOLD ? oldCap << 2 : oldCap << 1;
+    if (newCap <= oldCap) {
+      newCap = MAX_CAPACITY;
+      if (newCap <= oldCap) {
+        throw new Error("out of memory");
+      }
+    }
+    const links = new Array<u32>(2 * (newCap as u64)).fill(0);
+    const values = new Array<i64>(newCap).fill(0);
+    const oldLinks = this.links;
+    const oldValues = this.values;
+    for (let i: u32 = 0; i < oldCap; i++) {
+      links[2 * i] = oldLinks[2 * i];
+      links[2 * i + 1] = oldLinks[2 * i + 1];
+      values[i] = oldValues[i];
+    }
+    this.links = links;
+    this.values = values;
+    this.capacity = newCap;
+    const idx = this.allocated;
+    this.allocated = idx + 1;
+    return idx;
+  }
+
+  pushFront(value: i64): u64 {
+    const idx = this.allocNode();
+    const links = this.links;
+    const first = links[0];
+    links[2 * first + 1] = idx;
+    links[0] = idx;
+    links[2 * idx] = first;
+    links[2 * idx + 1] = 0;
+    this.values[idx] = value;
+    this.size++;
+    return idx as u64;
+  }
+
+  pushBack(value: i64): u64 {
+    const idx = this.allocNode();
+    const links = this.links;
+    const last = links[1];
+    links[2 * last] = idx;
+    links[1] = idx;
+    links[2 * idx] = 0;
+    links[2 * idx + 1] = last;
+    this.values[idx] = value;
+    this.size++;
+    return idx as u64;
+  }
+
+  insertBefore(node: u64, value: i64): u64 {
+    const idx = this.allocNode();
+    const links = this.links;
+    const t = node as u32;
+    const prev = links[2 * t + 1];
+    links[2 * prev] = idx;
+    links[2 * t + 1] = idx;
+    links[2 * idx] = t;
+    links[2 * idx + 1] = prev;
+    this.values[idx] = value;
+    this.size++;
+    return idx as u64;
+  }
+
+  insertAfter(node: u64, value: i64): u64 {
+    const idx = this.allocNode();
+    const links = this.links;
+    const t = node as u32;
+    const next = links[2 * t];
+    links[2 * next + 1] = idx;
+    links[2 * t] = idx;
+    links[2 * idx] = next;
+    links[2 * idx + 1] = t;
+    this.values[idx] = value;
+    this.size++;
+    return idx as u64;
+  }
+
+  remove(node: u64): i64 {
+    const links = this.links;
+    const p = node as u32;
+    const next = links[2 * p];
+    const prev = links[2 * p + 1];
+    const value = this.values[p];
+    links[2 * prev] = next;
+    links[2 * next + 1] = prev;
+    links[2 * p] = this.freeHead;
+    this.freeHead = p;
+    this.size--;
+    return value;
+  }
+
+  tryPopFront(): boolean {
+    const links = this.links;
+    const first = links[0];
+    if (first == 0) {
+      this.popped = 0;
+      return false;
+    }
+    const next = links[2 * first];
+    this.popped = this.values[first];
+    links[0] = next;
+    links[2 * next + 1] = 0;
+    links[2 * first] = this.freeHead;
+    this.freeHead = first;
+    this.size--;
+    return true;
+  }
+
+  tryPopBack(): boolean {
+    const links = this.links;
+    const last = links[1];
+    if (last == 0) {
+      this.popped = 0;
+      return false;
+    }
+    const prev = links[2 * last + 1];
+    this.popped = this.values[last];
+    links[1] = prev;
+    links[2 * prev] = 0;
+    links[2 * last] = this.freeHead;
+    this.freeHead = last;
+    this.size--;
+    return true;
+  }
+
+  moveToFront(node: u64): void {
+    const links = this.links;
+    const first = links[0];
+    const n = node as u32;
+    if (n == first) {
+      return;
+    }
+    const prev = links[2 * n + 1];
+    const next = links[2 * n];
+    links[2 * prev] = next;
+    links[2 * next + 1] = prev;
+    links[2 * n + 1] = 0;
+    links[2 * n] = first;
+    links[2 * first + 1] = n;
+    links[0] = n;
+  }
+
+  front(): u64 {
+    return this.links[0] as u64;
+  }
+
+  back(): u64 {
+    return this.links[1] as u64;
+  }
+
+  next(node: u64): u64 {
+    return this.links[2 * node] as u64;
+  }
+
+  prev(node: u64): u64 {
+    return this.links[2 * node + 1] as u64;
+  }
+
+  get(node: u64): i64 {
+    return this.values[node];
+  }
+}

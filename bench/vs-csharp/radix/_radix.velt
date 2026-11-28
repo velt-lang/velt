@@ -1,0 +1,1636 @@
+// Adaptive radix tree over byte-string keys with i64 values: a port of the benchmark's C#
+// solution (RadixTree.cs). Path-compressed; inner nodes adapt between 5 kinds (Leaf, Node8,
+// Node16, Node48, Node256, with the same promotion and hysteresis demotion thresholds). Every
+// node lives in a pool of 32-byte slots: the C# code's raw chunks are arrays of 32-bit words
+// here (a slot is 8 words), and a node is named by a 32-bit handle, chunk << 13 | slot.
+// Labels longer than a node's inline capacity live in 4 external pools (32, 64, 128, 256 B).
+// Byte fields (labels, child keys, the Node48 index) are packed 4 to a word, little-endian,
+// exactly at the C# byte offsets.
+//
+// Node layouts (byte offsets; all start with a 16-byte header, inline label or external label
+// handle at 16):
+//   header:  [0..3 SubtreeCount] [4..5 ChildCount] [6 LabelLen] [7 Meta] [8..15 Value]
+//   Leaf    (32B):   [16..31 Label(16)]
+//   Node8   (64B):   [16..23 Label(8)] [24..31 Keys(8)] [32..63 Children(8*4)]
+//   Node16  (128B):  [16..47 Label(32)] [48..63 Keys(16)] [64..127 Children(16*4)]
+//   Node48  (512B):  [16..23 Label(8)] [24..31 UsedMask] [32..63 Bitmap] [64..255 Children(48*4)]
+//                    [256..511 Index(256)]
+//   Node256 (1152B): [16..95 Label(80)] [96..127 Bitmap] [128..1151 Children(256*4)]
+
+const NONE: u32 = 0xffffffff;
+const OFFSET_BITS: u32 = 13;
+const OFFSET_MASK: u32 = 0x1fff;
+const MAX_CHUNK_BYTES: u32 = 262144;
+
+// Node kinds stored in Meta bits 0..2.
+const KIND_LEAF: u32 = 0;
+const KIND_NODE8: u32 = 1;
+const KIND_NODE16: u32 = 2;
+const KIND_NODE48: u32 = 3;
+const KIND_NODE256: u32 = 4;
+const KIND_MASK: u32 = 0x07;
+
+// Meta flags.
+const EXT_LABEL: u32 = 0x40;
+const HAS_VALUE: u32 = 0x80;
+
+// Byte offsets of the byte fields, word offsets of the word fields.
+const LABEL_OFF: i32 = 16;
+const W_LABEL: i32 = 4;
+const NODE8_KEYS_OFF: i32 = 24;
+const W_NODE8_KEYS: i32 = 6;
+const W_NODE8_CHILDREN: i32 = 8;
+const NODE16_KEYS_OFF: i32 = 48;
+const W_NODE16_KEYS: i32 = 12;
+const W_NODE16_CHILDREN: i32 = 16;
+const W_NODE48_USEDMASK: i32 = 6;
+const W_NODE48_BITMAP: i32 = 8;
+const W_NODE48_CHILDREN: i32 = 16;
+const NODE48_INDEX_OFF: i32 = 256;
+const W_NODE256_BITMAP: i32 = 24;
+const W_NODE256_CHILDREN: i32 = 32;
+
+const SWAR_LO: u64 = 0x0101010101010101;
+const SWAR_HI: u64 = 0x8080808080808080;
+const ALL_FF: u64 = 0xffffffffffffffff;
+
+// ------------------------------------------------------------ word and byte access
+
+function getB(a: u32[], i: i32): u32 {
+  return (a[i >> 2] >> (((i & 3) << 3) as u32)) & 0xff;
+}
+
+function setB(a: u32[], i: i32, v: u32) {
+  const w = i >> 2;
+  const s = ((i & 3) << 3) as u32;
+  a[w] = (a[w] & ~((0xff as u32) << s)) | ((v & 0xff) << s);
+}
+
+function load64(a: u32[], w: i32): u64 {
+  return (a[w] as u64) | ((a[w + 1] as u64) << 32);
+}
+
+function store64(a: u32[], w: i32, v: u64) {
+  a[w] = v as u32;
+  a[w + 1] = (v >> 32) as u32;
+}
+
+function childCount(c: u32[], b: i32): i32 {
+  return (c[b + 1] & 0xffff) as i32;
+}
+
+function labelLen(c: u32[], b: i32): i32 {
+  return ((c[b + 1] >> 16) & 0xff) as i32;
+}
+
+function metaOf(c: u32[], b: i32): u32 {
+  return c[b + 1] >> 24;
+}
+
+function setChildCount(c: u32[], b: i32, v: i32) {
+  c[b + 1] = (c[b + 1] & 0xffff0000) | ((v as u32) & 0xffff);
+}
+
+function setLabelLen(c: u32[], b: i32, v: i32) {
+  c[b + 1] = (c[b + 1] & 0xff00ffff) | (((v as u32) & 0xff) << 16);
+}
+
+function setMeta(c: u32[], b: i32, v: u32) {
+  c[b + 1] = (c[b + 1] & 0x00ffffff) | ((v & 0xff) << 24);
+}
+
+// The header word of ChildCount, LabelLen 0 and Meta.
+function header1(cc: i32, meta: u32): u32 {
+  return ((cc as u32) & 0xffff) | (meta << 24);
+}
+
+function valueOf(c: u32[], b: i32): i64 {
+  return load64(c, b + 2) as i64;
+}
+
+function setValue(c: u32[], b: i32, v: i64) {
+  store64(c, b + 2, v as u64);
+}
+
+function bmSet(c: u32[], w: i32, k: u32) {
+  const i = w + ((k >> 5) as i32);
+  c[i] = c[i] | ((1 as u32) << (k & 31));
+}
+
+function bmClear(c: u32[], w: i32, k: u32) {
+  const i = w + ((k >> 5) as i32);
+  c[i] = c[i] & ~((1 as u32) << (k & 31));
+}
+
+function inlineCap(kind: u32): i32 {
+  switch (kind) {
+    case KIND_LEAF:
+      return 16;
+    case KIND_NODE8:
+      return 8;
+    case KIND_NODE16:
+      return 32;
+    case KIND_NODE48:
+      return 8;
+    default:
+      return 80;
+  }
+}
+
+function stride32(kind: u32): u32 {
+  switch (kind) {
+    case KIND_LEAF:
+      return 1;
+    case KIND_NODE8:
+      return 2;
+    case KIND_NODE16:
+      return 4;
+    case KIND_NODE48:
+      return 16;
+    default:
+      return 36;
+  }
+}
+
+function extClass(len: i32): u32 {
+  if (len <= 32) {
+    return 0;
+  }
+  if (len <= 64) {
+    return 1;
+  }
+  if (len <= 128) {
+    return 2;
+  }
+  return 3;
+}
+
+// ------------------------------------------------------------ label helpers
+
+function copyBytes(src: u32[], so: i32, dst: u32[], d: i32, len: i32) {
+  for (let i: i32 = 0; i < len; i++) {
+    setB(dst, d + i, getB(src, so + i));
+  }
+}
+
+function copyKeyBytes(src: u8[], so: i32, dst: u32[], d: i32, len: i32) {
+  for (let i: i32 = 0; i < len; i++) {
+    setB(dst, d + i, src[so + i] as u32);
+  }
+}
+
+// Like memmove within one array: the ranges may overlap.
+function moveBytes(a: u32[], so: i32, d: i32, len: i32) {
+  if (d < so) {
+    for (let i: i32 = 0; i < len; i++) {
+      setB(a, d + i, getB(a, so + i));
+    }
+  } else {
+    for (let i = len - 1; i >= 0; i--) {
+      setB(a, d + i, getB(a, so + i));
+    }
+  }
+}
+
+function bytesEqual(a: u32[], ao: i32, key: u8[], ko: i32, len: i32): boolean {
+  for (let i: i32 = 0; i < len; i++) {
+    if (getB(a, ao + i) != (key[ko + i] as u32)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Assumes a[0] == key[0] and maxLen >= 1.
+function commonPrefixLenFrom1(a: u32[], ao: i32, key: u8[], ko: i32, maxLen: i32): i32 {
+  let i: i32 = 1;
+  while (i < maxLen && getB(a, ao + i) == (key[ko + i] as u32)) {
+    i++;
+  }
+  return i;
+}
+
+// ------------------------------------------------------------ child lookup
+
+function findIndexNode8(c: u32[], b: i32, k: u32): i32 {
+  const dup = SWAR_LO * (k as u64);
+  const m = load64(c, b + W_NODE8_KEYS) ^ dup;
+  const eq = (m - SWAR_LO) & ~m & SWAR_HI;
+  return (eq.trailingZeros() >> 3) as i32;
+}
+
+function findIndexNode16(c: u32[], b: i32, k: u32): i32 {
+  const dup = SWAR_LO * (k as u64);
+  const m0 = load64(c, b + W_NODE16_KEYS) ^ dup;
+  const e0 = (m0 - SWAR_LO) & ~m0 & SWAR_HI;
+  const m1 = load64(c, b + W_NODE16_KEYS + 2) ^ dup;
+  const e1 = (m1 - SWAR_LO) & ~m1 & SWAR_HI;
+  const i0 = (e0.trailingZeros() >> 3) as i32;
+  const i1 = 8 + ((e1.trailingZeros() >> 3) as i32);
+  return e0 != 0 ? i0 : i1;
+}
+
+// Assumes kind != KIND_LEAF.
+function findChild(c: u32[], b: i32, kind: u32, k: u32): u32 {
+  if (kind == KIND_NODE8) {
+    const idx = findIndexNode8(c, b, k);
+    return idx < childCount(c, b) ? c[b + W_NODE8_CHILDREN + idx] : NONE;
+  }
+  if (kind == KIND_NODE16) {
+    const idx = findIndexNode16(c, b, k);
+    return idx < childCount(c, b) ? c[b + W_NODE16_CHILDREN + idx] : NONE;
+  }
+  if (kind == KIND_NODE48) {
+    const slot = getB(c, (b << 2) + NODE48_INDEX_OFF + (k as i32));
+    return slot != 0xff ? c[b + W_NODE48_CHILDREN + (slot as i32)] : NONE;
+  }
+  return c[b + W_NODE256_CHILDREN + (k as i32)];
+}
+
+function replaceChild(c: u32[], b: i32, k: u32, newChild: u32) {
+  const kind = metaOf(c, b) & KIND_MASK;
+  if (kind == KIND_NODE8) {
+    c[b + W_NODE8_CHILDREN + findIndexNode8(c, b, k)] = newChild;
+    return;
+  }
+  if (kind == KIND_NODE16) {
+    c[b + W_NODE16_CHILDREN + findIndexNode16(c, b, k)] = newChild;
+    return;
+  }
+  if (kind == KIND_NODE48) {
+    const slot = getB(c, (b << 2) + NODE48_INDEX_OFF + (k as i32));
+    c[b + W_NODE48_CHILDREN + (slot as i32)] = newChild;
+    return;
+  }
+  c[b + W_NODE256_CHILDREN + (k as i32)] = newChild;
+}
+
+// Sorted insert into the keys at byte offset `ko` and the children at word offset `cw`.
+function insertSorted(c: u32[], b: i32, ko: i32, cw: i32, k: u32, child: u32) {
+  const cnt = childCount(c, b);
+  const keys = (b << 2) + ko;
+  const children = b + cw;
+  let i = cnt;
+  while (i > 0 && getB(c, keys + i - 1) > k) {
+    setB(c, keys + i, getB(c, keys + i - 1));
+    c[children + i] = c[children + i - 1];
+    i--;
+  }
+  setB(c, keys + i, k);
+  c[children + i] = child;
+  setChildCount(c, b, cnt + 1);
+}
+
+// ------------------------------------------------------------ pools
+
+class NodePool {
+  freeHead: u32 = NONE;
+  bumpChunkId: u32 = 0;
+  bumpOff32: u32 = 0;
+  bumpLimit32: u32 = 0;
+  nextChunkBytes: u32;
+
+  constructor(nextChunkBytes: u32) {
+    this.nextChunkBytes = nextChunkBytes;
+  }
+}
+
+class ExtPool {
+  freeHead: u32 = NONE;
+  bumpChunkId: u32 = 0;
+  bumpOff32: u32 = 0;
+  bumpEnd32: u32 = 0;
+  nextChunkBytes: u32 = 4096;
+}
+
+// ------------------------------------------------------------ collection and inspection
+
+// Walks the entire subtree of internal node (c, b); returns the next free index of `out`.
+function collectAll(chunks: u32[][], c: u32[], b: i32, out: i64[], at: i32): i32 {
+  let o = at;
+  const meta = metaOf(c, b);
+  if ((meta & HAS_VALUE) != 0) {
+    out[o++] = valueOf(c, b);
+  }
+  const kind = meta & KIND_MASK;
+  if (kind <= KIND_NODE16) {
+    const children = b + (kind == KIND_NODE8 ? W_NODE8_CHILDREN : W_NODE16_CHILDREN);
+    const cnt = childCount(c, b);
+    for (let i: i32 = 0; i < cnt; i++) {
+      const h = c[children + i];
+      const cc = chunks[h >> OFFSET_BITS];
+      const cb = ((h & OFFSET_MASK) << 3) as i32;
+      if ((metaOf(cc, cb) & KIND_MASK) == KIND_LEAF) {
+        out[o++] = valueOf(cc, cb);
+      } else {
+        o = collectAll(chunks, cc, cb, out, o);
+      }
+    }
+    return o;
+  }
+  const is48 = kind == KIND_NODE48;
+  const bm = b + (is48 ? W_NODE48_BITMAP : W_NODE256_BITMAP);
+  const children = b + (is48 ? W_NODE48_CHILDREN : W_NODE256_CHILDREN);
+  const idxTbl = (b << 2) + NODE48_INDEX_OFF;
+  for (let w: i32 = 0; w < 4; w++) {
+    let bits = load64(c, bm + 2 * w);
+    const baseKey = w << 6;
+    while (bits != 0) {
+      const k = baseKey + (bits.trailingZeros() as i32);
+      bits &= bits - 1;
+      const h = is48 ? c[children + (getB(c, idxTbl + k) as i32)] : c[children + k];
+      const cc = chunks[h >> OFFSET_BITS];
+      const cb = ((h & OFFSET_MASK) << 3) as i32;
+      if ((metaOf(cc, cb) & KIND_MASK) == KIND_LEAF) {
+        out[o++] = valueOf(cc, cb);
+      } else {
+        o = collectAll(chunks, cc, cb, out, o);
+      }
+    }
+  }
+  return o;
+}
+
+// Walks the subtree of internal node (c, b), stopping once the next index reaches `end`.
+function collectLimited(chunks: u32[][], c: u32[], b: i32, out: i64[], at: i32, end: i32): i32 {
+  let o = at;
+  const meta = metaOf(c, b);
+  if ((meta & HAS_VALUE) != 0) {
+    out[o++] = valueOf(c, b);
+    if (o == end) {
+      return o;
+    }
+  }
+  const kind = meta & KIND_MASK;
+  if (kind <= KIND_NODE16) {
+    const children = b + (kind == KIND_NODE8 ? W_NODE8_CHILDREN : W_NODE16_CHILDREN);
+    const cnt = childCount(c, b);
+    for (let i: i32 = 0; i < cnt; i++) {
+      const h = c[children + i];
+      const cc = chunks[h >> OFFSET_BITS];
+      const cb = ((h & OFFSET_MASK) << 3) as i32;
+      if ((metaOf(cc, cb) & KIND_MASK) == KIND_LEAF) {
+        out[o++] = valueOf(cc, cb);
+      } else {
+        o = collectLimited(chunks, cc, cb, out, o, end);
+      }
+      if (o == end) {
+        return o;
+      }
+    }
+    return o;
+  }
+  const is48 = kind == KIND_NODE48;
+  const bm = b + (is48 ? W_NODE48_BITMAP : W_NODE256_BITMAP);
+  const children = b + (is48 ? W_NODE48_CHILDREN : W_NODE256_CHILDREN);
+  const idxTbl = (b << 2) + NODE48_INDEX_OFF;
+  for (let w: i32 = 0; w < 4; w++) {
+    let bits = load64(c, bm + 2 * w);
+    const baseKey = w << 6;
+    while (bits != 0) {
+      const k = baseKey + (bits.trailingZeros() as i32);
+      bits &= bits - 1;
+      const h = is48 ? c[children + (getB(c, idxTbl + k) as i32)] : c[children + k];
+      const cc = chunks[h >> OFFSET_BITS];
+      const cb = ((h & OFFSET_MASK) << 3) as i32;
+      if ((metaOf(cc, cb) & KIND_MASK) == KIND_LEAF) {
+        out[o++] = valueOf(cc, cb);
+      } else {
+        o = collectLimited(chunks, cc, cb, out, o, end);
+      }
+      if (o == end) {
+        return o;
+      }
+    }
+  }
+  return o;
+}
+
+// Calls back with the handle of every child of internal node (c, b), in key order.
+function forEachChild(c: u32[], b: i32, f: (h: u32) => void) {
+  const kind = metaOf(c, b) & KIND_MASK;
+  if (kind <= KIND_NODE16) {
+    const children = b + (kind == KIND_NODE8 ? W_NODE8_CHILDREN : W_NODE16_CHILDREN);
+    const cnt = childCount(c, b);
+    for (let i: i32 = 0; i < cnt; i++) {
+      f(c[children + i]);
+    }
+    return;
+  }
+  const is48 = kind == KIND_NODE48;
+  const bm = b + (is48 ? W_NODE48_BITMAP : W_NODE256_BITMAP);
+  const children = b + (is48 ? W_NODE48_CHILDREN : W_NODE256_CHILDREN);
+  const idxTbl = (b << 2) + NODE48_INDEX_OFF;
+  for (let w: i32 = 0; w < 4; w++) {
+    let bits = load64(c, bm + 2 * w);
+    const baseKey = w << 6;
+    while (bits != 0) {
+      const k = baseKey + (bits.trailingZeros() as i32);
+      bits &= bits - 1;
+      f(is48 ? c[children + (getB(c, idxTbl + k) as i32)] : c[children + k]);
+    }
+  }
+}
+
+function countNodes(chunks: u32[][], h: u32): i32 {
+  const c = chunks[h >> OFFSET_BITS];
+  const b = ((h & OFFSET_MASK) << 3) as i32;
+  if ((metaOf(c, b) & KIND_MASK) == KIND_LEAF) {
+    return 1;
+  }
+  let total: i32 = 1;
+  forEachChild(c, b, (ch: u32) => {
+    total += countNodes(chunks, ch);
+  });
+  return total;
+}
+
+function computeHeight(chunks: u32[][], h: u32): i32 {
+  const c = chunks[h >> OFFSET_BITS];
+  const b = ((h & OFFSET_MASK) << 3) as i32;
+  if ((metaOf(c, b) & KIND_MASK) == KIND_LEAF) {
+    return 0;
+  }
+  let best: i32 = 0;
+  forEachChild(c, b, (ch: u32) => {
+    const d = 1 + computeHeight(chunks, ch);
+    if (d > best) {
+      best = d;
+    }
+  });
+  return best;
+}
+
+// ------------------------------------------------------------ the tree
+
+export class RadixTree {
+  private chunks: u32[][] = [];
+  private rootHandle: u32 = NONE;
+  // 5 node size-class pools, by kind: 32, 64, 128, 512 and 1152 bytes.
+  private pools: NodePool[] = [];
+  // 4 external label pools: 32, 64, 128 and 256 bytes.
+  private extChunks: u32[][] = [];
+  private extPools: ExtPool[] = [];
+  // The path of Insert and Remove (the C# code's stackalloc arrays): handles and edge bytes.
+  private pathH: u32[] = new Array<u32>(256).fill(0);
+  private pathB: u32[] = new Array<u32>(256).fill(0);
+
+  // The out values of tryGet (outValue) and tryLongestPrefix (outLength, outValue), valid when
+  // they return true.
+  outValue: i64 = 0;
+  outLength: i32 = 0;
+
+  constructor() {
+    this.pools.push(new NodePool(4096));
+    this.pools.push(new NodePool(4096));
+    this.pools.push(new NodePool(4096));
+    this.pools.push(new NodePool(4096));
+    this.pools.push(new NodePool(4 * 1152));
+    for (let i: i32 = 0; i < 4; i++) {
+      this.extPools.push(new ExtPool());
+    }
+    // The root is an empty Leaf (SubtreeCount 0, ChildCount 0, LabelLen 0, no value).
+    const h = this.allocNode(KIND_LEAF);
+    const c = this.chunks[h >> OFFSET_BITS];
+    const b = ((h & OFFSET_MASK) << 3) as i32;
+    c[b] = 0;
+    c[b + 1] = header1(0, KIND_LEAF);
+    setValue(c, b, 0);
+    this.rootHandle = h;
+  }
+
+  get count(): i32 {
+    const h = this.rootHandle;
+    return this.chunks[h >> OFFSET_BITS][((h & OFFSET_MASK) << 3) as i32] as i32;
+  }
+
+  // ---------------------------------------------------------- memory helpers
+
+  private chunkOf(h: u32): u32[] {
+    return this.chunks[h >> OFFSET_BITS];
+  }
+
+  private allocNode(kind: u32): u32 {
+    const pool = this.pools[kind];
+    const free = pool.freeHead;
+    if (free != NONE) {
+      pool.freeHead = this.chunks[free >> OFFSET_BITS][((free & OFFSET_MASK) << 3) as i32];
+      return free;
+    }
+    const off = pool.bumpOff32;
+    if (off < pool.bumpLimit32) {
+      pool.bumpOff32 = off + stride32(kind);
+      return (pool.bumpChunkId << OFFSET_BITS) | off;
+    }
+    return this.allocNodeSlow(kind, pool);
+  }
+
+  private allocNodeSlow(kind: u32, pool: NodePool): u32 {
+    const chunkBytes = pool.nextChunkBytes;
+    const chunkId = this.chunks.length as u32;
+    this.chunks.push(new Array<u32>(chunkBytes >> 2).fill(0));
+    pool.bumpChunkId = chunkId;
+    pool.bumpOff32 = stride32(kind);
+    pool.bumpLimit32 = chunkBytes >> 5;
+    // Grow the next chunk up to 256 KB (or 224 * 1152 B for Node256, so offset32 < 8192).
+    const maxBytes: u32 = kind == KIND_NODE256 ? 224 * 1152 : MAX_CHUNK_BYTES;
+    const next = chunkBytes * 2;
+    pool.nextChunkBytes = next <= maxBytes ? next : maxBytes;
+    return chunkId << OFFSET_BITS;
+  }
+
+  private freeNodeStructOnly(kind: u32, h: u32, c: u32[], b: i32) {
+    const pool = this.pools[kind];
+    c[b] = pool.freeHead;
+    pool.freeHead = h;
+  }
+
+  private freeNodeFull(h: u32, c: u32[], b: i32) {
+    const meta = metaOf(c, b);
+    if ((meta & EXT_LABEL) != 0) {
+      this.freeExtLabel(c[b + W_LABEL], labelLen(c, b));
+    }
+    this.freeNodeStructOnly(meta & KIND_MASK, h, c, b);
+  }
+
+  private extArr(e: u32): u32[] {
+    return this.extChunks[e >> OFFSET_BITS];
+  }
+
+  private allocExtLabel(len: i32): u32 {
+    const cls = extClass(len);
+    const pool = this.extPools[cls];
+    const free = pool.freeHead;
+    if (free != NONE) {
+      pool.freeHead = this.extChunks[free >> OFFSET_BITS][((free & OFFSET_MASK) << 3) as i32];
+      return free;
+    }
+    const bump = pool.bumpOff32;
+    if (bump < pool.bumpEnd32) {
+      pool.bumpOff32 = bump + ((1 as u32) << cls);
+      return (pool.bumpChunkId << OFFSET_BITS) | bump;
+    }
+    return this.allocExtLabelSlow(cls, pool);
+  }
+
+  private allocExtLabelSlow(cls: u32, pool: ExtPool): u32 {
+    const chunkBytes = pool.nextChunkBytes;
+    const chunkId = this.extChunks.length as u32;
+    this.extChunks.push(new Array<u32>(chunkBytes >> 2).fill(0));
+    pool.bumpChunkId = chunkId;
+    pool.bumpOff32 = (1 as u32) << cls;
+    pool.bumpEnd32 = chunkBytes >> 5;
+    const next = chunkBytes * 2;
+    pool.nextChunkBytes = next <= MAX_CHUNK_BYTES ? next : MAX_CHUNK_BYTES;
+    return chunkId << OFFSET_BITS;
+  }
+
+  private freeExtLabel(e: u32, len: i32) {
+    const pool = this.extPools[extClass(len)];
+    this.extChunks[e >> OFFSET_BITS][((e & OFFSET_MASK) << 3) as i32] = pool.freeHead;
+    pool.freeHead = e;
+  }
+
+  // The array and byte offset of the label of node (c, b) with Meta `meta`.
+  private labelArr(c: u32[], b: i32, meta: u32): u32[] {
+    return (meta & EXT_LABEL) == 0 ? c : this.extChunks[c[b + W_LABEL] >> OFFSET_BITS];
+  }
+
+  private labelOff(c: u32[], b: i32, meta: u32): i32 {
+    return (meta & EXT_LABEL) == 0
+      ? (b << 2) + LABEL_OFF
+      : (((c[b + W_LABEL] & OFFSET_MASK) << 5) as i32);
+  }
+
+  // Whether label bytes 1 .. len of node (c, b) equal key[at + 1 .. at + 1 + len) (the C#
+  // code's BytesEqual(GetLabelPtr(node, meta) + 1, keyPtr + at + 1, len)).
+  private labelEq(c: u32[], b: i32, meta: u32, key: u8[], at: i32, len: i32): boolean {
+    return bytesEqual(this.labelArr(c, b, meta), this.labelOff(c, b, meta) + 1, key, at + 1, len);
+  }
+
+  // ---------------------------------------------------------- label helpers
+
+  private initLabelFromKey(c: u32[], b: i32, kind: u32, key: u8[], ko: i32, len: i32) {
+    setLabelLen(c, b, len);
+    if (len == 0) {
+      return;
+    }
+    if (len <= inlineCap(kind)) {
+      copyKeyBytes(key, ko, c, (b << 2) + LABEL_OFF, len);
+    } else {
+      const e = this.allocExtLabel(len);
+      copyKeyBytes(key, ko, this.extArr(e), ((e & OFFSET_MASK) << 5) as i32, len);
+      c[b + W_LABEL] = e;
+      setMeta(c, b, metaOf(c, b) | EXT_LABEL);
+    }
+  }
+
+  private initLabelFromLabel(c: u32[], b: i32, kind: u32, src: u32[], so: i32, len: i32) {
+    setLabelLen(c, b, len);
+    if (len == 0) {
+      return;
+    }
+    if (len <= inlineCap(kind)) {
+      copyBytes(src, so, c, (b << 2) + LABEL_OFF, len);
+    } else {
+      const e = this.allocExtLabel(len);
+      copyBytes(src, so, this.extArr(e), ((e & OFFSET_MASK) << 5) as i32, len);
+      c[b + W_LABEL] = e;
+      setMeta(c, b, metaOf(c, b) | EXT_LABEL);
+    }
+  }
+
+  // Transfers ownership of the label of (sc, sb) to (dc, db), of kind dstKind and with Meta
+  // initialized without EXT_LABEL.
+  private moveLabel(sc: u32[], sb: i32, dc: u32[], db: i32, dstKind: u32) {
+    const len = labelLen(sc, sb);
+    setLabelLen(dc, db, len);
+    if (len == 0) {
+      return;
+    }
+    const srcInline = (sb << 2) + LABEL_OFF;
+    const dstInline = (db << 2) + LABEL_OFF;
+    const dstCap = inlineCap(dstKind);
+    if ((metaOf(sc, sb) & EXT_LABEL) == 0) {
+      if (len <= dstCap) {
+        copyBytes(sc, srcInline, dc, dstInline, len);
+      } else {
+        const e = this.allocExtLabel(len);
+        copyBytes(sc, srcInline, this.extArr(e), ((e & OFFSET_MASK) << 5) as i32, len);
+        dc[db + W_LABEL] = e;
+        setMeta(dc, db, metaOf(dc, db) | EXT_LABEL);
+      }
+    } else {
+      const e = sc[sb + W_LABEL];
+      if (len <= dstCap) {
+        copyBytes(this.extArr(e), ((e & OFFSET_MASK) << 5) as i32, dc, dstInline, len);
+        this.freeExtLabel(e, len);
+      } else {
+        dc[db + W_LABEL] = e;
+        setMeta(dc, db, metaOf(dc, db) | EXT_LABEL);
+      }
+    }
+  }
+
+  // Drops the first `shift` bytes (1 <= shift < LabelLen) from the label of (c, b).
+  private shrinkLabel(c: u32[], b: i32, shift: i32) {
+    const oldLen = labelLen(c, b);
+    const newLen = oldLen - shift;
+    const inl = (b << 2) + LABEL_OFF;
+    const meta = metaOf(c, b);
+    if ((meta & EXT_LABEL) == 0) {
+      moveBytes(c, inl + shift, inl, newLen);
+    } else {
+      const oldBuf = c[b + W_LABEL];
+      const oa = this.extArr(oldBuf);
+      const oo = ((oldBuf & OFFSET_MASK) << 5) as i32;
+      if (newLen <= inlineCap(meta & KIND_MASK)) {
+        copyBytes(oa, oo + shift, c, inl, newLen);
+        this.freeExtLabel(oldBuf, oldLen);
+        setMeta(c, b, meta & ~EXT_LABEL);
+      } else if (extClass(newLen) == extClass(oldLen)) {
+        moveBytes(oa, oo + shift, oo, newLen);
+      } else {
+        const nb = this.allocExtLabel(newLen);
+        copyBytes(oa, oo + shift, this.extArr(nb), ((nb & OFFSET_MASK) << 5) as i32, newLen);
+        this.freeExtLabel(oldBuf, oldLen);
+        c[b + W_LABEL] = nb;
+      }
+    }
+    setLabelLen(c, b, newLen);
+  }
+
+  // Prepends the pLen bytes at (pa, po) to the label of child (c, b).
+  private prependLabel(c: u32[], b: i32, pa: u32[], po: i32, pLen: i32) {
+    const cLen = labelLen(c, b);
+    const total = pLen + cLen;
+    const inl = (b << 2) + LABEL_OFF;
+    const meta = metaOf(c, b);
+    if ((meta & EXT_LABEL) == 0) {
+      if (total <= inlineCap(meta & KIND_MASK)) {
+        moveBytes(c, inl, inl + pLen, cLen);
+        copyBytes(pa, po, c, inl, pLen);
+      } else {
+        const nb = this.allocExtLabel(total);
+        const na = this.extArr(nb);
+        const no = ((nb & OFFSET_MASK) << 5) as i32;
+        copyBytes(pa, po, na, no, pLen);
+        copyBytes(c, inl, na, no + pLen, cLen);
+        c[b + W_LABEL] = nb;
+        setMeta(c, b, meta | EXT_LABEL);
+      }
+    } else {
+      const oldBuf = c[b + W_LABEL];
+      const oa = this.extArr(oldBuf);
+      const oo = ((oldBuf & OFFSET_MASK) << 5) as i32;
+      if (extClass(total) == extClass(cLen)) {
+        moveBytes(oa, oo, oo + pLen, cLen);
+        copyBytes(pa, po, oa, oo, pLen);
+      } else {
+        const nb = this.allocExtLabel(total);
+        const na = this.extArr(nb);
+        const no = ((nb & OFFSET_MASK) << 5) as i32;
+        copyBytes(pa, po, na, no, pLen);
+        copyBytes(oa, oo, na, no + pLen, cLen);
+        this.freeExtLabel(oldBuf, cLen);
+        c[b + W_LABEL] = nb;
+      }
+    }
+    setLabelLen(c, b, total);
+  }
+
+  // ---------------------------------------------------------- child mutation
+
+  // Adds child (k, child) to node h, promoting it if full; returns the node's (new) handle.
+  private addChild(h: u32, k: u32, child: u32): u32 {
+    const c = this.chunkOf(h);
+    const b = ((h & OFFSET_MASK) << 3) as i32;
+    const meta = metaOf(c, b);
+    const kind = meta & KIND_MASK;
+
+    if (kind == KIND_LEAF) {
+      const nh = this.allocNode(KIND_NODE8);
+      const nc = this.chunkOf(nh);
+      const nb = ((nh & OFFSET_MASK) << 3) as i32;
+      nc[nb] = c[b];
+      nc[nb + 1] = header1(1, KIND_NODE8 | (meta & HAS_VALUE));
+      setValue(nc, nb, valueOf(c, b));
+      this.moveLabel(c, b, nc, nb, KIND_NODE8);
+      store64(nc, nb + W_NODE8_KEYS, ALL_FF);
+      setB(nc, (nb << 2) + NODE8_KEYS_OFF, k);
+      nc[nb + W_NODE8_CHILDREN] = child;
+      this.freeNodeStructOnly(KIND_LEAF, h, c, b);
+      return nh;
+    }
+
+    if (kind == KIND_NODE8) {
+      if (childCount(c, b) < 8) {
+        insertSorted(c, b, NODE8_KEYS_OFF, W_NODE8_CHILDREN, k, child);
+        return h;
+      }
+      // Promote Node8 -> Node16.
+      const nh = this.allocNode(KIND_NODE16);
+      const nc = this.chunkOf(nh);
+      const nb = ((nh & OFFSET_MASK) << 3) as i32;
+      nc[nb] = c[b];
+      nc[nb + 1] = header1(8, KIND_NODE16 | (meta & HAS_VALUE));
+      setValue(nc, nb, valueOf(c, b));
+      this.moveLabel(c, b, nc, nb, KIND_NODE16);
+      store64(nc, nb + W_NODE16_KEYS, load64(c, b + W_NODE8_KEYS));
+      store64(nc, nb + W_NODE16_KEYS + 2, ALL_FF);
+      for (let i: i32 = 0; i < 8; i++) {
+        nc[nb + W_NODE16_CHILDREN + i] = c[b + W_NODE8_CHILDREN + i];
+      }
+      insertSorted(nc, nb, NODE16_KEYS_OFF, W_NODE16_CHILDREN, k, child);
+      this.freeNodeStructOnly(KIND_NODE8, h, c, b);
+      return nh;
+    }
+
+    if (kind == KIND_NODE16) {
+      if (childCount(c, b) < 16) {
+        insertSorted(c, b, NODE16_KEYS_OFF, W_NODE16_CHILDREN, k, child);
+        return h;
+      }
+      // Promote Node16 -> Node48.
+      const nh = this.allocNode(KIND_NODE48);
+      const nc = this.chunkOf(nh);
+      const nb = ((nh & OFFSET_MASK) << 3) as i32;
+      nc[nb] = c[b];
+      nc[nb + 1] = header1(17, KIND_NODE48 | (meta & HAS_VALUE));
+      setValue(nc, nb, valueOf(c, b));
+      this.moveLabel(c, b, nc, nb, KIND_NODE48);
+      const bm = nb + W_NODE48_BITMAP;
+      for (let w: i32 = 0; w < 8; w++) {
+        nc[bm + w] = 0;
+      }
+      const idxTbl = (nb << 2) + NODE48_INDEX_OFF;
+      for (let w: i32 = 0; w < 64; w++) {
+        nc[nb + (NODE48_INDEX_OFF >> 2) + w] = 0xffffffff;
+      }
+      const oldKeys = (b << 2) + NODE16_KEYS_OFF;
+      for (let i: i32 = 0; i < 16; i++) {
+        const ok = getB(c, oldKeys + i);
+        setB(nc, idxTbl + (ok as i32), i as u32);
+        nc[nb + W_NODE48_CHILDREN + i] = c[b + W_NODE16_CHILDREN + i];
+        bmSet(nc, bm, ok);
+      }
+      setB(nc, idxTbl + (k as i32), 16);
+      nc[nb + W_NODE48_CHILDREN + 16] = child;
+      bmSet(nc, bm, k);
+      store64(nc, nb + W_NODE48_USEDMASK, ((1 as u64) << 17) - 1);
+      this.freeNodeStructOnly(KIND_NODE16, h, c, b);
+      return nh;
+    }
+
+    if (kind == KIND_NODE48) {
+      const cnt = childCount(c, b);
+      if (cnt < 48) {
+        const used = load64(c, b + W_NODE48_USEDMASK);
+        const slot = (~used).trailingZeros() as i32;
+        store64(c, b + W_NODE48_USEDMASK, used | ((1 as u64) << (slot as u64)));
+        setB(c, (b << 2) + NODE48_INDEX_OFF + (k as i32), slot as u32);
+        c[b + W_NODE48_CHILDREN + slot] = child;
+        bmSet(c, b + W_NODE48_BITMAP, k);
+        setChildCount(c, b, cnt + 1);
+        return h;
+      }
+      // Promote Node48 -> Node256.
+      const nh = this.allocNode(KIND_NODE256);
+      const nc = this.chunkOf(nh);
+      const nb = ((nh & OFFSET_MASK) << 3) as i32;
+      nc[nb] = c[b];
+      nc[nb + 1] = header1(49, KIND_NODE256 | (meta & HAS_VALUE));
+      setValue(nc, nb, valueOf(c, b));
+      this.moveLabel(c, b, nc, nb, KIND_NODE256);
+      const oldBm = b + W_NODE48_BITMAP;
+      const newBm = nb + W_NODE256_BITMAP;
+      for (let w: i32 = 0; w < 8; w++) {
+        nc[newBm + w] = c[oldBm + w];
+      }
+      const newChildren = nb + W_NODE256_CHILDREN;
+      for (let i: i32 = 0; i < 256; i++) {
+        nc[newChildren + i] = NONE;
+      }
+      const oldIdx = (b << 2) + NODE48_INDEX_OFF;
+      const oldChildren = b + W_NODE48_CHILDREN;
+      for (let w: i32 = 0; w < 4; w++) {
+        let bits = load64(c, oldBm + 2 * w);
+        const baseKey = w << 6;
+        while (bits != 0) {
+          const ok = baseKey + (bits.trailingZeros() as i32);
+          bits &= bits - 1;
+          nc[newChildren + ok] = c[oldChildren + (getB(c, oldIdx + ok) as i32)];
+        }
+      }
+      nc[newChildren + (k as i32)] = child;
+      bmSet(nc, newBm, k);
+      this.freeNodeStructOnly(KIND_NODE48, h, c, b);
+      return nh;
+    }
+
+    // Node256.
+    c[b + W_NODE256_CHILDREN + (k as i32)] = child;
+    bmSet(c, b + W_NODE256_BITMAP, k);
+    setChildCount(c, b, childCount(c, b) + 1);
+    return h;
+  }
+
+  // Removes child byte `k` from node h, demoting it with hysteresis if appropriate; returns the
+  // node's (new) handle.
+  private removeChild(h: u32, k: u32): u32 {
+    const c = this.chunkOf(h);
+    const b = ((h & OFFSET_MASK) << 3) as i32;
+    const meta = metaOf(c, b);
+    const kind = meta & KIND_MASK;
+
+    if (kind == KIND_NODE8) {
+      const idx = findIndexNode8(c, b, k);
+      const last = childCount(c, b) - 1;
+      if (last == 0) {
+        // Demote Node8 -> Leaf.
+        const nh = this.allocNode(KIND_LEAF);
+        const nc = this.chunkOf(nh);
+        const nb = ((nh & OFFSET_MASK) << 3) as i32;
+        nc[nb] = c[b];
+        nc[nb + 1] = header1(0, KIND_LEAF | (meta & HAS_VALUE));
+        setValue(nc, nb, valueOf(c, b));
+        this.moveLabel(c, b, nc, nb, KIND_LEAF);
+        this.freeNodeStructOnly(KIND_NODE8, h, c, b);
+        return nh;
+      }
+      const keys = (b << 2) + NODE8_KEYS_OFF;
+      const children = b + W_NODE8_CHILDREN;
+      for (let i = idx; i < last; i++) {
+        setB(c, keys + i, getB(c, keys + i + 1));
+        c[children + i] = c[children + i + 1];
+      }
+      setB(c, keys + last, 0xff);
+      setChildCount(c, b, last);
+      return h;
+    }
+
+    if (kind == KIND_NODE16) {
+      const idx = findIndexNode16(c, b, k);
+      const last = childCount(c, b) - 1;
+      const keys = (b << 2) + NODE16_KEYS_OFF;
+      const children = b + W_NODE16_CHILDREN;
+      for (let i = idx; i < last; i++) {
+        setB(c, keys + i, getB(c, keys + i + 1));
+        c[children + i] = c[children + i + 1];
+      }
+      setB(c, keys + last, 0xff);
+      setChildCount(c, b, last);
+      if (last <= 6) {
+        // Demote Node16 -> Node8.
+        const nh = this.allocNode(KIND_NODE8);
+        const nc = this.chunkOf(nh);
+        const nb = ((nh & OFFSET_MASK) << 3) as i32;
+        nc[nb] = c[b];
+        nc[nb + 1] = header1(last, KIND_NODE8 | (meta & HAS_VALUE));
+        setValue(nc, nb, valueOf(c, b));
+        this.moveLabel(c, b, nc, nb, KIND_NODE8);
+        // keys[last .. 7] are already 0xFF.
+        store64(nc, nb + W_NODE8_KEYS, load64(c, b + W_NODE16_KEYS));
+        for (let i: i32 = 0; i < last; i++) {
+          nc[nb + W_NODE8_CHILDREN + i] = c[children + i];
+        }
+        this.freeNodeStructOnly(KIND_NODE16, h, c, b);
+        return nh;
+      }
+      return h;
+    }
+
+    if (kind == KIND_NODE48) {
+      const idxTbl = (b << 2) + NODE48_INDEX_OFF;
+      const slot = getB(c, idxTbl + (k as i32));
+      setB(c, idxTbl + (k as i32), 0xff);
+      store64(
+        c,
+        b + W_NODE48_USEDMASK,
+        load64(c, b + W_NODE48_USEDMASK) & ~((1 as u64) << (slot as u64)),
+      );
+      const bm = b + W_NODE48_BITMAP;
+      bmClear(c, bm, k);
+      const newCount = childCount(c, b) - 1;
+      setChildCount(c, b, newCount);
+      if (newCount <= 12) {
+        // Demote Node48 -> Node16.
+        const nh = this.allocNode(KIND_NODE16);
+        const nc = this.chunkOf(nh);
+        const nb = ((nh & OFFSET_MASK) << 3) as i32;
+        nc[nb] = c[b];
+        nc[nb + 1] = header1(newCount, KIND_NODE16 | (meta & HAS_VALUE));
+        setValue(nc, nb, valueOf(c, b));
+        this.moveLabel(c, b, nc, nb, KIND_NODE16);
+        const n16Keys = (nb << 2) + NODE16_KEYS_OFF;
+        store64(nc, nb + W_NODE16_KEYS, ALL_FF);
+        store64(nc, nb + W_NODE16_KEYS + 2, ALL_FF);
+        const n16Children = nb + W_NODE16_CHILDREN;
+        const oldChildren = b + W_NODE48_CHILDREN;
+        let dst: i32 = 0;
+        for (let w: i32 = 0; w < 4; w++) {
+          let bits = load64(c, bm + 2 * w);
+          const baseKey = w << 6;
+          while (bits != 0) {
+            const ok = baseKey + (bits.trailingZeros() as i32);
+            bits &= bits - 1;
+            setB(nc, n16Keys + dst, ok as u32);
+            nc[n16Children + dst] = c[oldChildren + (getB(c, idxTbl + ok) as i32)];
+            dst++;
+          }
+        }
+        this.freeNodeStructOnly(KIND_NODE48, h, c, b);
+        return nh;
+      }
+      return h;
+    }
+
+    // Node256.
+    const c256 = b + W_NODE256_CHILDREN;
+    c[c256 + (k as i32)] = NONE;
+    const bm256 = b + W_NODE256_BITMAP;
+    bmClear(c, bm256, k);
+    const cnt256 = childCount(c, b) - 1;
+    setChildCount(c, b, cnt256);
+    if (cnt256 <= 36) {
+      // Demote Node256 -> Node48.
+      const nh = this.allocNode(KIND_NODE48);
+      const nc = this.chunkOf(nh);
+      const nb = ((nh & OFFSET_MASK) << 3) as i32;
+      nc[nb] = c[b];
+      nc[nb + 1] = header1(cnt256, KIND_NODE48 | (meta & HAS_VALUE));
+      setValue(nc, nb, valueOf(c, b));
+      this.moveLabel(c, b, nc, nb, KIND_NODE48);
+      const newBm = nb + W_NODE48_BITMAP;
+      for (let w: i32 = 0; w < 8; w++) {
+        nc[newBm + w] = c[bm256 + w];
+      }
+      const newIdx = (nb << 2) + NODE48_INDEX_OFF;
+      for (let w: i32 = 0; w < 64; w++) {
+        nc[nb + (NODE48_INDEX_OFF >> 2) + w] = 0xffffffff;
+      }
+      const newChildren = nb + W_NODE48_CHILDREN;
+      let slot: i32 = 0;
+      for (let w: i32 = 0; w < 4; w++) {
+        let bits = load64(c, bm256 + 2 * w);
+        const baseKey = w << 6;
+        while (bits != 0) {
+          const ok = baseKey + (bits.trailingZeros() as i32);
+          bits &= bits - 1;
+          setB(nc, newIdx + ok, slot as u32);
+          nc[newChildren + slot] = c[c256 + ok];
+          slot++;
+        }
+      }
+      store64(nc, nb + W_NODE48_USEDMASK, ((1 as u64) << (slot as u64)) - 1);
+      this.freeNodeStructOnly(KIND_NODE256, h, c, b);
+      return nh;
+    }
+    return h;
+  }
+
+  // ---------------------------------------------------------- public operations
+  // A key is the `len` bytes of `key` from index `ko`.
+
+  // Whether the key is present; its value is then in outValue.
+  tryGet(key: u8[], ko: i32, keyLen: i32): boolean {
+    const chunks = this.chunks;
+    const rh = this.rootHandle;
+    let c = chunks[rh >> OFFSET_BITS];
+    let b = ((rh & OFFSET_MASK) << 3) as i32;
+    let meta = metaOf(c, b);
+
+    if (keyLen == 0) {
+      if ((meta & HAS_VALUE) != 0) {
+        this.outValue = valueOf(c, b);
+        return true;
+      }
+      return false;
+    }
+
+    let kind = meta & KIND_MASK;
+    if (kind == KIND_LEAF) {
+      return false;
+    }
+    let h = findChild(c, b, kind, key[ko] as u32);
+    if (h == NONE) {
+      return false;
+    }
+    c = chunks[h >> OFFSET_BITS];
+    b = ((h & OFFSET_MASK) << 3) as i32;
+    let pos: i32 = 0;
+
+    while (true) {
+      const ll = labelLen(c, b);
+      const nextPos = pos + ll;
+      meta = metaOf(c, b);
+      kind = meta & KIND_MASK;
+
+      if (kind == KIND_LEAF) {
+        if (nextPos != keyLen) {
+          return false;
+        }
+        if (ll > 1 && !this.labelEq(c, b, meta, key, ko + pos, ll - 1)) {
+          return false;
+        }
+        this.outValue = valueOf(c, b);
+        return true;
+      }
+
+      if (nextPos > keyLen) {
+        return false;
+      }
+      if (ll > 1 && !this.labelEq(c, b, meta, key, ko + pos, ll - 1)) {
+        return false;
+      }
+      if (nextPos == keyLen) {
+        if ((meta & HAS_VALUE) != 0) {
+          this.outValue = valueOf(c, b);
+          return true;
+        }
+        return false;
+      }
+
+      pos = nextPos;
+      h = findChild(c, b, kind, key[ko + pos] as u32);
+      if (h == NONE) {
+        return false;
+      }
+      c = chunks[h >> OFFSET_BITS];
+      b = ((h & OFFSET_MASK) << 3) as i32;
+    }
+  }
+
+  // Whether some present key is a prefix of the key; the longest one's length and value are
+  // then in outLength and outValue.
+  tryLongestPrefix(key: u8[], ko: i32, keyLen: i32): boolean {
+    const chunks = this.chunks;
+    const rh = this.rootHandle;
+    let c = chunks[rh >> OFFSET_BITS];
+    let b = ((rh & OFFSET_MASK) << 3) as i32;
+    let found = false;
+    let bestLen: i32 = 0;
+    let bestVal: i64 = 0;
+
+    let meta = metaOf(c, b);
+    if ((meta & HAS_VALUE) != 0) {
+      found = true;
+      bestVal = valueOf(c, b);
+    }
+
+    let kind = meta & KIND_MASK;
+    if (keyLen == 0 || kind == KIND_LEAF) {
+      this.outLength = bestLen;
+      this.outValue = bestVal;
+      return found;
+    }
+
+    let h = findChild(c, b, kind, key[ko] as u32);
+    if (h == NONE) {
+      this.outLength = bestLen;
+      this.outValue = bestVal;
+      return found;
+    }
+    c = chunks[h >> OFFSET_BITS];
+    b = ((h & OFFSET_MASK) << 3) as i32;
+    let pos: i32 = 0;
+
+    while (true) {
+      const ll = labelLen(c, b);
+      const nextPos = pos + ll;
+      if (nextPos > keyLen) {
+        break;
+      }
+      meta = metaOf(c, b);
+      if (ll > 1 && !this.labelEq(c, b, meta, key, ko + pos, ll - 1)) {
+        break;
+      }
+      pos = nextPos;
+      kind = meta & KIND_MASK;
+
+      if (kind == KIND_LEAF) {
+        this.outLength = pos;
+        this.outValue = valueOf(c, b);
+        return true;
+      }
+
+      if ((meta & HAS_VALUE) != 0) {
+        found = true;
+        bestLen = pos;
+        bestVal = valueOf(c, b);
+      }
+
+      if (pos == keyLen) {
+        break;
+      }
+      h = findChild(c, b, kind, key[ko + pos] as u32);
+      if (h == NONE) {
+        break;
+      }
+      c = chunks[h >> OFFSET_BITS];
+      b = ((h & OFFSET_MASK) << 3) as i32;
+    }
+
+    this.outLength = bestLen;
+    this.outValue = bestVal;
+    return found;
+  }
+
+  // The number of present keys that start with the prefix.
+  prefixCount(key: u8[], ko: i32, prefixLen: i32): i32 {
+    const chunks = this.chunks;
+    const rh = this.rootHandle;
+    let c = chunks[rh >> OFFSET_BITS];
+    let b = ((rh & OFFSET_MASK) << 3) as i32;
+
+    if (prefixLen == 0) {
+      return c[b] as i32;
+    }
+
+    let kind = metaOf(c, b) & KIND_MASK;
+    if (kind == KIND_LEAF) {
+      return 0;
+    }
+    let h = findChild(c, b, kind, key[ko] as u32);
+    if (h == NONE) {
+      return 0;
+    }
+    c = chunks[h >> OFFSET_BITS];
+    b = ((h & OFFSET_MASK) << 3) as i32;
+    let pos: i32 = 0;
+
+    while (true) {
+      const ll = labelLen(c, b);
+      const rem = prefixLen - pos;
+      const meta = metaOf(c, b);
+
+      if (rem <= ll) {
+        if (rem > 1 && !this.labelEq(c, b, meta, key, ko + pos, rem - 1)) {
+          return 0;
+        }
+        return c[b] as i32;
+      }
+
+      if (ll > 1 && !this.labelEq(c, b, meta, key, ko + pos, ll - 1)) {
+        return 0;
+      }
+
+      pos += ll;
+      kind = meta & KIND_MASK;
+      if (kind == KIND_LEAF) {
+        return 0;
+      }
+      h = findChild(c, b, kind, key[ko + pos] as u32);
+      if (h == NONE) {
+        return 0;
+      }
+      c = chunks[h >> OFFSET_BITS];
+      b = ((h & OFFSET_MASK) << 3) as i32;
+    }
+  }
+
+  // Writes the values of up to `limit` keys that start with the prefix, in key order, to
+  // outValues; returns how many.
+  prefixValues(key: u8[], ko: i32, prefixLen: i32, outValues: i64[], limit: i32): i32 {
+    if (limit <= 0) {
+      return 0;
+    }
+    const chunks = this.chunks;
+    const rh = this.rootHandle;
+    let c = chunks[rh >> OFFSET_BITS];
+    let b = ((rh & OFFSET_MASK) << 3) as i32;
+
+    if (prefixLen > 0) {
+      let kind = metaOf(c, b) & KIND_MASK;
+      if (kind == KIND_LEAF) {
+        return 0;
+      }
+      let h = findChild(c, b, kind, key[ko] as u32);
+      if (h == NONE) {
+        return 0;
+      }
+      c = chunks[h >> OFFSET_BITS];
+      b = ((h & OFFSET_MASK) << 3) as i32;
+      let pos: i32 = 0;
+
+      while (true) {
+        const ll = labelLen(c, b);
+        const rem = prefixLen - pos;
+        const meta = metaOf(c, b);
+
+        if (rem <= ll) {
+          if (rem > 1 && !this.labelEq(c, b, meta, key, ko + pos, rem - 1)) {
+            return 0;
+          }
+          break;
+        }
+
+        if (ll > 1 && !this.labelEq(c, b, meta, key, ko + pos, ll - 1)) {
+          return 0;
+        }
+
+        pos += ll;
+        kind = meta & KIND_MASK;
+        if (kind == KIND_LEAF) {
+          return 0;
+        }
+        h = findChild(c, b, kind, key[ko + pos] as u32);
+        if (h == NONE) {
+          return 0;
+        }
+        c = chunks[h >> OFFSET_BITS];
+        b = ((h & OFFSET_MASK) << 3) as i32;
+      }
+    }
+
+    const subCount = c[b] as i32;
+    if (subCount == 0) {
+      return 0;
+    }
+    if ((metaOf(c, b) & KIND_MASK) == KIND_LEAF) {
+      outValues[0] = valueOf(c, b);
+      return 1;
+    }
+    return subCount <= limit
+      ? collectAll(chunks, c, b, outValues, 0)
+      : collectLimited(chunks, c, b, outValues, 0, limit);
+  }
+
+  // Inserts the key with `value`, or replaces the value of a present key; true if it was new.
+  insert(key: u8[], ko: i32, keyLen: i32, value: i64): boolean {
+    const chunks = this.chunks;
+    const rh = this.rootHandle;
+    const rc = chunks[rh >> OFFSET_BITS];
+    const rb = ((rh & OFFSET_MASK) << 3) as i32;
+
+    if (keyLen == 0) {
+      const rm = metaOf(rc, rb);
+      if ((rm & HAS_VALUE) != 0) {
+        setValue(rc, rb, value);
+        return false;
+      }
+      setMeta(rc, rb, rm | HAS_VALUE);
+      setValue(rc, rb, value);
+      rc[rb] = rc[rb] + 1;
+      return true;
+    }
+
+    const firstByte = key[ko] as u32;
+    const rootKind = metaOf(rc, rb) & KIND_MASK;
+    let curHandle = rootKind == KIND_LEAF ? NONE : findChild(rc, rb, rootKind, firstByte);
+
+    if (curHandle == NONE) {
+      const lh = this.newLeaf(value, key, ko, keyLen);
+      const nr = this.addChild(rh, firstByte, lh);
+      this.rootHandle = nr;
+      const nc = this.chunks[nr >> OFFSET_BITS];
+      const nb = ((nr & OFFSET_MASK) << 3) as i32;
+      nc[nb] = nc[nb] + 1;
+      return true;
+    }
+
+    const pathH = this.pathH;
+    const pathB = this.pathB;
+    pathH[0] = rh;
+    pathB[0] = firstByte;
+    let depth: i32 = 1;
+    let cur = chunks[curHandle >> OFFSET_BITS];
+    let cb = ((curHandle & OFFSET_MASK) << 3) as i32;
+    pathH[1] = curHandle;
+    let pos: i32 = 0;
+
+    while (true) {
+      const ll = labelLen(cur, cb);
+      const rem = keyLen - pos;
+      const maxCmp = ll < rem ? ll : rem;
+      const curMeta = metaOf(cur, cb);
+      const la = this.labelArr(cur, cb, curMeta);
+      const lo = this.labelOff(cur, cb, curMeta);
+      const match = maxCmp > 1 ? commonPrefixLenFrom1(la, lo, key, ko + pos, maxCmp) : 1;
+
+      if (match < ll) {
+        // Split cur's edge at `match`.
+        const sh = this.allocNode(KIND_NODE8);
+        const sc = this.chunkOf(sh);
+        const sb = ((sh & OFFSET_MASK) << 3) as i32;
+        const bOld = getB(la, lo + match);
+        sc[sb] = cur[cb] + 1;
+        store64(sc, sb + W_NODE8_KEYS, ALL_FF);
+
+        if (match == rem) {
+          // The new key ends inside cur's label.
+          sc[sb + 1] = header1(1, KIND_NODE8 | HAS_VALUE);
+          setValue(sc, sb, value);
+          this.initLabelFromLabel(sc, sb, KIND_NODE8, la, lo, match);
+          setB(sc, (sb << 2) + NODE8_KEYS_OFF, bOld);
+          sc[sb + W_NODE8_CHILDREN] = curHandle;
+        } else {
+          // Branch into cur and a new leaf.
+          const lh = this.newLeaf(value, key, ko + pos + match, rem - match);
+          sc[sb + 1] = header1(2, KIND_NODE8);
+          setValue(sc, sb, 0);
+          this.initLabelFromLabel(sc, sb, KIND_NODE8, la, lo, match);
+          const bNew = key[ko + pos + match] as u32;
+          const sKeys = (sb << 2) + NODE8_KEYS_OFF;
+          const sChildren = sb + W_NODE8_CHILDREN;
+          if (bOld < bNew) {
+            setB(sc, sKeys, bOld);
+            sc[sChildren] = curHandle;
+            setB(sc, sKeys + 1, bNew);
+            sc[sChildren + 1] = lh;
+          } else {
+            setB(sc, sKeys, bNew);
+            sc[sChildren] = lh;
+            setB(sc, sKeys + 1, bOld);
+            sc[sChildren + 1] = curHandle;
+          }
+        }
+
+        this.shrinkLabel(cur, cb, match);
+        const ph = pathH[depth - 1];
+        replaceChild(this.chunkOf(ph), ((ph & OFFSET_MASK) << 3) as i32, pathB[depth - 1], sh);
+        this.bumpPath(depth - 1, 1);
+        return true;
+      }
+
+      // The full label matched.
+      pos += ll;
+      if (pos == keyLen) {
+        if ((curMeta & HAS_VALUE) != 0) {
+          setValue(cur, cb, value);
+          return false;
+        }
+        setMeta(cur, cb, curMeta | HAS_VALUE);
+        setValue(cur, cb, value);
+        this.bumpPath(depth, 1);
+        return true;
+      }
+
+      const nextB = key[ko + pos] as u32;
+      const curKind = curMeta & KIND_MASK;
+      const nextHandle = curKind == KIND_LEAF ? NONE : findChild(cur, cb, curKind, nextB);
+
+      if (nextHandle == NONE) {
+        const lh = this.newLeaf(value, key, ko + pos, keyLen - pos);
+        const newCurHandle = this.addChild(curHandle, nextB, lh);
+        if (newCurHandle != curHandle) {
+          const ph = pathH[depth - 1];
+          replaceChild(
+            this.chunkOf(ph),
+            ((ph & OFFSET_MASK) << 3) as i32,
+            pathB[depth - 1],
+            newCurHandle,
+          );
+          pathH[depth] = newCurHandle;
+        }
+        this.bumpPath(depth, 1);
+        return true;
+      }
+
+      pathB[depth] = nextB;
+      depth++;
+      curHandle = nextHandle;
+      cur = chunks[curHandle >> OFFSET_BITS];
+      cb = ((curHandle & OFFSET_MASK) << 3) as i32;
+      pathH[depth] = curHandle;
+    }
+  }
+
+  // A new Leaf holding `value` with the label key[ko .. ko + len).
+  private newLeaf(value: i64, key: u8[], ko: i32, len: i32): u32 {
+    const lh = this.allocNode(KIND_LEAF);
+    const lc = this.chunkOf(lh);
+    const lb = ((lh & OFFSET_MASK) << 3) as i32;
+    lc[lb] = 1;
+    lc[lb + 1] = header1(0, KIND_LEAF | HAS_VALUE);
+    setValue(lc, lb, value);
+    this.initLabelFromKey(lc, lb, KIND_LEAF, key, ko, len);
+    return lh;
+  }
+
+  // Adds `delta` to the SubtreeCount of the path nodes 0 .. last.
+  private bumpPath(last: i32, delta: u32) {
+    const pathH = this.pathH;
+    const chunks = this.chunks;
+    for (let i: i32 = 0; i <= last; i++) {
+      const h = pathH[i];
+      const c = chunks[h >> OFFSET_BITS];
+      const b = ((h & OFFSET_MASK) << 3) as i32;
+      c[b] = c[b] + delta;
+    }
+  }
+
+  // Removes the key; true if it was present.
+  remove(key: u8[], ko: i32, keyLen: i32): boolean {
+    const chunks = this.chunks;
+    const rh = this.rootHandle;
+    const rc = chunks[rh >> OFFSET_BITS];
+    const rb = ((rh & OFFSET_MASK) << 3) as i32;
+
+    if (keyLen == 0) {
+      const rm = metaOf(rc, rb);
+      if ((rm & HAS_VALUE) == 0) {
+        return false;
+      }
+      setMeta(rc, rb, rm & ~HAS_VALUE);
+      rc[rb] = rc[rb] - 1;
+      return true;
+    }
+
+    const rootKind = metaOf(rc, rb) & KIND_MASK;
+    if (rootKind == KIND_LEAF) {
+      return false;
+    }
+
+    const firstByte = key[ko] as u32;
+    let parentHandle = rh;
+    let curHandle = findChild(rc, rb, rootKind, firstByte);
+    if (curHandle == NONE) {
+      return false;
+    }
+
+    const pathH = this.pathH;
+    const pathB = this.pathB;
+    pathH[0] = rh;
+    pathB[0] = firstByte;
+    let depth: i32 = 1;
+    let cur = chunks[curHandle >> OFFSET_BITS];
+    let cb = ((curHandle & OFFSET_MASK) << 3) as i32;
+    pathH[1] = curHandle;
+    let pos: i32 = 0;
+
+    while (true) {
+      const ll = labelLen(cur, cb);
+      const nextPos = pos + ll;
+      if (nextPos > keyLen) {
+        return false;
+      }
+      const curMeta = metaOf(cur, cb);
+      if (ll > 1 && !this.labelEq(cur, cb, curMeta, key, ko + pos, ll - 1)) {
+        return false;
+      }
+      pos = nextPos;
+      if (pos == keyLen) {
+        break;
+      }
+      const curKind = curMeta & KIND_MASK;
+      if (curKind == KIND_LEAF) {
+        return false;
+      }
+      const nextB = key[ko + pos] as u32;
+      const nextHandle = findChild(cur, cb, curKind, nextB);
+      if (nextHandle == NONE) {
+        return false;
+      }
+      pathB[depth] = nextB;
+      depth++;
+      parentHandle = curHandle;
+      curHandle = nextHandle;
+      cur = chunks[curHandle >> OFFSET_BITS];
+      cb = ((curHandle & OFFSET_MASK) << 3) as i32;
+      pathH[depth] = curHandle;
+    }
+
+    const targetMeta = metaOf(cur, cb);
+    if ((targetMeta & HAS_VALUE) == 0) {
+      return false;
+    }
+
+    const cc = childCount(cur, cb);
+    if (cc >= 2) {
+      // Keep the branching node; just clear its key.
+      setMeta(cur, cb, targetMeta & ~HAS_VALUE);
+      cur[cb] = cur[cb] - 1;
+      this.bumpPath(depth - 1, NONE);
+      return true;
+    }
+
+    if (cc == 1) {
+      // A Node8 with 1 child and no key left: merge cur into its sole child.
+      const soleHandle = cur[cb + W_NODE8_CHILDREN];
+      const sc = this.chunkOf(soleHandle);
+      const sb = ((soleHandle & OFFSET_MASK) << 3) as i32;
+      this.prependLabel(
+        sc,
+        sb,
+        this.labelArr(cur, cb, targetMeta),
+        this.labelOff(cur, cb, targetMeta),
+        labelLen(cur, cb),
+      );
+      this.freeNodeFull(curHandle, cur, cb);
+      const ph = pathH[depth - 1];
+      replaceChild(
+        this.chunkOf(ph),
+        ((ph & OFFSET_MASK) << 3) as i32,
+        pathB[depth - 1],
+        soleHandle,
+      );
+      this.bumpPath(depth - 1, NONE);
+      return true;
+    }
+
+    // childCount == 0 (cur is a Leaf): delete cur and remove it from its parent.
+    this.freeNodeFull(curHandle, cur, cb);
+
+    const parentDepth = depth - 1;
+    const parentEdgeByte = pathB[parentDepth];
+    const newParentHandle = this.removeChild(parentHandle, parentEdgeByte);
+
+    if (newParentHandle != parentHandle) {
+      if (parentDepth == 0) {
+        this.rootHandle = newParentHandle;
+      } else {
+        const gh = pathH[parentDepth - 1];
+        replaceChild(
+          this.chunkOf(gh),
+          ((gh & OFFSET_MASK) << 3) as i32,
+          pathB[parentDepth - 1],
+          newParentHandle,
+        );
+      }
+      pathH[parentDepth] = newParentHandle;
+      parentHandle = newParentHandle;
+    }
+
+    this.bumpPath(parentDepth, NONE);
+
+    // If the parent is not the root, has no key and now has exactly 1 child, merge it into
+    // its sole child.
+    if (parentDepth > 0) {
+      const pc = this.chunkOf(parentHandle);
+      const pb = ((parentHandle & OFFSET_MASK) << 3) as i32;
+      const pMeta = metaOf(pc, pb);
+      if ((pMeta & HAS_VALUE) == 0 && childCount(pc, pb) == 1) {
+        const soleHandle = pc[pb + W_NODE8_CHILDREN];
+        const sc = this.chunkOf(soleHandle);
+        const sb = ((soleHandle & OFFSET_MASK) << 3) as i32;
+        this.prependLabel(
+          sc,
+          sb,
+          this.labelArr(pc, pb, pMeta),
+          this.labelOff(pc, pb, pMeta),
+          labelLen(pc, pb),
+        );
+        this.freeNodeFull(parentHandle, pc, pb);
+        const gh = pathH[parentDepth - 1];
+        replaceChild(
+          this.chunkOf(gh),
+          ((gh & OFFSET_MASK) << 3) as i32,
+          pathB[parentDepth - 1],
+          soleHandle,
+        );
+      }
+    }
+    return true;
+  }
+
+  // ---------------------------------------------------------- structural inspection (untimed)
+
+  nodeCount(): i32 {
+    return countNodes(this.chunks, this.rootHandle);
+  }
+
+  height(): i32 {
+    return computeHeight(this.chunks, this.rootHandle);
+  }
+}
