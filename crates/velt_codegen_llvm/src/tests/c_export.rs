@@ -61,6 +61,18 @@ fn an_export_s_calls_abort_when_a_panic_unwinds_into_them() {
             "@__gcc_personality_v0",
             "landingpad { ptr, i32 } cleanup",
         ),
+        // musl links the static runtime, which defines Rust's personality; its kit has no
+        // libgcc, so `__gcc_personality_v0` would be undefined at the link.
+        (
+            "x86_64-unknown-linux-musl",
+            "@rust_eh_personality",
+            "landingpad { ptr, i32 } cleanup",
+        ),
+        (
+            "aarch64-unknown-linux-musl",
+            "@rust_eh_personality",
+            "landingpad { ptr, i32 } cleanup",
+        ),
         (
             "x86_64-pc-windows-msvc",
             "@__C_specific_handler",
@@ -156,8 +168,8 @@ fn with_cleanup_pad(name: &str, stops_unwind: bool) -> Program {
     pb.finish()
 }
 
-/// A function has one personality: an export keeps only its abort pad (the C library's personality), as
-/// its cleanups could only run before the `abort`; any other function lands at its cleanup pad
+/// A function has one personality: an export keeps only its abort pad (the C library's
+/// personality), as its cleanups could only run before the `abort`; any other function lands at its cleanup pad
 /// with Velt's personality and resumes.
 #[test]
 fn an_export_s_unwind_edges_go_to_its_abort_pad() {

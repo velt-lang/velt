@@ -332,7 +332,8 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   (`hir::Program::c_exports`, #2203), with `Linkage::Export`, the symbol `c_name` and the C
   signature, on every native target. An unwind started below it must not pass it into C: the
   process aborts. LLVM makes its calls `invoke`s whose landing pad calls `abort` (personality
-  `rust_eh_personality`; on Windows a `cleanuppad` with `__CxxFrameHandler3`), and gives its
+  `__gcc_personality_v0` against glibc and macOS, `rust_eh_personality` against musl; on Windows
+  a `cleanuppad` under `__C_specific_handler`), and gives its
   `i8`/`i16`/`bool` parameters no `signext`/`zeroext`; Cranelift gives it no unwind entry, except
   on Windows (its unwinder takes such a function for a leaf; c-ffi.md "Exported functions").
   `Function::new` sets `false`.
