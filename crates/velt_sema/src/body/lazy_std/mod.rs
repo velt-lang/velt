@@ -145,6 +145,7 @@ pub(crate) const RECORD_HOOKS: &[&str] = &[
     velt_common::std_hook!(record_view_sync_all),
     velt_common::std_hook!(record_view_get_one),
     velt_common::std_hook!(record_view_has_one),
+    velt_common::std_hook!(record_view_in_one),
     velt_common::std_hook!(record_view_set_one),
     velt_common::std_hook!(record_view_delete_one),
     velt_common::std_hook!(record_view_write_all),

@@ -95,10 +95,17 @@ impl Ctx<'_> {
                 let af: Vec<TyId> = af.iter().map(|t| self.subst(*t, &as_)).collect();
                 self.match_all(&pf, &af, slots)
             }
-            (TyKind::Adt(..), TyKind::Adt(..)) => match self.base_of(actual) {
-                Some(b) => self.match_ty(pat, b, slots),
-                None => false,
-            },
+            // A record view (an interface with named members next to its index signature) is
+            // its record: `HeadMeta` against `Record<string, V>` binds `V` (#3091).
+            (TyKind::Adt(..), TyKind::Adt(..)) => {
+                match self
+                    .base_of(actual)
+                    .or_else(|| self.record_view(actual).map(|v| v.0))
+                {
+                    Some(b) => self.match_ty(pat, b, slots),
+                    None => false,
+                }
+            }
             (TyKind::Dyn(d, ps), TyKind::Dyn(d2, as_)) if d == d2 => {
                 self.match_iface_args(&ps, &as_, slots)
             }

@@ -191,6 +191,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("recordViewFlush", Op(I::RecordViewFlush)),
     ("recordViewGet", Op(I::RecordViewGet)),
     ("recordViewHas", Op(I::RecordViewHas)),
+    ("recordViewIn", Op(I::RecordViewIn)),
     ("recordViewIs", Op(I::RecordViewIs)),
     ("recordViewSet", Op(I::RecordViewSet)),
     ("recordViewSync", Op(I::RecordViewSync)),

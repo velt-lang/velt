@@ -14,7 +14,8 @@
 //!
 //! | operation on a view | done as |
 //! |---|---|
-//! | `r[k]`, `k in r` | the source's own entry `k`, through `any` |
+//! | `r[k]`, `Object.hasOwn(r, k)` | the source's own entry `k`, through `any` |
+//! | `k in r` | `k in` the source, through `any`: what it inherits too (a class's methods) |
 //! | `Object.keys` / `values` / `entries`, `size`, the glue that reads field 0 | the mirror rebuilt from the source, in its order, then the mirror's |
 //! | `r[k] = v`, `delete r[k]` | written to the source, or deleted from it, through `any` |
 //! | a spread or `Object.assign` into it | the mirror's, then the spread's keys written to the source |
@@ -142,7 +143,7 @@ impl FnLower<'_, '_> {
         let rty = self.sub(r.ty);
         if !self.cx.record_view(rty) {
             return match i {
-                Intrinsic::RecordViewIs | Intrinsic::RecordViewHas => {
+                Intrinsic::RecordViewIs | Intrinsic::RecordViewHas | Intrinsic::RecordViewIn => {
                     Operand::Const(Const::Bool(false), Ty::Bool)
                 }
                 Intrinsic::RecordViewGet => {
@@ -163,6 +164,7 @@ impl FnLower<'_, '_> {
             // The source of a record `recordViewIs` found to be a view.
             Intrinsic::RecordViewGet
             | Intrinsic::RecordViewHas
+            | Intrinsic::RecordViewIn
             | Intrinsic::RecordViewSet
             | Intrinsic::RecordViewDelete => {
                 let word = Operand::Copy(self.field_place(&r, rty, VIEW_FIELD));
@@ -189,6 +191,12 @@ impl FnLower<'_, '_> {
                         let out = Place::local(self.temp(Ty::Bool));
                         let key = ty::Str::arg(self.addr(kp));
                         hooks::record_view_has_one(self, src, key).emit_to(self, out.clone());
+                        Operand::Copy(out)
+                    }
+                    Intrinsic::RecordViewIn => {
+                        let out = Place::local(self.temp(Ty::Bool));
+                        let key = ty::Str::arg(self.addr(kp));
+                        hooks::record_view_in_one(self, src, key).emit_to(self, out.clone());
                         Operand::Copy(out)
                     }
                     Intrinsic::RecordViewSet => {

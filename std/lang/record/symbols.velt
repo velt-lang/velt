@@ -6,7 +6,7 @@
 // property definitions, `Proxy` or `Reflect` (std/prelude/global/record_symbols.velt).
 
 import { objectPrototypeKey } from "velt/lang/hooks/record";
-import { recordViewGet, recordViewHas, recordViewIs } from "velt/lang/intrinsics";
+import { recordViewGet, recordViewHas, recordViewIn, recordViewIs } from "velt/lang/intrinsics";
 import {
   RECORD_ACCESSOR,
   RECORD_DEFINE_ACCESSOR,
@@ -336,6 +336,10 @@ extend<K, V> Record<K, V> {
   [RECORD_IN_KEYED](key: K | symbol): bool {
     if (this[RECORD_HAS_KEYED](key)) {
       return true;
+    }
+    // A view: `key in` its source, a class's methods too (#3087).
+    if (typeof key === "string" && recordViewIs(this)) {
+      return recordViewIn(this, key as K);
     }
     return typeof key === "string" && !this[RECORD_IS_NULL_PROTO]() && objectPrototypeKey(key);
   }

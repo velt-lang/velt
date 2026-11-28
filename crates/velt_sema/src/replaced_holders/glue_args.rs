@@ -229,6 +229,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::RecordViewIs
         | I::RecordViewGet
         | I::RecordViewHas
+        | I::RecordViewIn
         | I::RecordViewSet
         | I::RecordViewDelete
         | I::RecordViewFlush => false,

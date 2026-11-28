@@ -621,6 +621,9 @@ pub enum Intrinsic {
     /// std only: `recordViewHas<K, V>(r: borrow Record<K, V>, key: borrow K): bool` — whether the
     /// view `r`'s source has the own key `key`.
     RecordViewHas,
+    /// std only: `recordViewIn<K, V>(r: borrow Record<K, V>, key: borrow K): bool` — `key in` the
+    /// view `r`'s source through `any`: its own keys and what it inherits (a class's methods).
+    RecordViewIn,
     /// std only: `recordViewSet<K, V>(r: borrow Record<K, V>, key: borrow K, value: owned V)`:
     /// `value` written to the view `r`'s source through `any` (a `TypeError` if it can't hold it).
     RecordViewSet,

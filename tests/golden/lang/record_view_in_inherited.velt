@@ -1,0 +1,41 @@
+// `k in r` of a record view of a class instance finds what the instance inherits (its class's
+// methods and accessors, a base class's, `Object.prototype`'s) as Node's `in` does, while
+// `Object.hasOwn` stays with its own keys (#3087): a literal key and a key known only at run time.
+
+class Base {
+  kind(): string {
+    return "b";
+  }
+}
+
+class Product extends Base {
+  name = "pen";
+  label(): string {
+    return this.name;
+  }
+  get title(): string {
+    return "T";
+  }
+  static make(): number {
+    return 1;
+  }
+}
+
+function main(): void {
+  const a: any = new Product();
+  const r = a as Record<string, any>;
+  const k = "label";
+  console.log("label" in r, Object.hasOwn(r, "label"), k in r);
+  console.log("kind" in r, "title" in r, "make" in r, "name" in r, "nope" in r);
+  console.log("toString" in r, Object.hasOwn(r, "toString"));
+  for (const key of ["label", "name", "kind", "zz"]) {
+    console.log(key, key in r, Object.hasOwn(r, key));
+  }
+  const plain: Record<string, any> = { x: 1 };
+  console.log("toString" in plain, "x" in plain, "label" in plain);
+  const o: any = { y: 2, f() { return 1; } };
+  const ro = o as Record<string, any>;
+  console.log("f" in ro, "y" in ro, "label" in ro, Object.hasOwn(ro, "f"));
+}
+
+main();

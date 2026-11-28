@@ -129,6 +129,7 @@ export {
   recordViewFlush,
   recordViewGet,
   recordViewHas,
+  recordViewIn,
   recordViewIs,
   recordViewSet,
   recordViewSync,

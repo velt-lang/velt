@@ -599,6 +599,7 @@ enums! {
         230 => Freeze,
         231 => IsFrozen,
         232 => AnyApplyThis,
+        233 => RecordViewIn,
     }
 }
 

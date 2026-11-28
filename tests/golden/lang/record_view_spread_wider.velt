@@ -1,0 +1,29 @@
+// A record view (an interface with named members next to its index signature) is its record for
+// inference: a spread of it into a record of a wider value type, and a generic function taking a
+// `Record<string, V>`, as tsc accepts them (#3091).
+
+interface HeadMeta {
+  name?: string;
+  [key: string]: string | undefined;
+}
+
+function keysOf<V>(r: Record<string, V>): string {
+  return Object.keys(r).join(",");
+}
+
+function keysOrNone<V>(r: Record<string, V> | null | undefined): string {
+  return r == null ? "-" : Object.keys(r).join(",");
+}
+
+function main(): void {
+  const meta: HeadMeta = { name: "d", lang: "en" };
+  const r: Record<string, string | undefined> = { ...meta };
+  const w: Record<string, string | boolean | undefined> = { ...meta };
+  const extra: Record<string, string | number | undefined> = { ...meta, n: 1 };
+  w.flag = true;
+  console.log(Object.keys(r).join(","), Object.keys(w).join(","), Object.keys(extra).join(","));
+  console.log(w.name, w.flag, meta.flag, extra.n);
+  console.log(keysOf(meta), keysOrNone(meta), keysOrNone(null));
+}
+
+main();

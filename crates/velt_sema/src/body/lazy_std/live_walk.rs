@@ -270,6 +270,7 @@ pub(super) fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
                     | I::RecordViewIs
                     | I::RecordViewGet
                     | I::RecordViewHas
+                    | I::RecordViewIn
                     | I::RecordViewSet
                     | I::RecordViewDelete
                     | I::RecordViewFlush,

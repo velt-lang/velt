@@ -1,0 +1,71 @@
+// A type parameter that an object literal argument offers no candidate for (it leaves out every
+// optional field naming it, also in a nested literal) takes its default, its constraint or
+// `unknown`, as TypeScript infers it, after any other argument that infers it (#3116). A field
+// written as `undefined` offers `undefined`, one written as `null` offers `null`.
+
+function count<S>(opts: { input?: S }): string {
+  return typeof opts.input;
+}
+function bounded<S extends number>(opts: { input?: S; n: number }): string {
+  return typeof opts.input + opts.n;
+}
+function defaulted<S = string>(opts: { input?: S }): S[] {
+  return [];
+}
+function later<S>(opts: { input?: S }, x: S): S {
+  return opts.input ?? x;
+}
+interface Options<T> {
+  value?: T;
+  name: string;
+}
+function describe<T>(o: Options<T>): string {
+  return o.name + ":" + typeof o.value;
+}
+class Box {
+  put<V>(o: { v?: V }): string {
+    return "put " + typeof o.v;
+  }
+}
+function later3<S>(a: { input?: S }, b: { input?: S }, x: S): S {
+  return a.input ?? b.input ?? x;
+}
+function nested<S>(o: { opts: { input?: S } }): string {
+  return typeof o.opts.input;
+}
+function nestedSibling<S>(o: { opts: { input?: S }; v: S }): S {
+  return o.opts.input ?? o.v;
+}
+function undef<S>(o: { input?: S }): S[] {
+  return [];
+}
+function both<S>(o: { input?: S; v: S }): S {
+  return o.input ?? o.v;
+}
+async function load<R>(o: { result?: R }): Promise<string> {
+  return typeof o.result;
+}
+function main(): void {
+  console.log(count({ input: 1 }), count({}), count({ input: "s" }));
+  console.log(bounded({ n: 3 }), bounded({ input: 5, n: 3 }));
+  const ds = defaulted({});
+  ds.push("x");
+  const dn = defaulted({ input: 2 });
+  dn.push(4);
+  console.log(ds.length, dn[0]);
+  console.log(later({}, 7), later({ input: 1 }, 2));
+  const l: number = later({}, 4);
+  console.log(l + 1);
+  console.log(describe({ name: "a" }), describe({ name: "b", value: true }));
+  console.log(new Box().put({}), new Box().put({ v: 1 }));
+  // The later argument's type, not `unknown`: its methods and operators apply.
+  console.log(later({}, 7).toFixed(1), later({}, "s").toUpperCase(), later3({}, {}, 2) + 1);
+  console.log(nested({ opts: {} }), nested({ opts: { input: 5 } }), nestedSibling({ opts: {}, v: 4 }) + 1);
+  const none: undefined[] = undef({ input: undefined });
+  const three: number[] = undef({ input: 3 });
+  console.log(none.length, three.length, both({ input: undefined, v: 3 }) + 1);
+  console.log(undef({ input: undefined }).length, count({ input: undefined }));
+  console.log(undef({ input: null }).length, count({ input: null }));
+  load({}).then((s) => console.log("load", s));
+}
+main();

@@ -290,9 +290,19 @@ impl FnCx<'_, '_> {
                             // A record's accessors too, in a program that defines them.
                             let keyed = self.cx.objects.record_accessors
                                 && self.has_record_method(velt_common::std_key!(record_has_keyed));
-                            let has = match keyed {
-                                true => velt_common::std_key!(record_has_keyed),
-                                false => velt_common::std_key!(record_has),
+                            // A record of `any` or `unknown` values may be a view of an object,
+                            // which also has what it inherits (a class's methods, #3087).
+                            let view = self.record_args(m).is_some_and(|(_, v)| {
+                                matches!(
+                                    self.cx.dynamic(v),
+                                    Some(crate::any::Dynamic::Any | crate::any::Dynamic::Unknown)
+                                )
+                            });
+                            let has = match (keyed, view) {
+                                (true, true) => velt_common::std_key!(record_in_keyed),
+                                (true, false) => velt_common::std_key!(record_has_keyed),
+                                (false, true) => velt_common::std_key!(record_in_any),
+                                (false, false) => velt_common::std_key!(record_has),
                             };
                             self.record_call(obj, has, &[lit], span)
                         }
