@@ -18,11 +18,6 @@ async function* agen() {
   o.ob();
 }
 
-function* gen() {
-  yield 1;
-  o.ob();
-}
-
 async function inArgs() {
   await Promise.resolve(o.ob());
 }
@@ -61,14 +56,6 @@ async function afterAwait() {
   return o.ob(v);
 }
 
-function sync() {
-  return o.ob();
-}
-
-function outer() {
-  return sync() + 1;
-}
-
 async function report(what, p) {
   try {
     await p;
@@ -92,13 +79,6 @@ async function main() {
   const g = agen();
   console.log((await g.next()).value);
   await report("async gen", g.next());
-  const s = gen();
-  console.log(s.next().value);
-  try {
-    s.next();
-  } catch (e) {
-    console.log("gen", e.message);
-  }
   await report("await operand", inArgs());
   await report("nested", nested());
   await report("optional", optional());
@@ -106,11 +86,6 @@ async function main() {
   await report("catch body", inCatch());
   await report("after await", afterAwait());
   await report("then", Promise.resolve(1).then((v) => o.ob(v)));
-  try {
-    outer();
-  } catch (e) {
-    console.log("sync caller", e.message);
-  }
   console.log(o.f(1), await (async () => o.f(2))());
 }
 

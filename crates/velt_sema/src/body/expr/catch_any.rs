@@ -62,14 +62,17 @@ struct Trial {
 
 impl FnCx<'_, '_> {
     /// A call through `any` was made here (dynamic_member.rs): counted in user modules only,
-    /// where velt_vir throws the `TypeError`; outside every `catch` of the function it is one of
-    /// the function's errors (`throws::not_fn`).
+    /// where velt_vir throws the `TypeError`; outside every `catch` of an async function or a
+    /// promise callback it is one of the function's errors (`throws::not_fn`).
     pub(crate) fn note_any_call(&mut self) {
         if !self.cx.scopes[self.module].is_std {
             self.f.any_calls += 1;
-            // Outside every `catch` of this function, the `TypeError` leaves it, as in Node
-            // (`throws::not_fn`).
-            if self.f.catch_depth == 0 {
+            // Outside every `catch` of an async function or a `then` / `catch` / `finally`
+            // callback, the `TypeError` rejects a promise, as in Node (`throws::not_fn`); a
+            // generator's `finally` block cannot throw.
+            let rejects = self.f.is_async || self.f.promise_callback;
+            let gen_finally = self.f.yield_ty.is_some() && self.f.finally_depth > 0;
+            if rejects && self.f.catch_depth == 0 && !gen_finally {
                 if let Some(s) = crate::throws::not_fn_src(self.cx) {
                     self.throw_src(s);
                 }

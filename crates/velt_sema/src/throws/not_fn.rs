@@ -1,14 +1,18 @@
 //! Node's `TypeError` for a call through `any` that holds no function (`o.ob()` with `o.ob`
-//! a number), where no `catch` of the calling function encloses the call: the error leaves the
-//! function, as in Node. An async function's promise rejects with it, and a sync function's
-//! caller can catch it (velt_vir any_not_fn.rs throws it to the function's own error).
+//! a number), made in an async function outside every `catch` of it: the error rejects the
+//! function's promise, as in Node, which an `await` in a `try` catches (velt_vir any_not_fn.rs
+//! throws it to the function's own error). So does one in an arrow passed to a promise's
+//! `then`, `catch` or `finally`: it rejects the promise the call returns.
 //!
-//! A function whose error type is open (inferred from its body) counts it among what it throws
-//! ([`FnCx::note_any_call`](crate::body::FnCx) records the source); one whose error type is
-//! written (`throws E`), fixed by the function type its closure is checked against, or bound
-//! by the interface method it implements does not: the source is left out here, before
-//! inference, so no clause or bound that held before is broken, and velt_vir stops the program
-//! with the message there, as it did before.
+//! An async function (or such a callback) whose error type is open (inferred from its body) counts it among what it
+//! throws ([`FnCx::note_any_call`](crate::body::FnCx) records the source). One whose error type
+//! is written (`Promise<T> throws E`), fixed by the function type its closure is checked
+//! against, or bound by the interface method it implements does not: the source is left out of
+//! it here, before inference, so its own clause or bound holds as before, and velt_vir stops the
+//! program with the message there, as it did before. Such a function that awaits an open one
+//! does get it, as from any other error the awaited function throws (a clause without
+//! `TypeError` reports it). A sync function keeps stopping: its errors would reach clauses
+//! through every caller (#3955).
 
 use velt_common::Span;
 
@@ -38,7 +42,9 @@ pub(super) fn keep_open_only(cx: &mut Ctx, fns: &[DefId], groups: &Groups) {
     for &d in fns {
         let info = cx.fn_info(d);
         let fixed = info.declared_throws.is_some_and(|t| !t.from_body)
-            || groups.group_of(d).is_some_and(|g| groups.list[g].bound.is_some());
+            || groups
+                .group_of(d)
+                .is_some_and(|g| groups.list[g].bound.is_some());
         if fixed && info.throw_srcs.iter().any(|s| is_not_fn(s, te)) {
             cx.fn_info_mut(d).throw_srcs.retain(|s| !is_not_fn(s, te));
         }

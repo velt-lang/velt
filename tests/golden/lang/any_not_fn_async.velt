@@ -1,9 +1,10 @@
 // A call through `any` whose member holds no function, outside every `catch` of an async
 // function, rejects the function's promise with Node's `TypeError`, which an `await` in a `try`
 // catches (#3955): an async arrow, function, method and generator, a call in an `await`'s
-// operand, in nested async arrows, in a `finally` or `catch` body, in a `then` callback, with a
-// computed key (`o[k]()`) or an optional chain (`o?.ob()`). A sync generator's `next()` and a
-// sync function's caller catch it the same way. Before, the program stopped (exit 101).
+// operand, in nested async arrows, in a `finally` or `catch` body, in a `then` callback (an
+// arrow, whose errors reject the promise `then` returns), with a computed key (`o[k]()`) or an
+// optional chain (`o?.ob()`). Before, the program stopped (exit 101). A sync function or
+// generator still stops there (any_not_fn_uncaught.velt).
 // Node twin: any_not_fn_async.mjs.
 const o: any = { ob: 5, f: (x: number): number => x + 1 };
 const k: string = "ob";
@@ -20,11 +21,6 @@ class C {
 }
 
 async function* agen(): AsyncGenerator<number> {
-  yield 1;
-  o.ob();
-}
-
-function* gen(): Generator<number> {
   yield 1;
   o.ob();
 }
@@ -67,14 +63,6 @@ async function afterAwait(): Promise<number> {
   return o.ob(v);
 }
 
-function sync(): number {
-  return o.ob();
-}
-
-function outer(): number {
-  return sync() + 1;
-}
-
 async function report(what: string, p: Promise<any>): Promise<void> {
   try {
     await p;
@@ -98,13 +86,6 @@ async function main(): Promise<void> {
   const g = agen();
   console.log((await g.next()).value);
   await report("async gen", g.next());
-  const s = gen();
-  console.log(s.next().value);
-  try {
-    s.next();
-  } catch (e) {
-    console.log("gen", (e as Error).message);
-  }
   await report("await operand", inArgs());
   await report("nested", nested());
   await report("optional", optional());
@@ -112,11 +93,6 @@ async function main(): Promise<void> {
   await report("catch body", inCatch());
   await report("after await", afterAwait());
   await report("then", Promise.resolve(1).then((v: number) => o.ob(v)));
-  try {
-    outer();
-  } catch (e) {
-    console.log("sync caller", (e as Error).message);
-  }
   console.log(o.f(1), await (async () => o.f(2))());
 }
 

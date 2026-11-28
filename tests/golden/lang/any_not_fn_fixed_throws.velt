@@ -1,20 +1,24 @@
-// A call through `any` that holds no function, in a function whose `throws` clause is written
-// without `TypeError`, still stops the program with Node's message (#3955): the clause keeps
-// the error from leaving the function, and counting it would break a clause that held. Node's
-// caller `catch` runs here (`caught o.ob is not a function`); add `TypeError` to the clause,
-// or leave the clause out, to get that.
+// A call through `any` that holds no function, in an async function whose `throws` clause is
+// written without `TypeError`, still stops the program with Node's message (#3955): the clause
+// keeps the error out of the function's promise, and counting it would break a clause that
+// held. Node's `catch` runs here (`caught o.ob is not a function`); add `TypeError` to the
+// clause, or leave the clause out, to get that (any_not_fn_async.velt).
 const o: any = { ob: 5 };
 
-function fixed(): void throws RangeError {
+async function fixed(): Promise<void> throws RangeError {
   if (o.ob === 6) {
     throw new RangeError("six");
   }
   o.ob();
 }
 
-console.log("before");
-try {
-  fixed();
-} catch (e) {
-  console.log("caught", (e as Error).message);
+async function main(): Promise<void> {
+  console.log("before");
+  try {
+    await fixed();
+  } catch (e) {
+    console.log("caught", (e as Error).message);
+  }
 }
+
+main();
