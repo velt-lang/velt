@@ -257,16 +257,21 @@ pub(crate) fn load_up_front(loader: &mut Loader, queue: &mut VecDeque<usize>) {
     };
     // The executor in Velt, on a native target (the `std-scheduler` condition); with it, what std
     // calls by role (`hookCall`, #2882).
-    let native = super::conditional::load_conditions(loader.opts)
-        .iter()
-        .any(|c| c == vpm::imports::STD_SCHEDULER);
+    let conditions = super::conditional::load_conditions(loader.opts);
+    let native = conditions.iter().any(|c| c == vpm::imports::STD_SCHEDULER);
+    // std's writer of stdout and stderr is a native target's (`#stdout-sys`' `native` variant
+    // calls it): a WebAssembly build's writer is the runtime's, and the writer's `@export` has no
+    // WebAssembly form.
+    let native_target = conditions.iter().any(|c| c == "native");
+    let writer = velt_common::std_module!(lang_hooks_out_native);
     // A debug compiler's cell check under it too (velt_sema `lazy_std` `sched_hooks`); none
     // when the caller serves them on demand still (`LoadOptions::demand_executor`).
     let cells = velt_common::std_module!(lang_hooks_sched_cells);
     let sched = (EXECUTOR_MODULES.iter().copied())
         .filter(|_| native && !loader.opts.demand_executor)
         .filter(|m| *m != cells || cfg!(debug_assertions));
-    let paths = velt_common::std_hooks::ON_DEMAND_MODULES.iter().copied();
+    let paths = (velt_common::std_hooks::ON_DEMAND_MODULES.iter().copied())
+        .filter(|p| native_target || *p != writer);
     for path in paths.chain(sched) {
         let Some(spec) = specifier(path) else {
             continue;
