@@ -598,10 +598,8 @@ their own forms); functions taking one never accept the other.
 
 | Symbol | Signature |
 |---|---|
-| `velt_rt_bytes_drop` | `(VeltBytes* b)` — frees if `cap > 0`, zeroes. Never given an array whose `cap` has bit 63 set (an owner, `rt_abi.md` "Array length limit") |
 | `velt_rt_bytes_from_str` | `(const VeltStr* s, VeltBytes* out)` — copy |
 | `velt_rt_bytes_to_str` | `(const VeltBytes* b, IoResult<VeltStr>* out)` — copy, `EILSEQ` if invalid |
-| `velt_rt_str_array_drop` | `(VeltStrArray* a)` — drops elements + buffer, zeroes |
 
 ## 5. std/fs
 
@@ -989,7 +987,6 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_strbuf_finish` | `(VeltStrBuf* b, VeltStr* out)` | moves the text to `*out`; `*b` becomes empty (reusable, nothing to free) |
 | `velt_rt_strbuf_commit` | `(VeltStrBuf* b, u64 n, u8 ascii)` | the `n` bytes written after the text, in the builder's spare room (a unique heap buffer), become part of it: UTF-8, ASCII when `ascii` is 1 (not counted then) |
 | `velt_rt_strbuf_drop` | `(VeltStrBuf* b)` | abandon an unfinished builder (exception path); zeroes it |
-| `velt_rt_rows_exact_i64` | `(f64 v, i64* out) -> u8` | 1 and the integer when `v` is one exactly (an integer field from a float cell of a `RowSource`), else 0 |
 
 ### 12.2 String methods
 
@@ -1019,7 +1016,6 @@ runtime keeps the functions below.
 | `velt_rt_str_to_upper` / `_to_lower` | `(const VeltStr* s, VeltStr* out)` | full Unicode default case mapping (`ß` → `SS`, final sigma), like JS, for text that is not ASCII; ASCII text is mapped in std (std/lang/string/case.velt), which calls these for the rest |
 | `velt_rt_str_from_char_code` | `(i64 code, VeltStr* out)` | JS `ToUint16(code)`; a surrogate gives a lone surrogate, as JS. std makes the string of an ASCII unit itself (inline, no call) and calls this for the others |
 | `velt_rt_str_to_number` | `(const VeltStr* s) -> f64` | exact JS `Number(s)`: trimmed; `""` ⇒ 0; `0x`/`0o`/`0b` (unsigned); `±Infinity`; whole string must be a decimal literal, else NaN |
-| `velt_rt_str_array_drop` | `(VeltStrArray* a)` | already in §4 |
 
 ### 12.3 JSON pull reader (`JSON.parse<T>`)
 

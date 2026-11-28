@@ -198,6 +198,8 @@ export const imports: Imports = {
   // A thread lock on an 8-byte word (standard input's buffer): std's inline one on native
   // targets, the runtime's elsewhere (wasm's runtime keeps its own `Mutex` lock).
   "#thread-lock": { native: "./lang/hooks/mutex.velt", default: "./process/thread_lock_rt.velt" },
+  /** `HostRef`'s release and clone: nothing natively (no JS host); wasm's runtime elsewhere. */
+  "#host-rt": { native: "./host/rt_native.velt", default: "./host/rt.velt" },
   // Reading standard input (std/process/stdin_buffer.velt's refills): `read` on fd 0 on macOS,
   // Linux and WASI (wasi-libc's), the console's or a pipe's own read on Windows, none under a JS
   // host.

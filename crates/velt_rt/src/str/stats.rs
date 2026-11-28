@@ -9,7 +9,7 @@
 //! (`alloc - free` = buffers still alive at exit). Refcount operations = `retain + release`.
 //! `blocks=<allocated>/<freed>` counts every `velt_rt_alloc` / `velt_rt_free` of a non-empty
 //! block (objects, array buffers, counted boxes, closure environments), plus the array buffers
-//! the runtime hands to compiled code (`VeltBytes`, `VeltArray`, `VeltStrArray` `from_vec`) or
+//! the runtime hands to compiled code (`VeltBytes`, `VeltStrArray` `from_vec`) or
 //! takes back from it (`VeltBytes::take_vec`), since compiled code frees and allocates those as
 //! its own blocks: equal numbers at exit mean compiled code freed everything it allocated (leak
 //! checks, semantics stage 2); the counts are frozen at a moment when they were equal, or else

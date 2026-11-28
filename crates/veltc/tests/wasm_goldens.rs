@@ -788,6 +788,31 @@ fn host_functions_under_node() {
     let _ = std::fs::remove_dir_all(&work);
 }
 
+/// velt/db's `readRows<T, S>` of a `RowSource` written in Velt into a struct of plain fields (the
+/// by-column reader std/db/generate/columns.velt writes) links and runs in a browser module
+/// (wasm32-unknown-unknown, under node): the reader needs nothing of the runtime, its
+/// exact-integer test being std's (#2121), so tests/golden/std/db_rows_exact_int.velt prints its
+/// `.out` there, in debug and release mode.
+#[test]
+fn rows_of_a_row_source_in_a_browser_module() {
+    if let Some(missing) = missing_tools("wasm32-unknown-unknown", "node") {
+        eprintln!("note: {missing} not available; skipping the row source test");
+        return;
+    }
+    let root = root();
+    build_runtime(&root, "wasm32-unknown-unknown");
+    let file = root.join("tests/golden/std/db_rows_exact_int.velt");
+    let work = work_dir::work_dir(&root, "golden-work-rows");
+    for mode in [None, Some("--release")] {
+        let _ = std::fs::remove_dir_all(&work);
+        std::fs::create_dir_all(&work).expect("work dir");
+        if let Err(e) = check(&file, "wasm32-unknown-unknown", mode, &work) {
+            panic!("{e}");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&work);
+}
+
 /// Async host functions and the turns the host drives (rt_abi_async.md §1.4, §2.5) under node:
 /// tests/wasm_host_async/main.velt awaits host promises of every result type, a rejection as an
 /// `IoError`, promises settled out of order and interleaved with timers, drops a disposable and
