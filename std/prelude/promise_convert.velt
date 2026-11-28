@@ -1,4 +1,4 @@
-// velt/prelude (internal): the conversion of a promise to another promise type (a `Promise<T>`
+// Prelude (internal): the conversion of a promise to another promise type (a `Promise<T>`
 // used as a `Promise<unknown>`, a method's promise read through an interface adapter; #1682).
 
 /**
