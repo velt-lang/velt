@@ -11,9 +11,8 @@
 // runtime takes by itself (a fatal error inside its Rust, `velt dev`'s stop of a server) goes
 // through the C library's `exit`, which runs `flushAtExit` (registered at the start; on Windows,
 // whose runtime exits by `ExitProcess`, the exiting thread's fiber-local callback); its stderr
-// message comes before the flushed stdout there. Not in the dev JIT, whose reload replaces this
-// code: there such an exit loses what was printed since a worker last went idle, which is when the
-// executor writes the shared buffer out.
+// message comes before the flushed stdout there. The dev JIT registers it too: its code stays
+// mapped for the rest of the process.
 
 import * as buf from "./stdout_buffer";
 import { export as cExport } from "velt/ffi";
@@ -155,8 +154,8 @@ export function initOutput(): void {
 
 /**
  * Registers `flushAtExit` with the end of the process (`#stdout-os`: the C library's `exit`; on
- * Windows the exiting thread's fiber-local callback): an executable's start, not the dev JIT's,
- * whose reload replaces this code.
+ * Windows the exiting thread's fiber-local callback): the program's start, the dev JIT's too, whose
+ * code stays mapped for the rest of the process.
  */
 export function registerExitFlush(): void {
   // SAFETY: `flushAtExit` is `@cExport`ed as `void f(void *)`, what `exit` calls.

@@ -40,14 +40,13 @@ impl FnLower<'_, '_> {
     }
 
     /// `velt_main`'s start: stdout's mode (a terminal or not) is asked once, before any task
-    /// writes, so that the first `console.log` of a task doesn't wait for the answer; and outside
-    /// the dev JIT, whose reload replaces the code a C library's exit handler would call, std's
-    /// flush is registered with `atexit`, for the exits the runtime takes by itself.
+    /// writes, so that the first `console.log` of a task doesn't wait for the answer; and std's
+    /// flush is registered with the end of the process, for the exits the runtime takes by
+    /// itself. In the dev JIT too: its code stays mapped for the rest of the process, whatever
+    /// a reload swaps in.
     pub(super) fn init_output(&mut self) {
         hooks::init_output(self).emit(self);
-        if !self.cx.jit {
-            hooks::flush_at_exit(self).emit(self);
-        }
+        hooks::flush_at_exit(self).emit(self);
     }
 
     /// Is the function being lowered part of the writer (`WRITER_MODULES`)?
