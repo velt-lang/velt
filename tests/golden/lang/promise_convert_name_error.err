@@ -1,0 +1,2 @@
+promise_convert_name_error.velt:5:14: error: no method named `#then` found for type `Promise<f64>`
+promise_convert_name_error.velt:10:12: error: no method named `#then` found for type `Promise<f64>`

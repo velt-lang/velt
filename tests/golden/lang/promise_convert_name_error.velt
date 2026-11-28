@@ -1,0 +1,11 @@
+// The compiler's conversion of a promise (#3277) has a member name no program can write: a
+// `#then` written on a promise is an unknown member, in a class and outside one, as in TypeScript.
+class A {
+  m(p: Promise<number>): Promise<number> {
+    return p.#then((v: number): number => v + 1);
+  }
+}
+
+function f(p: Promise<number>): Promise<number> {
+  return p.#then((v: number): number => v + 1);
+}

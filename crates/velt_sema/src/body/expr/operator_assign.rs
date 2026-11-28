@@ -48,26 +48,37 @@ fn name_ref(name: &str, span: Span) -> ast::Expr {
     )
 }
 
-/// Does `e` run no code of the program's: a variable, a literal, or `new BigInt(k)` of such
-/// operands and numbers computed from them (`bigint_compound`)?
-fn runs_no_code(e: &ast::Expr) -> bool {
-    fn number(e: &ast::Expr) -> bool {
+impl FnCx<'_, '_> {
+    /// Does `e` run no code of the program's: a variable, a literal, or `new BigInt(k)` of
+    /// literals, number variables and arithmetic on them (`bigint_compound`)? An operand of an
+    /// operator inside must be a number: on a class, `a + b` and `-a` call its operator methods.
+    fn runs_no_code(&mut self, e: &ast::Expr) -> bool {
         match &e.kind {
             ast::ExprKind::Ident(_) | ast::ExprKind::Lit(_) => true,
-            ast::ExprKind::Paren(x) | ast::ExprKind::Unary { expr: x, .. } => number(x),
-            ast::ExprKind::Binary { lhs, rhs, .. } => number(lhs) && number(rhs),
+            ast::ExprKind::Paren(x) => self.runs_no_code(x),
+            ast::ExprKind::New { class, args } => {
+                let named = matches!(&class.kind, ast::TypeExprKind::Named { path, args }
+                    if args.is_empty() && path.len() == 1 && path[0].name == "BigInt");
+                named && args.iter().all(|a| self.number_of_numbers(a))
+            }
             _ => false,
         }
     }
-    match &e.kind {
-        ast::ExprKind::Ident(_) | ast::ExprKind::Lit(_) => true,
-        ast::ExprKind::Paren(x) => runs_no_code(x),
-        ast::ExprKind::New { class, args } => {
-            let named = matches!(&class.kind, ast::TypeExprKind::Named { path, args }
-                if args.is_empty() && path.len() == 1 && path[0].name == "BigInt");
-            named && args.iter().all(number)
+
+    /// Is `e` a number literal, a variable of a number type, or operators on such operands
+    /// only (which call no operator method)?
+    fn number_of_numbers(&mut self, e: &ast::Expr) -> bool {
+        match &e.kind {
+            ast::ExprKind::Lit(ast::Lit::Int { .. } | ast::Lit::Float { .. }) => true,
+            ast::ExprKind::Ident(_) => self.peek_ty(e).is_some_and(|t| self.is_number_ty(t)),
+            ast::ExprKind::Paren(x) | ast::ExprKind::Unary { expr: x, .. } => {
+                self.number_of_numbers(x)
+            }
+            ast::ExprKind::Binary { lhs, rhs, .. } => {
+                self.number_of_numbers(lhs) && self.number_of_numbers(rhs)
+            }
+            _ => false,
         }
-        _ => false,
     }
 }
 
@@ -194,7 +205,7 @@ impl FnCx<'_, '_> {
             _ => false,
         };
         let arithmetic = matches!(op, B::Add | B::Sub | B::Mul | B::Div | B::Rem);
-        if !own_let || !arithmetic || !runs_no_code(value) {
+        if !own_let || !arithmetic || !self.runs_no_code(value) {
             return self.place_compound(place, op, value, false, span);
         }
         let assign = operators::assign_method(op).expect("ICE: a binary operator");

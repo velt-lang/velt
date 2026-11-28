@@ -63,9 +63,55 @@ const count = {
   },
 };
 
+const log = [];
+
+async function later(v, tag) {
+  log.push(tag + "1");
+  await null;
+  log.push(tag + "2");
+  await null;
+  log.push(tag + "3");
+  return v;
+}
+
+async function ticks(tag) {
+  for (const s of ["a", "b", "c", "d"]) {
+    await null;
+    log.push(tag + s);
+  }
+}
+
+async function callbacks() {
+  const p = later(1, "C");
+  const c = p;
+  const t = ticks("x");
+  const a = c.then(() => log.push("c1"));
+  const b = p.then(() => log.push("p1"));
+  await Promise.all([a, b, t]);
+  return "callbacks: " + log.join(" ");
+}
+
+async function raced() {
+  const kept = later(1, "K");
+  await kept;
+  const fresh = Promise.resolve(2);
+  return "raced: " + String(await Promise.race([fresh, kept]));
+}
+
+async function adaptedRace(options) {
+  const kept = options.input.validate(1);
+  await kept;
+  const fresh = options.input.validate(5);
+  const r = await Promise.race([fresh, kept]);
+  return "adapted race: " + String(r.value);
+}
+
 async function main() {
   console.log(await retyped());
   console.log(await literal(count));
   console.log(await adapted({ input: count, handler: (n) => "" + n }));
+  console.log(await callbacks());
+  console.log(await raced());
+  console.log(await adaptedRace({ input: count, handler: (n) => "" + n }));
 }
 main();

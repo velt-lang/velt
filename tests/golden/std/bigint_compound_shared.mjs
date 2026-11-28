@@ -131,6 +131,42 @@ console.log(s(r));
 let t = n(1);
 t += (t = n(5));
 console.log(s(t));
+
+// The operator methods of the .velt file, called as functions.
+let sneaked = n(0);
+let sz = n(1);
+const sa = () => {
+  sneaked = sz;
+  return 2;
+};
+sz += n(sa() + sa() - 2);
+console.log(s(sneaked), s(sz));
+let sy = n(10);
+const sb = () => {
+  sneaked = sy;
+  return 3;
+};
+sy *= n(sb());
+console.log(s(sneaked), s(sy));
+const sneakStore = [];
+function sneakIn() {
+  let z = n(1);
+  const read = () => z;
+  const a = () => {
+    sneakStore.push(read());
+    return 2;
+  };
+  z += n(a() + a() - 2);
+  let y = n(10);
+  const readY = () => y;
+  const b = () => {
+    sneakStore.push(readY());
+    return 3;
+  };
+  y *= n(b());
+  console.log(s(sneakStore[0]), s(z), s(sneakStore[2]), s(y));
+}
+sneakIn();
 async function main() {
   console.log(await stepAsync());
 }

@@ -138,6 +138,55 @@ console.log(s(r));
 let t = new BigInt(1);
 t += (t = new BigInt(5));
 console.log(s(t));
+
+// An operator method inside the right side runs the program's code, which may hold the number:
+// a new number then (`new BigInt(a + a)` on a class with `[Symbol.add]`).
+class Sneak {
+  f: () => i64;
+  constructor(f: () => i64) {
+    this.f = f;
+  }
+  [Symbol.add](o: Sneak): i64 {
+    return this.f() + o.f() - 2;
+  }
+  [Symbol.neg](): i64 {
+    return this.f();
+  }
+}
+let sneaked = new BigInt(0);
+let sz = new BigInt(1);
+const sa = new Sneak((): i64 => {
+  sneaked = sz;
+  return 2;
+});
+sz += new BigInt(sa + sa);
+console.log(s(sneaked), s(sz));
+let sy = new BigInt(10);
+const sb = new Sneak((): i64 => {
+  sneaked = sy;
+  return 3;
+});
+sy *= new BigInt(-sb);
+console.log(s(sneaked), s(sy));
+const sneakStore: BigInt[] = [];
+function sneakIn(): void {
+  let z = new BigInt(1);
+  const read = (): BigInt => z;
+  const a = new Sneak((): i64 => {
+    sneakStore.push(read());
+    return 2;
+  });
+  z += new BigInt(a + a);
+  let y = new BigInt(10);
+  const readY = (): BigInt => y;
+  const b = new Sneak((): i64 => {
+    sneakStore.push(readY());
+    return 3;
+  });
+  y *= new BigInt(-b);
+  console.log(s(sneakStore[0]), s(z), s(sneakStore[2]), s(y));
+}
+sneakIn();
 async function main(): Promise<void> {
   console.log(await stepAsync());
 }

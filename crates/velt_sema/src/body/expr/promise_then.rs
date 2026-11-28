@@ -10,10 +10,10 @@ use crate::body::{FnCx, Want};
 use crate::ctx::Item;
 use crate::hir::{self, PassMode, TyId, TyKind};
 
-/// The method of a compiler-made conversion of a promise's value (`<promise>.#then(f)`, a name no
-/// program can write): a `then` that settles when its promise does (`promiseConvert`), since in
-/// JS the converted promise is the same promise (#3277).
-pub(super) const CONVERT_THEN: &str = "#then";
+/// The method of a compiler-made conversion of a promise's value (`<promise>.<convert then>(f)`, a
+/// name with a space, which no identifier the lexer reads can be): a `then` that settles when its
+/// promise does (`promiseConvert`), since in JS the converted promise is the same promise (#3277).
+pub(super) const CONVERT_THEN: &str = "<convert then>";
 
 /// Is `name` a method a promise has (`then`, `catch`, `finally`), or [`CONVERT_THEN`]?
 pub(crate) fn is_promise_callback_method(name: &str) -> bool {

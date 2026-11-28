@@ -81,9 +81,59 @@ const count: Schema<number> = {
   },
 };
 
+// Fulfilled sources: a callback on the converted promise registered before one on the source
+// runs first, as in Node; a converted promise of a fulfilled one has settled when made, so
+// `Promise.race` takes it, first in the array.
+const log: string[] = [];
+
+async function later(v: number, tag: string): Promise<number> {
+  log.push(tag + "1");
+  await null;
+  log.push(tag + "2");
+  await null;
+  log.push(tag + "3");
+  return v;
+}
+
+async function ticks(tag: string): Promise<void> {
+  for (const s of ["a", "b", "c", "d"]) {
+    await null;
+    log.push(tag + s);
+  }
+}
+
+async function callbacks(): Promise<string> {
+  const p = later(1, "C");
+  const c: Promise<unknown> = p;
+  const t = ticks("x");
+  const a = c.then(() => log.push("c1"));
+  const b = p.then(() => log.push("p1"));
+  await Promise.all([a, b, t]);
+  return "callbacks: " + log.join(" ");
+}
+
+async function raced(): Promise<string> {
+  const kept: Promise<unknown> = later(1, "K");
+  await kept;
+  const fresh: Promise<unknown> = Promise.resolve(2);
+  return "raced: " + String(await Promise.race([fresh, kept]));
+}
+
+function adaptedRace<S>(options: Options<S>): Promise<string>;
+async function adaptedRace(options: Options<unknown>): Promise<string> {
+  const kept = options.input.validate(1);
+  await kept;
+  const fresh = options.input.validate(5);
+  const r = await Promise.race([fresh, kept]);
+  return "adapted race: " + String(r.value);
+}
+
 async function main(): Promise<void> {
   console.log(await retyped());
   console.log(await literal(count));
   console.log(await adapted({ input: count, handler: (n: number): string => "" + n }));
+  console.log(await callbacks());
+  console.log(await raced());
+  console.log(await adaptedRace({ input: count, handler: (n: number): string => "" + n }));
 }
 main();

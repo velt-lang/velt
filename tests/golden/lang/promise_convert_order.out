@@ -1,3 +1,6 @@
 retyped: Error: before
 literal: Error: before
 adapted: Error: before / Error: fresh
+callbacks: C1 C2 xa C3 xb c1 p1 xc xd
+raced: 2
+adapted race: 6
