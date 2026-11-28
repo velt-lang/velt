@@ -20,14 +20,6 @@ const xs = [3, 1, 2];
 xs.sort(cmpObj.by);
 console.log(xs.join(","));
 
-class Order {
-  by(a, b) {
-    return weight(b) - weight(a);
-  }
-}
-const ob = new Order();
-console.log(xs.toSorted(ob.by).join(","));
-
 function mk() {
   return (a, b) => weight(a) - weight(b);
 }

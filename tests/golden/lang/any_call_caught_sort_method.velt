@@ -1,0 +1,28 @@
+// A class method as a typed sort's comparator, calling a helper that calls through `any`, in a
+// program whose calls through `any` throw (#1938): it sorts, and when it throws the error leaves
+// to the caller's `catch` with the array unchanged.
+function check(x: number): number {
+  if (x < 0) throw new RangeError("negative " + x);
+  return x;
+}
+const table: any = { check };
+console.log(table.check(1));
+function weight(x: number): number {
+  return table.check(x) as number;
+}
+class Order {
+  by(a: number, b: number): number {
+    return weight(b) - weight(a);
+  }
+}
+const ob = new Order();
+const xs: number[] = [3, 1, 2];
+console.log(xs.toSorted(ob.by).join(","));
+xs.sort(ob.by);
+console.log(xs.join(","));
+const bad: number[] = [2, -1];
+try {
+  bad.sort(ob.by);
+} catch (e) {
+  console.log("method caught", (e as Error).message, bad.join(","));
+}

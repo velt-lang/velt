@@ -1,7 +1,8 @@
 // Typed comparators of every shape whose function type throws `any` (they call a helper that
-// calls through `any`), in a program whose calls through `any` throw (#1938): a member, a class
-// method as a value, a call's result, a conditional, and the comparators of typed arrays. Each
-// sorts, and a throwing one leaves the error to the caller's `catch` with the array unchanged.
+// calls through `any`), in a program whose calls through `any` throw (#1938): a member (a class
+// method as a value is any_call_caught_sort_method's), a call's result, a conditional, and the
+// comparators of typed arrays. Each sorts, and a throwing one leaves the error to the caller's
+// `catch` with the array unchanged.
 function check(x: number): number {
   if (x < 0) throw new RangeError("negative " + x);
   return x;
@@ -22,14 +23,6 @@ const cmpObj = { by: (a: number, b: number): number => weight(a) - weight(b) };
 const xs: number[] = [3, 1, 2];
 xs.sort(cmpObj.by);
 console.log(xs.join(","));
-
-class Order {
-  by(a: number, b: number): number {
-    return weight(b) - weight(a);
-  }
-}
-const ob = new Order();
-console.log(xs.toSorted(ob.by).join(","));
 
 function mk(): (a: number, b: number) => number {
   return (a: number, b: number): number => weight(a) - weight(b);

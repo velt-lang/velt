@@ -23,6 +23,9 @@ tests/golden/lang/any_call_kept_message.velt                       #3792 units
 tests/golden/lang/any_call_caught.velt                             #2943 units
 tests/golden/lang/any_call_caught_callbacks.velt                   #2943 units
 tests/golden/lang/any_call_caught_this_fn.velt                     #2943 units
+# A class method as a value passed as an argument (`xs.sort(ob.by)`) is "no field `by`" in a check
+# by units, in any program (not only one whose calls through `any` throw).
+tests/golden/lang/any_call_caught_sort_method.velt                 #2943 units
 
 # Fail in a run by units (VELT_UNITS=2) on main 667cfae77, a sample of ~410 goldens (#2943's U6 list):
 tests/golden/lang/class_local_ctor.velt                            #2943 units
