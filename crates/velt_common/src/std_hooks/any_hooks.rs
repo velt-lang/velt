@@ -66,6 +66,8 @@ macro_rules! with_any_hooks {
             record_view_get_one => lang_hooks_any_record, "recordViewGetOne", sig((&RecordViewSource, &string) -> any), lowered;
             /// Whether a view's source has one own key.
             record_view_has_one => lang_hooks_any_record, "recordViewHasOne", sig((&RecordViewSource, &string) -> bool), lowered;
+            /// Whether a key is `in` a view's source: its own or one it inherits (a class's method).
+            record_view_in_one => lang_hooks_any_record, "recordViewInOne", sig((&RecordViewSource, &string) -> bool), lowered;
             /// A value written to a view's source under one key.
             record_view_set_one => lang_hooks_any_record, "recordViewSetOne", sig((&RecordViewSource, &string, move any) -> void), lowered;
             /// A key deleted from a view's source.

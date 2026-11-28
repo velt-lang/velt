@@ -1,0 +1,47 @@
+// A type parameter that an object literal argument offers no candidate for (it leaves out every
+// optional field naming it) takes its default, its constraint or `unknown`, as TypeScript infers it,
+// after any other argument that infers it (#3116).
+
+function count<S>(opts: { input?: S }): string {
+  return typeof opts.input;
+}
+function bounded<S extends number>(opts: { input?: S; n: number }): string {
+  return typeof opts.input + opts.n;
+}
+function defaulted<S = string>(opts: { input?: S }): S[] {
+  return [];
+}
+function later<S>(opts: { input?: S }, x: S): S {
+  return opts.input ?? x;
+}
+interface Options<T> {
+  value?: T;
+  name: string;
+}
+function describe<T>(o: Options<T>): string {
+  return o.name + ":" + typeof o.value;
+}
+class Box {
+  put<V>(o: { v?: V }): string {
+    return "put " + typeof o.v;
+  }
+}
+async function load<R>(o: { result?: R }): Promise<string> {
+  return typeof o.result;
+}
+function main(): void {
+  console.log(count({ input: 1 }), count({}), count({ input: "s" }));
+  console.log(bounded({ n: 3 }), bounded({ input: 5, n: 3 }));
+  const ds = defaulted({});
+  ds.push("x");
+  const dn = defaulted({ input: 2 });
+  dn.push(4);
+  console.log(ds.length, dn[0]);
+  console.log(later({}, 7), later({ input: 1 }, 2));
+  const l: number = later({}, 4);
+  console.log(l + 1);
+  console.log(describe({ name: "a" }), describe({ name: "b", value: true }));
+  console.log(new Box().put({}), new Box().put({ v: 1 }));
+  load({}).then((s) => console.log("load", s));
+}
+main();

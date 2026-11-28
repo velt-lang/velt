@@ -575,6 +575,7 @@ impl FnLower<'_, '_> {
                 | I::RecordViewIs
                 | I::RecordViewGet
                 | I::RecordViewHas
+                | I::RecordViewIn
                 | I::RecordViewSet
                 | I::RecordViewDelete
                 | I::RecordViewFlush,

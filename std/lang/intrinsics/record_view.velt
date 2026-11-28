@@ -23,6 +23,10 @@ export declare function recordViewGet<K, V>(r: Record<K, V>, key: K): V | undefi
 @intrinsic
 export declare function recordViewHas<K, V>(r: Record<K, V>, key: K): bool;
 
+/** Whether `key` is `in` the view `r`'s source: an own key or one it inherits (a class's method). */
+@intrinsic
+export declare function recordViewIn<K, V>(r: Record<K, V>, key: K): bool;
+
 /** `value` written to the view `r`'s source under `key` (a `TypeError` where it can't hold it). */
 @intrinsic
 export declare function recordViewSet<K, V>(r: Record<K, V>, key: K, value: Owned<V>);

@@ -142,7 +142,7 @@ impl FnLower<'_, '_> {
         let rty = self.sub(r.ty);
         if !self.cx.record_view(rty) {
             return match i {
-                Intrinsic::RecordViewIs | Intrinsic::RecordViewHas => {
+                Intrinsic::RecordViewIs | Intrinsic::RecordViewHas | Intrinsic::RecordViewIn => {
                     Operand::Const(Const::Bool(false), Ty::Bool)
                 }
                 Intrinsic::RecordViewGet => {
@@ -163,6 +163,7 @@ impl FnLower<'_, '_> {
             // The source of a record `recordViewIs` found to be a view.
             Intrinsic::RecordViewGet
             | Intrinsic::RecordViewHas
+            | Intrinsic::RecordViewIn
             | Intrinsic::RecordViewSet
             | Intrinsic::RecordViewDelete => {
                 let word = Operand::Copy(self.field_place(&r, rty, VIEW_FIELD));
@@ -189,6 +190,12 @@ impl FnLower<'_, '_> {
                         let out = Place::local(self.temp(Ty::Bool));
                         let key = ty::Str::arg(self.addr(kp));
                         hooks::record_view_has_one(self, src, key).emit_to(self, out.clone());
+                        Operand::Copy(out)
+                    }
+                    Intrinsic::RecordViewIn => {
+                        let out = Place::local(self.temp(Ty::Bool));
+                        let key = ty::Str::arg(self.addr(kp));
+                        hooks::record_view_in_one(self, src, key).emit_to(self, out.clone());
                         Operand::Copy(out)
                     }
                     Intrinsic::RecordViewSet => {

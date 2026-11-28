@@ -12,7 +12,7 @@ import {
   RECORD_HAS,
   RECORD_IS_NULL_PROTO,
 } from "velt/lang/hooks/keys";
-import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+import { recordViewIn, recordViewIs, strByteAt, strByteLen } from "velt/lang/intrinsics";
 
 /** `a === b` on prototypes (or `null`, a prototype-less object's). */
 export function prototypeSame(a: ObjectPrototype | null, b: ObjectPrototype | null): bool {
@@ -59,6 +59,10 @@ export function objectPrototypeKey(key: string): bool {
  * `key`, or `key` names a member every object inherits from `Object.prototype`.
  */
 export function recordIn<V>(key: string, r: Record<string, V>): bool {
+  // A view (`x as Record<string, any>`): `key in` its source, a class's methods too (#3087).
+  if (recordViewIs(r)) {
+    return recordViewIn(r, key);
+  }
   return r[RECORD_HAS](key) || objectPrototypeKey(key);
 }
 
@@ -67,6 +71,9 @@ export function recordIn<V>(key: string, r: Record<string, V>): bool {
  * `recordIn` there): a record made by it inherits nothing from `Object.prototype`.
  */
 export function recordInMaybeNullProto<V>(key: string, r: Record<string, V>): bool {
+  if (recordViewIs(r)) {
+    return recordViewIn(r, key);
+  }
   return r[RECORD_HAS](key) || (!r[RECORD_IS_NULL_PROTO]() && objectPrototypeKey(key));
 }
 

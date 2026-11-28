@@ -5,7 +5,9 @@ use velt_syntax::ast;
 
 use super::args::{as_arrow, deferred, Callable};
 use super::arrow_defaults::context_sensitive;
+use super::method_value::strip_parens;
 use crate::body::FnCx;
+use crate::hir::TyId;
 
 impl FnCx<'_, '_> {
     /// The indexes of `args` in the order they are checked.
@@ -40,11 +42,20 @@ impl FnCx<'_, '_> {
         // A bare `undefined` for a `T | undefined` offers no candidate for `T`: it goes after
         // every argument that may offer one (`g(undefined, 1)` is `T = number`), and fixes those
         // still open (`fix_for_context_sensitive`, #2683).
+        // So does an object literal that leaves out every optional field naming a type parameter
+        // another parameter also names (`f({}, 1)` for `f<S>(o: { input?: S }, x: S)`, #3116).
         let nothing: Vec<bool> = (0..args.len())
             .map(|i| {
-                c.params
-                    .get(i)
-                    .is_some_and(|p| self.bare_nothing_for(&args[i], p.ty))
+                c.params.get(i).is_some_and(|p| {
+                    self.bare_nothing_for(&args[i], p.ty)
+                        || self.left_out_slots(&args[i], p.ty).iter().any(|&s| {
+                            (c.params.iter().enumerate()).any(|(j, q)| {
+                                let mut names = vec![];
+                                crate::types::collect_params(&self.cx.ty, q.ty, &mut names);
+                                j != i && names.contains(&s)
+                            })
+                        })
+                })
             })
             .collect();
         let round = |i: usize| match (deferred(&args[i]) || late[i], as_arrow(&args[i]).is_some()) {
@@ -58,5 +69,44 @@ impl FnCx<'_, '_> {
         let mut order: Vec<usize> = (0..args.len()).collect();
         order.sort_by_key(|&i| (round(i), !pattern[i]));
         order
+    }
+
+    /// The type parameters of `pty` that the object literal `arg` offers no candidate for: they
+    /// appear only in optional fields it leaves out (`{}` for `{ input?: S }`), as TypeScript
+    /// infers nothing from an absent property. Empty for anything else, and for a literal with a
+    /// spread or a computed key (what it holds is known only from their types) or a method.
+    pub(super) fn left_out_slots(&mut self, arg: &ast::Expr, pty: TyId) -> Vec<u32> {
+        let ast::ExprKind::Object(props) = &strip_parens(arg).kind else {
+            return vec![];
+        };
+        let core = self.cx.ty.core(pty).unwrap_or(pty);
+        let Some((d, targs)) = self.adt_of(core) else {
+            return vec![];
+        };
+        let mut written: Vec<&str> = vec![];
+        for p in props {
+            match p {
+                ast::ObjectProp::KeyValue(k, _) | ast::ObjectProp::Shorthand(k) => {
+                    written.push(&k.name)
+                }
+                ast::ObjectProp::Spread(_) | ast::ObjectProp::Method(_) => return vec![],
+            }
+        }
+        let Some(a) = self.cx.adt(d) else {
+            return vec![];
+        };
+        let fields: Vec<(bool, TyId)> = (a.fields.iter())
+            .map(|f| (f.optional && !written.contains(&f.name.as_str()), f.ty))
+            .collect();
+        let (mut absent, mut present) = (vec![], vec![]);
+        for (left_out, t) in fields {
+            let t = self.cx.subst(t, &targs);
+            let names = if left_out { &mut absent } else { &mut present };
+            crate::types::collect_params(&self.cx.ty, t, names);
+        }
+        absent.retain(|s| !present.contains(s));
+        absent.sort_unstable();
+        absent.dedup();
+        absent
     }
 }

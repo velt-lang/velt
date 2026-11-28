@@ -29,6 +29,7 @@ import {
   recordViewFlush,
   recordViewGet,
   recordViewHas,
+  recordViewIn,
   recordViewIs,
   recordViewSet,
   recordViewSync,
@@ -239,9 +240,13 @@ export class Record<K, V> {
 
   /**
    * `key in r` through `any`: the entry `key`, or a member every object inherits from
-   * `Object.prototype` (none for a record made by `Object.create(null)`).
+   * `Object.prototype` (none for a record made by `Object.create(null)`); for a view, `key in`
+   * its source (a class's methods too).
    */
   [RECORD_IN_ANY](key: K): bool {
+    if (recordViewIs(this)) {
+      return recordViewIn(this, key);
+    }
     return this[RECORD_HAS](key) ||
       (!this[RECORD_IS_NULL_PROTO]() && objectPrototypeKey(String(key)));
   }

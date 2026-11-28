@@ -101,6 +101,10 @@ impl FnCx<'_, '_> {
             crate::types::collect_params(&self.cx.ty, core, &mut open.fix);
         } else {
             self.open_slots(arg, pty, known, &mut open);
+            // An object literal leaving out the optional fields that name a slot (`count({})`
+            // for `count<S>(o: { input?: S })`) offers it nothing: as with no candidate (#3116).
+            let left_out = self.left_out_slots(arg, pty);
+            open.fix.extend(left_out);
         }
         if open.fix.is_empty() {
             return;

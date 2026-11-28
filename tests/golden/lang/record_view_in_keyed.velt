@@ -1,0 +1,22 @@
+// `k in r` of a record view of a class instance in a program that defines a record's accessors
+// (`Object.defineProperty`), where `in` tests a record's accessors too: what the instance
+// inherits is still found, as in Node, and `Object.hasOwn` stays with its own keys (#3087).
+
+class Product {
+  name = "pen";
+  label(): string {
+    return this.name;
+  }
+}
+
+function main(): void {
+  const a: any = new Product();
+  const r = a as Record<string, any>;
+  const k = "label";
+  console.log("label" in r, k in r, Object.hasOwn(r, "label"), "name" in r, "zz" in r);
+  const plain: Record<string, number> = {};
+  Object.defineProperty(plain, "n", { get: () => 1 });
+  console.log("n" in plain, "m" in plain, "toString" in plain, plain.n);
+}
+
+main();

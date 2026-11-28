@@ -92,6 +92,11 @@ export function recordViewHasOne(s: RecordViewSource, k: string): bool {
   return Object.hasOwn(s.target, k);
 }
 
+/** Whether `k in` the source: an own key, or one it inherits (a class's method, `toString`). */
+export function recordViewInOne(s: RecordViewSource, k: string): bool {
+  return k in s.target;
+}
+
 /** `v` written to the source under `k` (a `TypeError` where it can't hold it). */
 export function recordViewSetOne(s: RecordViewSource, k: string, v: any) {
   const t = s.target;
