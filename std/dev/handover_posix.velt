@@ -1,6 +1,6 @@
 // velt/dev (internal): the listener `velt dev`'s supervisor hands a program on macOS and Linux
 // (`#dev-handover`, std/net/tcp_sched.velt's `listen` under `velt dev`). The supervisor's dev
-// channel is a Unix socket (`VELT_DEV_SOCKET`, crates/velt_rt/src/dev/handover): the program
+// channel is a Unix socket (`VELT_DEV_SOCKET`, crates/veltc/src/dev/handover): the program
 // connects, sends `listen <addr>\n` and reads `ok\n` with the listening socket's descriptor
 // attached (`SCM_RIGHTS`), or `err <message>\n`. The supervisor binds the address on its first
 // request and hands the same socket to every later version, so the port (port 0's too) and the

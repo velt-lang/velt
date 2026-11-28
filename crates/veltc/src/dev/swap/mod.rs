@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use velt_codegen_cl::{DevSession, Reload};
-use velt_rt_host::dev::handover::reload::{reply_reload, wait_reload, Reloaded};
-use velt_rt_host::dev::handover::Stream;
+use crate::dev::handover::reload::{reply_reload, wait_reload, Reloaded};
+use crate::dev::handover::Stream;
 
 use super::native::{source_files, Fingerprint};
 use crate::cli::BuildArgs;

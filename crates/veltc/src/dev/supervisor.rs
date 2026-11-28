@@ -27,8 +27,8 @@ use crate::cli::{DevArgs, DevMode, Emit};
 use crate::commands::{build_options, failure_code, report};
 use crate::driver::{self, Artifact, BuildError, OutputPaths, Session};
 
-use velt_rt_host::dev::handover::reload::{request_reload, Reloaded};
-use velt_rt_host::dev::handover::Stream;
+use crate::dev::handover::reload::{request_reload, Reloaded};
+use crate::dev::handover::Stream;
 
 use super::child::{Launch, Running};
 use super::host::QUIET_ENV;
@@ -133,7 +133,7 @@ impl Supervisor {
         let (tx, reports) = std::sync::mpsc::channel();
         let dev_socket = Handover::start(tx)?;
         let env = vec![(
-            velt_rt_host::dev::SOCKET_ENV.into(),
+            crate::dev::SOCKET_ENV.into(),
             dev_socket.name().to_os_string(),
         )];
         interrupt::install();
@@ -351,7 +351,7 @@ impl Supervisor {
                 Ok(built) if built.ok => {
                     self.stop_running();
                     // A host that cannot receive `go` has died; its exit is reported later.
-                    let _ = velt_rt_host::dev::handover::reply_go(&built.stream);
+                    let _ = crate::dev::handover::reply_go(&built.stream);
                     self.running = Some(candidate);
                     self.started = Some(Instant::now());
                     self.channel = Some(built.stream);

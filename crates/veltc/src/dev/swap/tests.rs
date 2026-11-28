@@ -207,7 +207,7 @@ fn host_reload(
     carried: &mut super::Carried,
     source: &str,
     load: Result<(), String>,
-) -> velt_rt_host::dev::handover::reload::Reloaded {
+) -> crate::dev::handover::reload::Reloaded {
     let opts = BuildOptions {
         input: PathBuf::from("main.velt"),
         root_source: Some(source.to_string()),
@@ -225,7 +225,7 @@ fn host_reload(
 /// starts counting `Node`, and the fixed one that follows must restart.
 #[test]
 fn a_version_that_failed_after_lowering_is_not_the_baseline() {
-    use velt_rt_host::dev::handover::reload::Reloaded;
+    use crate::dev::handover::reload::Reloaded;
     let mut sess = Session::new();
     sess.counted_seed = Some(velt_vir::CountedSeed::default());
     let opts = BuildOptions {

@@ -1,5 +1,5 @@
 // velt/dev (internal): the supervisor's dev pipe on Windows (`VELT_DEV_SOCKET`, a local named
-// pipe, crates/velt_rt/src/dev/handover): opening it, and the Win32 calls that read and write it,
+// pipe, crates/veltc/src/dev/handover): opening it, and the Win32 calls that read and write it,
 // for the stop channel (std/dev/stop_win32.velt) and the listener handover
 // (std/dev/handover_win32.velt).
 

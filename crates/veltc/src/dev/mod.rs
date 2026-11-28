@@ -18,6 +18,7 @@ mod edits;
 mod fault;
 #[cfg(unix)]
 mod fault_unix;
+pub mod handover;
 mod host;
 mod interrupt;
 #[cfg(windows)]
@@ -35,6 +36,9 @@ use crate::cli::DevArgs;
 use crate::commands::test::Outcome;
 
 pub use host::host_command;
+
+/// Names the supervisor's dev channel (handover), in the environment of the programs it starts.
+pub const SOCKET_ENV: &str = "VELT_DEV_SOCKET";
 
 /// `velt dev` (supervisor modes). Runs until interrupted.
 pub fn dev_command(args: DevArgs) -> ExitCode {
