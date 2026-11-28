@@ -94,16 +94,10 @@ impl FnCx<'_, '_> {
 }
 
 impl FnCx<'_, '_> {
-    /// Does the checked value `v` never come: of type `never`, or such a value as another type
-    /// (`document.createElement("div") as HTMLDivElement`, a `T | null` holding one)?
+    /// Does the checked value `v` never come (`document.createElement("div")`, also cast: a cast
+    /// of a `never` is a `never`)?
     pub(crate) fn never_comes(&self, v: &hir::Expr) -> bool {
-        if v.ty == self.cx.ty.never {
-            return true;
-        }
-        match &v.kind {
-            H::WrapSome(x) | H::Cast(x) | H::Downcast(x) => self.never_comes(x),
-            _ => false,
-        }
+        v.ty == self.cx.ty.never
     }
 
     /// A union value made of branches that each give some of the members of `token`'s union
