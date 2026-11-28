@@ -1,6 +1,7 @@
 //! The client: one request per call, over `std::net`. `https://` goes through rustls with
 //! Mozilla's root certificates ([`crate::tls`]), the TLS stack the Velt runtime uses too, so
-//! nothing depends on a system `curl` or the machine's trust store.
+//! nothing depends on a system `curl` or the machine's trust store. A request goes through the
+//! proxy the environment sets ([`crate::proxy`]).
 
 use std::io::{BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -11,6 +12,7 @@ use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, StreamOwned};
 
 use crate::message::{read_response, Response};
+use crate::proxy::{split_port, Proxy};
 
 /// Largest response body accepted (packages and API answers are far smaller).
 const MAX_RESPONSE: usize = 256 << 20;
@@ -60,20 +62,43 @@ pub fn fetch_within(
     body: &[u8],
     limits: Limits,
 ) -> Result<Response, String> {
+    let via = crate::proxy::from_env(url).map_err(|e| format!("{method} {url}: {e}"))?;
+    fetch_via(method, url, headers, body, limits, via.as_ref())
+}
+
+/// [`fetch_within`] through `via` (`None`: directly), whatever the environment says.
+pub fn fetch_via(
+    method: &str,
+    url: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+    limits: Limits,
+    via: Option<&Proxy>,
+) -> Result<Response, String> {
     check_request(method, url, headers)?;
-    let deadline = Instant::now() + limits.total;
+    let budget = Budget {
+        limits,
+        deadline: Instant::now() + limits.total,
+    };
     if let Some(rest) = url.strip_prefix("http://") {
-        return plain(method, rest, headers, body, limits, deadline)
+        return plain(method, rest, headers, body, budget, via)
             .map_err(|e| format!("{method} {url}: {e}"));
     }
     if let Some(rest) = url.strip_prefix("https://") {
         return crate::tls::client_config()
-            .and_then(|config| https_within(method, rest, headers, body, config, limits, deadline))
+            .and_then(|config| https_within(method, rest, headers, body, config, budget, via))
             .map_err(|e| format!("{method} {url}: {e}"));
     }
     Err(format!(
         "unsupported URL `{url}` (expected http:// or https://)"
     ))
+}
+
+/// The limits of a request and the moment its time is up.
+#[derive(Clone, Copy)]
+struct Budget {
+    limits: Limits,
+    deadline: Instant,
 }
 
 /// The request line and headers are written as text: a CR or LF in any part (a token read from
@@ -190,20 +215,20 @@ fn split(rest: &str) -> (&str, &str) {
     }
 }
 
-/// A connection to `host` (each of its addresses in turn, `limits.connect` each but never past
-/// `deadline`), whose reads
-/// and writes fail once `deadline` has passed.
-fn connect(
-    host: &str,
-    default_port: u16,
-    limits: Limits,
-    deadline: Instant,
-) -> Result<Deadlined, String> {
-    let authority = if host.rsplit_once(':').is_some_and(|(_, p)| !p.contains(']')) {
+/// `host` with `default_port` unless it names a port.
+fn with_port(host: &str, default_port: u16) -> String {
+    if split_port(host).is_some() {
         host.to_string()
     } else {
         format!("{host}:{default_port}")
-    };
+    }
+}
+
+/// A connection to `host` (each of its addresses in turn, `limits.connect` each but never past
+/// the deadline), whose reads and writes fail once the deadline has passed.
+fn connect(host: &str, default_port: u16, budget: Budget) -> Result<Deadlined, String> {
+    let Budget { limits, deadline } = budget;
+    let authority = with_port(host, default_port);
     let addrs = authority
         .to_socket_addrs()
         .map_err(|e| format!("cannot connect: {e}"))?;
@@ -295,15 +320,31 @@ fn plain(
     rest: &str,
     headers: &[(&str, &str)],
     body: &[u8],
-    limits: Limits,
-    deadline: Instant,
+    budget: Budget,
+    via: Option<&Proxy>,
 ) -> Result<Response, String> {
     let (host, path) = split(rest);
-    let stream = connect(host, 80, limits, deadline)?;
-    exchange(stream, method, host, path, headers, body, limits.max_body)
+    let max = budget.limits.max_body;
+    let Some(proxy) = via else {
+        let head = request_head(method, host, path, headers, body.len(), None);
+        return exchange(connect(host, 80, budget)?, &head, body, max);
+    };
+    let target = absolute_form(host, path);
+    let auth = proxy.authorization.as_deref();
+    let head = request_head(method, host, &target, headers, body.len(), auth);
+    exchange(to_proxy(proxy, budget)?, &head, body, max)
 }
 
-/// One request over TLS, verified with `config`, within the default limits.
+/// The whole URL as the request target for a proxy, which connects to the origin: `http://`, the
+/// host and port, and the path. A user and password the URL names are never part of it (RFC 9110
+/// §4.2.4): the proxy is a third party. ([`url_host`] already refuses a URL with `@` in its host
+/// part; this holds without that check too.)
+fn absolute_form(authority: &str, path: &str) -> String {
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    format!("http://{host}{path}")
+}
+
+/// One request over TLS, verified with `config`, within the default limits and directly.
 #[cfg(test)]
 pub(crate) fn https(
     method: &str,
@@ -312,20 +353,36 @@ pub(crate) fn https(
     body: &[u8],
     config: Arc<ClientConfig>,
 ) -> Result<Response, String> {
-    let limits = Limits::DEFAULT;
-    let deadline = Instant::now() + limits.total;
-    https_within(method, rest, headers, body, config, limits, deadline)
+    https_via(method, rest, headers, body, config, None)
 }
 
-/// One request over TLS, verified with `config`.
+/// [`https`] through `via`.
+#[cfg(test)]
+pub(crate) fn https_via(
+    method: &str,
+    rest: &str,
+    headers: &[(&str, &str)],
+    body: &[u8],
+    config: Arc<ClientConfig>,
+    via: Option<&Proxy>,
+) -> Result<Response, String> {
+    let limits = Limits::DEFAULT;
+    let budget = Budget {
+        limits,
+        deadline: Instant::now() + limits.total,
+    };
+    https_within(method, rest, headers, body, config, budget, via)
+}
+
+/// One request over TLS, verified with `config`; through a `CONNECT` tunnel of `via`.
 fn https_within(
     method: &str,
     rest: &str,
     headers: &[(&str, &str)],
     body: &[u8],
     config: Arc<ClientConfig>,
-    limits: Limits,
-    deadline: Instant,
+    budget: Budget,
+    via: Option<&Proxy>,
 ) -> Result<Response, String> {
     let (host, path) = split(rest);
     // `[::1]:8443` → `::1`, `example.com:8443` → `example.com`.
@@ -336,27 +393,95 @@ fn https_within(
     let server_name =
         ServerName::try_from(name.to_string()).map_err(|_| format!("invalid host `{name}`"))?;
     let conn = ClientConnection::new(config, server_name).map_err(|e| format!("TLS: {e}"))?;
-    let stream = StreamOwned::new(conn, connect(host, 443, limits, deadline)?);
-    exchange(stream, method, host, path, headers, body, limits.max_body)
+    let socket = match via {
+        Some(proxy) => tunnel(to_proxy(proxy, budget)?, proxy, &with_port(host, 443))?,
+        None => connect(host, 443, budget)?,
+    };
+    let head = request_head(method, host, path, headers, body.len(), None);
+    exchange(
+        StreamOwned::new(conn, socket),
+        &head,
+        body,
+        budget.limits.max_body,
+    )
 }
 
-fn exchange(
-    mut stream: impl Read + Write,
+/// A connection to `proxy`.
+fn to_proxy(proxy: &Proxy, budget: Budget) -> Result<Deadlined, String> {
+    connect(&proxy.authority, 80, budget).map_err(|e| format!("proxy {}: {e}", proxy.authority))
+}
+
+/// The longest answer to `CONNECT` read.
+const MAX_TUNNEL_HEAD: usize = 16 << 10;
+
+/// `stream` to `proxy` turned into a tunnel to `authority` (`host:port`): `CONNECT`, and a 2xx
+/// answer, read byte by byte so nothing of the origin's first bytes is taken from the stream.
+fn tunnel(mut stream: Deadlined, proxy: &Proxy, authority: &str) -> Result<Deadlined, String> {
+    let at = &proxy.authority;
+    let mut head = format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n");
+    if let Some(auth) = &proxy.authorization {
+        head.push_str(&format!("Proxy-Authorization: {auth}\r\n"));
+    }
+    head.push_str("\r\n");
+    stream
+        .write_all(head.as_bytes())
+        .and_then(|()| stream.flush())
+        .map_err(|e| format!("proxy {at}: cannot send: {e}"))?;
+    let mut got = Vec::new();
+    let mut byte = [0u8; 1];
+    while !got.ends_with(b"\r\n\r\n") {
+        if got.len() > MAX_TUNNEL_HEAD {
+            return Err(format!("proxy {at}: the answer to CONNECT is too long"));
+        }
+        match stream.read(&mut byte) {
+            Ok(0) => return Err(format!("proxy {at}: closed the connection on CONNECT")),
+            Ok(_) => got.push(byte[0]),
+            Err(e) => return Err(format!("proxy {at}: {e}")),
+        }
+    }
+    let text = String::from_utf8_lossy(&got);
+    let line = text.lines().next().unwrap_or("");
+    let status = line.split(' ').nth(1).and_then(|s| s.parse::<u16>().ok());
+    match status {
+        Some(200..=299) => Ok(stream),
+        _ => Err(format!(
+            "proxy {at} refused the tunnel to {authority}: {}",
+            line.chars()
+                .filter(|c| !c.is_control())
+                .take(200)
+                .collect::<String>()
+        )),
+    }
+}
+
+/// The request line and headers: `target` is the path, or the whole URL for a proxy.
+fn request_head(
     method: &str,
     host: &str,
-    path: &str,
+    target: &str,
     headers: &[(&str, &str)],
-    body: &[u8],
-    max_body: usize,
-) -> Result<Response, String> {
+    body_len: usize,
+    proxy_auth: Option<&str>,
+) -> String {
     let mut head = format!(
-        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nContent-Length: {}\r\nConnection: close\r\n",
-        body.len()
+        "{method} {target} HTTP/1.1\r\nHost: {host}\r\nContent-Length: {body_len}\r\nConnection: close\r\n"
     );
+    if let Some(auth) = proxy_auth {
+        head.push_str(&format!("Proxy-Authorization: {auth}\r\n"));
+    }
     for (n, v) in headers {
         head.push_str(&format!("{n}: {v}\r\n"));
     }
     head.push_str("\r\n");
+    head
+}
+
+fn exchange(
+    mut stream: impl Read + Write,
+    head: &str,
+    body: &[u8],
+    max_body: usize,
+) -> Result<Response, String> {
     stream
         .write_all(head.as_bytes())
         .and_then(|()| stream.write_all(body))
@@ -368,6 +493,16 @@ fn exchange(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_absolute_form_never_names_the_urls_user() {
+        assert_eq!(
+            absolute_form("bob:TARGETPW@origin.test:8080", "/a?b=c"),
+            "http://origin.test:8080/a?b=c"
+        );
+        assert_eq!(absolute_form("a@b@origin.test", "/"), "http://origin.test/");
+        assert_eq!(absolute_form("[::1]:80", "/x"), "http://[::1]:80/x");
+    }
 
     #[test]
     fn url_hosts() {

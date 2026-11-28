@@ -57,4 +57,4 @@ pub fn config_with(extra_pem: &[u8]) -> Result<Arc<ClientConfig>, String> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
