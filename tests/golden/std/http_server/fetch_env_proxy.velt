@@ -1,13 +1,14 @@
-// `fetch` and the environment's proxy (#3693): used by default, as in Bun (`NODE_USE_ENV_PROXY`
-// is not read); `http_proxy` before `HTTP_PROXY` (even when empty), `https_proxy` /
+// `fetch` and the environment's proxy (#3693), where Node 22 reads it as Velt does: used by
+// default (`NODE_USE_ENV_PROXY` is not read); `http_proxy` before `HTTP_PROXY`, `https_proxy` /
 // `HTTPS_PROXY` for `https:` (never the `http:` one, as in Bun); the proxy's credentials as
-// `proxy-authorization` (only with both a user and a password); the proxy variables read once and
-// `NO_PROXY` at each request; `NO_PROXY` hosts, `.`/`*` suffixes, ports, IPv6 in brackets, white
-// space as a separator, `no_proxy` first, `*`; every request through a `CONNECT` tunnel, `http:`
-// too, this machine too; redirects between `http:` and `https:` proxied hop by hop; a proxy that
-// refuses, one that answers 204 and one that is not there. The variables are read when the program starts, so each run
-// is this program again with its own environment ("child"); servers, proxy and its log are here.
-// fetch_env_proxy.mjs is the Node twin and prints the same (the proxy is local, no network).
+// `proxy-authorization` (only with both a user and a password); `NO_PROXY` hosts, subdomains,
+// ports, IPv6 in brackets, white space as a separator, `no_proxy` first, `*`; every request
+// through a `CONNECT` tunnel, `http:` too, this machine too; redirects between `http:` and
+// `https:` proxied hop by hop; a proxy that refuses, one that answers 204 and one that is not
+// there. Where Velt reads the variables as Bun and not as Node 22: fetch_env_proxy_bun.velt.
+// Each run is this program again with its own environment ("child"); servers, proxy and its log
+// are here. fetch_env_proxy.mjs is the Node 22 twin and prints the same (the proxy is local, no
+// network; a later Node differs: Node 26 sends `http:` to a proxy without `CONNECT`).
 import { serve } from "http-server";
 import { connect, listen, TcpStream } from "velt/net";
 import { utf8DecodeLossy } from "velt/encoding";
@@ -223,13 +224,6 @@ async function main() {
     { http_proxy: `http://:pw@127.0.0.1:${proxyPort}` },
     [`http://u2.test:${H}/`],
   );
-  await run("the proxy variables read once, NO_PROXY at each request", { http_proxy: P }, [
-    `http://o1.test:${H}/a`,
-    "env:http_proxy=",
-    `http://o2.test:${H}/b`,
-    "env:NO_PROXY=o3.test",
-    `http://o3.test:${H}/c`,
-  ]);
   await run("uppercase HTTP_PROXY", { HTTP_PROXY: P }, [`http://d.test:${H}/`]);
   await run("HTTPS_PROXY alone", { HTTPS_PROXY: P }, [
     `https://localhost:${S}/e`,
@@ -238,33 +232,23 @@ async function main() {
   await run("http_proxy over HTTP_PROXY", { http_proxy: P, HTTP_PROXY: "http://127.0.0.1:1" }, [
     `http://f.test:${H}/`,
   ]);
-  await run("an empty http_proxy over HTTP_PROXY", { http_proxy: "", HTTP_PROXY: P }, [
-    `http://g.test:${H}/`,
-  ]);
+  // The entries Node 22 reads as Velt does; the others are in fetch_env_proxy_bun.velt.
   await run(
     "NO_PROXY",
-    {
-      HTTP_PROXY: P,
-      NO_PROXY: `n1.test,.n2.test\t*.n3.test n4.test:1 n5.test:${H} [::1] ::5 N6.TEST`,
-    },
+    { HTTP_PROXY: P, NO_PROXY: `n1.test,.n2.test\t*.n3.test n4.test:1 n5.test:${H} [::1] N6.TEST` },
     [
       `http://n1.test:${H}/`,
-      `http://x.n1.test:${H}/`,
-      `http://n2.test:${H}/`,
       `http://x.n2.test:${H}/`,
       `http://x.n3.test:${H}/`,
       `http://n4.test:${H}/`,
       `http://n5.test:${H}/`,
       `http://[::1]:${H}/`,
-      `http://[::5]:${H}/`,
       `http://n6.test:${H}/`,
     ],
   );
-  await run(
-    "no_proxy over NO_PROXY, even empty",
-    { HTTP_PROXY: P, no_proxy: "", NO_PROXY: "h.test" },
-    [`http://h.test:${H}/`],
-  );
+  await run("no_proxy over NO_PROXY", { HTTP_PROXY: P, no_proxy: "h2.test", NO_PROXY: "h.test" }, [
+    `http://h.test:${H}/`,
+  ]);
   await run("NO_PROXY=*", { HTTP_PROXY: P, NO_PROXY: "*" }, [`http://i.test:${H}/`]);
   await run(
     "redirects between http: and https:",

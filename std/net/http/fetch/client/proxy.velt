@@ -1,37 +1,35 @@
 // velt/net/http (internal): the proxy a `fetch` goes through (#3693). The request's `proxy`
 // option, when it has one, decides: a proxy URL, or "" for none. Otherwise the environment's
-// proxy is used, always, as in Bun (`fromEnv`): `http_proxy`, else `HTTP_PROXY`, for `http:`;
-// `https_proxy`, else `HTTPS_PROXY`, for `https:` (never the `http:` one, as in Bun). A lowercase
-// variable that is set wins even when it is empty, and an empty value means no proxy.
-// `no_proxy`, else `NO_PROXY`, lists the hosts reached directly (`noProxy`, as undici reads it);
-// this machine is not special (`localhost` goes to the proxy too). Opting out is `NO_PROXY=*` or
-// `proxy: ""`. The proxy variables are read once, at the first request without a `proxy` option
-// (`envVars`), so a program that never fetches reads none; `NO_PROXY` is read for each request
-// and redirect hop, as undici re-reads it.
-//
-// Where Node 22.21+ differs: it uses the environment's proxy only with `NODE_USE_ENV_PROXY=1`
-// (Velt never reads that variable), reads the proxy variables when it starts (a program that
-// sets one before its first `fetch` goes through that proxy here), and sends an `https:` request
-// through the `http:` proxy when no `https:` one is set. Where Bun differs: it also reads
-// `ALL_PROXY`, takes `HTTP_PROXY` when `http_proxy` is set but empty, reads `""` and `''` as
-// empty, reads the variables at every request, and its `NO_PROXY` takes CIDR blocks and has
-// `example.com` cover its subdomains (here, as in Node, it names that host alone).
+// proxy is used, always, read as Bun reads it (`fromEnv`), at every request and redirect hop (a
+// program that never fetches reads none of the variables):
+// - `http_proxy`, else `HTTP_PROXY`, for `http:`; `https_proxy`, else `HTTPS_PROXY`, for `https:`
+//   (never the `http:` one); `all_proxy`, else `ALL_PROXY`, for both when the scheme's is unset.
+//   A lowercase variable that is empty counts as unset, so the uppercase one is read (CI
+//   environments often set `http_proxy=""`), and so do `""` and `''` (a shell's empty quotes).
+// - A value is `http://…` or `host:port`; one that names another kind of proxy (`https://`,
+//   `socks5://`) is ignored: this client speaks to neither (Bun speaks TLS to an `https://` one).
+// - `no_proxy`, else `NO_PROXY` (empty counts as unset), lists the hosts reached directly
+//   (no_proxy.velt: domains with their subdomains, IP addresses, CIDR blocks, ports). This
+//   machine is not special (`localhost` goes to the proxy too).
+// Opting out is `NO_PROXY=*` or `proxy: ""`. Node 22.21+ reads the environment's proxy only with
+// `NODE_USE_ENV_PROXY=1` (Velt never reads that variable), once when it starts, and otherwise as
+// undici's `EnvHttpProxyAgent`: no `ALL_PROXY`, a set lowercase variable wins even when empty,
+// `https:` through the `http:` proxy when no `https:` one is set, and a `NO_PROXY` entry names
+// that host alone (`.example.com` only its subdomains), without IP blocks.
 //
 // A proxy is `http://[user:password@]host[:port][/]` (port 80 by default); its user and password,
 // when it has both, become `proxy-authorization: Basic …` (with only one of them, none, as in
 // undici). Every request goes through a `CONNECT` tunnel to the
 // origin's host and port (tunnel.velt), `http:` too, as undici does; for `https:` TLS to the
-// origin runs inside it, as without a proxy. Where Node differs: it starts no program whose
-// proxy variable is not a URL (Velt also takes `host:port`, and rejects a `fetch` through any
-// other proxy with `EINVAL`), and it speaks TLS to an `https://` proxy, which Velt refuses.
-// Node also starts no program whose proxy URL has a path, query or fragment; a `fetch` through
-// it fails with `EINVAL` here.
+// origin runs inside it, as without a proxy. The `proxy` option rejects any other proxy with
+// `EINVAL`, as it does a proxy URL with a path, query or fragment (in a variable too).
 
 import { IoError } from "velt/io/error";
 import { base64Encode, utf8Encode } from "velt/encoding";
 import { URL } from "velt/net/url";
 import { decodeLenient } from "velt/net/url/encode";
 import { getEnv } from "#env-sys";
+import { noProxy } from "velt/net/http/fetch/client/no_proxy";
 
 /** A proxy to send requests through. */
 export class Via {
@@ -44,59 +42,6 @@ export class Via {
     this.addr = addr;
     this.authorization = authorization;
   }
-}
-
-/** The proxy variables, each with the name it was read from (proxy.velt module comment). */
-class EnvVars {
-  /** `http_proxy`, else `HTTP_PROXY`; undefined when neither is set. */
-  http: string | undefined;
-  httpName: string;
-  /** `https_proxy`, else `HTTPS_PROXY`; undefined when neither is set. */
-  https: string | undefined;
-  httpsName: string;
-
-  constructor(
-    http: string | undefined,
-    httpName: string,
-    https: string | undefined,
-    httpsName: string,
-  ) {
-    this.http = http;
-    this.httpName = httpName;
-    this.https = https;
-    this.httpsName = httpsName;
-  }
-}
-
-/** The proxy variables as the first request that used them read them. */
-let readOnce: EnvVars | null = null;
-
-/** The proxy variables, read at the first call (Node reads them once, when it starts). */
-function envVars(): EnvVars {
-  const known = readOnce;
-  if (known != null) {
-    return known;
-  }
-  const vars = readEnvVars();
-  readOnce = vars;
-  return vars;
-}
-
-/** The proxy variables as they are now. */
-function readEnvVars(): EnvVars {
-  let httpName = "http_proxy";
-  let http = getEnv(httpName);
-  if (http == null) {
-    httpName = "HTTP_PROXY";
-    http = getEnv(httpName);
-  }
-  let httpsName = "https_proxy";
-  let https = getEnv(httpsName);
-  if (https == null) {
-    httpsName = "HTTPS_PROXY";
-    https = getEnv(httpsName);
-  }
-  return new EnvVars(http, httpName, https, httpsName);
 }
 
 /**
@@ -114,37 +59,58 @@ export function proxyFor(
   if (given != null) {
     return given.length == 0 ? null : parseProxy(given, "the proxy option");
   }
-  return fromVars(envVars(), https, hostname, port);
-}
-
-/** The environment's proxy, its variables read now, for a request to `hostname` on `port`. */
-export function fromEnv(https: bool, hostname: string, port: i64): Via | null throws IoError {
-  return fromVars(readEnvVars(), https, hostname, port);
+  return fromEnv(https, hostname, port);
 }
 
 /**
- * The proxy `vars` give a request to `hostname` on `port`: the scheme's own variable (no
- * fallback to the `http:` one for `https:`, as in Bun), `NO_PROXY` read now.
+ * The environment's proxy for a request to `hostname` on `port`, its variables read now (module
+ * comment).
  */
-function fromVars(
-  vars: EnvVars,
-  https: bool,
-  hostname: string,
-  port: i64,
-): Via | null throws IoError {
-  const name = https ? vars.httpsName : vars.httpName;
-  const value = https ? vars.https : vars.http;
-  if (value == null || value.length == 0) {
+export function fromEnv(https: bool, hostname: string, port: i64): Via | null throws IoError {
+  let name = https ? "https_proxy" : "http_proxy";
+  let value = usable(variable(name));
+  if (value == null) {
+    name = https ? "HTTPS_PROXY" : "HTTP_PROXY";
+    value = usable(variable(name));
+  }
+  if (value == null) {
+    name = "all_proxy";
+    value = usable(variable(name));
+  }
+  if (value == null) {
+    name = "ALL_PROXY";
+    value = usable(variable(name));
+  }
+  if (value == null) {
     return null;
   }
-  let list = getEnv("no_proxy");
+  let list = variable("no_proxy");
   if (list == null) {
-    list = getEnv("NO_PROXY");
+    list = variable("NO_PROXY");
   }
   if (list != null && noProxy(list, hostname, port)) {
     return null;
   }
   return parseProxy(value, `$${name}`);
+}
+
+/** Variable `name`, or null when it is unset, empty, `""` or `''` (as Bun's `is_emptyish`). */
+function variable(name: string): string | null {
+  const value = getEnv(name);
+  if (value == null || value.length == 0 || value == `""` || value == "''") {
+    return null;
+  }
+  return value;
+}
+
+/** `value` when it names an `http:` proxy (or has no scheme), else null (module comment). */
+function usable(value: string | null): string | null {
+  if (value == null) {
+    return null;
+  }
+  const text = value.trim();
+  const sep = text.indexOf("://");
+  return sep < 0 || text.slice(0, sep).toLowerCase() == "http" ? value : null;
 }
 
 /** The proxy `value` names; `what` says where it came from in an error. */
@@ -185,87 +151,4 @@ export function parseProxy(value: string, what: string): Via throws IoError {
 
 function invalid(what: string, why: string): IoError {
   return new IoError("EINVAL", `fetch failed: invalid proxy in ${what}: ${why}`);
-}
-
-/**
- * Whether `list` names `hostname` on `port`, as `EnvHttpProxyAgent` reads it: entries separated
- * by commas and white space, each `host` or `host:port` (a port only covers that port), compared
- * without case. A host that starts with `.` or `*` names every host ending in it (after the `*`):
- * `.example.com` and `*.example.com` its subdomains, `*` everything; any other is that host
- * alone. IPv6 addresses are written in brackets, as in URLs (`[::1]`, `[::1]:8080`).
- */
-export function noProxy(list: string, hostname: string, port: i64): bool {
-  const host = hostname.toLowerCase();
-  const n = list.length as i64;
-  let start: i64 = 0;
-  for (let i: i64 = 0; i <= n; i++) {
-    if (i < n && !separator(list.charCodeAt(i))) {
-      continue;
-    }
-    if (i > start && listed(list.slice(start, i).toLowerCase(), host, port)) {
-      return true;
-    }
-    start = i + 1;
-  }
-  return false;
-}
-
-/** Whether `entry` (lowercase) of a `NO_PROXY` list names `host` (lowercase) on `port`. */
-function listed(entry: string, host: string, port: i64): bool {
-  let name = entry;
-  // `host:port`, as undici's `/^(.+):(\d+)$/` reads it: the last colon, only digits after it.
-  const colon = entry.lastIndexOf(":");
-  if (colon > 0 && colon + 1 < (entry.length as i64)) {
-    const want = digits(entry.slice(colon + 1));
-    if (want >= 0) {
-      // A port of 0 (`host:0`) is no port, as in undici.
-      if (want != 0 && want != port) {
-        return false;
-      }
-      name = entry.slice(0, colon);
-    }
-  }
-  if (name.startsWith(".") || name.startsWith("*")) {
-    return host.endsWith(name.startsWith("*") ? name.slice(1) : name);
-  }
-  return host == name;
-}
-
-/** A separator of `NO_PROXY` entries: a comma, or white space as a regex's `\s` is. */
-function separator(c: i64): bool {
-  return (
-    c == 44 ||
-    c == 32 ||
-    (c >= 9 && c <= 13) ||
-    c == 0xa0 ||
-    c == 0x1680 ||
-    (c >= 0x2000 && c <= 0x200a) ||
-    c == 0x2028 ||
-    c == 0x2029 ||
-    c == 0x202f ||
-    c == 0x205f ||
-    c == 0x3000 ||
-    c == 0xfeff
-  );
-}
-
-/**
- * The decimal number `s` (digits only), or -1. It stops growing past nine digits, still no port
- * (as undici's `parseInt` of a long one).
- */
-function digits(s: string): i64 {
-  if (s.length == 0) {
-    return -1;
-  }
-  let n: i64 = 0;
-  for (let i: i64 = 0; i < (s.length as i64); i++) {
-    const c = s.charCodeAt(i) - 48;
-    if (c < 0 || c > 9) {
-      return -1;
-    }
-    if (n < 1000000000) {
-      n = n * 10 + c;
-    }
-  }
-  return n;
 }

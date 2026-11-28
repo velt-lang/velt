@@ -23,14 +23,6 @@ proxy: CONNECT u1.test:<http> auth=-
 == a proxy URL with only a password
 http://u2.test:<http>/ 200 http u2.test:<http>/
 proxy: CONNECT u2.test:<http> auth=-
-== the proxy variables read once, NO_PROXY at each request
-http://o1.test:<http>/a 200 http o1.test:<http>/a
-env:http_proxy=
-http://o2.test:<http>/b 200 http o2.test:<http>/b
-env:NO_PROXY=o3.test
-http://o3.test:<http>/c failed
-proxy: CONNECT o1.test:<http> auth=-
-proxy: CONNECT o2.test:<http> auth=-
 == uppercase HTTP_PROXY
 http://d.test:<http>/ 200 http d.test:<http>/
 proxy: CONNECT d.test:<http> auth=-
@@ -41,24 +33,16 @@ proxy: CONNECT localhost:<https> auth=-
 == http_proxy over HTTP_PROXY
 http://f.test:<http>/ 200 http f.test:<http>/
 proxy: CONNECT f.test:<http> auth=-
-== an empty http_proxy over HTTP_PROXY
-http://g.test:<http>/ failed
 == NO_PROXY
 http://n1.test:<http>/ failed
-http://x.n1.test:<http>/ 200 http x.n1.test:<http>/
-http://n2.test:<http>/ 200 http n2.test:<http>/
 http://x.n2.test:<http>/ failed
 http://x.n3.test:<http>/ failed
 http://n4.test:<http>/ 200 http n4.test:<http>/
 http://n5.test:<http>/ failed
 http://[::1]:<http>/ failed
-http://[::5]:<http>/ 200 http [::5]:<http>/
 http://n6.test:<http>/ failed
-proxy: CONNECT x.n1.test:<http> auth=-
-proxy: CONNECT n2.test:<http> auth=-
 proxy: CONNECT n4.test:<http> auth=-
-proxy: CONNECT [::5]:<http> auth=-
-== no_proxy over NO_PROXY, even empty
+== no_proxy over NO_PROXY
 http://h.test:<http>/ 200 http h.test:<http>/
 proxy: CONNECT h.test:<http> auth=-
 == NO_PROXY=*

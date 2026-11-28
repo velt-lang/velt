@@ -197,8 +197,6 @@ describe("fetch through a proxy", () => {
     ).toBe(true);
   });
 
-  // The first request of this program without a `proxy` option: the proxy variables are read
-  // then, once.
   it("takes the environment's proxy by default, for this machine too", async () => {
     const s = await setup();
     setEnv("http_proxy", s.proxy);
