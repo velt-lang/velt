@@ -327,32 +327,27 @@ fn is_cpu_start(symbol: &str) -> bool {
 /// std's writer of standard output and standard error (std/lang/hooks/stdout.velt and the
 /// files behind `#stdout-sys`, #2196): printing is not input, as the runtime's writer was not
 /// (`write` in [`PURE_RUNTIME`]). What it calls besides `write` doesn't change what the program
-/// computes either: whether stdout is a terminal (line flushing), `VELT_STDOUT_STATS`, the clock
-/// a terminal's flush reads, waiting on a full pipe, `sched_yield` at its lock, and ending the
-/// process on a closed pipe as `SIGPIPE` would.
+/// computes either: whether stdout is a terminal (line flushing), `VELT_STDOUT_STATS`, waiting on
+/// a full pipe or for its lock at an exit, `sched_yield` at its lock, the end of the process's
+/// flush it registers, and ending the process on a closed pipe as `SIGPIPE` would.
 fn is_output_writer(symbol: &str) -> bool {
+    /// The writer's files as their symbols name them, through the `N` before the item: the
+    /// mangling doubles an underscore, and the length counts it doubled.
     const FILES: [&str; 7] = [
-        "stdout",
-        "out_native",
-        "out_hooked",
-        "out_posix",
-        "out_win32",
-        "stdout_buffer",
-        "stdout_block",
+        "6stdoutN",
+        "11out__nativeN",
+        "11out__hookedN",
+        "10out__posixN",
+        "10out__win32N",
+        "14stdout__bufferN",
+        "13stdout__blockN",
     ];
     if symbol == "std_stdout_flush_at_exit" {
         return true;
     }
-    let Some(rest) = symbol.strip_prefix("_V3stdP4langP5hooksP") else {
-        return false;
-    };
-    // The mangling doubles an underscore, and the length counts it doubled.
-    FILES.iter().any(|f| {
-        let name = f.replace('_', "__");
-        let item = rest.strip_prefix(&name.len().to_string());
-        item.and_then(|r| r.strip_prefix(name.as_str()))
-            .is_some_and(|r| r.starts_with('N'))
-    })
+    symbol
+        .strip_prefix("_V3stdP4langP5hooksP")
+        .is_some_and(|rest| FILES.iter().any(|f| rest.starts_with(f)))
 }
 
 /// The C functions std reads the clocks through (`Date.now()`, `performance.now()`:
@@ -682,6 +677,34 @@ mod tests {
             "GetLastError",
         ] {
             assert_eq!(reason(inside), None, "{inside}");
+        }
+    }
+
+    /// The writer's files by their mangled names: each file's items are the writer's, a file
+    /// whose name only starts like one of them (`stdout_x`) or another module's item is not.
+    #[test]
+    fn the_writer_s_items_are_those_of_its_files() {
+        for file in [
+            "stdout",
+            "out_native",
+            "out_hooked",
+            "out_posix",
+            "out_win32",
+            "stdout_buffer",
+            "stdout_block",
+        ] {
+            let name = file.replace('_', "__");
+            let symbol = format!("_V3stdP4langP5hooksP{}{name}N5flush", name.len());
+            assert!(super::is_output_writer(&symbol), "{symbol}");
+        }
+        assert!(super::is_output_writer("std_stdout_flush_at_exit"));
+        for other in [
+            "_V3stdP4langP5hooksP9stdout__xN5flush",
+            "_V3stdP4langP5hooksP5sched5flush",
+            "_V3stdP4langP5hooksP5schedN5flush",
+            "_V3stdP2fsP6stdoutN5flush",
+        ] {
+            assert!(!super::is_output_writer(other), "{other}");
         }
     }
 }
