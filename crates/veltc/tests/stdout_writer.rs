@@ -113,20 +113,22 @@ const ORDER: &str = r#"function main() {
 fn stdout_and_stderr_on_one_pipe_keep_the_program_order() {
     let dir = test_dir::TestDir::new();
     let exe = build(dir.path(), "order", ORDER);
-    let o = if cfg!(windows) {
+    // cmd's own quoting: an argument `Command` quoted would come with its quotes escaped.
+    #[cfg(windows)]
+    let o = {
+        use std::os::windows::process::CommandExt;
         command("cmd")
-            .arg("/C")
-            .arg(format!("\"{}\" 2>&1", exe.display()))
-            .output()
-            .unwrap()
-    } else {
-        command("sh")
-            .arg("-c")
-            .arg("\"$0\" 2>&1")
-            .arg(&exe)
+            .raw_arg(format!("/S /C \"\"{}\" 2>&1\"", exe.display()))
             .output()
             .unwrap()
     };
+    #[cfg(not(windows))]
+    let o = command("sh")
+        .arg("-c")
+        .arg("\"$0\" 2>&1")
+        .arg(&exe)
+        .output()
+        .unwrap();
     let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
     assert!(out.starts_with("one\ntwo\nthree 4\nfive\n"), "{out:?}");
     assert!(out[18..].contains("six"), "{out:?}");
