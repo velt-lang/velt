@@ -89,6 +89,9 @@ pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/string/split",
     "std/lang/string/replace",
     "std/lang/string/case",
+    // A code unit of a string that is not ASCII (#2816), demanded by `strCharCodeAt`
+    // (`Construct::CharCode`).
+    "std/lang/string/positions",
     // `Date`'s zone name and its table, which the prelude's `toTimeString` calls by role (#3152).
     "std/lang/hooks/date_zone_name",
     // A byte range as a string, which the prelude's `utf8Slice` calls by role (#2196).

@@ -401,9 +401,10 @@ pub enum Effects {
     Any,
     /// Reads memory, writes none (string comparison, hashing).
     ReadOnly,
-    /// Reads memory and writes only state of its own that compiled code never reads: a string's
-    /// position-translation table and lone-surrogate count, built on first use (#377 phase 2b:
-    /// `charCodeAt` on non-ASCII text, `indexOf`).
+    /// Reads memory and writes only state of its own that compiled code never reads: the
+    /// per-thread cache of the last position translations and a string's breadcrumb table, built
+    /// on first use (`charCodeAt` on non-ASCII text in the object of positions.velt, #2816:
+    /// [`CHAR_CODE_AT_ENTRY`]).
     ReadCaching,
     /// Touches no memory: every [`MathOp`].
     None,
@@ -422,12 +423,17 @@ impl Effects {
     }
 }
 
+/// The entry point of `charCodeAt`'s translation in the object of std/lang/string/positions.velt
+/// (velt_common `prebuilt::symbol` of the `string_char_code_at` hook), which a program that links
+/// the object calls in place of std's `charCodeAtWide`: [`Effects::ReadCaching`], as that
+/// function's code is.
+pub const CHAR_CODE_AT_ENTRY: &str = "velt_hook_string_char_code_at";
+
 /// The runtime functions besides the [`MathOp`]s whose effects are not [`Effects::Any`].
-const EFFECTS: [(&str, Effects); 5] = [
+const EFFECTS: [(&str, Effects); 4] = [
     ("velt_rt_str_cmp", Effects::ReadOnly),
     ("velt_rt_str_eq", Effects::ReadOnly),
     ("velt_rt_str_hash", Effects::ReadOnly),
-    ("velt_rt_str_char_code_at", Effects::ReadCaching),
     ("velt_rt_array_view_cold", Effects::Cold),
 ];
 
@@ -435,6 +441,9 @@ const EFFECTS: [(&str, Effects); 5] = [
 pub fn effects(symbol: &str) -> Effects {
     if MathOp::of_symbol(symbol).is_some() {
         return Effects::None;
+    }
+    if symbol == CHAR_CODE_AT_ENTRY {
+        return Effects::ReadCaching;
     }
     // The SIMD operations (`velt_simd_*`, std/simd), which backends expand inline: lane
     // arithmetic, comparisons, conversions and loads read at most memory; the stores write, and
@@ -566,7 +575,6 @@ mod tests {
             assert_eq!(effects(op.symbol()), Effects::None, "{op:?}");
         }
         assert_eq!(effects("velt_rt_str_cmp"), Effects::ReadOnly);
-        assert_eq!(effects("velt_rt_str_char_code_at"), Effects::ReadCaching);
         assert_eq!(effects("velt_rt_array_view_cold"), Effects::Cold);
         assert_eq!(effects("velt_simd_u8x16_eq"), Effects::ReadOnly);
         assert_eq!(effects("velt_simd_u8x16_load"), Effects::ReadOnly);
@@ -577,6 +585,15 @@ mod tests {
         assert_eq!(effects("velt_simd_f32x8_load"), Effects::Any);
         assert_eq!(effects("velt_rt_write_str"), Effects::Any);
         assert!(!Effects::Cold.writes_nothing_visible());
+        assert!(Effects::ReadOnly.writes_nothing_visible());
         assert!(Effects::ReadCaching.writes_nothing_visible());
+        assert_eq!(effects(CHAR_CODE_AT_ENTRY), Effects::ReadCaching);
+        let hook = (velt_common::std_hooks::HOOKS.iter())
+            .find(|h| h.name == "string_char_code_at")
+            .expect("the hook");
+        assert_eq!(
+            velt_common::std_hooks::prebuilt::symbol(hook),
+            CHAR_CODE_AT_ENTRY
+        );
     }
 }

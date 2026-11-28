@@ -104,7 +104,7 @@ fn case_matches_js() {
 #[test]
 fn char_codes_match_js() {
     for &(s, i, want) in js::CHAR_CODE_AT {
-        assert_eq!(unsafe { velt_rt_str_char_code_at(&lit(s), i) }, want);
+        assert_eq!(unsafe { char_code_at(&lit(s), i) }, want);
     }
     for &(code, want) in js::FROM_CHAR_CODE {
         assert_eq!(
@@ -154,7 +154,7 @@ fn code_unit_positions() {
     assert_eq!(slice(0, 2), "hé");
     assert_eq!(slice(-4, -1), "éll");
     unsafe {
-        assert_eq!(velt_rt_str_char_code_at(&s, 1), 233);
+        assert_eq!(char_code_at(&s, 1), 233);
     }
 }
 
@@ -164,9 +164,9 @@ fn half_pair_paths_match_js() {
     let (hi, lo) = (wtf8(&[0xD83D]), wtf8(&[0xDE00]));
     let emoji = lit("😀");
     unsafe {
-        assert_eq!(velt_rt_str_char_code_at(&emoji, 0), 0xD83D);
-        assert_eq!(velt_rt_str_char_code_at(&emoji, 1), 0xDE00);
-        assert_eq!(velt_rt_str_char_code_at(&emoji, 2), -1);
+        assert_eq!(char_code_at(&emoji, 0), 0xD83D);
+        assert_eq!(char_code_at(&emoji, 1), 0xDE00);
+        assert_eq!(char_code_at(&emoji, 2), -1);
     }
     let slice = |s: &VeltStr, a, b| take_units(|o| unsafe { velt_rt_str_slice(s, a, b, o) });
     assert_eq!(slice(&emoji, 0, 1), vec![0xD83D]);

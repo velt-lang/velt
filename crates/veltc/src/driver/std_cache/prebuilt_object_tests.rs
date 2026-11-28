@@ -81,13 +81,20 @@ fn an_extern_of_shared_state_is_refused() {
     ] {
         let externs = ["velt_rt_alloc", symbol];
         let calls = program(vec![body("_V3stdN1f", call(1))], &externs, vec![]);
-        let err = shares_nothing(&calls, &HashSet::new()).unwrap_err();
+        let err = shares_nothing(&calls, &HashSet::new(), &HashSet::new()).unwrap_err();
         assert!(err.contains(symbol), "{err}");
         let address = Terminator::Return(Operand::Const(Const::Extern(ExternId(1)), Ty::Ptr));
         let takes = program(vec![body("_V3stdN1f", address)], &externs, vec![]);
-        assert!(shares_nothing(&takes, &HashSet::new()).is_err(), "{symbol}");
+        assert!(
+            shares_nothing(&takes, &HashSet::new(), &HashSet::new()).is_err(),
+            "{symbol}"
+        );
         let listed = program(vec![body("_V3stdN1f", call(0))], &externs, vec![]);
-        assert_eq!(shares_nothing(&listed, &HashSet::new()), Ok(()), "{symbol}");
+        assert_eq!(
+            shares_nothing(&listed, &HashSet::new(), &HashSet::new()),
+            Ok(()),
+            "{symbol}"
+        );
     }
 }
 
@@ -176,18 +183,18 @@ fn a_mutable_or_named_static_is_refused() {
     for shared in [atomic, named, imported] {
         let direct = program(vec![names_static(1)], &[], vec![literal(), shared.clone()]);
         assert!(
-            shares_nothing(&direct, &HashSet::new()).is_err(),
+            shares_nothing(&direct, &HashSet::new(), &HashSet::new()).is_err(),
             "{shared:?}"
         );
         let statics = vec![literal(), table.clone(), shared.clone()];
         let through = program(vec![names_static(1)], &[], statics);
         assert!(
-            shares_nothing(&through, &HashSet::new()).is_err(),
+            shares_nothing(&through, &HashSet::new(), &HashSet::new()).is_err(),
             "{shared:?} through a relocation"
         );
         let unnamed = program(vec![names_static(0)], &[], vec![literal(), shared.clone()]);
         assert_eq!(
-            shares_nothing(&unnamed, &HashSet::new()),
+            shares_nothing(&unnamed, &HashSet::new(), &HashSet::new()),
             Ok(()),
             "{shared:?} named by nothing"
         );
@@ -196,6 +203,7 @@ fn a_mutable_or_named_static_is_refused() {
     assert_eq!(
         shares_nothing(
             &program(vec![names_static(1)], &[], statics),
+            &HashSet::new(),
             &HashSet::new()
         ),
         Ok(())
@@ -212,7 +220,7 @@ fn an_extern_reached_through_a_relocation_is_refused() {
         ..StaticData::default()
     };
     let p = program(vec![names_static(0)], &["velt_tls_slot"], vec![table]);
-    assert!(shares_nothing(&p, &HashSet::new()).is_err());
+    assert!(shares_nothing(&p, &HashSet::new(), &HashSet::new()).is_err());
 }
 
 const F64: Param = Param {
@@ -301,16 +309,16 @@ fn the_module_s_own_state_is_taken() {
     };
     let (mine, other) = (get(7), get(8));
     let calls = program(vec![body("_V3stdN1f", call(0))], &[mine.as_str()], vec![]);
-    assert_eq!(shares_nothing(&calls, &own), Ok(()));
-    assert!(shares_nothing(&calls, &HashSet::new()).is_err());
+    assert_eq!(shares_nothing(&calls, &own, &own), Ok(()));
+    assert!(shares_nothing(&calls, &HashSet::new(), &HashSet::new()).is_err());
     let calls = program(vec![body("_V3stdN1f", call(0))], &[other.as_str()], vec![]);
-    assert!(shares_nothing(&calls, &own).is_err());
+    assert!(shares_nothing(&calls, &own, &own).is_err());
     let calls = program(
         vec![body("_V3stdN1f", call(0))],
         &["velt_tls_get_i64"],
         vec![],
     );
-    assert!(shares_nothing(&calls, &own).is_err());
+    assert!(shares_nothing(&calls, &own, &own).is_err());
     let atomic = |id| StaticData {
         bytes: vec![0; 8],
         align: 8,
@@ -318,14 +326,14 @@ fn the_module_s_own_state_is_taken() {
         ..StaticData::default()
     };
     let p = program(vec![names_static(0)], &[], vec![atomic(9)]);
-    assert_eq!(shares_nothing(&p, &own), Ok(()));
+    assert_eq!(shares_nothing(&p, &own, &own), Ok(()));
     let p = program(vec![names_static(0)], &[], vec![atomic(10)]);
-    assert!(shares_nothing(&p, &own).is_err());
+    assert!(shares_nothing(&p, &own, &own).is_err());
     let named = StaticData {
         symbol: Some("_Vs0123".into()),
         linkage: Linkage::Export,
         ..atomic(9)
     };
     let p = program(vec![names_static(0)], &[], vec![named]);
-    assert!(shares_nothing(&p, &own).is_err());
+    assert!(shares_nothing(&p, &own, &own).is_err());
 }

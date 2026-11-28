@@ -42,7 +42,7 @@ export function codePoint3(s: string, i: usize): u32 {
 // `borrowed_copies/read_only.rs`).
 
 /** The code unit of `s` at position `p` (see above). */
-function unitAt(s: string, p: u64): u32 {
+export function unitAt(s: string, p: u64): u32 {
   const i = (p >> 1) as usize;
   const b = strByteAt(s, i as u64);
   if (b < 0x80) {

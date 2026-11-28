@@ -314,6 +314,55 @@ fn an_object_reads_the_programs_process_static() {
     }
 }
 
+/// A program reading `charCodeAt` of non-ASCII heap strings, each freed before the next is built
+/// (often at the same address): the translation's cache (std/lang/string/positions.velt, the
+/// object of `lang_string_positions`) keeps an entry only under the program's `STR_EPOCH`, which
+/// the runtime bumps when such a buffer is freed. Node 22 prints the same.
+const CODE_UNITS: &str = r#"function built(piece: string, n: i64): string {
+  let s = "";
+  for (let i: i64 = 0; i < n; i++) {
+    s += piece;
+  }
+  return s;
+}
+
+function readAt(piece: string, n: i64, at: i64): string {
+  const s = built(piece, n);
+  return `${s.charCodeAt(at)} ${s.charCodeAt(at + 1)} ${s.charCodeAt(at - 1)}`;
+}
+
+function main() {
+  const out: string[] = [];
+  for (let round: i64 = 0; round < 2; round++) {
+    out.push(readAt("é日😀a", 100, 250));
+    out.push(readAt("😀é日a", 100, 250));
+    out.push(readAt("a😀日é", 100, 251));
+  }
+  console.log(out.join("|"));
+}
+"#;
+const CODE_UNITS_OUT: &str =
+    "233 26085 97|55357 56832 97|55357 56832 97|233 26085 97|55357 56832 97|55357 56832 97\n";
+
+/// `charCodeAt` of non-ASCII text calls the object of positions.velt where the cache holds it,
+/// with the output of the module loaded, in debug and release builds.
+#[test]
+fn char_code_at_calls_the_positions_object() {
+    for mode in [&["run", "--release"][..], &["run"]] {
+        let tmp = test_dir::TestDir::new();
+        let dir = tmp.path();
+        let filled = velt(dir, "c.velt", CODE_UNITS, mode, &[FILL]);
+        assert_eq!(text(&filled.stdout), CODE_UNITS_OUT, "{mode:?}");
+        let served = velt(dir, "c.velt", CODE_UNITS, mode, &[]);
+        let err = text(&served.stderr);
+        assert!(
+            err.contains("std/lang/string/positions: object found"),
+            "{err}"
+        );
+        assert_eq!(text(&served.stdout), CODE_UNITS_OUT, "{mode:?}");
+    }
+}
+
 /// WebAssembly links no objects: the build loads the module, whatever the cache holds.
 #[test]
 fn webassembly_loads_the_module() {

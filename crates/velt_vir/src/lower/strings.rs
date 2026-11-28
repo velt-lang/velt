@@ -16,6 +16,7 @@
 //! number, which lets LLVM vectorize scan loops into slower SSE2 code (#377 phase 1 measured
 //! 16%); the counts are read as signed 32-bit numbers instead (exact below 2 GiB).
 
+use super::hook_calls::{self as hooks, ty, Construct, HookTy};
 use super::operand::proj;
 use super::rt::Rt;
 use super::{cint, ice, FnLower};
@@ -113,6 +114,36 @@ impl FnLower<'_, '_> {
             Operand::Copy(p) => proj(p, Proj::Deref(Ty::Agg(STR_AGG))),
             _ => ice("a string address that is not a place"),
         }
+    }
+
+    /// The first `k` bytes (`k <= 7`) of the string at address `key`, the first one highest, as
+    /// an `i64`, or -1 when it has fewer: how the `any` glue tests a key's first character on its
+    /// UTF-8 bytes (a digit: one byte; U+FFFF, which starts a symbol the program made: `EF BF
+    /// BF`), with no position to translate.
+    pub(super) fn str_lead_bytes(&mut self, key: &Operand, k: u64) -> Operand {
+        let p = Self::str_at(key);
+        let n = self.str_bytes(&p);
+        let out = self.temp(Ty::I64);
+        self.assign(Place::local(out), Rvalue::Use(cint(-1, Ty::I64)));
+        let long = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Ge, n, cint(k as i128, Ty::U64)),
+        );
+        let (load, join) = (self.new_block(), self.new_block());
+        self.branch(long, load, join);
+        self.switch_to(load);
+        let data = self.str_data(&p);
+        let mut acc = cint(0, Ty::I64);
+        for i in 0..k {
+            let b = self.text_byte_at(data.clone(), cint(i as i128, Ty::U64));
+            let b = self.rvalue_temp(Ty::I64, Rvalue::Cast(b, Ty::I64));
+            let high = self.rvalue_temp(Ty::I64, Rvalue::Binary(BinOp::Shl, acc, cint(8, Ty::I64)));
+            acc = self.rvalue_temp(Ty::I64, Rvalue::Binary(BinOp::BitOr, high, b));
+        }
+        self.assign(Place::local(out), Rvalue::Use(acc));
+        self.goto(join);
+        self.switch_to(join);
+        Operand::Copy(Place::local(out))
     }
 
     /// Whether the string at `p` is counted (a heap string or a slice): `(int64_t)w2 > 0`.
@@ -274,7 +305,8 @@ impl FnLower<'_, '_> {
 
     /// `s.charCodeAt(i)`: the UTF-16 code unit at `i` as an `i64`, or -1 when `i` is out of range.
     /// An ASCII string (units == bytes) loads the byte inline, as before #377 phase 2b; any other
-    /// string calls the runtime, which translates the position.
+    /// string calls std's `charCodeAtWide` (std/lang/string/positions.velt, #2816), which
+    /// translates the position (sema demands it for the intrinsic: `Construct::CharCode`).
     pub(super) fn str_char_code_at(&mut self, v: Operand, i: Operand) -> Operand {
         let p = self.operand_place(v, Ty::Agg(STR_AGG));
         let (w1, w2, inline) = self.str_words(&p);
@@ -335,8 +367,9 @@ impl FnLower<'_, '_> {
         self.assign(Place::local(out), Rvalue::Cast(byte, Ty::I64));
         self.goto(join);
         self.switch_to(call);
-        let s = self.addr(p);
-        self.call_rt(Rt::StrCharCodeAt, vec![s, i], Some(Place::local(out)));
+        let s = ty::Str::arg(self.addr(p));
+        hooks::string_char_code_at(self, Construct::CharCode, s, ty::I64::arg(i))
+            .emit_to(self, Place::local(out));
         self.goto(join);
         self.switch_to(join);
         Operand::Copy(Place::local(out))

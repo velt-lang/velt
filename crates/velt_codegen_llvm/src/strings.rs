@@ -223,12 +223,6 @@ mod tests {
     }
 
     #[test]
-    fn char_code_at_stays_a_runtime_call() {
-        let code_at = [Ty::Ptr, Ty::I64];
-        assert!(fast_path("velt_rt_str_char_code_at", &code_at, Ty::I64, false).is_none());
-    }
-
-    #[test]
     fn memcmp_takes_the_targets_size_t() {
         let eq = |ptr32| fast_path("velt_rt_str_eq", &[Ty::Ptr, Ty::Ptr], Ty::U8, ptr32).unwrap();
         let (_, defs) = eq(true);

@@ -79,6 +79,9 @@ pub(super) fn build(
     let hir =
         checked.map_err(|_| format!("its world does not check:\n{}", sess.render_diagnostics()))?;
     let own = own_state(&hir, prebuilt::private(module_entry));
+    // Thread-local values the program shares, under the same symbols (`prebuilt.rs` "State").
+    let mut own_tls = own_state(&hir, prebuilt::thread_shared(module_entry));
+    own_tls.extend(own.iter().copied());
     let files: Vec<String> = (sess.std_files.iter())
         .map(|&f| sess.sm.get(f))
         .filter(|f| f.path != opts.input)
@@ -114,7 +117,7 @@ pub(super) fn build(
         let main = vir::Function::new("velt_main".into(), vec![], Ty::I32, Linkage::Import);
         program.funcs.push(main);
     }
-    shares_nothing(&program, &own)?;
+    shares_nothing(&program, &own, &own_tls)?;
     holds_no_module_state(&program, prebuilt::private(module_entry))?;
     let tls = thread_locals(&program);
     let statics = process_statics(&program);
@@ -288,12 +291,17 @@ fn own_state(hir: &velt_sema::hir::Program, private: &[&str]) -> HashSet<u64> {
 }
 
 /// `Err` where the object's code (its optimized functions with bodies, and the statics they name)
-/// holds state a program shares with it (module docs); `own` is the module's own ([`own_state`]).
-fn shares_nothing(program: &vir::Program, own: &HashSet<u64>) -> Result<(), String> {
+/// holds state a program shares with it (module docs); `own` is the module's own ([`own_state`]),
+/// and `own_tls` the thread-local values it may use (`own` and `prebuilt::thread_shared`'s).
+fn shares_nothing(
+    program: &vir::Program,
+    own: &HashSet<u64>,
+    own_tls: &HashSet<u64>,
+) -> Result<(), String> {
     let (externs, statics) = reached(program);
     let shared = ["velt_rt_module_state", "velt_tls_", "velt_rt_statics"];
     let owned = |symbol: &str| {
-        velt_vir::tls::TlsCall::of_symbol(symbol).is_some_and(|c| own.contains(&c.id()))
+        velt_vir::tls::TlsCall::of_symbol(symbol).is_some_and(|c| own_tls.contains(&c.id()))
     };
     if let Some(e) = (externs.iter().map(|&e| &program.externs[e]))
         .find(|e| shared.iter().any(|s| e.symbol.starts_with(s)) && !owned(&e.symbol))

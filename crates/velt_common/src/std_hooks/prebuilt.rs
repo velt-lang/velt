@@ -33,6 +33,12 @@
 //! that loads none of them (`velt_sema` `lazy_std/hook_stubs.rs` `declared`); a program that
 //! does (the core's own white-box tests) loads the module as without the object.
 //!
+//! A module's [`thread_shared`] modules may be imported by other std code: the object uses their
+//! thread-local values, but under the symbols the program's own code uses for them (each names
+//! the constant, its type and its starting word), so a program that loads them too has one value
+//! per thread, as without the object, compiled from the same files (the object's key names their
+//! hashes). Only thread-local values: their static atomics would be copies, and stay refused.
+//!
 //! Std's process statics (a `process_static` entry, #2779) are the exception to the first rule:
 //! every program defines their words and hands the runtime their addresses (`velt_vir`
 //! `static_atomic.rs`), so the program's word is the one the runtime bumps. An object reaching
@@ -111,6 +117,22 @@ const PRIVATE: &[(&str, &[&str])] = &[
         &["std/lang/hooks/module_blocks"],
     ),
 ];
+
+/// Per prebuilt module (its table entry): the std modules whose thread-local values its object
+/// uses as the program's (module docs, "State"), which other std code may import.
+const THREAD_SHARED: &[(&str, &[&str])] = &[
+    // `charCodeAt`'s translation (#2816): the per-thread cache of the last translations, an entry
+    // valid under `STR_EPOCH` alone (rt_abi.md "Breadcrumbs").
+    ("lang_string_positions", &["std/lang/string/positions"]),
+];
+
+/// The modules whose thread-local values the object of prebuilt module `module_entry` uses as the
+/// program's (module docs, "State"): none for most.
+pub fn thread_shared(module_entry: &str) -> &'static [&'static str] {
+    (THREAD_SHARED.iter())
+        .find(|(m, _)| *m == module_entry)
+        .map_or(&[], |(_, list)| list)
+}
 
 /// The private modules of prebuilt module `module_entry` (module docs, "State"): none for a module
 /// without state of its own.
