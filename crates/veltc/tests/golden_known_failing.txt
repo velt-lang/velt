@@ -68,3 +68,13 @@ tests/golden/std/http_server/http_request_body_after_response.velt #2943 units
 # the throws std's unit gave them (with std a unit of its own: an ICE in lowering, "error thrown
 # outside a throwing function or try block"; it passes in one context).
 tests/golden/std/regex_subclass_exec_throws.velt                   #3684 units=2
+
+# Fail by units on main 179b67e8 (the nightly's golden-units, run 45985328852), #2943's known gaps:
+# - a panic under `catchPanic` is not caught by units, here in a custom inspect and in a drop
+#   (as `catch_panic_*` and `inspect_custom_panic` above);
+# - a std body that dispatches over the program's classes (`RegExp[INSPECT]` reading
+#   `constructor.name`, the program's glue) is checked in std's unit without them: a subclass
+#   prints as `RegExp` (as `class_object_print` above).
+tests/golden/std/drop_queue_catch_panic.velt                       #2943 units
+tests/golden/std/inspect_layout_custom_panic.velt                  #2943 units
+tests/golden/std/regexp_print.velt                                 #2943 units

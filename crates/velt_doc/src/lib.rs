@@ -23,6 +23,7 @@ pub mod resolve;
 mod sig;
 mod ts;
 mod ts_extend;
+mod ts_package;
 
 use std::path::{Path, PathBuf};
 

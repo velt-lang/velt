@@ -1,0 +1,17 @@
+// In a program with a function taking `this`, a member call through `any` with a number key
+// that holds no function, where no `catch` takes the `TypeError`, stops the program with Node's
+// message, the key as `String(n)` (`o[1658206780088562.2]`). Before, `callOn` made the call and
+// the message named its parameter (`f is not a function`).
+const o: any = {
+  x: 5,
+  m: function (this: any): number {
+    return this.x;
+  },
+};
+
+function main(): void {
+  console.log(o.m());
+  o[1658206780088562.25]();
+}
+
+main();

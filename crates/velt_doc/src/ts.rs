@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use velt_syntax::ast::{self, GenericParam, Item, ItemKind, TypeExpr, TypeExprKind};
 
 use crate::sig::Printer;
+pub(crate) use crate::ts_package::{Defaults, Widened};
 
 /// Velt's numeric types, all `number` in TypeScript.
 pub(crate) const NUMBERS: &[&str] = &[
@@ -53,14 +54,9 @@ pub(crate) struct TsPrinter<'a> {
     pub(crate) items: &'a [Item],
     /// The bounds that TypeScript's own types satisfy through Velt's extensions.
     pub(crate) widened: &'a Widened,
+    /// The interfaces' default methods.
+    pub(crate) defaults: &'a Defaults,
 }
-
-/// What satisfies an interface beyond what declares it, through std's extensions (computed by
-/// [`crate::dts`]): a bound on it (`K extends Comparable<K>`) widens to those of TypeScript's
-/// types (`Comparable<K> | string | number | boolean`), or goes (`None`: every type does,
-/// `extend<T> T implements Settles`). TypeScript sees no extensions of its own types, which
-/// a type-only import must not add to the client's globals.
-pub(crate) type Widened = HashMap<String, Option<Vec<String>>>;
 
 /// A top-level declaration in TypeScript.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -266,6 +262,7 @@ impl TsPrinter<'_> {
                 .filter(|m| !m.is_private)
                 .map(|m| self.method_in(m, &t.generics)),
         );
+        members.extend(self.interface_defaults(t));
         let keyword = if t.is_abstract {
             "abstract class"
         } else {
@@ -474,9 +471,9 @@ impl TsPrinter<'_> {
     }
 
     /// Record a reference to type `name` with `arity` type arguments, unless it is a type
-    /// parameter in scope.
+    /// parameter in scope or `this` (TypeScript's own polymorphic `this` type).
     pub(crate) fn refer(&self, name: &str, arity: usize) {
-        if self.scope.borrow().iter().any(|s| s == name) {
+        if name == "this" || self.scope.borrow().iter().any(|s| s == name) {
             return;
         }
         let mut refs = self.refs.borrow_mut();
@@ -674,7 +671,7 @@ impl TsPrinter<'_> {
     }
 
     /// A type as an operand of `|`, `&` or `[]`: parenthesized when it is a function or a union.
-    fn operand(&self, t: &TypeExpr) -> String {
+    pub(crate) fn operand(&self, t: &TypeExpr) -> String {
         let s = self.ty(t);
         match &t.kind {
             TypeExprKind::Function { .. }
