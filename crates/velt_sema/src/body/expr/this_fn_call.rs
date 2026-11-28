@@ -18,6 +18,7 @@
 use velt_common::Span;
 use velt_syntax::ast;
 
+use super::dynamic_arith::{TAG_FUNCTION, TAG_NULL};
 use super::setters::synth;
 use crate::any::Dynamic;
 use crate::body::FnCx;
@@ -156,20 +157,35 @@ impl FnCx<'_, '_> {
             let f = lw.expr(&read, None, crate::body::Want::Borrow);
             let text = lw.callee_text(&f);
             lw.with_temp("<method>", f, callee.span, span, |lw, f| {
-                if let Some(l) = lw.f.scopes.last().and_then(|s| s.names.get("<method>")) {
-                    let l = *l;
+                let held =
+                    lw.f.scopes
+                        .last()
+                        .and_then(|s| s.names.get("<method>"))
+                        .copied();
+                if let Some(l) = held {
                     lw.f.chain_texts.push((l, text));
                 }
-                let call = |lw: &mut Self| lw.call_on_function(f, o, args, span);
+                // An `any` member is tested by its tag, read without a call (`typeof`'s text and
+                // `== null` would each lower to a dispatch of their own at every call site).
+                let tagged = held.and_then(|l| {
+                    let t = lw.f.locals[l.0 as usize].ty;
+                    matches!(lw.cx.dynamic(t), Some(Dynamic::Any)).then_some((l, t))
+                });
+                let call = |lw: &mut Self| lw.call_on_function(f, tagged, o, args, span);
                 if !optional {
                     return call(lw);
                 }
                 let Some(any) = lw.any_ty() else {
                     return lw.error_expr(span);
                 };
-                let null = synth(ast::ExprKind::Lit(ast::Lit::Null), span);
-                let nullish = binary(ast::BinaryOp::Eq, f.clone(), null, span);
-                let cond = lw.expr(&nullish, Some(lw.cx.ty.bool_), crate::body::Want::Move);
+                let cond = match tagged {
+                    Some((l, t)) => lw.tag_test(l, t, hir::BinOp::LtEq, TAG_NULL, span),
+                    None => {
+                        let null = synth(ast::ExprKind::Lit(ast::Lit::Null), span);
+                        let nullish = binary(ast::BinaryOp::Eq, f.clone(), null, span);
+                        lw.expr(&nullish, Some(lw.cx.ty.bool_), crate::body::Want::Move)
+                    }
+                };
                 let undefined = lw.dynamic_nothing(hir::Nothing::Undefined, any, span);
                 let els = call(lw);
                 let kind = hir::ExprKind::If {
@@ -199,10 +215,13 @@ impl FnCx<'_, '_> {
     }
 
     /// `typeof f === "function" ? callOn(f, o, <args>) : f(...<args>)`, the arguments evaluated
-    /// first, into `<args>` (`f` names the member read, `o` the object).
+    /// first, into `<args>` (`f` names the member read, `o` the object). `tagged`: the local and
+    /// type of `f` when it is an `any`, tested by its tag (`AnyTag(f) == TAG_FUNCTION`, what
+    /// `typeof` reads).
     fn call_on_function(
         &mut self,
         f: &ast::Expr,
+        tagged: Option<(hir::LocalId, hir::TyId)>,
         o: &ast::Expr,
         args: &[ast::Expr],
         span: Span,
@@ -215,16 +234,22 @@ impl FnCx<'_, '_> {
         let list = self.expr(&list, Some(anys), crate::body::Want::Move);
         let list = self.coerce(list, anys);
         self.with_temp("<args>", list, span, span, |lw, xs| {
-            let ty_of = synth(
-                ast::ExprKind::Unary {
-                    op: ast::UnaryOp::TypeOf,
-                    expr: Box::new(f.clone()),
-                },
-                span,
-            );
-            let function = synth(ast::ExprKind::Lit(ast::Lit::Str("function".into())), span);
-            let is_fn = binary(ast::BinaryOp::StrictEq, ty_of, function, span);
-            let cond = lw.expr(&is_fn, Some(lw.cx.ty.bool_), crate::body::Want::Move);
+            let cond = match tagged {
+                Some((l, t)) => lw.tag_test(l, t, hir::BinOp::Eq, TAG_FUNCTION, span),
+                None => {
+                    let ty_of = synth(
+                        ast::ExprKind::Unary {
+                            op: ast::UnaryOp::TypeOf,
+                            expr: Box::new(f.clone()),
+                        },
+                        span,
+                    );
+                    let function =
+                        synth(ast::ExprKind::Lit(ast::Lit::Str("function".into())), span);
+                    let is_fn = binary(ast::BinaryOp::StrictEq, ty_of, function, span);
+                    lw.expr(&is_fn, Some(lw.cx.ty.bool_), crate::body::Want::Move)
+                }
+            };
             let (fa, oa) = (ty::Any::of(f.clone()), ty::Any::of(o.clone()));
             let then = hooks::call_on(fa, oa, ty::Array::<ty::Any>::of(xs.clone())).check(lw, span);
             let spread = synth(ast::ExprKind::Spread(Box::new(xs.clone())), span);

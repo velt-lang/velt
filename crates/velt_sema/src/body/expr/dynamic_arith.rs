@@ -15,6 +15,8 @@ use crate::body::{FnCx, LocalKind};
 use crate::hir::{self, BinOp, ExprKind as H, Intrinsic, LocalId, TyId, UseMode};
 use crate::hook_calls::{self as hooks, ty, Call, HookTy};
 
+/// `Intrinsic::AnyTag` of `null`; tags up to it are the nullish values (`undefined`, `null`).
+pub(crate) const TAG_NULL: u128 = 1;
 /// `Intrinsic::AnyTag` of a number; tags up to it (`undefined`, `null`, booleans, numbers) add
 /// as numbers.
 pub(crate) const TAG_NUMBER: u128 = 3;
