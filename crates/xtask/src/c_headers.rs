@@ -51,7 +51,6 @@ const PATHS: &[&str] = &[
     "std/lang/hooks/clock_linux.velt",
     "std/lang/hooks/clock_win32.velt",
     "std/lang/hooks/os_posix.velt",
-    "std/lang/hooks/sched_cells.velt",
     "std/lang/hooks/sched_end.velt",
     "std/lang/hooks/sched_exit.velt",
     "std/lang/hooks/sched_id.velt",
