@@ -50,17 +50,23 @@ What implements `J` is what a plain conversion to `J` accepts: a class that decl
 `implements J` (itself or through a base class), since Velt's classes are nominal, or an object
 type with `J`'s members. An object type that is only shaped like `J` (made as an `I`, never
 converted to `J`) gets its implementation of `J` too, because each object type implementing an
-interface the program casts from is recorded as a value `any` may hold. A class only shaped like
-`J` fails the check, where Node goes on.
+interface the program casts from is recorded as a value `any` may hold. An object made as an
+interface extending `J` (a `Both extends J, K` value seen as an `I`) implements `J` through that
+interface: each such interface is recorded as converting to `J`, which gives every type
+implementing it an implementation of `J` (velt_sema `note_extension_upcasts`). A class only
+shaped like `J` fails the check, where Node goes on.
+
+`x as J | K` for extensions `J` and `K` of `I`, and `x as J | undefined` (also from an
+`I | undefined`, whose `undefined` passes through), are checked the same way: the value converts
+to the first member, in order, that its object implements (velt_vir `union_iface`, the glue
+`AnyIface` per member, which returns whether it converted), and one implementing none panics with
+the `TypeError`. Unions of std's `lib.dom` interfaces convert to the first member unchecked, as no
+DOM value exists on a server.
 
 The casts that stay `cannot cast`:
 
-- to a union of extensions, or to `J | undefined`: there is no run-time test of an `any` for one
-  of several interfaces ([#924](https://github.com/velt-lang/velt/issues/924)). Unions of std's
-  `lib.dom` interfaces are the exception: the value converts to the first member, as no DOM value
-  exists on a server;
-- from a source that may be `undefined`: Node passes `undefined` on, and it is no `J`; test it
-  first;
+- from a source that may be `undefined` to a target without `undefined`: Node passes `undefined`
+  on, and it is no `J`; test it first;
 - to `J` at other type arguments than `I` (`Source<number> as Labeled<string>`): no object is
   both.
 
@@ -146,7 +152,6 @@ Programs without such a cast are unchanged.
 A cast Velt refuses, with a note saying why:
 
 ```text
-error: cannot cast `Shape` as `Named | Sided`
 error: cannot cast `Shape | undefined` as `Named`
 a `Shape | undefined` may be `undefined`, which is no `Named`
 error: cannot cast `Source<f64>` as `Labeled<string>`
