@@ -1,0 +1,123 @@
+// A call through `any` whose member holds no function, outside every `catch` of an async
+// function, rejects the function's promise with Node's `TypeError`, which an `await` in a `try`
+// catches (#3955): an async arrow, function, method and generator, a call in an `await`'s
+// operand, in nested async arrows, in a `finally` or `catch` body, in a `then` callback, with a
+// computed key (`o[k]()`) or an optional chain (`o?.ob()`). A sync generator's `next()` and a
+// sync function's caller catch it the same way. Before, the program stopped (exit 101).
+// Node twin: any_not_fn_async.mjs.
+const o: any = { ob: 5, f: (x: number): number => x + 1 };
+const k: string = "ob";
+
+async function decl(): Promise<void> {
+  o.ob();
+}
+
+class C {
+  async m(): Promise<number> {
+    o[k]();
+    return 1;
+  }
+}
+
+async function* agen(): AsyncGenerator<number> {
+  yield 1;
+  o.ob();
+}
+
+function* gen(): Generator<number> {
+  yield 1;
+  o.ob();
+}
+
+async function inArgs(): Promise<void> {
+  await Promise.resolve(o.ob());
+}
+
+async function nested(): Promise<void> {
+  await (async () => {
+    await (async () => {
+      o.ob();
+    })();
+  })();
+}
+
+async function optional(): Promise<void> {
+  o?.ob();
+}
+
+async function inFinally(): Promise<void> {
+  try {
+    console.log("try body");
+  } finally {
+    o.ob();
+  }
+}
+
+async function inCatch(): Promise<void> {
+  try {
+    throw new Error("first");
+  } catch (e) {
+    o.ob();
+  }
+}
+
+async function afterAwait(): Promise<number> {
+  const v = await Promise.resolve(2);
+  console.log("awaited", v);
+  return o.ob(v);
+}
+
+function sync(): number {
+  return o.ob();
+}
+
+function outer(): number {
+  return sync() + 1;
+}
+
+async function report(what: string, p: Promise<any>): Promise<void> {
+  try {
+    await p;
+    console.log(what, "resolved");
+  } catch (e) {
+    console.log(what, (e as Error).name, (e as Error).message.endsWith("is not a function"));
+  }
+}
+
+async function main(): Promise<void> {
+  const p = (async () => {
+    o.ob();
+  })();
+  try {
+    await p;
+  } catch (e) {
+    console.log("arrow", (e as Error).message);
+  }
+  await report("decl", decl());
+  await report("method", new C().m());
+  const g = agen();
+  console.log((await g.next()).value);
+  await report("async gen", g.next());
+  const s = gen();
+  console.log(s.next().value);
+  try {
+    s.next();
+  } catch (e) {
+    console.log("gen", (e as Error).message);
+  }
+  await report("await operand", inArgs());
+  await report("nested", nested());
+  await report("optional", optional());
+  await report("finally", inFinally());
+  await report("catch body", inCatch());
+  await report("after await", afterAwait());
+  await report("then", Promise.resolve(1).then((v: number) => o.ob(v)));
+  try {
+    outer();
+  } catch (e) {
+    console.log("sync caller", (e as Error).message);
+  }
+  console.log(o.f(1), await (async () => o.f(2))());
+}
+
+main();
