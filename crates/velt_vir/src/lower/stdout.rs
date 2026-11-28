@@ -75,9 +75,7 @@ impl super::Cx<'_> {
             return;
         }
         for h in velt_common::std_hooks::prebuilt::calls_out() {
-            let def =
-                (self.prelude_def(&h.qualified())).filter(|d| !self.hir.unchecked.contains(d));
-            if let Some(d) = def {
+            if let Some(d) = self.std_hook_live(&h.qualified()) {
                 self.func_in_mode(super::Work::Fn(d, vec![]), super::LkMode::Plain);
             }
         }
