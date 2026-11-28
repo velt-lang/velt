@@ -1,0 +1,9 @@
+// velt/lang/hooks (internal): the `wasi` variant of `#sched-quiet` (sched_end.velt). The
+// executor in Velt runs WASI programs on its one thread (#3905), and nothing there awaits a
+// runtime leaf (velt_rt_wasm's take the runtime's `cx`), so the runtime never has one
+// outstanding.
+
+/** Has the runtime nothing outstanding? Always so here. */
+export function runtimeQuiet(cx: usize): bool {
+  return true;
+}

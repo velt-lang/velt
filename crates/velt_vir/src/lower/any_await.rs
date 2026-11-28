@@ -56,9 +56,9 @@ impl Cx<'_> {
     /// Does the program run the executor in Velt (std's `schedStart` is loaded)? Without it no
     /// promise exists, and a promise's table, whose glue is the executor's, can't be built.
     pub(super) fn executor_loaded(&self) -> bool {
-        // Where the executor in Velt doesn't run the program (a wasm target: `FnLower::std_sched`),
+        // Where the executor in Velt doesn't run the program (a JS host: `FnLower::std_sched`),
         // the runtime's does, and the glue calls the runtime: nothing to load.
-        if !velt_common::std_hooks::std_scheduler() || self.target.trim().starts_with("wasm") {
+        if !velt_common::std_hooks::std_scheduler() || !self.runs_std_executor() {
             return true;
         }
         let start = self.prelude_def(velt_common::std_hook!(sched_start));
