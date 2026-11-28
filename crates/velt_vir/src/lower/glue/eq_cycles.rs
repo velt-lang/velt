@@ -37,7 +37,8 @@ impl FnLower<'_, '_> {
             self.cast_to(ptr_b, Ty::Ptr, Ty::U64),
         ];
         let [x, y]: [Operand; 2] = ids.try_into().unwrap_or_else(|_| unreachable!());
-        hooks::deep_eq_enter(self, ty::U64::arg(x), ty::U64::arg(y)).emit_to(self, Place::local(seen));
+        hooks::deep_eq_enter(self, ty::U64::arg(x), ty::U64::arg(y))
+            .emit_to(self, Place::local(seen));
         let seen = Operand::Copy(Place::local(seen));
         let fresh = self.rvalue_temp(
             Ty::Bool,
