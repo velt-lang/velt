@@ -1,6 +1,8 @@
 // velt/math (internal): the operators of `BigInt` (design operators.md): `a + b` is `a.add(b)`,
-// `a += b` is `a.addAssign(b)`, in place, and so on. Both operands are BigInts, as in JavaScript
-// (which throws on `b + 3`) and TypeScript (TS2365): mixed arithmetic is the named twins
+// and so on. A BigInt is a value, as in JavaScript: `a += b` is `a = a + b`, a new number, so
+// another variable holding the old one keeps it (`let z = x; z += y` leaves `x`, #3108); the
+// in-place methods (`a.addAssign(b)`) change the number itself. Both operands are BigInts, as in
+// JavaScript (which throws on `b + 3`) and TypeScript (TS2365): mixed arithmetic is the named twins
 // (`addInt`, `mulIntAssign`, ...), which skip building a BigInt for the small operand. Shift
 // counts and exponents are an `i64`. Division truncates and `%` takes the dividend's sign, like
 // JS; dividing by zero and a negative exponent panic with JS's RangeError.
@@ -71,40 +73,5 @@ extend BigInt {
   /** `-this`. */
   [Symbol.neg](): BigInt {
     return this.neg();
-  }
-
-  /** `this += other`, in place. */
-  [Symbol.addAssign](other: BigInt): void {
-    this.addAssign(other);
-  }
-
-  /** `this -= other`, in place. */
-  [Symbol.subAssign](other: BigInt): void {
-    this.subAssign(other);
-  }
-
-  /** `this *= other`, in place. */
-  [Symbol.mulAssign](other: BigInt): void {
-    this.mulAssign(other);
-  }
-
-  /** `this /= other`, in place, truncated. */
-  [Symbol.divAssign](other: BigInt): void {
-    this.divAssign(other);
-  }
-
-  /** `this %= other`, in place, with the sign of `this`. */
-  [Symbol.remAssign](other: BigInt): void {
-    this.remAssign(other);
-  }
-
-  /** `this <<= n`, in place. */
-  [Symbol.shlAssign](n: i64): void {
-    this.shlAssign(n);
-  }
-
-  /** `this >>= n`, in place. */
-  [Symbol.shrAssign](n: i64): void {
-    this.shrAssign(n);
   }
 }

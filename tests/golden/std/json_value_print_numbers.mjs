@@ -1,0 +1,20 @@
+// Node twin of json_value_print_numbers.velt: prints its .out.
+const v = JSON.parse('{"a":[1,"x",null,[2,[3]],{"b":3},true],"n":0,"s":"t"}');
+v.z = -0;
+v.i = Infinity;
+v.m = -Infinity;
+v.q = NaN;
+const nums = [];
+nums.push(-0);
+nums.push(Infinity);
+nums.push(1.5);
+nums.push(null);
+console.log(v);
+console.log(nums);
+console.log(v.z, v.i, v.m, v.q);
+const a = v.a;
+console.log(`${a}|${v}|${nums}|${v.s}|${v.n}|${v.z}|${v.i}`);
+console.log(String(a), String(v), String(nums), a.toString(), nums.toString());
+console.log(`${[]}|${{}}|${null}|${true}`);
+console.log(JSON.stringify(v));
+console.log(JSON.stringify(nums));

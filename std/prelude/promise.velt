@@ -246,6 +246,18 @@ export async function promiseThen<T, E, U>(
   return notAdopted(f(r.value));
 }
 
+/**
+ * `p` converted to a promise of another type (the compiler's `then` that retypes a promise's
+ * value, #1682): the same promise in JS, so it settles when `p` does, with no microtask of a
+ * callback between (#3277). `f` converts the value; what `p` rejects with passes through.
+ */
+export async function promiseConvert<T, E, U>(
+  p: Promise<T, E>,
+  f: (value: T) => U,
+): Promise<U> throws E {
+  return f(await p);
+}
+
 /** `p.then(f)`: `f` returns a value and throws what `p` rejects with. */
 export async function promiseThenThrows<T, E, U>(
   p: Promise<T, E>,

@@ -40,7 +40,7 @@ import {
   TREE_TAPE,
 } from "velt/encoding/json/tree";
 import { treeMember, treeOfTape, treeStringify, writeTree } from "velt/encoding/json/tree_text";
-import { inspectJsonValue } from "velt/encoding/json/value_inspect";
+import { inspectJsonValue, jsonValueString } from "velt/encoding/json/value_inspect";
 import { frozenTree } from "velt/encoding/json/tree_freeze";
 import { treeAt, treeGet, treeKeys, treeLen, treeTapeKind } from "velt/encoding/json/tree_read";
 
@@ -401,6 +401,11 @@ export class JsonValue {
    */
   toJSON(): string {
     return this.stringify();
+  }
+
+  /** `String(v)` of the parsed value, as JavaScript writes it: `1,2` for `[1, 2]`, `[object Object]`. */
+  toString(): string {
+    return jsonValueString(this);
   }
 
   /** Same as `JSON.stringify(this)`. */

@@ -101,6 +101,10 @@ pub(super) struct AsyncCx {
     /// The poll function of an async generator: also `await`s suspend (PENDING, 0), and the
     /// results are the `GEN_*` codes plus one (generator.rs `gen_code`).
     async_gen: bool,
+    /// A slot method of an object literal that awaits the promise of the function in its field
+    /// (sema's `await_forwarded`): in JS the literal's method is that function, so its `await`
+    /// takes no step (#3277).
+    forwarder: bool,
 }
 
 impl Cx<'_> {
@@ -203,7 +207,15 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.out_ptr = Some(state);
         let start = self.new_block();
         self.live[start.0 as usize] = true;
+        // The methods of an object literal's struct (named `<I> literal`) are its slots: what the
+        // literal writes are function values in its fields.
+        let forwarder = !f.is_generator
+            && f.self_ty.is_some_and(|t| match self.cx.kind(t) {
+                TyKind::Adt(d, _) => self.cx.adt_def(d).name.ends_with(" literal"),
+                _ => false,
+            });
         self.asyncx = Some(AsyncCx {
+            forwarder,
             state,
             cx,
             cases: vec![(0, start)],

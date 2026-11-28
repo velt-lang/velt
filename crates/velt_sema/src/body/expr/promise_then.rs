@@ -10,9 +10,14 @@ use crate::body::{FnCx, Want};
 use crate::ctx::Item;
 use crate::hir::{self, PassMode, TyId, TyKind};
 
-/// Is `name` a method a promise has (`then`, `catch`, `finally`)?
+/// The method of a compiler-made conversion of a promise's value (`<promise>.#then(f)`, a name no
+/// program can write): a `then` that settles when its promise does (`promiseConvert`), since in
+/// JS the converted promise is the same promise (#3277).
+pub(super) const CONVERT_THEN: &str = "#then";
+
+/// Is `name` a method a promise has (`then`, `catch`, `finally`), or [`CONVERT_THEN`]?
 pub(crate) fn is_promise_callback_method(name: &str) -> bool {
-    matches!(name, "then" | "catch" | "finally")
+    matches!(name, "then" | "catch" | "finally" | CONVERT_THEN)
 }
 
 /// Is `name` one of the prelude functions these methods compile to?
@@ -20,6 +25,7 @@ pub(crate) fn is_promise_callback_fn(name: &str) -> bool {
     matches!(
         name,
         "promiseThen"
+            | "promiseConvert"
             | "promiseThenThrows"
             | "promiseThenAsync"
             | "promiseThenAsyncThrows"
@@ -262,7 +268,9 @@ impl FnCx<'_, '_> {
                 ast::ExprKind::Lit(ast::Lit::Null | ast::Lit::Undefined)
             )
         };
+        let convert = prop.name == CONVERT_THEN;
         let (method, args) = match (prop.name.as_str(), args) {
+            (CONVERT_THEN, _) => ("then", args),
             ("then", [f, g]) if absent(f) && !absent(g) => ("catch", std::slice::from_ref(g)),
             ("then", [f, g]) if absent(g) && !absent(f) => ("then", std::slice::from_ref(f)),
             (m, _) => (m, args),
@@ -397,6 +405,7 @@ impl FnCx<'_, '_> {
                     return self.error_expr(span);
                 }
                 let name = match (all_async, throws) {
+                    (false, false) if convert => "promiseConvert",
                     (false, false) => "promiseThen",
                     (false, true) => "promiseThenThrows",
                     (true, false) => "promiseThenAsync",

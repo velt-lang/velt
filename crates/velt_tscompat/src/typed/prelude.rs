@@ -216,6 +216,7 @@ pub(crate) const VELT_GLOBALS: &[VeltOnly] = &[
     ("promiseReject", "use `Promise.reject(…)`"),
     ("promiseResolve", "use `Promise.resolve(…)`"),
     ("promiseResolveVoid", "use `Promise.resolve()`"),
+    ("promiseConvert", "use `p.then(…)`"),
     ("promiseThen", "use `p.then(…)`"),
     ("promiseThenAsync", "use `p.then(…)`"),
     ("promiseThenAsyncThrows", "use `p.then(…)`"),

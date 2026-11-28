@@ -1,0 +1,50 @@
+// A BigInt is a value, as in JavaScript (#3108): a compound assignment gives its variable a new
+// number, so another variable holding the old one keeps it (`let z = x; z += y` leaves `x`), for
+// every operator, through fields and array elements, and in a loop. The in-place methods
+// (`addAssign`) still change the number itself.
+import { BigInt } from "velt/math";
+
+const n = (k: i64): BigInt => new BigInt(k);
+
+const x = n(5);
+let z = x;
+z += n(1);
+console.log(x.toString(), z.toString());
+
+const a = n(100);
+let b = a;
+b -= n(1);
+let c = a;
+c *= n(3);
+let d = a;
+d /= n(7);
+let e = a;
+e %= n(7);
+let f = a;
+f <<= 2;
+let g = a;
+g >>= 2;
+console.log(a.toString(), b.toString(), c.toString(), d.toString(), e.toString(), f.toString(), g.toString());
+
+class Acc {
+  total: BigInt = n(0);
+}
+const acc = new Acc();
+const start = acc.total;
+const xs = [n(1), n(2)];
+const first = xs[0];
+for (let i: i64 = 1; i <= 3; i++) {
+  acc.total += n(i);
+  xs[0] *= n(10);
+}
+console.log(start.toString(), acc.total.toString(), first.toString(), xs[0].toString());
+
+let y = n(7);
+y += y;
+y *= y;
+console.log(y.toString());
+
+const m = n(40);
+const kept = m;
+m.addAssign(n(2));
+console.log(m.toString(), kept.toString());

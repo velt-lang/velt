@@ -2,7 +2,8 @@
 // `util.inspect` of the parsed value: `{ a: 1, b: [ 2, 'x' ] }`, within its `depth` and
 // `maxArrayLength` limits), for either form of the value. Lowering calls it through
 // `JsonValue[JSON_INSPECT]` (velt_vir glue/format.rs) with the line's builder. Node's depth limit
-// bounds the walk: containers below it print as `[Array]` / `[Object]`.
+// bounds the walk: containers below it print as `[Array]` / `[Object]`. Also `String(v)` of a
+// `JsonValue` (`jsonValueString`, its `toString()`), which a template literal writes.
 
 import { JsonValue } from "velt/prelude/json/json_value";
 import { inspectMore } from "velt/lang/hooks/inspect";
@@ -56,8 +57,9 @@ function inspectAt(buf: string, v: JsonValue, depth: u32): void {
   }
   const n = v.asNumber();
   if (n != null) {
-    if (n != n || n == Infinity || n == -Infinity) {
-      velt_rt_strbuf_push_str(buf, "null");
+    // As Node prints the number: `-0`, `NaN`, `Infinity` (a value stored with `JsonValue.of`).
+    if (n == 0 && 1.0 / n < 0) {
+      velt_rt_strbuf_push_str(buf, "-0");
     } else {
       const text: string = hookCall("number_shortest", n);
       velt_rt_strbuf_push_str(buf, text);
@@ -107,4 +109,43 @@ function inspectAt(buf: string, v: JsonValue, depth: u32): void {
     inspectAt(buf, m, depth + 1);
   }
   velt_rt_strbuf_push_str(buf, " }");
+}
+
+/**
+ * `String(v)` and `${v}` of a `JsonValue`, as JavaScript converts the parsed value: a string is
+ * itself, a number its `String(n)` (`-0` is `0`), an array its elements joined with `,` (a null
+ * element as empty text, a nested array the same way) and an object `[object Object]`.
+ */
+export function jsonValueString(v: JsonValue): string {
+  const s = v.asString();
+  if (s != null) {
+    return s;
+  }
+  if (v.isArray()) {
+    let out = "";
+    const len = v.len();
+    for (let i: i64 = 0; i < len; i++) {
+      if (i > 0) {
+        out += ",";
+      }
+      const e = v.at(i)!;
+      if (!e.isNull()) {
+        out += jsonValueString(e);
+      }
+    }
+    return out;
+  }
+  if (v.isObject()) {
+    return "[object Object]";
+  }
+  if (v.isNull()) {
+    return "null";
+  }
+  const b = v.asBool();
+  if (b != null) {
+    return b ? "true" : "false";
+  }
+  const n = v.asNumber()!;
+  const text: string = hookCall("number_shortest", n);
+  return text;
 }

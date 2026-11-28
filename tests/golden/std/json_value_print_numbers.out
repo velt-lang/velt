@@ -1,0 +1,16 @@
+{
+  a: [ 1, 'x', null, [ 2, [Array] ], { b: 3 }, true ],
+  n: 0,
+  s: 't',
+  z: -0,
+  i: Infinity,
+  m: -Infinity,
+  q: NaN
+}
+[ -0, Infinity, 1.5, null ]
+-0 Infinity -Infinity NaN
+1,x,,2,3,[object Object],true|[object Object]|0,Infinity,1.5,|t|0|0|Infinity
+1,x,,2,3,[object Object],true [object Object] 0,Infinity,1.5, 1,x,,2,3,[object Object],true 0,Infinity,1.5,
+|[object Object]|null|true
+{"a":[1,"x",null,[2,[3]],{"b":3},true],"n":0,"s":"t","z":0,"i":null,"m":null,"q":null}
+[0,null,1.5,null]
