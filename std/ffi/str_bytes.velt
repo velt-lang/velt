@@ -2,8 +2,8 @@
 // function lowering calls for each such argument (crates/velt_vir/src/lower/c_call.rs).
 
 import { noInline, strByteAt, strByteLen, strLen } from "velt/lang/intrinsics";
+import { strIsWellFormed } from "velt/lang/string/well_formed";
 
-declare function velt_rt_str_is_well_formed(s: string): bool;
 declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64, units: u64): string;
 
 /** The piece's unit count, unknown: `velt_rt_str_byte_slice` counts it. */
@@ -29,11 +29,11 @@ export function byteLength(s: string): usize {
  * The string whose bytes a `StrBytes` argument passes: `s` itself when it is well-formed, as
  * nearly every string is, else a copy with U+FFFD for each lone surrogate (std only: lowering
  * calls it). Small, so LLVM inlines it at each argument: ASCII text (as many UTF-16 units as
- * bytes) is checked inline, other text by the runtime's O(1) check, and the copy is a function
- * of its own.
+ * bytes) is checked inline, other text by `strIsWellFormed` (O(1) for most heap strings), and
+ * the copy is a function of its own.
  */
 export function strBytesOf(s: string): string {
-  if (strLen(s) == strByteLen(s) || velt_rt_str_is_well_formed(s)) {
+  if (strLen(s) == strByteLen(s) || strIsWellFormed(s)) {
     return s;
   }
   return wellFormedCopy(s);

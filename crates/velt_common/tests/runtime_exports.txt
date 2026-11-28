@@ -86,7 +86,6 @@ velt_rt velt_rt_str_eq
 velt_rt velt_rt_str_from_bool
 velt_rt velt_rt_str_from_char_code
 velt_rt velt_rt_str_hash
-velt_rt velt_rt_str_is_well_formed
 velt_rt velt_rt_str_join
 velt_rt velt_rt_str_own
 velt_rt velt_rt_str_to_lower

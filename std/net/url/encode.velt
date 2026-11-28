@@ -9,10 +9,10 @@
 
 import { IoResult } from "velt/native/result";
 import { arrayWithCapacity, strByteLen } from "velt/lang/intrinsics";
+import { strIsWellFormed } from "velt/lang/string/well_formed";
 
 declare function velt_rt_bytes_from_str(s: string): u8[];
 declare function velt_rt_bytes_to_str(b: u8[]): IoResult<string>;
-declare function velt_rt_str_is_well_formed(s: string): bool;
 
 /**
  * WHATWG percent-encode sets (url.spec.whatwg.org §1.3). Each set after `C0` up to `FORM`
@@ -237,7 +237,7 @@ export function encodeSet(s: string, set: i64): string {
  * `URIError` (a lone surrogate, which has no UTF-8).
  */
 export function encodeUri(s: string, keepReserved: bool): string | null {
-  if (!velt_rt_str_is_well_formed(s)) {
+  if (!strIsWellFormed(s)) {
     return null;
   }
   const b = bytesOf(s);

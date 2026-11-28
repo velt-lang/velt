@@ -26,6 +26,7 @@ import {
   strLoadU8x16,
 } from "velt/lang/intrinsics";
 import { codePoint4 } from "velt/lang/string/code_units";
+import { strIsWellFormed } from "velt/lang/string/well_formed";
 
 declare function velt_rt_str_byte_slice(s: string, start: u64, end: u64, units: u64): string;
 
@@ -37,7 +38,6 @@ declare function velt_rt_strbuf_new(cap: u64, out: string);
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
 declare function velt_rt_strbuf_finish(buf: string, out: string);
 declare function velt_rt_strbuf_push_u8s(buf: string, bytes: u8[], len: u64, units: u64);
-declare function velt_rt_str_is_well_formed(s: string): bool;
 declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
 declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
 declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
@@ -186,7 +186,7 @@ export function repeat(s: string, count: i64): string {
     }
     // Text with a lone surrogate is appended as strings: a copy that ends with a high one
     // joins the next that starts with a low one.
-    if (!velt_rt_str_is_well_formed(s)) {
+    if (!strIsWellFormed(s)) {
       return appended(s, times, total);
     }
   }
