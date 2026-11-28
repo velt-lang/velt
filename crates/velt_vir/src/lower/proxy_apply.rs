@@ -88,7 +88,8 @@ impl FnLower<'_, '_> {
         let (arr, arr_ty) = self.argv_array(argv, argc);
         let outp = self.any_out(out);
         let args = vec![(tv, any), (arr, arr_ty)];
-        let st = match self.proxy_invoke(velt_common::std_key!(proxy_apply), data, ty, args, &outp) {
+        let st = match self.proxy_invoke(velt_common::std_key!(proxy_apply), data, ty, args, &outp)
+        {
             true => ST_OK,
             false => ST_UNSUPPORTED,
         };
@@ -224,7 +225,12 @@ impl FnLower<'_, '_> {
     /// `typeof` of an `any` whose tag says `"object"` (`data`, `desc`), into `out`: `"function"`
     /// for a proxy of a function (`[PROXY_IS_FUNCTION]`), in a program that has `Proxy`. Continues
     /// in the block for any other value.
-    pub(super) fn proxy_typeof(&mut self, (data, desc): (Operand, Operand), out: &Place, done: vir::BlockId) {
+    pub(super) fn proxy_typeof(
+        &mut self,
+        (data, desc): (Operand, Operand),
+        out: &Place,
+        done: vir::BlockId,
+    ) {
         let Some(proxy) = self.cx.prelude_proxy_ty() else {
             return;
         };

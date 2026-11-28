@@ -609,7 +609,12 @@ impl FnLower<'_, '_> {
             // A proxy: of a function, its `apply` trap or its target (proxy_apply.rs).
             TyKind::Adt(..) if self.is_proxy(ty) => {
                 let call = (argv, argc, out);
-                self.proxy_apply_call((data, ty), super::proxy_apply::ProxyThis::Undefined, call, None)
+                self.proxy_apply_call(
+                    (data, ty),
+                    super::proxy_apply::ProxyThis::Undefined,
+                    call,
+                    None,
+                )
             }
             // An array method (`Reflect.get(array, "push")`, `Array.prototype[k]`) called plainly
             // runs as a `ThisFn` does, with `undefined` as `this` (std/lang/proxy/array.velt).
