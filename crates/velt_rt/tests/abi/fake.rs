@@ -39,7 +39,23 @@ pub unsafe fn spawn_state(poll: PollFn, state: *mut u8) -> JoinHandle<()> {
 /// A leaf that is pending once (waking its task) and ready on the next poll, with an empty
 /// result (what a stored `yieldNow()` was before the executor in Velt took it over).
 pub fn yield_once() -> *mut VeltFut {
-    crate::task::leaf::new_inner_leaf(tokio::task::yield_now())
+    crate::task::leaf::new_inner_leaf(YieldOnce(false))
+}
+
+/// Pending on its first poll, after waking its task; ready on the next.
+struct YieldOnce(bool);
+
+impl Future for YieldOnce {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        if self.0 {
+            return Poll::Ready(());
+        }
+        self.0 = true;
+        cx.waker().wake_by_ref();
+        Poll::Pending
+    }
 }
 
 /// Wait for a task [`spawn_state`] started (its panic goes on here).

@@ -127,7 +127,6 @@ const CHECKED: &[&str] = &[
     "lang/hooks/reactor_epoll.velt",
     "lang/hooks/reactor_kqueue.velt",
     "lang/hooks/sched_cells.velt",
-    "lang/hooks/sched_end.velt",
     "lang/hooks/sched_io_write.velt",
     "lang/hooks/sched_node_loc.velt",
     "lang/hooks/sched_read.velt",
@@ -293,8 +292,8 @@ mod tests {
     #[test]
     fn only_the_runtime_s_exports_are_skipped() {
         let exports = runtime_exports();
-        assert!(exports.contains("velt_rt_timer_unref_due"));
-        assert!(exports.contains("velt_rt_keep_alive_acquire"));
+        assert!(exports.contains("velt_rt_tcp_listen"));
+        assert!(exports.contains("velt_rt_latch_new"));
         assert!(!exports.contains("velt_rt_not_exported"));
         assert!(!exports.contains("strlen"));
         // The WebAssembly runtime's lines are not velt_rt's.

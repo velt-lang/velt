@@ -7,13 +7,12 @@
 //! give back ([`JoinHandle`], [`AbortHandle`]), never through tokio's own.
 //!
 //! The runtime starts lazily on first use and lives until the process exits (there is no
-//! shutdown). Like Node, the program's entry ([`crate::entry::run_main`]) keeps the process alive
-//! after `main` returns while something can still happen: a keep-alive reference (a listening
-//! HTTP server, a ref'd timer) is held, or a task runs or waits for a timer or I/O (quiet.rs,
-//! which also ends an `async main` that can never finish). The host has one worker thread
-//! ([`worker_count`], `VELT_THREADS` or the cores, is the executor's count that the old ABI
-//! reports); it flushes buffered stdout whenever it goes idle, so output written from the glue
-//! shows promptly.
+//! shutdown). What keeps a program alive after `main` returns (a listening server, a ref'd timer,
+//! a task that waits for a timer or I/O) is the executor's to decide (std/lang/hooks/
+//! sched_end.velt), as Node's event loop does: the host's tasks do not keep the process alive.
+//! The host has one worker thread ([`worker_count`], `VELT_THREADS` or the cores, is the
+//! executor's count that the old ABI reports); it flushes buffered stdout whenever it goes idle,
+//! so output written from the glue shows promptly.
 
 mod handle;
 mod host;
@@ -30,97 +29,9 @@ use std::cell::Cell;
 use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Keep-alive references (Node's "ref'd handles"): while > 0, the process outlives `main`.
-static KEEP_ALIVE: AtomicUsize = AtomicUsize::new(0);
-
-/// Take a keep-alive reference (e.g. a server started listening).
-pub fn keep_alive_acquire() {
-    KEEP_ALIVE.fetch_add(1, Ordering::SeqCst);
-}
-
-/// Release a keep-alive reference taken with [`keep_alive_acquire`].
-///
-/// A hand-off point: releasing the last reference lets the program's exit path continue on the
-/// main thread, which flushes stdout and ends the process; what this thread printed (a timer
-/// callback's last line) must be published before that.
-pub fn keep_alive_release() {
-    crate::io::publish_before_handoff();
-    if KEEP_ALIVE.fetch_sub(1, Ordering::SeqCst) == 1 {
-        // Released outside a worker (which signals when it goes idle): the end may be here.
-        if !super::quiet::on_worker() {
-            super::quiet::signal();
-        }
-    }
-}
-
-/// `velt_rt_keep_alive_acquire()`: take a keep-alive reference for a ref'd timer
-/// (std/prelude/timers.velt), released with [`velt_rt_keep_alive_release`].
-#[no_mangle]
-pub extern "C-unwind" fn velt_rt_keep_alive_acquire() {
-    keep_alive_acquire();
-}
-
-/// `velt_rt_keep_alive_release()`: release a reference taken with
-/// [`velt_rt_keep_alive_acquire`].
-#[no_mangle]
-pub extern "C-unwind" fn velt_rt_keep_alive_release() {
-    keep_alive_release();
-}
-
-/// `velt_rt_timer_unref_due()`: a due `unref()`'d timer asks whether to drop its callback: the
-/// leaf completes with 1 once the process is ending (quiet.rs `UnrefDue`, which may wait for the
-/// last worker to park first), as Node exits without running it (std/prelude/timers.velt).
-#[no_mangle]
-pub extern "C-unwind" fn velt_rt_timer_unref_due() -> *mut super::VeltFut {
-    super::leaf::new_inner_leaf(super::quiet::UnrefDue::new(&QUIET))
-}
-
-/// Program exit (after `main` returns): like Node, block while something can still happen: a
-/// server is listening, a ref'd timer is pending, or a task runs or waits for a timer or I/O
-/// (quiet.rs). Returns at once, and never starts the runtime, when nothing is held and no task is
-/// alive.
-pub fn wait_for_the_end() {
-    if KEEP_ALIVE.load(Ordering::SeqCst) == 0 && alive_tasks() == 0 {
-        return;
-    }
-    crate::io::flush_stdout();
-    static NEVER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    super::quiet::wait(&QUIET, &NEVER);
-}
-
-/// Whether a task may still run (for the leak counters, which wait for tasks that free blocks),
-/// or a Rust waker is giving back its reference to a task of the executor in Velt, which may be
-/// the last (a reactor thread's late wake of a task that is done).
-pub(crate) fn tasks_may_run() -> bool {
-    (alive_tasks() > 0 && !super::quiet::is_quiet(&QUIET)) || super::waker::giving_back()
-}
-
-fn keep_alive_count() -> usize {
-    KEEP_ALIVE.load(Ordering::SeqCst)
-}
-
-/// What quiet.rs reads of the runtime.
-static QUIET: super::quiet::Runtime<'static> = super::quiet::Runtime {
-    keep_alive: &keep_alive_count,
-    alive_tasks: &alive_tasks,
-    queued: &queued_tasks,
-};
-
-/// Tasks waiting in the runtime's queues outside a worker's own (spawned from outside a worker,
-/// or woken there).
-fn queued_tasks() -> usize {
-    host::queued_tasks()
-}
-
-/// The park hook of every worker: publish its output, then count it idle (quiet.rs).
+/// The park hook of the host's worker: publish its output.
 pub(super) fn parked() {
     crate::io::flush_idle();
-    quiet_parked();
-}
-
-/// A worker goes idle (quiet.rs): the last one checks whether the process is done.
-fn quiet_parked() {
-    super::quiet::parked(&QUIET);
 }
 
 /// Environment variable overriding the worker-thread count.
@@ -199,24 +110,8 @@ pub fn block_on<F: Future>(f: F) -> F::Output {
     runtime().block_on(f)
 }
 
-/// How many tasks are alive (spawned and not finished); 0 if the host never started.
-pub(crate) fn alive_tasks() -> usize {
-    host::alive_tasks()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn releasing_a_keep_alive_publishes_this_threads_output_first() {
-        use crate::io::handoff_probe::{buffer_output, published};
-        keep_alive_acquire();
-        buffer_output();
-        keep_alive_release();
-        assert!(published());
-    }
-
     #[test]
     fn an_idle_worker_publishes_this_threads_output() {
         // Output printed outside a task poll (a future dropped after it finished) has no

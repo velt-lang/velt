@@ -26,8 +26,6 @@ velt_rt velt_rt_fut_id
 velt_rt velt_rt_fut_share
 velt_rt velt_rt_host_clone
 velt_rt velt_rt_host_release
-velt_rt velt_rt_keep_alive_acquire
-velt_rt velt_rt_keep_alive_release
 velt_rt velt_rt_latch_free
 velt_rt velt_rt_latch_new
 velt_rt velt_rt_latch_open
@@ -116,7 +114,6 @@ velt_rt velt_rt_strbuf_push_words
 velt_rt velt_rt_tcp_listen
 velt_rt velt_rt_thread_yield
 velt_rt velt_rt_throw_loc
-velt_rt velt_rt_timer_unref_due
 velt_rt velt_rt_tla_at
 velt_rt velt_rt_uncaught_report
 velt_rt velt_rt_view_get
