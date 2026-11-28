@@ -44,7 +44,7 @@ export async function promiseAllSettled<T, E>(
   // array and change it while this waits (and JS leaves the array as it is).
   const snap = ps.slice();
   if (!settledAtCall()) {
-    // The runtime's executor (WebAssembly): every input awaited from the call on, as JS handles
+    // The runtime's executor (a JS host): every input awaited from the call on, as JS handles
     // each at once (#3195); taken in order, then Node's step after the last one's callback.
     const each: Promise<PromiseSettledResult<T, E>>[] = [];
     for (let i = 0; i < snap.length; i++) {

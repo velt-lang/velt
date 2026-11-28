@@ -154,16 +154,15 @@ fn whole_header_copy(rhs: &str) -> bool {
 
 #[test]
 fn a_runtime_function_gets_an_array_of_a_view_type_in_place() {
-    // #1831: `u8[]` is a view type here, so its arrays are boxed. A TCP stream's `readInto`
-    // passes its buffer's bytes to `velt_rt_tcp_try_read_into`, which writes them: the extern
-    // gets the box's own header, not a copy of it in a temporary (whose writes would be lost),
-    // and the view's mirror is written back after the call. (WebAssembly: a native build reads
-    // through the executor's reactor in std, which calls no runtime function with the array;
-    // the WebAssembly runtime's streams are still its own, and `TcpStream.readInto` calls it.)
-    const EXTERN: &str = "velt_rt_tcp_try_read_into(";
-    let vir = vir_for(
-        "import { connect } from \"velt/net\";\nconst ns: any = [1];\nconst bs = ns as u8[];\nasync function main() {\n  const s = await connect(\"127.0.0.1:1\");\n  const buf = new Uint8Array(8);\n  console.log(bs.length, await s.readInto(buf));\n}\n",
-        &["--target", "wasm32-wasip1"],
+    // #1831: `u8[]` is a view type here, so its arrays are boxed. `utf8Decode` passes its
+    // bytes to the runtime's `velt_rt_bytes_to_str`, which may write an array it is given (its
+    // parameter is not `readonly`): the extern gets the box's own header, not a copy of it in a
+    // temporary (whose writes would be lost), and the view's mirror is written back after the
+    // call. (It once was a TCP stream's `readInto` and `velt_rt_tcp_try_read_into`; std reads
+    // streams without the runtime now, on every target.)
+    const EXTERN: &str = "velt_rt_bytes_to_str(";
+    let vir = vir_of(
+        "import { utf8Decode } from \"velt/encoding\";\nconst ns: any = [1];\nconst bs = ns as u8[];\nfunction main() {\n  const buf: u8[] = [104, 105];\n  console.log(bs.length, utf8Decode(buf));\n}\n",
     );
     let fns: Vec<&str> = vir
         .split("\nfn#")
@@ -182,10 +181,10 @@ fn a_runtime_function_gets_an_array_of_a_view_type_in_place() {
         .iter()
         .position(|l| l.contains("call extern#") && l.contains(EXTERN))
         .unwrap();
-    // Its second argument is the array (`(handle, data, start, end, out)`).
+    // Its first argument is the array (`(bytes, out)`).
     let arg = exec[call]
         .split_once(EXTERN)
-        .and_then(|(_, a)| a.split(',').nth(1))
+        .and_then(|(_, a)| a.split(',').next())
         .map(str::trim)
         .unwrap_or_else(|| panic!("cannot read the array argument of {}", exec[call]));
     let def = |local: &str| -> Vec<&str> {

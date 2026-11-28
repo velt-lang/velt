@@ -6,6 +6,7 @@
 import { export as cExport } from "velt/ffi";
 import { inline, noInline } from "velt/lang/intrinsics";
 import { clearStdoutWritten, stdoutWrittenSince } from "./process";
+import * as th from "#sched-thread";
 import * as io from "./sched_io";
 import * as lk from "./sched_lock";
 import * as m from "./sched_mem";
@@ -381,9 +382,12 @@ export function toInbox(h: usize, t: usize): void {
  */
 @inline("always")
 export function publish(w: usize): void {
-  // SAFETY: the worker's latch handle, open, never freed.
-  unsafe {
-    velt_rt_latch_open$rt(m.ld(w + tk.E_LATCH) as u64);
+  // One thread (WebAssembly): nothing to publish to (no latch, sched_workers.velt `setUp`).
+  if (th.SUPPORTED) {
+    // SAFETY: the worker's latch handle, open, never freed.
+    unsafe {
+      velt_rt_latch_open$rt(m.ld(w + tk.E_LATCH) as u64);
+    }
   }
 }
 

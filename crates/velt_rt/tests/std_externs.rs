@@ -319,15 +319,15 @@ fn mismatches(defs: &BTreeMap<String, Vec<(Sig, PathBuf)>>, required: bool) -> V
 }
 
 /// The std files whose declarations velt_rt may lack, bindings WebAssembly builds use:
-/// std/fs/rt.velt (`#fs-rt`), whose async leaves are velt_rt_wasm's alone (a native build
-/// imports only the file's `*_sync` twins and runs them on the executor's blocking pool), and
-/// std/process/tty_wasm.velt, env_wasm.velt, cwd_wasm.velt and memory_wasm.velt (`#tty`'s,
-/// `#env-sys`', `#cwd-sys`' and `#memory-sys`'s default variants: native builds ask the OS
+/// std/fs/rt.velt and rt_sync.velt (the calls of `#fs-rt`'s WebAssembly variants: velt_rt_wasm's
+/// alone, a native build uses rt_sched.velt), std/process/tty_wasm.velt, env_wasm.velt,
+/// cwd_wasm.velt and memory_wasm.velt (`#tty`'s, `#env-sys`', `#cwd-sys`' and `#memory-sys`'s default variants: native builds ask the OS
 /// from std), std/task/catch_rt.velt (`#task-catch`'s default variant: native builds catch
 /// panics on the executor in Velt, catch_sched.velt), and std/task/signal_rt.velt
 /// (`#task-signal`'s default variant: native builds keep abort signals in std) (#2196).
 const WASM_ONLY_BINDINGS: &[&str] = &[
     "std/fs/rt.velt",
+    "std/fs/rt_sync.velt",
     "std/task/catch_rt.velt",
     "std/task/signal_rt.velt",
     "std/process/tty_wasm.velt",

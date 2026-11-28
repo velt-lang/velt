@@ -26,8 +26,9 @@ import { STD_ID, taskId } from "./sched_id";
 import * as r from "#reactor";
 import * as t from "./sched_task";
 
-/** The C library's `abort`: the report is the last thing the program does. */
-declare c("c") function abort(): void;
+// The C library's `abort` (the runtime's exit with its code on a JS host): the report is the last
+// thing the program does.
+import { abortProcess } from "#sched-os";
 
 /** The owner of a guarded cell. */
 export const GUARDED: usize = 0xffff_ffff_ffff_ffff;
@@ -401,10 +402,7 @@ function report(name: string, owner: usize, at: usize, me: usize): void {
   console.error(
     `velt debug-cells: ${v} was used by two tasks: it belongs to ${taskText(owner)} (on ${placeText(at)}), and ${taskText(me)} (on ${placeText(worker())}) used it too. A closure that assigns a variable it captured was shared with another task or HTTP request instead of copied, so both would change the variable (and its reference count) at the same time. Keep one value every task shares in \`shared(...)\` instead (a \`shared(new Mutex(...))\` for anything but a 64-bit integer).`,
   );
-  // SAFETY: no precondition; the program ends here.
-  unsafe {
-    abort();
-  }
+  abortProcess();
 }
 
 /** A guarded cell used without the module lock (cell_owner.rs `report_unlocked`), then stop. */
@@ -412,8 +410,5 @@ function reportUnlocked(name: string, me: usize): void {
   console.error(
     `velt debug-cells: captured variable \`${name}\` is shared through module state, and ${taskText(me)} (on ${placeText(worker())}) used it without the module lock, so it may change at the same time as another task's use. A closure that assigns a variable it captured was given to a task that does not use module state instead of copied.`,
   );
-  // SAFETY: no precondition; the program ends here.
-  unsafe {
-    abort();
-  }
+  abortProcess();
 }

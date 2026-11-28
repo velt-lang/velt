@@ -55,7 +55,8 @@ impl FnLower<'_, '_> {
             ice("not a C function")
         };
         let (symbol, ret) = (x.symbol.clone(), x.ret);
-        if !self.c_callable(x.span, &c.library) {
+        if !self.c_callable(x.span, &c.library) && !self.js_host_links(x.span, &c.library, &symbol)
+        {
             self.cx
                 .unavailable
                 .push((def, self.cx.cur_def, self.cx.user_site));
@@ -435,6 +436,23 @@ impl FnLower<'_, '_> {
         wasi(&self.cx.target)
             && library == "c"
             && self.cx.locs.as_ref().is_some_and(|m| m.is_std(span))
+    }
+
+    /// Does a JS host's module link the function `symbol` of `library` that std declares at
+    /// `span`? It has no C library, but the runtime is linked in: its own functions (`velt_rt_*`,
+    /// which the executor in Velt calls as C functions, as it does natively and on WASI) and
+    /// Rust's `memcpy`, `memmove` and `memset` (compiler_builtins). A package's never.
+    pub(super) fn js_host_links(
+        &self,
+        span: velt_common::Span,
+        library: &str,
+        symbol: &str,
+    ) -> bool {
+        let base = symbol.split('$').next().unwrap_or(symbol);
+        super::host::js_host(&self.cx.target)
+            && library == "c"
+            && self.cx.locs.as_ref().is_some_and(|m| m.is_std(span))
+            && (base.starts_with("velt_rt_") || matches!(base, "memcpy" | "memmove" | "memset"))
     }
 
     /// A read of the C constant `d` of type `ty` (`declare c const`): its value for this target,

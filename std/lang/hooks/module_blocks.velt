@@ -20,18 +20,17 @@
 // so it imports little (its own words and C allocation, below): that is such a program's compile
 // time.
 
-import { Ptr } from "velt/ffi/ptr";
 import { addressLoad, addressStore, inline, noInline } from "velt/lang/intrinsics";
-import { addressCall } from "velt/lang/intrinsics/future";
+// `init`, `rest` and `drop` take the block and return nothing: called as `stateDrop` calls (a
+// pointer in, nothing out), which is their signature on every target (wasm32 checks it).
+import { stateDrop } from "velt/lang/intrinsics/future";
 
 declare function velt_rt_write_str(stream: u32, s: string);
 declare function velt_rt_flush();
 declare function velt_rt_exit(code: i32): never;
-// As sched_mem.velt declares them: one C symbol has one signature in a program.
-declare c("c") function calloc$blocks(n: usize, size: usize): Ptr<u8> | null;
-declare c("c") function free$blocks(p: Ptr<u8> | null): void;
-// As std/process/env_posix.velt declares it.
-declare c("c") function getenv$blocks(name: readonly u8[]): Ptr<u8> | null;
+
+// The blocks' memory and the environment: the C library's, or the runtime's on a JS host.
+import { blockFree, blockZeroed, statsAsked } from "#mem-lasting";
 
 /**
  * Are the debug runtime's block counters on (`VELT_RC_STATS=1`)? Read from the C library and not
@@ -39,16 +38,7 @@ declare c("c") function getenv$blocks(name: readonly u8[]): Ptr<u8> | null;
  * module's object keeps none but its own. Asked once, when a program without tasks ends.
  */
 function counting(): bool {
-  // "VELT_RC_STATS" and a NUL.
-  const name: u8[] = [86, 69, 76, 84, 95, 82, 67, 95, 83, 84, 65, 84, 83, 0];
-  // SAFETY: `name` is NUL-terminated and alive during the call.
-  const p = unsafe { getenv$blocks(name) };
-  if (p === null) {
-    return false;
-  }
-  const at = Ptr.addressOf(p);
-  // "1" exactly.
-  return byte(at) === 49 && byte(at + 1) === 0;
+  return statsAsked();
 }
 
 /** The word at `a`: a word of a block's table entry or of a descriptor. */
@@ -87,23 +77,18 @@ function stop(message: string): never {
   velt_rt_exit(101);
 }
 
-/** `n` bytes set to 0, aligned to 16, from the C library; freed with `release`. */
+/** `n` bytes set to 0, aligned to 16 (`#mem-lasting`); freed with `release`. */
 function zeroed(n: usize): usize {
-  // SAFETY: calloc has no precondition; its result is checked.
-  const p = unsafe { calloc$blocks(1, n) };
-  if (p === null) {
+  const p = blockZeroed(n);
+  if (p === 0) {
     stop("panic: memory allocation of a module state block failed\n");
   }
-  return Ptr.addressOf(p);
+  return p;
 }
 
 /** Frees what `zeroed` gave. */
 function release(p: usize): void {
-  // SAFETY: `p` came from calloc and is not used after. `Ptr.orNull`, as `free` takes NULL:
-  // `Ptr.at` stops on 0, so this would report its callers' locations (#3094).
-  unsafe {
-    free$blocks(Ptr.orNull<u8>(p));
-  }
+  blockFree(p);
 }
 
 /**
@@ -236,7 +221,7 @@ function dropAll(): void {
     const p = ld(at + 8);
     // SAFETY: the descriptor's `drop` drops the block it initialized, once.
     unsafe {
-      addressCall(ld(desc + DESC_DROP), p);
+      stateDrop(ld(desc + DESC_DROP), p);
     }
     freeBlock(desc, p);
   }
@@ -380,10 +365,10 @@ function newBlock(desc: usize): usize {
   // SAFETY: the descriptor's `init` and `rest` take the block they initialize; `p` is a zeroed
   // block of its size and alignment.
   unsafe {
-    addressCall(ld(desc + DESC_INIT), p);
+    stateDrop(ld(desc + DESC_INIT), p);
     const rest = ld(desc + DESC_REST);
     if (rest !== 0 && !first) {
-      addressCall(rest, p);
+      stateDrop(rest, p);
     }
   }
   return p;
