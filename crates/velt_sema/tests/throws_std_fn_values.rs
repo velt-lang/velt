@@ -1,7 +1,8 @@
 //! A call through a parameter of an arrow passed to std, typed there by a function type written in
 //! std (`new Promise`'s `resolve` and `reject`), throws what that type says: not what the user's
 //! function types of the same shape hold (`throws::std_values`, #3949). A parameter the arrow
-//! assigns, or a closure in it does, may hold such a user value, and its calls still throw it.
+//! assigns, or a closure in it does, may hold such a user value: the value's error type comes into
+//! the parameter's type with the assignment, so its calls still throw it.
 
 mod common;
 
@@ -55,7 +56,8 @@ fn an_executors_resolve_throws_nothing_beside_a_user_value_of_its_type() {
 #[test]
 fn an_assigned_executor_parameter_throws_what_its_values_may() {
     // `r` holds `open` when it is called: its call throws `Refused`, which the executor's
-    // `Negative` does not allow.
+    // `Negative` does not allow. The `Refused` comes with `open`'s type, which the assignment
+    // brings into `r`'s, not from matching `r`'s type with the user's sites.
     let e = err_src(&program("r = open;\n    r(n);"));
     assert!(e.contains("throws `Refused`"), "{e}");
     let e = err_src(&program(

@@ -7,9 +7,11 @@
 //! function type unless it throws within that type (the conversion is refused), and a user type
 //! with a site of the same shape is std's object type only while the site's set is empty.
 //!
-//! An executor parameter the executor assigns, or a closure in it does, may hold any value of its
-//! type: its calls match as before. A `const` without a written type initialized with one holds
-//! the same function.
+//! An executor parameter the executor assigns, or a closure in it does, is noted too: the value
+//! assigned brings its error type into the parameter's type (`r = open` for a `(n: number) =>
+//! void` variable holding a throwing closure: its site's variable), so a call of the parameter
+//! throws that through its type, which the structural match would only repeat. A `const` without
+//! a written type initialized with one holds the same function.
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -18,7 +20,7 @@ use crate::hir::{ExprKind as H, Stmt, StmtKind as S, TyKind};
 
 impl crate::body::FnCx<'_, '_> {
     /// `executor` is a `new Promise` executor (an arrow): note its parameters without a written
-    /// type that it never assigns.
+    /// type.
     pub(crate) fn note_executor_params(&mut self, executor: &ast::Expr) {
         let mut arrow = executor;
         while let ast::ExprKind::Paren(x) = &arrow.kind {
@@ -30,15 +32,8 @@ impl crate::body::FnCx<'_, '_> {
         if self.cx.fn_sites.by_file.is_empty() {
             return;
         }
-        let assigned = self.arrow_scans.closure_assigned(arrow);
-        let ends = self.arrow_scans.assignment_ends(arrow);
         for a in params {
-            let name = &a.name.name;
-            if a.ty.is_none()
-                && a.pattern.is_none()
-                && !assigned.contains_key(name)
-                && !ends.contains_key(name)
-            {
+            if a.ty.is_none() && a.pattern.is_none() {
                 self.executor_params.insert(a.name.span);
             }
         }
