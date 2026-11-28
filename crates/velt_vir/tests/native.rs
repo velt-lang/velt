@@ -1,6 +1,6 @@
 //! Native runs of lowered M3/M4 programs: HIR (golden sources loaded with the real std, which
 //! prints numbers: #2197) → `velt_vir::lower` → Cranelift object → linked with the real
-//! `velt_rt` (tokio executor, timers, TCP, JSON reader) → executed; stdout is compared with the
+//! `velt_rt` (allocator, strings, JSON reader) → executed; stdout is compared with the
 //! goldens.
 
 #[path = "../src/tests/std_src.rs"]

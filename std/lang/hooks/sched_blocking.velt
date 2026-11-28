@@ -13,8 +13,8 @@
 //   detached; where none can start (the default variant), `supported()` is false and callers
 //   keep the runtime's leaves. When the OS refuses a thread and none is running, the thread
 //   that queued the job runs the queue itself (a blocked worker rather than a job nobody runs).
-// - A job queued or running keeps the process alive (sched_end.velt), as with the runtime, whose
-//   exit waits for tokio's blocking threads, and Node, whose thread-pool requests are referenced:
+// - A job queued or running keeps the process alive (sched_end.velt), as with the runtime's tokio
+//   blocking threads before, and Node, whose thread-pool requests are referenced:
 //   `submit` takes a keep-alive reference, and the job's end gives it back and wakes worker 0,
 //   which looks again whether anything is left to happen (a job whose waiter left wakes nobody
 //   else). After `main` too: the program's end waits for the jobs counted (sched.velt
