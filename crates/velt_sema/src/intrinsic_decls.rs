@@ -42,8 +42,6 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("anyMethodCalled", Op(I::AnyMethodCalled)),
     ("anyToPrimitive", AnyToPrimitive),
     ("noteStdUse", Op(I::NoteStdUse)),
-    ("proxyArrayCall", Op(I::ProxyArrayCall)),
-    ("proxyArrayHole", Op(I::ProxyArrayHole)),
     ("stdUsed", Op(I::StdUsed)),
     // array.velt
     ("arrayByteLength", Op(I::ArrayByteLength)),

@@ -1,0 +1,24 @@
+// `splice` on a proxy of an array, read only by a computed name (`p[m].call(p, ...)`): the program
+// can run every array algorithm, so the holes Node's algorithm makes are kept and the traps see
+// them, as in Node.
+const target: number[] = [1, 2, 3];
+const p: any = new Proxy(target, {
+  set(obj: any, prop: string | symbol, v: any, r: any): boolean {
+    const ok = Reflect.set(obj, prop, v, r);
+    console.log("set", String(prop), "has 3:", Reflect.has(obj, "3"), "length", obj.length);
+    return ok;
+  },
+  deleteProperty(obj: any, prop: string | symbol): boolean {
+    const ok = Reflect.deleteProperty(obj, prop);
+    console.log("delete", String(prop), "has:", Reflect.has(obj, prop), "length", obj.length);
+    return ok;
+  },
+});
+const parts: string[] = ["spl", "ice"];
+const m = parts.join("");
+// Inserting at the start writes index 4 past the end first: 3 is a hole until it is written.
+console.log(p[m].call(p, 0, 0, 7, 8));
+// Removing from the start deletes the last elements before the shorter length is written.
+const f = p[m];
+console.log(f.call(p, 0, 2));
+console.log(target.join(","));
