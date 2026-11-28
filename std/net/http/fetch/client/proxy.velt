@@ -1,13 +1,21 @@
 // velt/net/http (internal): the proxy a `fetch` goes through (#3693). The request's `proxy`
-// option, when it has one, decides: a proxy URL, or "" for none. Otherwise, as in Node 22.21+,
-// the environment's proxy is used only when `NODE_USE_ENV_PROXY=1` (read once, at the first
-// request: `envProxyOn`), and then as undici's `EnvHttpProxyAgent` reads it (`fromEnv`):
-// `http_proxy`, else `HTTP_PROXY`, for `http:`; `https_proxy`, else `HTTPS_PROXY`, for `https:`,
-// and the `http:` one when neither is set. A lowercase variable that is set wins even when it is
-// empty, and an empty value means no proxy. `no_proxy`, else `NO_PROXY`, lists the hosts reached
-// directly (`noProxy`); this machine is not special (Node sends `localhost` to the proxy too).
-// The proxy variables are read once, at that first request (`envVars`), as Node reads them once
-// when it starts; `NO_PROXY` is read for each request and redirect hop, as undici re-reads it.
+// option, when it has one, decides: a proxy URL, or "" for none. Otherwise the environment's
+// proxy is used, always, as in Bun (`fromEnv`): `http_proxy`, else `HTTP_PROXY`, for `http:`;
+// `https_proxy`, else `HTTPS_PROXY`, for `https:` (never the `http:` one, as in Bun). A lowercase
+// variable that is set wins even when it is empty, and an empty value means no proxy.
+// `no_proxy`, else `NO_PROXY`, lists the hosts reached directly (`noProxy`, as undici reads it);
+// this machine is not special (`localhost` goes to the proxy too). Opting out is `NO_PROXY=*` or
+// `proxy: ""`. The proxy variables are read once, at the first request without a `proxy` option
+// (`envVars`), so a program that never fetches reads none; `NO_PROXY` is read for each request
+// and redirect hop, as undici re-reads it.
+//
+// Where Node 22.21+ differs: it uses the environment's proxy only with `NODE_USE_ENV_PROXY=1`
+// (Velt never reads that variable), reads the proxy variables when it starts (a program that
+// sets one before its first `fetch` goes through that proxy here), and sends an `https:` request
+// through the `http:` proxy when no `https:` one is set. Where Bun differs: it also reads
+// `ALL_PROXY`, takes `HTTP_PROXY` when `http_proxy` is set but empty, reads `""` and `''` as
+// empty, reads the variables at every request, and its `NO_PROXY` takes CIDR blocks and has
+// `example.com` cover its subdomains (here, as in Node, it names that host alone).
 //
 // A proxy is `http://[user:password@]host[:port][/]` (port 80 by default); its user and password,
 // when it has both, become `proxy-authorization: Basic …` (with only one of them, none, as in
@@ -17,8 +25,7 @@
 // proxy variable is not a URL (Velt also takes `host:port`, and rejects a `fetch` through any
 // other proxy with `EINVAL`), and it speaks TLS to an `https://` proxy, which Velt refuses.
 // Node also starts no program whose proxy URL has a path, query or fragment; a `fetch` through
-// it fails with `EINVAL` here. A program that sets a proxy variable before its first `fetch`
-// goes through that proxy here, where Node keeps the one it started with.
+// it fails with `EINVAL` here.
 
 import { IoError } from "velt/io/error";
 import { base64Encode, utf8Encode } from "velt/encoding";
@@ -37,22 +44,6 @@ export class Via {
     this.addr = addr;
     this.authorization = authorization;
   }
-}
-
-/**
- * Whether `NODE_USE_ENV_PROXY` is `1`: -1 before the first request reads it, then 0 or 1. Starts
- * at a literal: an atomic started at a constant's name is built anew at every use.
- */
-const ENV_PROXY = new Atomic<i32>(-1);
-
-/** Whether the environment's proxy is used (`NODE_USE_ENV_PROXY=1`, read once per process). */
-function envProxyOn(): bool {
-  let on = ENV_PROXY.load("relaxed");
-  if (on < 0) {
-    on = getEnv("NODE_USE_ENV_PROXY") == "1" ? 1 : 0;
-    ENV_PROXY.store(on, "relaxed");
-  }
-  return on == 1;
 }
 
 /** The proxy variables, each with the name it was read from (proxy.velt module comment). */
@@ -110,9 +101,9 @@ function readEnvVars(): EnvVars {
 
 /**
  * The proxy of a request to `hostname` (as the URL parser serializes it: IPv6 in brackets) on
- * `port`: the request's `given` one ("" for none), or when it is null the environment's, if
- * `NODE_USE_ENV_PROXY=1`. Throws `EINVAL` for a proxy URL that is not `http:`, naming where it
- * came from, never its value (which may hold a password).
+ * `port`: the request's `given` one ("" for none), or when it is null the environment's. Throws
+ * `EINVAL` for a proxy URL that is not `http:`, naming where it came from, never its value
+ * (which may hold a password).
  */
 export function proxyFor(
   https: bool,
@@ -123,7 +114,7 @@ export function proxyFor(
   if (given != null) {
     return given.length == 0 ? null : parseProxy(given, "the proxy option");
   }
-  return envProxyOn() ? fromVars(envVars(), https, hostname, port) : null;
+  return fromVars(envVars(), https, hostname, port);
 }
 
 /** The environment's proxy, its variables read now, for a request to `hostname` on `port`. */
@@ -132,8 +123,8 @@ export function fromEnv(https: bool, hostname: string, port: i64): Via | null th
 }
 
 /**
- * The proxy `vars` give a request to `hostname` on `port`, as `EnvHttpProxyAgent`'s: `NO_PROXY`
- * read now.
+ * The proxy `vars` give a request to `hostname` on `port`: the scheme's own variable (no
+ * fallback to the `http:` one for `https:`, as in Bun), `NO_PROXY` read now.
  */
 function fromVars(
   vars: EnvVars,
@@ -141,15 +132,8 @@ function fromVars(
   hostname: string,
   port: i64,
 ): Via | null throws IoError {
-  let name = vars.httpName;
-  let value = vars.http;
-  if (https) {
-    const secure = vars.https;
-    if (secure != null && secure.length > 0) {
-      name = vars.httpsName;
-      value = secure;
-    }
-  }
+  const name = https ? vars.httpsName : vars.httpName;
+  const value = https ? vars.https : vars.http;
   if (value == null || value.length == 0) {
     return null;
   }

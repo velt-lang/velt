@@ -1,9 +1,9 @@
 // `fetch` through a proxy (#3693): `https:` and `http:` requests through a `CONNECT` tunnel to
 // velt/http servers (the `https:` one with the test certificate), a proxy that refuses the tunnel
-// or is not there, and the proxy the environment sets with `NODE_USE_ENV_PROXY=1`. The proxy is
-// written here on velt/net. (Which proxy a request takes, and `NO_PROXY`, are white-box tests:
-// std/net/http/fetch/client/proxy.test.velt; tests/golden/std/fetch_env_proxy.velt runs them
-// beside Node.)
+// or is not there, and the proxy the environment sets (used by default). The proxy is written
+// here on velt/net. (Which proxy a request takes, and `NO_PROXY`, are white-box tests:
+// std/net/http/fetch/client/proxy.test.velt; tests/golden/std/http_server/fetch_env_proxy.velt
+// runs them beside Node.)
 import { Channel, channel } from "velt/sync";
 import { HttpServer, serve } from "http-server";
 import { IoError } from "velt/io";
@@ -197,11 +197,10 @@ describe("fetch through a proxy", () => {
     ).toBe(true);
   });
 
-  // The first request of this program without a `proxy` option: `NODE_USE_ENV_PROXY` is read
-  // then, once, as Node reads it when it starts.
-  it("takes the environment's proxy with NODE_USE_ENV_PROXY=1, for this machine too", async () => {
+  // The first request of this program without a `proxy` option: the proxy variables are read
+  // then, once.
+  it("takes the environment's proxy by default, for this machine too", async () => {
     const s = await setup();
-    setEnv("NODE_USE_ENV_PROXY", "1");
     setEnv("http_proxy", s.proxy);
     setEnv("https_proxy", s.proxy);
     removeEnv("no_proxy");
