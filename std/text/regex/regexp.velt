@@ -22,9 +22,17 @@
 
 import { Pattern } from "velt/text/regex/pattern";
 import { compileRegExp } from "velt/text/regex/regexp_compile";
-import { foundByExec, replaceFound, splitting } from "velt/text/regex/exec_calls";
+import {
+  foundByExec,
+  matchAllByExec,
+  matchByExec,
+  replaceFound,
+  searchByExec,
+  splitByExec,
+  splitting,
+} from "velt/text/regex/exec_calls";
 import { find, findAll } from "velt/text/regex/find";
-import { CURSOR, MATCH, MATCH_ALL, REPLACE_CALLING, SEARCH, SPLIT } from "velt/text/regex/keys";
+import { CURSOR, REPLACE_CALLING } from "velt/text/regex/keys";
 import { past, positionOf, textOf } from "velt/text/regex/offsets";
 import { matchOf } from "velt/text/regex/match_of";
 import { Program } from "velt/text/regex/program";
@@ -216,38 +224,33 @@ export class RegExp implements Pattern {
    * ones `replace` replaces.
    */
   replaceWith<E>(s: string, f: (m: RegExpMatch) => string throws E): string {
-    if (!isExactClass(this)) {
-      return replaceFound(s, foundByExec(this, s), (m, _s) => f(m));
-    }
-    let out = "";
-    let last: number = 0;
-    for (const m of this.replaced(s)) {
-      out += s.slice(last as i64, m.index as i64);
-      out += f(m);
-      last = m.end;
-    }
-    out += s.slice(last as i64);
-    return out;
+    const found = isExactClass(this) ? this.replaced(s) : foundByExec(this, s);
+    return replaceFound(s, found, (m, _s) => f(m));
+  }
+
+  /**
+   * JS `re[Symbol.replace](s, replacement)`, which `s.replace(re, replacement)` and
+   * `s.replaceAll(re, replacement)` call with a string replacement (`replace`). Velt has no
+   * overloads, so a replacer function goes to `RegExp`'s own steps instead, which call `exec`;
+   * a call passing one to a regex whose class declares its own `[Symbol.replace]` is refused.
+   */
+  [Symbol.replace](s: string, replacement: string): string {
+    return this.replace(s, replacement);
   }
 
   /** `replaceWith` for `s.replace(re, (match, ...groups) => …)`: `f` gets the subject too. */
   [REPLACE_CALLING]<E>(s: string, f: (m: RegExpMatch, s: string) => string throws E): string {
-    if (!isExactClass(this)) {
-      return replaceFound(s, foundByExec(this, s), f);
-    }
-    let out = "";
-    let last: number = 0;
-    for (const m of this.replaced(s)) {
-      out += s.slice(last as i64, m.index as i64);
-      out += f(m, s);
-      last = m.end;
-    }
-    out += s.slice(last as i64);
-    return out;
+    return replaceFound(s, isExactClass(this) ? this.replaced(s) : foundByExec(this, s), f);
   }
 
-  /** JS `s.match(re)`: every match's text with `g` (null if none), else `exec`'s groups. */
-  [MATCH](s: string): string[] | null {
+  /**
+   * JS `re[Symbol.match](s)`, which `s.match(re)` calls: every match's text with `g` (null if
+   * none), else `exec`'s groups. A class's own `exec` is called as JavaScript calls it.
+   */
+  [Symbol.match](s: string): string[] | null {
+    if (!isExactClass(this) && this.global) {
+      return matchByExec(this, s);
+    }
     if (!this.global) {
       const m = this.exec(s);
       if (m == null) {
@@ -265,38 +268,38 @@ export class RegExp implements Pattern {
     return found.length == 0 ? null : found;
   }
 
-  /** JS `s.matchAll(re)` (a `g` regex): every match from `lastIndex` on, which stays as is. */
-  [MATCH_ALL](s: string): RegExpMatch[] {
+  /**
+   * JS `re[Symbol.matchAll](s)`, which `s.matchAll(re)` calls (a `g` regex): every match from
+   * `lastIndex` on, which stays as is.
+   */
+  [Symbol.matchAll](s: string): RegExpMatch[] {
     if (!this.global) {
       panic("TypeError: String.prototype.matchAll called with a non-global RegExp argument");
     }
-    if (this.lastIndex == 0 && !this.sticky) {
+    if (isExactClass(this) && this.lastIndex == 0 && !this.sticky) {
       return this.matchAll(s);
     }
-    const saved = this.lastIndex;
-    const out: RegExpMatch[] = [];
-    while (true) {
-      const m = this.exec(s);
-      if (m == null) {
-        break;
-      }
-      if (m.end == m.index) {
-        this.#cursor.at.store(past(s, m.end, this.#prog.units));
-      }
-      out.push(m);
+    // From `lastIndex`, which stays: by `exec`, a class's own when it declares one.
+    return matchAllByExec(this, s);
+  }
+
+  /**
+   * JS `re[Symbol.search](s)`, which `s.search(re)` calls: where the first match from 0 starts,
+   * or -1; `lastIndex` stays.
+   */
+  [Symbol.search](s: string): number {
+    if (!isExactClass(this)) {
+      return searchByExec(this, s) as number;
     }
-    this.#cursor.at.store(saved);
-    return out;
-  }
-
-  /** JS `s.search(re)`: where the first match from 0 starts, or -1; `lastIndex` stays. */
-  [SEARCH](s: string): i64 {
     const m = this.execAt(s, 0);
-    return m == null ? -1 : m.index as i64;
+    return m == null ? -1 : m.index;
   }
 
-  /** JS `s.split(re, limit)`: no limit when null, `[]` for 0. */
-  [SPLIT](s: string, limit: number | null | undefined): string[] {
+  /** JS `re[Symbol.split](s, limit)`, which `s.split(re, limit)` calls: `[]` for 0. */
+  [Symbol.split](s: string, limit?: number): string[] {
+    if (!isExactClass(this)) {
+      return splitByExec(this, s, limit);
+    }
     const n = limit == null ? -1 : limit as i64;
     return n == 0 ? [] : splitMatches(this.#prog, s, n > 0 ? n as usize : 0);
   }

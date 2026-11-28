@@ -1,0 +1,5 @@
+regex_subclass_replace_function.velt:16:27: error: a replacer function with a regex of class `R`, whose `[Symbol.replace]` takes a string
+  = note: JavaScript passes the function to the class's `[Symbol.replace]`; Velt has no overloads, so it takes a string replacement: pass a string, or call the method yourself (velt-lang/velt#3823)
+
+regex_subclass_replace_function.velt:17:30: error: a replacer function with a regex of class `R`, whose `[Symbol.replace]` takes a string
+  = note: JavaScript passes the function to the class's `[Symbol.replace]`; Velt has no overloads, so it takes a string replacement: pass a string, or call the method yourself (velt-lang/velt#3823)

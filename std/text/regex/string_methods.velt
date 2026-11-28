@@ -3,19 +3,18 @@
 // `std_hooks.rs`) taking the string first, loaded with `RegExp` (velt/text/regex/regexp imports
 // this module).
 //
-// JavaScript's methods call the regex's `exec`, which a class that extends `RegExp` may have
-// of its own: an object of such a class takes the specification's steps (exec_calls.velt, and
-// `RegExp`'s `replace`), and a `RegExp` itself (`isExactClass`) its own searches.
+// As JavaScript's, they call the regex's `[Symbol.match]`, `[Symbol.matchAll]`,
+// `[Symbol.replace]`, `[Symbol.search]` and `[Symbol.split]`, which a class that extends `RegExp`
+// may declare to change a method wholesale (#3823). `RegExp`'s own call the regex's `exec` for a
+// class that declares one, as the specification's steps do (exec_calls.velt).
 
-import { isExactClass } from "velt/lang/intrinsics";
-import { matchAllByExec, matchByExec, searchByExec, splitByExec } from "velt/text/regex/exec_calls";
-import { MATCH, MATCH_ALL, REPLACE_CALLING, SEARCH, SPLIT } from "velt/text/regex/keys";
+import { REPLACE_CALLING } from "velt/text/regex/keys";
 import { RegExp } from "velt/text/regex/regexp";
 import { RegExpMatch } from "velt/text/regex/regexp_match";
 
-/** `s.replace(re, replacement)` */
+/** `s.replace(re, replacement)`: the regex's `[Symbol.replace]`. */
 export function replaceRegExp(s: string, re: RegExp, replacement: string): string {
-  return re.replace(s, replacement);
+  return re[Symbol.replace](s, replacement);
 }
 
 /** `s.replace(re, (match, p1, …, offset, s) => …)` (the compiler adapts the function). */
@@ -32,7 +31,7 @@ export function replaceAllRegExp(s: string, re: RegExp, replacement: string): st
   if (!re.global) {
     panic("TypeError: String.prototype.replaceAll called with a non-global RegExp argument");
   }
-  return re.replace(s, replacement);
+  return re[Symbol.replace](s, replacement);
 }
 
 /** `s.replaceAll(re, (match, …) => …)`: `re` must have the `g` flag. */
@@ -47,36 +46,22 @@ export function replaceAllRegExpCalling<E>(
   return re[REPLACE_CALLING](s, f);
 }
 
-/** `s.match(re)` */
+/** `s.match(re)`: the regex's `[Symbol.match]`, a class's own when it declares one. */
 export function matchRegExp(s: string, re: RegExp): string[] | null {
-  // Without `g`, `[MATCH]` is one `exec`, for every class.
-  if (!isExactClass(re) && re.global) {
-    return matchByExec(re, s);
-  }
-  return re[MATCH](s);
+  return re[Symbol.match](s);
 }
 
 /** `s.matchAll(re)`: `re` must have the `g` flag. */
 export function matchAllRegExp(s: string, re: RegExp): RegExpMatch[] {
-  // Without `g`, `[MATCH_ALL]` stops the program, for every class.
-  if (!isExactClass(re) && re.global) {
-    return matchAllByExec(re, s);
-  }
-  return re[MATCH_ALL](s);
+  return re[Symbol.matchAll](s);
 }
 
 /** `s.search(re)` */
 export function searchRegExp(s: string, re: RegExp): i64 {
-  if (!isExactClass(re)) {
-    return searchByExec(re, s);
-  }
-  return re[SEARCH](s);
+  return re[Symbol.search](s) as i64;
 }
 
 /** `s.split(re, limit)` */
 export function splitRegExp(s: string, re: RegExp, limit?: number): string[] {
-  if (!isExactClass(re)) {
-    return splitByExec(re, s, limit);
-  }
-  return re[SPLIT](s, limit);
+  return re[Symbol.split](s, limit);
 }

@@ -1,9 +1,9 @@
-// A class that extends `RegExp` and declares one of the methods JavaScript's string methods
-// call on a regex (`[Symbol.match]`, `[Symbol.matchAll]`, `[Symbol.replace]`, `[Symbol.search]`,
-// `[Symbol.split]`) is refused where it declares it: Velt's string methods would not call it
-// (#3823), and `"xax".split(new S("a"))` would answer `[ 'x', 'x' ]` where Node answers
-// `[ 'custom', 'xax' ]`. An accessor of that name and a class further down are refused too; a
-// class that does not extend `RegExp` may declare them.
+// A class that extends `RegExp` changes the string methods wholesale with `[Symbol.match]`,
+// `[Symbol.matchAll]`, `[Symbol.replace]`, `[Symbol.search]` and `[Symbol.split]`, as in
+// JavaScript (#3823): `s.split(re)` and the others call the regex's methods, a class's own by
+// dispatch, also from a class further down and through a variable typed `RegExp`. A class that
+// declares none answers as `RegExp` does, and `RegExp`'s methods can be called directly.
+// Expected output: node of regex_subclass_symbol_methods.mjs.
 import { RegExpMatch } from "velt/text";
 
 class S extends RegExp {
@@ -14,7 +14,7 @@ class S extends RegExp {
     return ["custom-match"];
   }
   [Symbol.replace](s: string, r: string): string {
-    return "custom-replace";
+    return "custom-replace:" + r;
   }
   [Symbol.search](s: string): number {
     return 42;
@@ -27,15 +27,39 @@ class Below extends Plain {
   [Symbol.matchAll](s: string): RegExpMatch[] {
     return [];
   }
-  get [Symbol.search](): number {
-    return 1;
-  }
 }
 
-class Other {
-  [Symbol.split](s: string): string[] {
-    return [s];
-  }
-}
+class Deeper extends S {}
 
-console.log("xax".split(new S("a", "g")), new Below("a").source, new Other()[Symbol.split]("a"));
+const s = new S("a", "g");
+console.log(
+  JSON.stringify("xax".split(s)),
+  JSON.stringify("xax".match(s)),
+  "xax".replace(s, "-"),
+  "xax".search(s),
+);
+console.log("xax".replaceAll(s, "+"), JSON.stringify("x,y".split(new Deeper(",", "g"))));
+const held: RegExp = new Deeper("a", "g");
+console.log(
+  JSON.stringify("banana".split(held)),
+  "banana".search(held),
+  "banana".replace(held, "o"),
+);
+console.log(
+  [..."aXbXc".matchAll(new Below("X", "g"))].length,
+  [..."aXbXc".matchAll(new Plain("X", "g"))].length,
+);
+const p = new Plain("a", "g");
+console.log(
+  JSON.stringify("banana".split(p)),
+  JSON.stringify("banana".match(p)),
+  "banana".search(p),
+  "banana".replace(p, "o"),
+);
+const re = /b/g;
+console.log(
+  JSON.stringify(re[Symbol.split]("abcabc")),
+  re[Symbol.search]("xxb"),
+  re[Symbol.replace]("abc", "B"),
+);
+console.log(JSON.stringify(re[Symbol.match]("abcb")));

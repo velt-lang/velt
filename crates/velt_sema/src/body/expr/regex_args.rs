@@ -69,6 +69,7 @@ impl FnCx<'_, '_> {
             if let Some(adapter) = self.replacer_adapter(f, groups, &args[0]) {
                 out[1] = adapter;
                 calling = true;
+                self.replacer_for_own_replace(&args[0]);
             }
         }
         use velt_common::std_hook as h;
@@ -146,15 +147,7 @@ impl FnCx<'_, '_> {
     /// Is `e` a `RegExp`: `new RegExp(…)` (a regex literal is one) or a variable or field path
     /// of that type? Other expressions take the string method (and its type errors).
     fn is_regexp_arg(&mut self, e: &ast::Expr) -> bool {
-        let ty = match &strip_parens(e).kind {
-            E::New { class, .. } => {
-                let mark = self.cx.diags.len();
-                let t = self.resolve(class);
-                self.cx.diags.truncate(mark);
-                Some(t)
-            }
-            _ => self.peek_ty(e),
-        };
+        let ty = self.regexp_arg_ty(e);
         // A class that extends `RegExp` is one too: the hooks take it as a `RegExp`, and its
         // own `exec` is called as JavaScript calls it (std/text/regex/exec_calls.velt).
         let mut ty = ty;
@@ -165,6 +158,55 @@ impl FnCx<'_, '_> {
             ty = self.cx.base_of(t);
         }
         false
+    }
+
+    /// The type of `e`, a possible regex argument, without checking it: the class of
+    /// `new C(…)`, else what `peek_ty` finds.
+    fn regexp_arg_ty(&mut self, e: &ast::Expr) -> Option<TyId> {
+        match &strip_parens(e).kind {
+            E::New { class, .. } => {
+                let mark = self.cx.diags.len();
+                let t = self.resolve(class);
+                self.cx.diags.truncate(mark);
+                Some(t)
+            }
+            _ => self.peek_ty(e),
+        }
+    }
+
+    /// A replacer function passed with regex `e`, a program's class (or one below it) declaring
+    /// its own `[Symbol.replace]`: JavaScript would call that method with the function, which
+    /// takes a string in Velt (no overloads), so the call is refused rather than answered
+    /// without it (#3823).
+    fn replacer_for_own_replace(&mut self, e: &ast::Expr) {
+        let name = ast::Ident {
+            name: "[Symbol.replace]".to_string(),
+            span: e.span,
+        };
+        let key = self.cx.method_key(self.module, &name, false);
+        let mut ty = self.regexp_arg_ty(e);
+        while let Some(t) = ty {
+            let TyKind::Adt(d, _) = *self.cx.ty.kind(t) else {
+                return;
+            };
+            if self.cx.declared_in_std(d) {
+                return;
+            }
+            let own = (self.cx.adt(d).and_then(|a| a.methods.get(&key)))
+                .is_some_and(|m| !m.is_static && self.cx.fn_info(m.def).owner == Some(d));
+            if own {
+                let class = self.cx.display(t);
+                self.cx.error(
+                    Diagnostic::error(
+                        format!("a replacer function with a regex of class `{class}`, whose `[Symbol.replace]` takes a string"),
+                        e.span,
+                    )
+                    .with_note("JavaScript passes the function to the class's `[Symbol.replace]`; Velt has no overloads, so it takes a string replacement: pass a string, or call the method yourself (velt-lang/velt#3823)"),
+                );
+                return;
+            }
+            ty = self.cx.base_of(t);
+        }
     }
 
     /// Is `t` the std class with the qualified name `qual`?

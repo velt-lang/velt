@@ -1,0 +1,18 @@
+// A replacer function passed with a regex whose class declares its own `[Symbol.replace]` is
+// refused (#3823): JavaScript passes the function to that method, which takes a string
+// replacement in Velt (no overloads). A string replacement calls it; a class without its own
+// `[Symbol.replace]` takes the function as `RegExp` does.
+class R extends RegExp {
+  [Symbol.replace](s: string, r: string): string {
+    return "own:" + r;
+  }
+}
+
+class Below extends R {}
+
+class Plain extends RegExp {}
+
+console.log("abc".replace(new R("b"), "-"));
+console.log("abc".replace(new R("b"), (m) => m.toUpperCase()));
+console.log("abc".replaceAll(new Below("b", "g"), (m) => m + m));
+console.log("abc".replace(new Plain("b"), (m) => m.toUpperCase()));

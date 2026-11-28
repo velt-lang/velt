@@ -292,7 +292,6 @@ fn own_methods(cx: &mut Ctx, d: DefId, overridden: &Overridden, vt: &mut Vtable)
     let (decl, base_ty, module) = (a.decl.expect("ICE: adt decl"), a.base, a.module);
     for m in decl.methods.iter().filter(|m| !m.is_static) {
         let name = &m.decl.sig.name;
-        super::regexp_symbols::check(cx, d, name);
         let key = cx.method_key(module, name, m.is_setter);
         let Some(mref) = cx.adt(d).and_then(|a| a.methods.get(&key)).copied() else {
             continue;

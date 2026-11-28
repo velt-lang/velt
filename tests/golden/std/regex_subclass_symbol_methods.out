@@ -1,0 +1,7 @@
+["custom","xax"] ["custom-match"] custom-replace:- 42
+custom-replace:+ ["custom","x,y"]
+["custom","banana"] 42 custom-replace:o
+0 2
+["b","n","n",""] ["a","a","a"] 1 bonono
+["a","ca","c"] 2 aBc
+["b","b"]
