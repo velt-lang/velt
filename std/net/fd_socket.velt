@@ -182,6 +182,7 @@ async function connectOne(ai: usize, deadline: u64, cell: usize): Promise<IoResu
     return failed(osError(prep), 0);
   }
   setOn(fd, IPPROTO_TCP, TCP_NODELAY);
+  sys.beforeConnect(fd, m.ld(ai + sys.AI_ADDR));
   const addr = m.ptrTo<sockaddr>(m.ld(ai + sys.AI_ADDR));
   // SAFETY: the address and its length from getaddrinfo's entry.
   const rc = unsafe { connect$net(fd, addr, m.ld32(ai + AI_ADDRLEN)) };

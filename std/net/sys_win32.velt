@@ -3,7 +3,31 @@
 // `<sys/socket.h>` and `<netdb.h>` in Winsock's headers, and the runtime's error code of a
 // Winsock error (std/native/error.velt), as Rust's `io::ErrorKind` sorts them.
 
+import { Ptr } from "velt/ffi/ptr";
 import { addressLoad } from "velt/lang/intrinsics";
+import * as m from "velt/lang/hooks/sched_mem";
+
+// As std/lang/hooks/reactor_afd.velt declares it: one C symbol has one signature in a program.
+declare c("c") function WSAIoctl(
+  s: usize,
+  code: u32,
+  input: Ptr<u8> | null,
+  inputLen: u32,
+  output: Ptr<u8> | null,
+  outputLen: u32,
+  returned: Ptr<u8> | null,
+  overlapped: Ptr<u8> | null,
+  routine: Ptr<u8> | null,
+): i32;
+
+/** `SIO_TCP_INITIAL_RTO` (`_WSAIOW(IOC_VENDOR, 17)`). */
+const SIO_TCP_INITIAL_RTO: u32 = 0x98000011;
+/**
+ * `TCP_INITIAL_RTO_PARAMETERS` as one little-endian `u32`: `Rtt` (a `u16`) the default
+ * (`TCP_INITIAL_RTO_UNSPECIFIED_RTT`, 0xffff), `MaxSynRetransmissions` (a `u8`)
+ * `TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS` (0xfe).
+ */
+const NO_SYN_RETRIES: u32 = 0x00feffff;
 
 /** `AF_INET6`. */
 export const AF_INET6: i32 = 23;
@@ -25,6 +49,44 @@ export const AI_ADDR: usize = 32;
 export function familyOf(sa: usize): i32 {
   // SAFETY: `sa` is a socket address the OS filled.
   return unsafe { addressLoad<u16>(sa + 0) } as i32;
+}
+
+/**
+ * Before socket `fd` connects to `sa`: to a loopback address (127.0.0.0/8, `::1`), no SYN is sent
+ * again after a refusal, so a connect to a port nobody listens on fails at once, as on Linux and
+ * macOS, instead of after Windows' two retries (about 2 s). `localhost` resolves to `::1` first,
+ * so a connect to a server listening on 127.0.0.1 only tried `::1` for 2 s first (#3964's test on
+ * Windows). Node's libuv does the same for loopback. Failing leaves the default, not an error
+ * (Windows before 10 1709 has no such option).
+ */
+export function beforeConnect(fd: i32, sa: usize): void {
+  if (!loopback(sa)) {
+    return;
+  }
+  const buf = m.zeroed(16);
+  m.st32(buf, NO_SYN_RETRIES);
+  // SAFETY: the 4-byte parameters at `buf`, the count of bytes returned at `buf + 8`.
+  unsafe {
+    WSAIoctl(fd as usize, SIO_TCP_INITIAL_RTO, m.ptr(buf), 4, null, 0, m.ptr(buf + 8), null, null);
+  }
+  m.release(buf, 16);
+}
+
+/** Is the `sockaddr` at `sa` a loopback address: IPv4 127.x.x.x, or IPv6 `::1`? */
+function loopback(sa: usize): bool {
+  // SAFETY: `sa` is a socket address getaddrinfo filled, as long as its family says.
+  unsafe {
+    const family = familyOf(sa);
+    if (family === 2) {
+      return addressLoad<u8>(sa + 4) === 127;
+    }
+    // `sin6_addr` at byte 8: 15 zero bytes and a 1.
+    return (
+      family === AF_INET6 &&
+      addressLoad<u64>(sa + 8) === 0 &&
+      addressLoad<u64>(sa + 16) === 0x0100000000000000
+    );
+  }
 }
 
 /** The runtime's error code (std/native/error.velt) of Winsock error `e`. */

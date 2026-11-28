@@ -22,6 +22,9 @@ export function familyOf(sa: usize): i32 {
   return unsafe { addressLoad<u8>(sa + 1) } as i32;
 }
 
+/** Before socket `fd` connects to `sa`: nothing here (a refused connect fails at once). */
+export function beforeConnect(fd: i32, sa: usize): void {}
+
 /** The runtime's error code (std/native/error.velt) of `errno` `e`. */
 export function codeOf(e: i32): i32 {
   switch (e) {
