@@ -315,11 +315,11 @@ impl FnLower<'_, '_> {
         let ks = self.share_value(Operand::Copy(kp), k);
         let kslot = Place::local(self.copy_to_temp(ks, kvt));
         let this = self.any_this(data, ty);
-        let any = self.cx.any_ty();
-        let avt = self.cx.ty(any);
-        let out = Place::local(self.temp(avt));
-        self.any_invoke(&r, this, vec![(kslot, k)], &out);
-        self.has_result(&out);
+        // Its `bool` as the answer, not boxed as an `any` and unboxed again: a program whose
+        // only `bool` in an `any` was this one gets no `bool` glue.
+        let v = self.invoke_ready(&r, this, vec![(kslot, k)]);
+        let st = self.rvalue_temp(Ty::U8, Rvalue::Cast(v, Ty::U8));
+        self.terminate(Terminator::Return(st));
     }
 
     /// Return the boolean the `any` at `out` holds as the slot's answer.
