@@ -51,9 +51,6 @@ tests/golden/lang/any_to_union_object_member_panics.velt           #2943 units
 tests/golden/lang/assign_target_optional_callbacks.velt            #2943 units
 tests/golden/lang/assign_target_replaced_holder_fix.velt           #2943 units
 tests/golden/lang/assign_value_indexes.velt                        #2943 units
-tests/golden/lang/catch_panic_drops_state.velt                     #2943 units
-tests/golden/lang/catch_panic_nested.velt                          #2943 units
-tests/golden/lang/catch_panic_promise_freed.velt                   #2943 units
 tests/golden/lang/concat_lists_params.velt                         #2943 units
 tests/golden/lang/default_export_of_import.velt                    #2943 units
 tests/golden/lang/function_call_this.velt                          #2943 units
@@ -61,32 +58,10 @@ tests/golden/lang/number_of_any.velt                               #2943 units
 tests/golden/lang/param_text_any.velt                              #2943 units
 tests/golden/lang/union_view_assigned.velt                         #2943 units
 tests/golden/lang/union_view_live.velt                             #2943 units
-tests/golden/std/bigint_errors.velt                                #2943 units
-tests/golden/std/catch_panic.velt                                  #2943 units
-tests/golden/std/catch_panic_after_timer.velt                      #2943 units
-tests/golden/std/catch_panic_await_shapes.velt                     #2943 units
-tests/golden/std/catch_panic_in_clone.velt                         #2943 units
-tests/golden/std/catch_panic_in_clone_cycle.velt                   #2943 units
-tests/golden/std/catch_panic_join_yield.velt                       #2943 units
-tests/golden/std/catch_panic_nested_shapes.velt                    #2943 units
-tests/golden/std/catch_panic_promises.velt                         #2943 units
-tests/golden/std/catch_panic_returned_shapes.velt                  #2943 units
-tests/golden/std/catch_panic_task_freed.velt                       #2943 units
-tests/golden/std/catch_panic_with.velt                             #2943 units
-tests/golden/std/catch_panic_with_pinned.velt                      #2943 units
-tests/golden/std/catch_panic_yield_siblings.velt                   #2943 units
 tests/golden/std/console_format.velt                               #2943 units
 tests/golden/std/console_format_any.velt                           #2943 units
 tests/golden/std/http_server/http_request_after_handler.velt       #2943 units
 tests/golden/std/http_server/http_request_body_after_response.velt #2943 units
-tests/golden/std/inspect_custom_panic.velt                         #2943 units
-tests/golden/std/shared_fn_panic_caught.velt                       #2943 units
-tests/golden/std/shared_fn_panic_caught_generator_interface.velt   #2943 units
-tests/golden/std/shared_fn_panic_caught_resource_any.velt          #2943 units
-tests/golden/std/shared_fn_panic_caught_resource_interface.velt    #2943 units
-tests/golden/std/shared_fn_spawn_after_caught_transfer_panic.velt  #2943 units
-tests/golden/std/shared_fn_walk_after_caught_transfer_panic.velt   #2943 units
-tests/golden/std/simd_half_range.velt                              #2943 units
 
 # Fails by units on main c016f2513 too (std never calls the subclass's exec there): std's calls of a
 # program's throwing override now reach it, but std's callers of the method (RegExp.test) keep

@@ -184,7 +184,7 @@ fn build(
     mut generated: Bound,
 ) -> (hir::Program, Diagnostics) {
     let unchecked = finalize::build_defs(&mut cx);
-    let hooks_demanded = body::lazy_std::hooks_demanded(&cx);
+    let hooks_demanded = body::lazy_std::hooks_demanded(&mut cx);
     layout_merge::merge(&mut cx);
     let type_names = readonly::erase(&mut cx, &mut generated);
     cx.debug_distinct_variants();
