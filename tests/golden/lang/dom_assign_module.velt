@@ -1,0 +1,38 @@
+// A module variable assigned a DOM call's result holds what the call's type says, as a
+// function's variable does (dom_assign_unreached.velt), also through a cast of the result
+// (sigx's Portal, #2739): reading `document` throws `ReferenceError` as on Node, so the line
+// after it never runs, and it type-checks as under `tsc`.
+let container: HTMLDivElement | null = null;
+let input: HTMLInputElement | null = null;
+let label: HTMLElement | undefined;
+
+function mount(): void {
+  container = document.createElement("div");
+  container.setAttribute("data-portal", "");
+}
+
+function mountCast(): void {
+  input = document.createElement("input") as HTMLInputElement;
+  input.value = "x";
+}
+
+function mountLocal(): string {
+  const el: HTMLElement | null = document.createElement("span") as HTMLElement;
+  el.textContent = "y";
+  label = document.body;
+  return label.tagName;
+}
+
+function report(f: () => void): void {
+  try {
+    f();
+    console.log("ran");
+  } catch (e) {
+    console.log((e as Error).name + ": " + (e as Error).message);
+  }
+}
+
+report(mount);
+report(mountCast);
+report(() => console.log(mountLocal()));
+console.log(container === null, input === null, label === undefined);

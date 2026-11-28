@@ -1,0 +1,10 @@
+{ v: [Getter/Setter], w: 2, show: [Function: show] }
+{ v: [Getter/Setter], w: 2, show: [Function: show] }
+30 30 s30
+40 { v: [Getter/Setter], w: 2, show: [Function: show] }
+{"v":40,"w":2} v,w,show
+{ inner: { v: [Getter/Setter], w: 2, show: [Function: show] }, n: 1 }
+[ { v: [Getter/Setter], w: 2, show: [Function: show] } ]
+{ a: [Getter/Setter], b: 1 }
+y! y! {"a":"y!","b":1}
+{ g: [Getter], tag: [Function: tag] } 4
