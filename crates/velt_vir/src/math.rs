@@ -429,6 +429,14 @@ impl Effects {
 /// function's code is.
 pub const CHAR_CODE_AT_ENTRY: &str = "velt_hook_string_char_code_at";
 
+/// std's `==` on strings (std/lang/hooks/str_key.velt, the `str_equals` hook), by its qualified
+/// name ([`crate::mangle::mangle`] gives its symbol): a function that only reads, which the
+/// optimizer and the LLVM backend know by name, as they knew the runtime's `velt_rt_str_eq`.
+pub const STR_EQUALS: &str = velt_common::std_hook!(str_equals);
+
+/// std's hash of a string key (the same file, the `str_hash` hook), as [`STR_EQUALS`].
+pub const STR_HASH: &str = velt_common::std_hook!(str_hash);
+
 /// The runtime functions besides the [`MathOp`]s whose effects are not [`Effects::Any`].
 const EFFECTS: [(&str, Effects); 2] = [
     ("velt_rt_str_cmp", Effects::ReadOnly),

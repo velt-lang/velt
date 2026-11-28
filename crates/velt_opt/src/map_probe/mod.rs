@@ -48,7 +48,8 @@ const CANDIDATES: usize = 4;
 /// caller would make (its `==` is std's `strEquals`, [`Probes::read_only_fns`]).
 const READ_ONLY_EXTERNS: [&str; 1] = ["velt_rt_str_cmp"];
 
-/// Is `symbol` std's hook `name` (its mangled name: `velt_common::std_hook!`), or a clone of it?
+/// Is `symbol` the std function of qualified name `name` (`velt_vir::math::STR_HASH`), or a clone
+/// of it?
 fn is_hook(symbol: &str, name: &str) -> bool {
     let hook = velt_vir::mangle::mangle(name);
     symbol
@@ -101,9 +102,9 @@ impl Probes {
         };
         Probes {
             lookups,
-            hash: hooks(velt_common::std_hook!(str_hash)),
+            hash: hooks(velt_vir::math::STR_HASH),
             read_only: READ_ONLY_EXTERNS.iter().filter_map(|n| ext(n)).collect(),
-            read_only_fns: hooks(velt_common::std_hook!(str_equals)),
+            read_only_fns: hooks(velt_vir::math::STR_EQUALS),
             clone: ext(STR_CLONE),
             alloc: ext("velt_rt_alloc"),
         }

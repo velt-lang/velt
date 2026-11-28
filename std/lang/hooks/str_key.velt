@@ -24,7 +24,6 @@ import {
   strWord0,
   strWord2,
 } from "velt/lang/intrinsics";
-import { sameBytes } from "velt/lang/string/byte_scan";
 
 /** The hash's seed. */
 const SEED: u64 = 0x243f6a8885a308d3;
@@ -37,7 +36,21 @@ const INLINE: u64 = 0x8000000000000000;
 @noInline
 export function strEquals(a: string, b: string): bool {
   const n = strByteLen(a);
-  return strByteLen(b) == n && sameBytes(a, 0, b, 0, n);
+  if (strByteLen(b) != n) {
+    return false;
+  }
+  const pa = strDataAddress(a);
+  const pb = strDataAddress(b);
+  let i: usize = 0;
+  while (i + 8 <= n) {
+    // SAFETY: bytes `i` to `i + 7` of both, which have `n` bytes.
+    if (unsafe { wordAt(pa + i) } != unsafe { wordAt(pb + i) }) {
+      return false;
+    }
+    i += 8;
+  }
+  // SAFETY: the last `n - i` bytes of both.
+  return i == n || unsafe { tailWord(pa + i, n - i) } == unsafe { tailWord(pb + i, n - i) };
 }
 
 /** The hash a string key is stored under. */

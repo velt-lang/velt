@@ -59,8 +59,8 @@ describe("strHash", () => {
     }
   });
 
-  it("ignores what an inline string holds after its text", () => {
-    // `abcdefgh` cut down to `abc` in place: the bytes after the text are not part of it.
+  it("hashes a cut-down string as its text alone", () => {
+    // `abcdefgh` cut down to `abc`: only the text's bytes are hashed.
     let s = "abcdefgh";
     s = rebuilt(s).slice(0, 3);
     expect(strHash(s)).toBe(strHash("abc"));

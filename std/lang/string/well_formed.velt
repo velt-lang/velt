@@ -24,7 +24,6 @@ import {
   strLen,
   strWord2,
 } from "velt/lang/intrinsics";
-import { findByte } from "velt/lang/string/byte_scan";
 
 /** Bit 63 of `w2`: an inline string. */
 const INLINE: u64 = 0x8000000000000000;
@@ -78,13 +77,10 @@ function heapWellFormed(s: string): bool {
 function countLone(s: string): usize {
   const n = strByteLen(s);
   let count: usize = 0;
-  let at = findByte(s, 0xed, 0, n);
-  while (at >= 0) {
-    const i = at as usize;
-    if (i + 1 < n && strByteAt(s, (i + 1) as u64) >= 0xa0) {
+  for (let i: usize = 0; i + 1 < n; i++) {
+    if (strByteAt(s, i as u64) == 0xed && strByteAt(s, (i + 1) as u64) >= 0xa0) {
       count += 1;
     }
-    at = findByte(s, 0xed, i + 1, n);
   }
   return count;
 }

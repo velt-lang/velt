@@ -157,13 +157,13 @@ pub(crate) fn fast_path(
     }
 }
 
-/// The mangled symbols of std's `strEquals` and `strHash` (velt_common `std_hooks.rs`).
+/// The mangled symbols of std's `strEquals` and `strHash` (`velt_vir::math::STR_EQUALS`, `STR_HASH`).
 fn hook_symbols() -> &'static (String, String) {
     static SYMBOLS: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
     SYMBOLS.get_or_init(|| {
         (
-            velt_vir::mangle::mangle(velt_common::std_hook!(str_equals)),
-            velt_vir::mangle::mangle(velt_common::std_hook!(str_hash)),
+            velt_vir::mangle::mangle(velt_vir::math::STR_EQUALS),
+            velt_vir::mangle::mangle(velt_vir::math::STR_HASH),
         )
     })
 }
