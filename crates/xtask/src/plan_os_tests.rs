@@ -166,7 +166,6 @@ fn code_that_can_differ_on_macos_checks_it() {
         "crates/velt_codegen_llvm/src/target.rs",
         "crates/velt_vir/src/c_abi.rs",
         "crates/velt_vir/src/simd/ext.rs",
-        "crates/velt_text/src/json_escape.rs",
         "crates/vpm/src/native/build.rs",
         "crates/veltc/src/dev/supervisor.rs",
         "std/fs/index.velt",
