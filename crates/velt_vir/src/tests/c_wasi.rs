@@ -119,3 +119,21 @@ fn other_c_calls_are_refused_on_wasip1() {
     let e = lower_for(&other, "wasm32-wasip1").unwrap_err();
     assert!(e.contains("`z` has no library on wasm32-wasip1"), "{e}");
 }
+
+/// What a program reads and changes of its process: the environment (std checks each name against
+/// velt's two variables, std/process/env_hidden.velt), its arguments and `process.exit` (which
+/// reads `VELT_RC_STATS`).
+const PROCESS: &str = "import { envAll, removeEnv, setEnv } from \"velt/process\";\n\
+    function main() {\n  \
+    console.log(process.env.HOME ?? \"none\", process.argv.length);\n  \
+    setEnv(\"VELT_SCRIPT\", \"x\");\n  \
+    removeEnv(\"VELT_ARGV\");\n  \
+    console.log(Object.keys(envAll()).length >= 0);\n  \
+    setTimeout(() => process.exit(3), 1);\n}\n";
+
+#[test]
+fn the_process_lowers_for_the_js_host_without_the_c_library() {
+    // A C function would be an error here ("... is not available on wasm32-unknown-unknown").
+    lower_for(PROCESS, "wasm32-unknown-unknown").unwrap_or_else(|e| panic!("{e}"));
+    lower_for(PROCESS, "wasm32-wasip1").unwrap_or_else(|e| panic!("{e}"));
+}

@@ -6,10 +6,7 @@
 // runtime removed them at start-up. Once the program sets or removes one itself (`ownVar`), that
 // one is the program's own variable and is read as any other, as it was then.
 
-import { Ptr } from "velt/ffi/ptr";
-import { noInline, strByteAt, strByteLen, strDataAddress } from "velt/lang/intrinsics";
-
-declare c("c") function memcmp$hidden(a: Ptr<u8> | null, b: Ptr<u8> | null, n: usize): i32;
+import { noInline, strByteAt, strByteLen } from "velt/lang/intrinsics";
 
 /** `VELT_SCRIPT`: the source file `velt run` and `velt dev` run (Node's `process.argv[1]`). */
 export const SCRIPT_VAR = "VELT_SCRIPT";
@@ -19,7 +16,8 @@ export const ARGV_VAR = "VELT_ARGV";
 
 /**
  * `VELT_SCRIPT` and `VELT_ARGV` as NUL-terminated bytes, for the C library's `getenv` (macOS and
- * Linux: `passedVar`), so that reading them converts no text for C.
+ * Linux: `passedVar`), so that reading them converts no text for C, and for `bitOf`'s byte
+ * comparison.
  */
 export const SCRIPT_C: u8[] = [86, 69, 76, 84, 95, 83, 67, 82, 73, 80, 84, 0];
 export const ARGV_C: u8[] = [86, 69, 76, 84, 95, 65, 82, 71, 86, 0];
@@ -29,38 +27,25 @@ const OWN = new Atomic<u32>(0);
 
 /**
  * `name`'s bit (`OWN`), 0 for any other name; `fold`: without regard to ASCII case (Windows). By
- * its bytes (`memcmp`), the length first, inline, and the comparison one call compiled once
- * (`namedBit`; the loop of `foldedBit` only where names fold).
+ * its bytes, the length first, inline, and the comparison one call compiled once (`namedBit`). A
+ * byte loop, not the C library's `memcmp`: a JS host has no C library, and every read of a
+ * variable calls this (`process.exit`'s too).
  */
 function bitOf(name: string, fold: bool): u32 {
   const n = strByteLen(name);
   if (n !== 11 && n !== 9) {
     return 0;
   }
-  return fold ? foldedBit(name) : namedBit(name);
+  return namedBit(name, fold);
 }
 
-/** `bitOf` of a name as long as one of them, compared exactly (`memcmp`). */
+/** `bitOf` of a name as long as one of them. */
 @noInline
-function namedBit(name: string): u32 {
-  const n = strByteLen(name);
-  const other = n === 11 ? SCRIPT_VAR : ARGV_VAR;
-  // SAFETY: `name`'s data address, its `n` bytes alive during the call below.
-  const a = unsafe { Ptr.orNull<u8>(strDataAddress(name)) };
-  // SAFETY: `other`'s, a constant as long as `name`.
-  const b = unsafe { Ptr.orNull<u8>(strDataAddress(other)) };
-  // SAFETY: `n` bytes at `a` and at `b`.
-  const got = unsafe { memcmp$hidden(a, b, n) };
-  return got !== 0 ? 0 : n === 11 ? 1 : 2;
-}
-
-/** `bitOf` of a name as long as one of them, a lower-case ASCII letter as its upper case. */
-@noInline
-function foldedBit(name: string): u32 {
+function namedBit(name: string, fold: bool): u32 {
   if (strByteLen(name) === 11) {
-    return same(name, SCRIPT_C) ? 1 : 0;
+    return same(name, SCRIPT_C, fold) ? 1 : 0;
   }
-  return same(name, ARGV_C) ? 2 : 0;
+  return same(name, ARGV_C, fold) ? 2 : 0;
 }
 
 /**
@@ -104,14 +89,14 @@ export function withoutHidden(pairs: string[], fold: bool): string[] {
 }
 
 /**
- * Whether the bytes of `a` are `b`'s before its NUL (upper-case ASCII, as long as `a`), a
+ * Whether the bytes of `a` are `b`'s before its NUL (upper-case ASCII, as long as `a`); `fold`: a
  * lower-case ASCII letter of `a` as its upper case.
  */
-function same(a: string, b: readonly u8[]): bool {
+function same(a: string, b: readonly u8[], fold: bool): bool {
   const n = strByteLen(a);
   for (let i: usize = 0; i < n; i++) {
     let c = strByteAt(a, i as u64);
-    if (c >= 97 && c <= 122) {
+    if (fold && c >= 97 && c <= 122) {
       c -= 32;
     }
     if (c !== b[i]) {
