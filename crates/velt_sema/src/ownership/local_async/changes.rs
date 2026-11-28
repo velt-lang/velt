@@ -47,7 +47,7 @@ use crate::ownership::local_closures::walk::{self, Visit};
 use super::labels::share_fix;
 use super::reach::{constructor, plain, reached_locals, reaches};
 use super::record::writer;
-use super::targets::Read;
+use super::targets::{any_apply_skip, Read};
 use super::Crossing;
 
 /// Bodies deeper than this are not followed.
@@ -470,6 +470,11 @@ fn call_changes(
         Callee::Intrinsic(
             Intrinsic::AnySet | Intrinsic::AnySetIndex | Intrinsic::AnyDelete | Intrinsic::AnyCall,
         ) if i == 0 && direct => Some((base.to_string(), format!("{base}.… = …"))),
+        // A member call passing its object as `this` (`o[k](x)`, this_fn_call.rs): the function
+        // may change it.
+        Callee::Intrinsic(Intrinsic::AnyApplyThis) if i == 1 && direct => {
+            Some((base.to_string(), format!("{base}[…](…)")))
+        }
         // A call through a function value (`hooks[0](ctx)`, `plugin.server?.setup?.(ctx)`), or
         // of a function read from an `any` (`f(ctx)` of `f = plugin[hook]`): any of the
         // program's function values that accept the arguments may run, each followed; one made
@@ -487,11 +492,14 @@ fn call_changes(
                 Some(t) => follow(cx, &t, (i, direct, root_ty), (base, via), depth, memo),
             }
         }
-        Callee::Intrinsic(Intrinsic::AnyApply) if i >= 2 => {
+        Callee::Intrinsic(c @ (Intrinsic::AnyApply | Intrinsic::AnyApplyThis))
+            if i >= any_apply_skip(*c) =>
+        {
+            let skip = any_apply_skip(*c);
             let via = format!("…({base})");
-            let want: Vec<TyId> = args[2..].iter().map(|a| unconverted(a).ty).collect();
+            let want: Vec<TyId> = args[skip..].iter().map(|a| unconverted(a).ty).collect();
             let lits = memo.lits.clone();
-            match super::targets::value_targets(cx, &lits, &want, Read::FromAny, 2) {
+            match super::targets::value_targets(cx, &lits, &want, Read::FromAny, skip) {
                 None => Some((base.to_string(), via)),
                 Some(t) => follow(cx, &t, (i, direct, root_ty), (base, via), depth, memo),
             }

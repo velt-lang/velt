@@ -1,0 +1,104 @@
+// In a program with a function taking `this`, a member call whose function is a dynamic value
+// is one call (`AnyApplyThis`) that passes the object as `this` to such a function and calls
+// any other value plainly, whatever holds the member: an object, an array held as `any` called
+// by index, a record, a proxy whose `get` trap gives the function (`this` is the proxy, and
+// reads through it run the trap again). The object, then the member (a getter runs first),
+// then the arguments are evaluated. A member that is no function throws Node's `TypeError`
+// naming it to a `catch` in the same function, also after an `await`
+// (this_fn_call_not_fn_uncaught: one that no `catch` takes).
+// Node twin: this_fn_call_targets.mjs.
+const m = function (this: any, x: number): string {
+  return `${this.name}:${x}`;
+};
+const plain = (x: number): string => `plain:${x}`;
+
+function log(what: string, value: number): number {
+  console.log(what);
+  return value;
+}
+
+function arrays(): void {
+  const fs: any = [m, plain];
+  console.log(fs[0](1), fs[1](2));
+  try {
+    fs[5](log("arg of fs[5]", 3));
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+}
+
+function records(): void {
+  const r: Record<string, any> = {};
+  r["k"] = m;
+  r["p"] = plain;
+  console.log(r["k"](1), r["p"](2));
+  const d: any = { name: "d", k: m };
+  const key = "k";
+  console.log(d[key](3));
+  try {
+    d["name"](4);
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+}
+
+function proxies(): void {
+  const target: any = { name: "target", m: m };
+  const reads: string[] = [];
+  const p: any = new Proxy(target, {
+    get(t, k) {
+      reads.push(String(k));
+      return t[k];
+    },
+  });
+  console.log(p["m"](1));
+  console.log(reads.join(","));
+  try {
+    p["name"](2);
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+}
+
+function getters(): void {
+  const g: any = {
+    name: "g",
+    get m(): any {
+      console.log("get m");
+      return m;
+    },
+  };
+  console.log(g["m"](log("arg", 1)));
+}
+
+function inner(o: any, k: string): string {
+  return o[k](1);
+}
+
+async function later(): Promise<number> {
+  await Promise.resolve(0);
+  return 2;
+}
+
+async function routing(): Promise<void> {
+  const o: any = { name: "o", m: m, n: 5 };
+  try {
+    o["n"](await later());
+  } catch (e) {
+    console.log("after an await:", (e as Error).message);
+  }
+  try {
+    o["m"](await later());
+    console.log(o["m"](await later()));
+    o["n"]();
+  } catch (e) {
+    console.log((e as Error).name, e instanceof TypeError);
+  }
+  console.log(inner(o, "m"));
+}
+
+arrays();
+records();
+proxies();
+getters();
+routing().then(() => console.log("done"));

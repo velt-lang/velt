@@ -180,4 +180,46 @@ impl FnLower<'_, '_> {
         self.ret_status(st);
         self.switch_to(no);
     }
+
+    /// The `AnyApplyThis` call of the function value `data` / `desc` with `this` at `this` (a
+    /// borrowed `any`): one glue function per program (`Glue::AnyApplyThis` for `ThisFn`), the
+    /// status of the call (`None` in a program without `ThisFn`, which calls as `AnyApply`).
+    pub(super) fn any_apply_this_call(
+        &mut self,
+        (data, desc, this): (Operand, Operand, Operand),
+        (argv, argc, out): (Operand, Operand, Operand),
+    ) -> Option<Operand> {
+        let t = self.this_fn_ty()?;
+        self.cx.note_any_apply();
+        let args = vec![data, desc, this, argv, argc, out];
+        Some(self.call_glue(super::glue::Glue::AnyApplyThis, t, args))
+    }
+
+    /// The body of `Glue::AnyApplyThis` (`ty`: `ThisFn`): a `ThisFn` gets a share of `*this` as
+    /// its `this`; any other value is called through its own `AnyApply` slot (a proxy's apply,
+    /// or `ST_NOT_FN` for a value that is no function), as `AnyApply` calls it.
+    pub(super) fn any_apply_this_body(&mut self, args: &[vir::Local], ty: TyId) {
+        let &[data, desc, this, argv, argc, out] = args else {
+            panic!("ICE: AnyApplyThis glue of {} parameters", args.len());
+        };
+        let imp = self.cx.hir.any_impl.unwrap_or(0);
+        let tdesc = self.vtable_addr(VtableKey::Impl(imp, ty));
+        let d = Operand::Copy(Place::local(desc));
+        let is_t = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, d.clone(), tdesc));
+        let (yes, no) = (self.new_block(), self.new_block());
+        self.branch(is_t, yes, no);
+        self.switch_to(yes);
+        let any = self.cx.any_ty();
+        let avt = self.cx.ty(any);
+        let held = self.deref_param(this, any);
+        let v = self.share_value(Operand::Copy(held), any);
+        let r = Place::local(self.copy_to_temp(v, avt));
+        let st = self.this_fn_invoke(data, ty, r, (argv, argc, out));
+        self.ret_status(st);
+        self.switch_to(no);
+        let a = [data, argv, argc, out].map(|l| Operand::Copy(Place::local(l)));
+        let p = vec![Ty::Ptr, Ty::Ptr, Ty::U64, Ty::Ptr];
+        let st = self.any_slot(d, super::any_member::SLOT_APPLY, a.to_vec(), p);
+        self.terminate(crate::vir::Terminator::Return(st));
+    }
 }

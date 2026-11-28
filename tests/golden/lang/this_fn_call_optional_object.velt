@@ -1,0 +1,88 @@
+// An optional read of the object in a member call through `any` (`o?.m?.(x)`, `o?.[k]?.(x)`,
+// `o?.[k](x)`) passes the object as `this` to a function taking it, as `o.m?.(x)` does. A
+// `null` or `undefined` object makes the call `undefined` without reading the member or
+// evaluating the arguments, also through a `?.` link further down the chain (`o?.a.m?.(x)`);
+// the object is evaluated once.
+// Node twin: this_fn_call_optional_object.mjs.
+const m = function (this: any, x: number): string {
+  return `${this.name}:${x}`;
+};
+const k = "m";
+let evaluated = 0;
+
+function arg(v: number): number {
+  evaluated++;
+  return v;
+}
+
+function present(): void {
+  const o: any = { name: "o", m: m };
+  console.log(o?.m?.(1));
+  console.log(o?.[k]?.(2));
+  console.log(o?.[k](3));
+  console.log(o?.["m"]?.(arg(4)));
+  console.log(o?.z?.(arg(5)));
+  console.log(`evaluated ${evaluated}`);
+}
+
+function nullish(): void {
+  const none: any = null;
+  const missing: any = undefined;
+  console.log(none?.m?.(arg(6)));
+  console.log(missing?.[k]?.(arg(7)));
+  console.log(none?.[k](arg(8)));
+  console.log(`evaluated ${evaluated}`);
+}
+
+let reads = 0;
+function source(o: any): any {
+  reads++;
+  return o;
+}
+
+function once(): void {
+  const o: any = { name: "once", m: m };
+  console.log(source(o)?.m?.(9));
+  console.log(source(null)?.[k]?.(arg(10)));
+  console.log(`reads ${reads}, evaluated ${evaluated}`);
+}
+
+function arrays(): void {
+  const fs: any = [
+    function (this: any): number {
+      return this.length;
+    },
+  ];
+  console.log(fs?.[0]?.());
+  console.log(fs?.[0]());
+}
+
+function changed(): void {
+  // `this` is the object read before the argument, which assigns the variable.
+  let o: any = { name: "first", m: m };
+  const second: any = { name: "second", m: m };
+  const swap = (): number => {
+    o = second;
+    return 11;
+  };
+  console.log(o?.m?.(swap()));
+  console.log(o?.[k]?.(12));
+}
+
+function chains(): void {
+  // A `?.` link further down the chain short-circuits the whole call.
+  const o: any = { name: "o", inner: { name: "inner", m: m } };
+  const none: any = null;
+  console.log(o?.inner.m?.(13));
+  console.log(o?.inner?.[k]?.(14));
+  console.log(none?.inner.m?.(arg(15)));
+  console.log(none?.inner[k]?.(arg(16)));
+  console.log(`evaluated ${evaluated}`);
+}
+
+present();
+nullish();
+once();
+arrays();
+changed();
+chains();

@@ -646,6 +646,7 @@ impl FnLower<'_, '_> {
         &mut self,
         o: &hir::Expr,
         key: Option<&hir::Expr>,
+        this: Option<&hir::Expr>,
         text: &hir::Expr,
         args: &[hir::Expr],
         ty: TyId,
@@ -659,6 +660,13 @@ impl FnLower<'_, '_> {
             }
         }
         let (data, desc) = self.any_receiver(o);
+        // `AnyApplyThis`: the address of the borrowed `this`, read before the arguments.
+        let this = this.map(|t| {
+            let tt = self.sub(t.ty);
+            let tv = self.expr(t);
+            let tp = self.place_of(tv, tt);
+            self.addr(tp)
+        });
         let ka = key.map(|k| {
             let kt = self.sub(k.ty);
             let kv = self.expr(k);
@@ -724,9 +732,22 @@ impl FnLower<'_, '_> {
                 self.any_slot(desc, SLOT_CALL, a, p)
             }
             None => {
-                let a = vec![data, argv, argc, oa];
-                let p = vec![Ty::Ptr, Ty::Ptr, Ty::U64, Ty::Ptr];
-                self.any_slot(desc, SLOT_APPLY, a, p)
+                let via_this = match this {
+                    Some(t) => {
+                        let parts = (data.clone(), desc.clone(), t);
+                        let call = (argv.clone(), argc.clone(), oa.clone());
+                        self.any_apply_this_call(parts, call)
+                    }
+                    None => None,
+                };
+                match via_this {
+                    Some(st) => st,
+                    None => {
+                        let a = vec![data, argv, argc, oa];
+                        let p = vec![Ty::Ptr, Ty::Ptr, Ty::U64, Ty::Ptr];
+                        self.any_slot(desc, SLOT_APPLY, a, p)
+                    }
+                }
             }
         };
         if let Some((held, arr, at)) = list {

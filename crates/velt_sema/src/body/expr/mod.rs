@@ -410,6 +410,13 @@ impl FnCx<'_, '_> {
                 args,
                 optional,
             } if self.this_fn_call_site(callee, type_args, *optional) => {
+                // `o?.a.m?.(x)`: a `?.` link below the callee's object short-circuits the whole
+                // call (chain.rs); the callee's own (`o?.m?.(x)`) is this_fn_call.rs's.
+                if *optional {
+                    if let Some(h) = self.short_circuit_call(e, exp) {
+                        return h;
+                    }
+                }
                 self.this_fn_member_call(callee, args, *optional, span)
             }
             A::Call {

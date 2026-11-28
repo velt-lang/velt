@@ -78,6 +78,7 @@ pub fn runs_user_code(i: hir::Intrinsic) -> bool {
             | I::AnyIndex
             | I::AnyCall
             | I::AnyApply
+            | I::AnyApplyThis
             | I::AnySet
             | I::AnySetIndex
             | I::AnyHas
