@@ -26,28 +26,33 @@ use std::sync::Mutex;
 
 use wasm_tools::{build_runtime, copy_dir, for_node, missing_tools, root};
 
-/// Goldens that cannot run on WebAssembly: the runtime has no sockets (nor `velt/http`), and a
-/// shared promise settling resumes its waiters at the executor's next step instead of queueing
-/// them as microtasks, so `.then` callbacks and `queueMicrotask` jobs around a `resolve` called
-/// later do not keep Node's order (https://veltlang.com/docs/reference/async/).
+/// Goldens that cannot run on WebAssembly: the runtime has no sockets (nor `velt/http`), and the
+/// WebAssembly stacks are smaller.
 const UNSUPPORTED: &[&str] = &[
-    // wasm's race is still the runtime's, which orders its losers' steps differently from Node
-    // (#3077).
-    "promise_race_array_mixed",
-    // Known to fail on every target (#3079; this runner doesn't read golden_known_failing.txt);
-    // on wasm the race is still the runtime's (#3077).
-    "promise_race_running_call",
     "tcp_echo",
     "http_server",
     "console_std_handles",
+    // Nests 2,000 generators, which a native debug build holds in its 8 MiB stack (#2048); the
+    // WebAssembly stacks overflow.
+    "deep_generator_frames",
+];
+/// Goldens a JS host can't run yet: its programs still run on the runtime's executor, whose
+/// steps differ from Node's (https://veltlang.com/docs/reference/async/). wasm32-wasip1 runs the
+/// executor in Velt (#3905), which keeps Node's order, so WASI runs them all.
+const JS_HOST_ORDER: &[&str] = &[
+    // The runtime's race orders its losers' steps differently from Node (#3077).
+    "promise_race_array_mixed",
+    "promise_race_running_call",
+    "promise_race_inline_children_order",
+    // A shared promise settling resumes its waiters at the executor's next step instead of
+    // queueing them as microtasks, and a converted promise's rejection is reported as its own (no
+    // views, #1682).
     "await_order_resolve",
     "promise_shared_inflight",
     "promise_shared_orphan",
     "promise_shared_orphan_task",
     "promise_shared_sync_main",
     "promise_shared_sync_main_module",
-    // A shared promise settling resumes its waiters at the executor's next step (the order of
-    // the log), and a converted promise's rejection is reported as its own (no views, #1682).
     "promise_identity_bounded",
     "promise_identity_converted_rejects",
     "promise_identity_defer",
@@ -57,28 +62,22 @@ const UNSUPPORTED: &[&str] = &[
     "promise_widen_compare",
     // The combinators of the executor in Velt settle in the microtask Node runs for their
     // deciding input, and a promise `resolve` settled resumes its one waiter in the microtask
-    // `resolve` queued; wasm's executor is still the runtime's, which keeps the steps it had.
+    // `resolve` queued; the runtime's keep the steps they had.
     "promise_all_settled_resolver_ticks",
     "promise_combinator_ticks_pending",
     "promise_combinator_ticks_settled",
     "promise_combinator_ticks_stored",
     "promise_shared_resolve_ticks",
-    // wasm's race is still the runtime's (#3077).
-    "promise_race_inline_children_order",
-    // The executor in Velt gives up a promise nobody can settle and nobody holds; wasm's is
-    // still the runtime's, which keeps it parked (#3247).
+    // The executor in Velt gives up a promise nobody can settle and nobody holds; the runtime's
+    // keeps it parked (#3247), and a spawned task parked on one (#3126).
     "promise_abandoned_freed",
-    // The same for a spawned task parked on such a promise (#3126).
     "task_parked_freed",
-    // wasm's executor is still the runtime's, whose `yieldNow()` wakes at once instead of taking
-    // its turn after the microtasks queued before it, as the executor in Velt does (#3307).
+    // The runtime's `yieldNow()` wakes at once instead of taking its turn after the microtasks
+    // queued before it, as the executor in Velt does (#3307).
     "yield_now_order",
     "yield_now_immediates",
     "yield_now_due_sleep",
     "yield_now_turn_passed",
-    // Nests 2,000 generators, which a native debug build holds in its 8 MiB stack (#2048); the
-    // WebAssembly stacks overflow.
-    "deep_generator_frames",
 ];
 /// Goldens that need a file system (not available to browser modules).
 const NEEDS_FS: &[&str] = &["fs"];
@@ -249,10 +248,17 @@ const WASI_DIRS: &[&str] = &["m1", "m2", "m3", "m4", "lang"];
 /// Windows hosts, [`WASI_STD_NOT_ON_WINDOWS_HOSTS`]), and two ephemeron caches, whose trials call between std's weak core and the
 /// compiler's glue.
 const WASI_STD: &[&str] = &[
+    // The executor in Velt on WASI (#3905): `AbortSignal.timeout` on std's signals, and the
+    // program's end with their timers left.
+    "abort_signal_timeout_dropped",
+    "abort_signal_timeout_wait",
     "bytes_search",
     "clock_reads",
     "crypto",
     "crypto_random_int",
+    // Module blocks after the first: std calls their `init` through its address with the C
+    // signature of compiled code (#3905).
+    "events_dispatch",
     "fs_copy_mode",
     "fs_links_errors",
     "fs_mapped_copy_targets",
@@ -266,6 +272,8 @@ const WASI_STD: &[&str] = &[
     "half_dot_bf16_lengths_short",
     "half_dot_lengths",
     "half_dot_lengths_short",
+    // velt/net on WASI fails without the runtime's leaves, whose `cx` std's executor lacks (#3920).
+    "net_connect_fails",
     "random",
     "simd_aes",
     "simd_any",
@@ -412,7 +420,9 @@ fn goldens_in_the_browser_glue() {
     }
     let root = root();
     build_runtime(&root, "wasm32-unknown-unknown");
-    let skip: Vec<&str> = UNSUPPORTED.iter().chain(NEEDS_FS).copied().collect();
+    let skip: Vec<&str> = (UNSUPPORTED.iter().chain(JS_HOST_ORDER).chain(NEEDS_FS))
+        .copied()
+        .collect();
     let files = programs(&root, &["m1", "m2", "m3"], &skip, None);
     let work = work_dir::work_dir(&root, "golden-work-web");
     let failures = run_all(&files, "wasm32-unknown-unknown", &[None], &work, 4);

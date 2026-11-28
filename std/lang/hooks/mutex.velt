@@ -5,13 +5,13 @@
 // the lock is held (it spins a little, then parks the thread) or when threads are parked (the
 // unlock wakes one). `with` callbacks never await and are short, so a thread that holds the lock
 // releases it soon on the thread that took it.
-// The lock counts no `Mutex`es for the module lock (sched_module.velt never read the count); a
-// wasm build keeps the runtime's lock, where lowering calls the runtime as before.
+// The lock counts no `Mutex`es for the module lock (sched_module.velt never read the count). The
+// slow path is the runtime's where threads can contend, and a deadlock's panic on WASI's one
+// thread (`#mutex-slow`); a browser build keeps the runtime's lock, where lowering calls the
+// runtime as before.
 
 import { addressAtomicCas, inline } from "velt/lang/intrinsics";
-
-declare c("c") function velt_rt_mutex_lock_slow$rt(p: usize): void;
-declare c("c") function velt_rt_mutex_unlock_slow$rt(p: usize): void;
+import { lockSlow, unlockSlow } from "#mutex-slow";
 
 /** The lock word's held bit; the runtime sets bit 1 while threads are parked on it. */
 const LOCKED: u32 = 1;
@@ -21,10 +21,7 @@ const LOCKED: u32 = 1;
 export function mutexLock(p: usize): void {
   // SAFETY: `p` is a `Mutex`'s lock word, changed only atomically (here and by the runtime).
   if (unsafe { addressAtomicCas<u32>(p, 0, LOCKED, "acquire", "relaxed") } !== 0) {
-    // SAFETY: the runtime's slow path on the same lock word, which it changes only atomically.
-    unsafe {
-      velt_rt_mutex_lock_slow$rt(p);
-    }
+    lockSlow(p);
   }
 }
 
@@ -34,9 +31,6 @@ export function mutexUnlock(p: usize): void {
   // SAFETY: as `mutexLock`. A word that is not `LOCKED` alone has threads parked on it: the
   // runtime wakes one (or hands the lock to it).
   if (unsafe { addressAtomicCas<u32>(p, LOCKED, 0, "release", "relaxed") } !== LOCKED) {
-    // SAFETY: as `mutexLock`'s; this thread holds the lock.
-    unsafe {
-      velt_rt_mutex_unlock_slow$rt(p);
-    }
+    unlockSlow(p);
   }
 }

@@ -1,0 +1,39 @@
+// velt/fs (internal): the runtime's sync file calls on WebAssembly (velt_rt_wasm's,
+// docs/internals/contracts/rt_abi_async.md §5) and the listing they return, which both
+// WebAssembly variants of `#fs-rt` use: std/fs/rt.velt (a JS host) and std/fs/rt_wasi.velt
+// (WASI, which runs their async forms as blocking-pool jobs). Their own file, as the variants of
+// one `#name` export the same names. Extern conventions: rt.velt's.
+
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+import { Dirent } from "velt/fs/dirent";
+import { Stats } from "velt/fs/stats";
+
+export declare function velt_rt_fs_read_file_bytes_sync(path: string): IoResult<u8[]>;
+export declare function velt_rt_fs_write_file_sync(path: string, data: string): IoStatus;
+export declare function velt_rt_fs_append_file_sync(path: string, data: string): IoStatus;
+export declare function velt_rt_fs_read_dir_sync(path: string): IoResult<string[]>;
+export declare function velt_rt_fs_read_dir_typed_sync(path: string): IoResult<DirentList>;
+export declare function velt_rt_fs_stat_sync(path: string): IoResult<Stats>;
+export declare function velt_rt_fs_lstat_sync(path: string): IoResult<Stats>;
+export declare function velt_rt_fs_mkdir_sync(path: string, recursive: bool): IoStatus;
+export declare function velt_rt_fs_remove_sync(path: string, recursive: bool): IoStatus;
+export declare function velt_rt_fs_exists_sync(path: string): bool;
+
+/**
+ * The runtime's `VeltDirents`: sorted names and, at the same index, each one's kind (0 other,
+ * 1 file, 2 directory, 3 symlink).
+ */
+export struct DirentList {
+  names: string[];
+  kinds: u8[];
+}
+
+/** The entries of a runtime listing, each with its type. */
+export function dirents(list: DirentList): Dirent[] {
+  const out: Dirent[] = [];
+  for (let i = 0; i < list.names.length; i++) {
+    out.push({ name: list.names[i], kind: list.kinds[i] });
+  }
+  return out;
+}

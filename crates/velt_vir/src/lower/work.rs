@@ -130,4 +130,7 @@ pub(super) enum Work {
     /// The C function of `Program::c_exports[i]` (`@export("c_name")`, c_export.rs): its
     /// unmangled symbol, its C signature, a call of the Velt function.
     CExport(u32),
+    /// The machine-word form of a std function whose address is taken on wasm32 (`fnAddress`,
+    /// address_thunk.rs): `usize`/`isize` parameters and result as 32-bit words.
+    AddressThunk(DefId, Vec<TyId>),
 }

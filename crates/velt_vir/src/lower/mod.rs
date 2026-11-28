@@ -20,6 +20,7 @@
 
 mod abi;
 mod adapters;
+mod address_thunk;
 mod adt;
 mod any;
 mod any_args;
