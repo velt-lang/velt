@@ -47,7 +47,7 @@ impl FnLower<'_, '_> {
             return;
         };
         // A program without `Proxy` has no such hook, and no such key to read.
-        if self.cx.prelude_def(PROTOTYPE_MEMBER).is_none() {
+        if self.cx.std_hook_if_loaded(PROTOTYPE_MEMBER).is_none() {
             return;
         }
         let vp = self.any_value_place(data, ty);

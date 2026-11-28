@@ -36,8 +36,8 @@
 //!
 //! A program without such a conversion has no view types and compiles as before.
 
-use rustc_hash::{FxHashMap, FxHashSet};
-use velt_sema::hir::{self, DefId, TyId, TyKind};
+use rustc_hash::FxHashSet;
+use velt_sema::hir::{self, TyId, TyKind};
 
 use super::any_set_site::ARRAY_ID;
 use super::boxing::Boxing;
@@ -134,7 +134,7 @@ impl Cx<'_> {
     /// hold, each boxed.
     pub(super) fn close_array_views(&mut self, next: &mut Boxing) {
         let mut work: Vec<TyId> = self.facts.array_view_targets.iter().copied().collect();
-        if work.is_empty() || self.prelude_def(VIEW_NEW).is_none() {
+        if work.is_empty() || self.std_hook_if_loaded(VIEW_NEW).is_none() {
             return;
         }
         let mut seen = FxHashSet::default();
@@ -168,34 +168,12 @@ impl Cx<'_> {
             _ => {}
         }
     }
-
-    /// The prelude definition `name` (std/lang/hooks).
-    pub(super) fn prelude_def(&self, name: &str) -> Option<DefId> {
-        let hir = self.hir;
-        let by_name = self.prelude_defs.get_or_init(|| {
-            let mut by_name: FxHashMap<&str, DefId> = FxHashMap::default();
-            for (i, d) in hir.defs.iter().enumerate() {
-                let name = match d {
-                    hir::Def::Fn(f) => f.name.as_str(),
-                    hir::Def::Adt(a) => a.name.as_str(),
-                    _ => continue,
-                };
-                // The first of a name, as a scan finds it.
-                by_name.entry(name).or_insert(DefId(i as u32));
-            }
-            by_name
-        });
-        by_name.get(name).copied()
-    }
 }
 
 impl FnLower<'_, '_> {
     /// The type `ArrayView<e>`.
     fn view_class(&mut self, e: TyId) -> TyId {
-        let d = self
-            .cx
-            .prelude_def(VIEW_CLASS)
-            .unwrap_or_else(|| ice("no prelude `ArrayView`"));
+        let d = self.cx.std_hook(VIEW_CLASS);
         self.cx.intern(TyKind::Adt(d, vec![e]))
     }
 

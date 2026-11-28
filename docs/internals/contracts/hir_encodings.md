@@ -1124,7 +1124,12 @@ see. Lowering may look up by name only what is live with it: the prelude helpers
 lowering's code), the free functions of the modules in `BY_NAME`, and the methods of a type where it
 has a value of that type. Lowering's only other use of `unchecked` is to do without a hook that
 waits for the program to need it: `any_to_record`'s, the `fallback` hooks, and the executor's
-hooks (`sched_exit`, `program_thread`) in a program that runs nothing on the executor.
+hooks (`sched_exit`, `program_thread`) in a program that runs nothing on the executor. It does
+without such a hook also where the program doesn't load the hook's module; a module the program
+loads without the hook is an ICE naming both (`crates/velt_vir/src/lower/std_defs.rs`), never a
+feature quietly switched off, and so is a hook found only under a second name of its module (a
+module the loader named as std's by a path that leaves std's root, `std/../…`, ending in `/` and
+the hook's module, as in #3731).
 
 A hook whose `velt_common` `std_hooks.rs` entry lists `constructs(…)` (the integer text hooks
 `intText`, `uintText`, `intPush`, `uintPush`, `intWrite`, `uintWrite`, the `inspect…` and

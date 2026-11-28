@@ -25,10 +25,12 @@ pub(in crate::lower) const NO_TRANSFER: i128 = 1;
 impl FnLower<'_, '_> {
     /// Can a transfer be open where this call runs? Not in a program built without std, nor in
     /// one whose live code starts none (sema demanded no transfer hook): then each call is its
-    /// answer outside a transfer, and a begin is left out (module docs).
+    /// answer outside a transfer, and a begin is left out (module docs). A demanded hook its
+    /// loaded module lacks is an internal error (`std_hook_if_loaded`), not transfers left out.
     fn has_xfer(&mut self) -> bool {
+        let begin = velt_common::std_hook!(xfer_begin);
         (self.cx.hir.hooks_demanded).contains(hook_index::xfer_begin)
-            && (self.cx.prelude_def(velt_common::std_hook!(xfer_begin))).is_some()
+            && self.cx.std_hook_if_loaded(begin).is_some()
     }
 
     /// The start of a transfer (nested ones nest).
