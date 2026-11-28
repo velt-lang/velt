@@ -7,9 +7,10 @@
 #
 #   bench/compile/not_fn_instr.sh BASE_TREE HEAD_TREE [WORK]
 #
-# Each tree is a checkout with its release compiler and runtime built (`cargo build --release
-# -p veltc --bin velt -p velt_rt -p velt_rt_shared`, in <tree>/target); each side reads its own
-# std. Prints `<program> <check|vir|run> base=<n> head=<n> <change>`.
+# Each tree is a checkout with its release compiler and runtime built in <tree>/target (`cargo
+# build --release -p veltc --bin velt`, then `cargo build --release -p velt_rt -p velt_rt_shared`:
+# one command for both leaves out the runtime's library); each side reads its own std. Prints
+# `<program> <check|vir|run> base=<n> head=<n> <change>`.
 set -uo pipefail
 base=$(cd "$1" && pwd) head=$(cd "$2" && pwd)
 work=${3:-$(mktemp -d)}
@@ -39,8 +40,8 @@ ir() { # <tree> <dir> <check|vir|run> <file>
   local cmd=("$1/target/release/velt" check "$4")
   [ "$3" = vir ] && cmd=("$1/target/release/velt" build --emit=vir "$4")
   if [ "$3" = run ]; then
-    (cd "$2" && VELT_STD="$1/std" "$1/target/release/velt" build --release -o "$work/anys-bin" "$4" \
-      > /dev/null 2>&1) || return
+    (cd "$2" && VELT_STD="$1/std" VELT_RT_LIB="$1/target/release/libvelt_rt.a" \
+      "$1/target/release/velt" build --release -o "$work/anys-bin" "$4" > /dev/null 2>&1) || return
     cmd=("$work/anys-bin")
   fi
   (cd "$2" && VELT_THREADS=1 VELT_BUILD_CACHE=off VELT_STD="$1/std" valgrind --tool=cachegrind \
