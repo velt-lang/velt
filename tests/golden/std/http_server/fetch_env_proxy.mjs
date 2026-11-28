@@ -29,6 +29,13 @@ const PROXY_VARS = [
 
 async function child(urls) {
   for (const url of urls) {
+    // `env:NAME=VALUE` sets a variable between two requests.
+    if (url.startsWith("env:")) {
+      const eq = url.indexOf("=");
+      process.env[url.slice(4, eq)] = url.slice(eq + 1);
+      console.log(url);
+      continue;
+    }
     try {
       const res = await fetch(url, { ca: TEST_CA });
       console.log(`${url} ${res.status} ${await res.text()}`);
@@ -65,8 +72,12 @@ async function main() {
       return;
     }
     const port = Number(req.url.slice(req.url.lastIndexOf(":") + 1));
+    // Not 200: undici takes no other answer, 2xx neither, and the tunnel would work.
+    const answer = req.url.startsWith("nocontent.test:")
+      ? "HTTP/1.1 204 No Content\r\n\r\n"
+      : "HTTP/1.1 200 Connection established\r\n\r\n";
     const origin = net.connect(port, "127.0.0.1", () => {
-      socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+      socket.write(answer);
       origin.write(head);
       origin.pipe(socket);
       socket.pipe(origin);
@@ -133,6 +144,19 @@ async function main() {
     `http://127.0.0.1:${H}/loopback`,
     `https://localhost:${S}/s`,
   ]);
+  await run("a proxy URL with only a user", { NODE_USE_ENV_PROXY: "1", http_proxy: `http://u@127.0.0.1:${proxy.address().port}` }, [
+    `http://u1.test:${H}/`,
+  ]);
+  await run("a proxy URL with only a password", { NODE_USE_ENV_PROXY: "1", http_proxy: `http://:pw@127.0.0.1:${proxy.address().port}` }, [
+    `http://u2.test:${H}/`,
+  ]);
+  await run("the proxy variables read once, NO_PROXY at each request", { NODE_USE_ENV_PROXY: "1", http_proxy: P }, [
+    `http://o1.test:${H}/a`,
+    "env:http_proxy=",
+    `http://o2.test:${H}/b`,
+    "env:NO_PROXY=o3.test",
+    `http://o3.test:${H}/c`,
+  ]);
   await run("uppercase HTTP_PROXY", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P }, [`http://d.test:${H}/`]);
   await run("HTTPS_PROXY alone", { NODE_USE_ENV_PROXY: "1", HTTPS_PROXY: P }, [
     `https://localhost:${S}/e`,
@@ -174,6 +198,9 @@ async function main() {
   ]);
   await run("a proxy that refuses", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P }, [
     `http://refuse.test:${H}/`,
+  ]);
+  await run("a proxy that answers 204", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P }, [
+    `http://nocontent.test:${H}/`,
   ]);
   await run("no proxy there", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: "http://127.0.0.1:1" }, [
     `http://k.test:${H}/`,

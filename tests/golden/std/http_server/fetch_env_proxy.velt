@@ -1,16 +1,17 @@
 // `fetch` and the environment's proxy (#3693), as in Node 22.21+: used only with
 // `NODE_USE_ENV_PROXY=1`; `http_proxy` before `HTTP_PROXY` (even when empty), `https_proxy` /
 // `HTTPS_PROXY` for `https:` with the `http:` one as its fallback; the proxy's credentials as
-// `proxy-authorization`; `NO_PROXY` hosts, `.`/`*` suffixes, ports, IPv6 in brackets, white
+// `proxy-authorization` (only with both a user and a password); the proxy variables read once and
+// `NO_PROXY` at each request; `NO_PROXY` hosts, `.`/`*` suffixes, ports, IPv6 in brackets, white
 // space as a separator, `no_proxy` first, `*`; every request through a `CONNECT` tunnel, `http:`
 // too, this machine too; redirects between `http:` and `https:` proxied hop by hop; a proxy that
-// refuses and one that is not there. The variables are read when the program starts, so each run
+// refuses, one that answers 204 and one that is not there. The variables are read when the program starts, so each run
 // is this program again with its own environment ("child"); servers, proxy and its log are here.
 // fetch_env_proxy.mjs is the Node twin and prints the same (the proxy is local, no network).
 import { serve } from "http-server";
 import { connect, listen, TcpStream } from "velt/net";
 import { utf8DecodeLossy } from "velt/encoding";
-import { envAll } from "velt/process";
+import { envAll, setEnv } from "velt/process";
 import { exec } from "velt/process/child";
 import { Channel, channel } from "velt/sync";
 import { TEST_CA, TEST_CERT, TEST_KEY } from "../_tls";
@@ -29,6 +30,13 @@ const PROXY_VARS = [
 
 async function child(urls: string[]) {
   for (const url of urls) {
+    // `env:NAME=VALUE` sets a variable between two requests.
+    if (url.startsWith("env:")) {
+      const eq = url.indexOf("=");
+      setEnv(url.slice(4, eq), url.slice(eq + 1));
+      console.log(url);
+      continue;
+    }
     try {
       const res = await fetch(url, { ca: TEST_CA });
       console.log(`${url} ${res.status} ${await res.text()}`);
@@ -88,6 +96,10 @@ async function proxyOne(conn: TcpStream, log: Channel<string>) {
     conn.close();
     return;
   }
+  // Not 200: undici takes no other answer, 2xx neither, and the tunnel would work.
+  const answer = target.startsWith("nocontent.test:")
+    ? "HTTP/1.1 204 No Content\r\n\r\n"
+    : "HTTP/1.1 200 Connection established\r\n\r\n";
   let origin: TcpStream;
   try {
     origin = await connect(`127.0.0.1:${target.slice(target.lastIndexOf(":") + 1)}`);
@@ -95,7 +107,7 @@ async function proxyOne(conn: TcpStream, log: Channel<string>) {
     conn.close();
     return;
   }
-  await conn.write("HTTP/1.1 200 Connection established\r\n\r\n");
+  await conn.write(answer);
   const rest = input.slice(end + 4);
   if (rest.length > 0) {
     await origin.writeBytes(rest);
@@ -194,6 +206,27 @@ async function main() {
     { NODE_USE_ENV_PROXY: "1", http_proxy: withAuth },
     [`http://c.test:${H}/c`, `http://127.0.0.1:${H}/loopback`, `https://localhost:${S}/s`],
   );
+  await run(
+    "a proxy URL with only a user",
+    { NODE_USE_ENV_PROXY: "1", http_proxy: `http://u@127.0.0.1:${proxyPort}` },
+    [`http://u1.test:${H}/`],
+  );
+  await run(
+    "a proxy URL with only a password",
+    { NODE_USE_ENV_PROXY: "1", http_proxy: `http://:pw@127.0.0.1:${proxyPort}` },
+    [`http://u2.test:${H}/`],
+  );
+  await run(
+    "the proxy variables read once, NO_PROXY at each request",
+    { NODE_USE_ENV_PROXY: "1", http_proxy: P },
+    [
+      `http://o1.test:${H}/a`,
+      "env:http_proxy=",
+      `http://o2.test:${H}/b`,
+      "env:NO_PROXY=o3.test",
+      `http://o3.test:${H}/c`,
+    ],
+  );
   await run("uppercase HTTP_PROXY", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P }, [
     `http://d.test:${H}/`,
   ]);
@@ -246,6 +279,9 @@ async function main() {
   );
   await run("a proxy that refuses", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P }, [
     `http://refuse.test:${H}/`,
+  ]);
+  await run("a proxy that answers 204", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P }, [
+    `http://nocontent.test:${H}/`,
   ]);
   await run("no proxy there", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: "http://127.0.0.1:1" }, [
     `http://k.test:${H}/`,

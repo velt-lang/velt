@@ -171,7 +171,10 @@ describe("proxy URLs", () => {
     expect(parseProxy("http://al%40ice:p%3Aw@proxy:8080", "$X").authorization).toBe(
       "Basic YWxAaWNlOnA6dw==",
     );
-    expect(parseProxy("http://user@proxy:8080", "$X").authorization).toBe("Basic dXNlcjo=");
+    // Only with both, as undici's `ProxyAgent`.
+    expect(parseProxy("http://user@proxy:8080", "$X").authorization).toBe("");
+    expect(parseProxy("http://:pw@proxy:8080", "$X").authorization).toBe("");
+    expect(parseProxy("http://user:@proxy:8080", "$X").authorization).toBe("");
   });
 
   it("are refused when not http:, naming the variable but not the password", () => {
@@ -180,6 +183,11 @@ describe("proxy URLs", () => {
       "https://proxy:443",
       "http://user:secret@",
       "http://user:sec%0Aret@proxy:1",
+      // Only an origin, as undici's `parseOrigin`.
+      "http://user:secret@proxy:1/path",
+      "proxy:1/path",
+      "http://proxy:1/?q",
+      "http://proxy:1/#f",
     ];
     for (const url of bad) {
       let message = "";

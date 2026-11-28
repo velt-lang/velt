@@ -6,14 +6,19 @@
 // and the `http:` one when neither is set. A lowercase variable that is set wins even when it is
 // empty, and an empty value means no proxy. `no_proxy`, else `NO_PROXY`, lists the hosts reached
 // directly (`noProxy`); this machine is not special (Node sends `localhost` to the proxy too).
+// The proxy variables are read once, at that first request (`envVars`), as Node reads them once
+// when it starts; `NO_PROXY` is read for each request and redirect hop, as undici re-reads it.
 //
-// A proxy is `http://[user:password@]host[:port]` (port 80 by default); its user and password
-// become `proxy-authorization: Basic …`. Every request goes through a `CONNECT` tunnel to the
+// A proxy is `http://[user:password@]host[:port][/]` (port 80 by default); its user and password,
+// when it has both, become `proxy-authorization: Basic …` (with only one of them, none, as in
+// undici). Every request goes through a `CONNECT` tunnel to the
 // origin's host and port (tunnel.velt), `http:` too, as undici does; for `https:` TLS to the
 // origin runs inside it, as without a proxy. Where Node differs: it starts no program whose
 // proxy variable is not a URL (Velt also takes `host:port`, and rejects a `fetch` through any
 // other proxy with `EINVAL`), and it speaks TLS to an `https://` proxy, which Velt refuses.
-// The proxy variables and `NO_PROXY` are read for each request.
+// Node also starts no program whose proxy URL has a path, query or fragment; a `fetch` through
+// it fails with `EINVAL` here. A program that sets a proxy variable before its first `fetch`
+// goes through that proxy here, where Node keeps the one it started with.
 
 import { IoError } from "velt/io/error";
 import { base64Encode, utf8Encode } from "velt/encoding";
@@ -50,6 +55,59 @@ function envProxyOn(): bool {
   return on == 1;
 }
 
+/** The proxy variables, each with the name it was read from (proxy.velt module comment). */
+class EnvVars {
+  /** `http_proxy`, else `HTTP_PROXY`; undefined when neither is set. */
+  http: string | undefined;
+  httpName: string;
+  /** `https_proxy`, else `HTTPS_PROXY`; undefined when neither is set. */
+  https: string | undefined;
+  httpsName: string;
+
+  constructor(
+    http: string | undefined,
+    httpName: string,
+    https: string | undefined,
+    httpsName: string,
+  ) {
+    this.http = http;
+    this.httpName = httpName;
+    this.https = https;
+    this.httpsName = httpsName;
+  }
+}
+
+/** The proxy variables as the first request that used them read them. */
+let readOnce: EnvVars | null = null;
+
+/** The proxy variables, read at the first call (Node reads them once, when it starts). */
+function envVars(): EnvVars {
+  const known = readOnce;
+  if (known != null) {
+    return known;
+  }
+  const vars = readEnvVars();
+  readOnce = vars;
+  return vars;
+}
+
+/** The proxy variables as they are now. */
+function readEnvVars(): EnvVars {
+  let httpName = "http_proxy";
+  let http = getEnv(httpName);
+  if (http == null) {
+    httpName = "HTTP_PROXY";
+    http = getEnv(httpName);
+  }
+  let httpsName = "https_proxy";
+  let https = getEnv(httpsName);
+  if (https == null) {
+    httpsName = "HTTPS_PROXY";
+    https = getEnv(httpsName);
+  }
+  return new EnvVars(http, httpName, https, httpsName);
+}
+
 /**
  * The proxy of a request to `hostname` (as the URL parser serializes it: IPv6 in brackets) on
  * `port`: the request's `given` one ("" for none), or when it is null the environment's, if
@@ -65,26 +123,30 @@ export function proxyFor(
   if (given != null) {
     return given.length == 0 ? null : parseProxy(given, "the proxy option");
   }
-  return envProxyOn() ? fromEnv(https, hostname, port) : null;
+  return envProxyOn() ? fromVars(envVars(), https, hostname, port) : null;
 }
 
-/** The environment's proxy for a request to `hostname` on `port`, as `EnvHttpProxyAgent`'s. */
+/** The environment's proxy, its variables read now, for a request to `hostname` on `port`. */
 export function fromEnv(https: bool, hostname: string, port: i64): Via | null throws IoError {
-  let name = "http_proxy";
-  let value = getEnv(name);
-  if (value == null) {
-    name = "HTTP_PROXY";
-    value = getEnv(name);
-  }
+  return fromVars(readEnvVars(), https, hostname, port);
+}
+
+/**
+ * The proxy `vars` give a request to `hostname` on `port`, as `EnvHttpProxyAgent`'s: `NO_PROXY`
+ * read now.
+ */
+function fromVars(
+  vars: EnvVars,
+  https: bool,
+  hostname: string,
+  port: i64,
+): Via | null throws IoError {
+  let name = vars.httpName;
+  let value = vars.http;
   if (https) {
-    let secureName = "https_proxy";
-    let secure = getEnv(secureName);
-    if (secure == null) {
-      secureName = "HTTPS_PROXY";
-      secure = getEnv(secureName);
-    }
+    const secure = vars.https;
     if (secure != null && secure.length > 0) {
-      name = secureName;
+      name = vars.httpsName;
       value = secure;
     }
   }
@@ -117,9 +179,14 @@ export function parseProxy(value: string, what: string): Via throws IoError {
   if (u == null || u.hostname.length == 0) {
     throw invalid(what, "not a URL with a host");
   }
+  // undici's `parseOrigin`: only an origin, with or without a `/`.
+  if (u.pathname != "/" || u.search.length > 0 || u.hash.length > 0) {
+    throw invalid(what, "a path, query or fragment after the host");
+  }
   const port = u.port.length > 0 ? u.port : "80";
   let authorization = "";
-  if (u.username.length > 0 || u.password.length > 0) {
+  // As undici's `ProxyAgent`: only with both a user and a password.
+  if (u.username.length > 0 && u.password.length > 0) {
     const plain = `${decodeLenient(u.username, false)}:${decodeLenient(u.password, false)}`;
     for (let i: i64 = 0; i < (plain.length as i64); i++) {
       const c = plain.charCodeAt(i);

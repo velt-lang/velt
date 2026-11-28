@@ -14,7 +14,7 @@ const MAX_HEAD: i64 = 16384;
 
 /**
  * Asks proxy `via` on `s` for a tunnel to `authority` (`host:port`), within `left` milliseconds
- * and before an abort; resolves once the proxy answered 2xx. On a failure `s` is closed.
+ * and before an abort; resolves once the proxy answered 200 (only 200, as undici). On a failure `s` is closed.
  */
 export async function tunnel(
   s: TcpStream,
@@ -91,12 +91,13 @@ async function ask(
 function answered(buf: u8[], at: i64, end: i64, via: Via, authority: string) throws IoError {
   const lf = buf.indexOf(10);
   const line = utf8DecodeLossy(buf.slice(0, lf as i64)).trim();
-  // `HTTP/1.1 200 …`
+  // `HTTP/1.1 200 …`: 200 only; undici fails a tunnel on any other answer, 2xx too.
   const ok =
     line.startsWith("HTTP/1.") &&
     line.length >= 12 &&
-    line.charCodeAt(9) == 50 &&
-    line.charCodeAt(8) == 32;
+    line.charCodeAt(8) == 32 &&
+    line.slice(9, 12) == "200" &&
+    (line.length == 12 || line.charCodeAt(12) == 32);
   if (!ok) {
     throw refused(via, authority, line.length > 200 ? line.slice(0, 200) : line);
   }
