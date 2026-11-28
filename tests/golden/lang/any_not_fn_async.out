@@ -12,4 +12,6 @@ catch body TypeError true
 awaited 2
 after await TypeError true
 then TypeError true
+inner body
+outer catch o.ob is not a function
 2 3

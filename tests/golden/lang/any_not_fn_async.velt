@@ -63,6 +63,20 @@ async function afterAwait(): Promise<number> {
   return o.ob(v);
 }
 
+// The `catch` around a `try` whose `finally` calls through `any` takes the error, also in a
+// sync function.
+function finallyInTry(): void {
+  try {
+    try {
+      console.log("inner body");
+    } finally {
+      o.ob();
+    }
+  } catch (e) {
+    console.log("outer catch", (e as Error).message);
+  }
+}
+
 async function report(what: string, p: Promise<any>): Promise<void> {
   try {
     await p;
@@ -93,6 +107,7 @@ async function main(): Promise<void> {
   await report("catch body", inCatch());
   await report("after await", afterAwait());
   await report("then", Promise.resolve(1).then((v: number) => o.ob(v)));
+  finallyInTry();
   console.log(o.f(1), await (async () => o.f(2))());
 }
 

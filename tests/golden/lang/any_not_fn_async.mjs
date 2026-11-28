@@ -56,6 +56,18 @@ async function afterAwait() {
   return o.ob(v);
 }
 
+function finallyInTry() {
+  try {
+    try {
+      console.log("inner body");
+    } finally {
+      o.ob();
+    }
+  } catch (e) {
+    console.log("outer catch", e.message);
+  }
+}
+
 async function report(what, p) {
   try {
     await p;
@@ -86,6 +98,7 @@ async function main() {
   await report("catch body", inCatch());
   await report("after await", afterAwait());
   await report("then", Promise.resolve(1).then((v) => o.ob(v)));
+  finallyInTry();
   console.log(o.f(1), await (async () => o.f(2))());
 }
 
