@@ -1,0 +1,18 @@
+// Parses URLs with domain, IPv4 and IPv6 hosts in a loop (bench/compile/node_misc_instr.sh).
+import { URL } from "velt/net/url";
+
+const inputs: string[] = [
+  "https://example.com/a/b?q=1#f",
+  "http://user:pw@Sub.Example.ORG:8080/x/../y",
+  "http://127.1/",
+  "http://[::1]:3000/x",
+  "http://[2001:db8:0:0:0:ff00:42:8329]/",
+  "http://[::ffff:127.0.0.1]/p",
+  "ws://h/chat",
+];
+let total = 0;
+for (let i = 0; i < 20000; i++) {
+  const u = new URL(inputs[i % inputs.length]);
+  total += u.href.length + u.host.length;
+}
+console.log(total);

@@ -1,0 +1,12 @@
+// Proxy member reads and `typeof` of `any` values in a program that has `Proxy`
+// (bench/compile/node_misc_instr.sh): both sides run it.
+const target: any = { a: 1, b: 2 };
+const p: any = new Proxy(target, {});
+const values: any[] = [p, target, 1, "s", () => 1, null];
+let n = 0;
+let kinds = 0;
+for (let i = 0; i < 200000; i++) {
+  n += p.a + p.b;
+  kinds += typeof values[i % values.length] === "object" ? 1 : 0;
+}
+console.log(n, kinds);

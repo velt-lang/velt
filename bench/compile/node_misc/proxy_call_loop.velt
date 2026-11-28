@@ -1,0 +1,15 @@
+// Calls through a proxy of a function (#3978; bench/compile/node_misc_instr.sh): without a
+// trap, with an `apply` trap, and as a member. The base cannot run it.
+const add = (a: number, b: number): number => a + b;
+const plain: any = new Proxy(add, {});
+const trapped: any = new Proxy(add, {
+  apply(t: any, thisArg: any, args: any[]): any {
+    return t(args[0], args[1]);
+  },
+});
+const o: any = { f: plain };
+let s = 0;
+for (let i = 0; i < 100000; i++) {
+  s += plain(i, 1) + trapped(i, 2) + o.f(i, 3);
+}
+console.log(s);
