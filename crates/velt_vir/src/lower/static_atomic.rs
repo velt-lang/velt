@@ -9,6 +9,7 @@
 //! `Work::StaticsDrop`), which it calls then. `velt/sync/epoch`'s registry is one of them. The
 //! same table holds the addresses of std's process statics (#2779), words the runtime uses.
 
+use velt_common::std_hooks::prebuilt;
 use velt_sema::hir::{self, ExprKind as K, TyKind};
 
 use super::atomic::is_atomic;
@@ -16,7 +17,9 @@ use super::operand::proj;
 use super::rt::Rt;
 use super::thread_local::literal_word;
 use super::{FnLower, ScopeKind, Work};
-use crate::vir::{Const, Function, Operand, Place, Proj, Rvalue, StaticData, StaticId, Ty};
+use crate::vir::{
+    Const, Function, Linkage, Operand, Place, Proj, Rvalue, StaticData, StaticId, Ty,
+};
 
 impl FnLower<'_, '_> {
     /// The place of global `d`'s `Atomic` when `d` is a static atomic.
@@ -67,6 +70,13 @@ impl FnLower<'_, '_> {
             };
             let w = literal_word(&init, vt, half, bits);
             let bytes = w.to_le_bytes()[..(bits / 8) as usize].to_vec();
+            // A process static's word is the program's under its symbol, which the objects of
+            // prebuilt hook modules import (velt_common `std_hooks/prebuilt.rs`, "State").
+            let symbol = prebuilt::process_static(&name).map(prebuilt::static_symbol);
+            let linkage = match symbol {
+                Some(_) => Linkage::Export,
+                None => Linkage::Internal,
+            };
             let id = StaticId(self.cx.statics.len() as u32);
             self.cx.statics.push(StaticData {
                 align: bits / 8,
@@ -74,6 +84,8 @@ impl FnLower<'_, '_> {
                 relocs: vec![],
                 // The type is part of it: an edit changing it gets a new word (`velt dev`).
                 mutable: Some(crate::tls::stable_id(&format!("{name}:{vt:?}"))),
+                symbol,
+                linkage,
                 ..Default::default()
             });
             id

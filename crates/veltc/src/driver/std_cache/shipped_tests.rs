@@ -39,6 +39,7 @@ fn built(std_root: &Path, files: &[&str]) -> Built {
         entries: vec!["velt_hook_probe [F64] -> F64".into()],
         files,
         tls: vec![],
+        statics: vec!["velt_process_str_epoch".into()],
     }
 }
 
@@ -77,6 +78,15 @@ fn a_manifest_reads_back_and_names_nothing_of_the_machine() {
     }
     assert_eq!(std::fs::read(dir.join("m.o")).unwrap(), b"an object");
     assert!(text.ends_with("\nend\n"), "{text}");
+    // The process statics it imports; a symbol that names none is no manifest.
+    assert_eq!(manifest.statics, ["velt_process_str_epoch"]);
+    let unknown = text.replacen(
+        "static velt_process_str_epoch",
+        "static velt_process_nothing",
+        1,
+    );
+    assert_ne!(unknown, text);
+    assert_eq!(Manifest::parse(&unknown), None);
     // Another form is no manifest.
     assert_eq!(
         Manifest::parse(&text.replacen("module 2", "module 1", 1)),

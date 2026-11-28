@@ -30,6 +30,10 @@
 //! `velt_main` defines their storage. Where a debug build's backend has no thread-local storage
 //! an object shares (`velt_codegen_cl::has_thread_local_data`), an object with any is a miss.
 //!
+//! **Process statics.** The object imports the words of std's process statics it uses from the
+//! program (`prebuilt.rs` "State"), which defines and registers every one: the manifest lists
+//! them (`static` lines), and [`link`] finds each defined before it adds the object.
+//!
 //! **Pinned.** Once sema has called the object's entry points, the build has to link it: a build
 //! that links takes the object found out of the cache's reach at once ([`pin`]: a hard link or a
 //! copy in a temporary directory the build holds), so another build's garbage collection or
@@ -68,6 +72,8 @@ pub(crate) struct Found {
     pub files: Vec<String>,
     /// The externs of its thread-local values (`tls` lines), which the program defines.
     pub tls: Vec<String>,
+    /// The symbols of the process statics it imports (`static` lines), which the program defines.
+    pub statics: Vec<String>,
     /// It is the toolchain's (`shipped`), found there by this build.
     pub shipped: bool,
     /// The temporary directory holding the pinned object, removed when the last copy goes.
@@ -226,6 +232,7 @@ impl Finder {
             entries: s.entries,
             files: s.files,
             tls: s.tls,
+            statics: s.statics,
             shipped: true,
             _pinned: None,
         })
@@ -245,6 +252,7 @@ impl Finder {
             entries: s.entries.clone(),
             files: s.files.clone(),
             tls: s.tls.clone(),
+            statics: s.statics.clone(),
         };
         write_atomically(&self.manifest_path(&key), &manifest.render()).ok()
     }
@@ -286,6 +294,7 @@ impl Finder {
             entries: manifest.entries,
             files: manifest.files,
             tls: manifest.tls,
+            statics: manifest.statics,
             shipped: false,
             _pinned: pinned,
         })
@@ -343,6 +352,7 @@ impl Finder {
             entries: built.entries,
             files: built.files,
             tls: built.tls,
+            statics: built.statics,
         };
         let path = self.manifest_path(&key);
         write_atomically(&path, &manifest.render()).map_err(|e| format!("{}: {e}", path.display()))
@@ -477,6 +487,7 @@ struct Manifest {
     entries: Vec<String>,
     files: Vec<String>,
     tls: Vec<String>,
+    statics: Vec<String>,
 }
 
 impl Manifest {
@@ -489,12 +500,16 @@ impl Manifest {
         let mut entries = vec![];
         let mut files = vec![];
         let mut tls = vec![];
+        let mut statics = vec![];
         for line in lines {
             if let Some(e) = line.strip_prefix("entry ") {
                 entries.push(e.to_string());
             } else if let Some(t) = line.strip_prefix("tls ") {
                 velt_vir::tls::TlsCall::of_symbol(t)?;
                 tls.push(t.to_string());
+            } else if let Some(t) = line.strip_prefix("static ") {
+                prebuilt::of_static_symbol(t)?;
+                statics.push(t.to_string());
             } else if line.starts_with("file ") {
                 files.push(line.to_string());
             } else {
@@ -506,6 +521,7 @@ impl Manifest {
             entries,
             files,
             tls,
+            statics,
         })
     }
 
@@ -516,6 +532,9 @@ impl Manifest {
         }
         for t in &self.tls {
             s.push_str(&format!("tls {t}\n"));
+        }
+        for t in &self.statics {
+            s.push_str(&format!("static {t}\n"));
         }
         for f in &self.files {
             s.push_str(f);
@@ -566,10 +585,22 @@ pub(crate) fn linked_objects(
             }
             called = true;
         }
-        if called {
-            objects.push(f.object.clone());
-            tls.extend(f.tls.iter().cloned());
+        if !called {
+            continue;
         }
+        // Every program defines std's process statics (`velt_vir` `static_atomic.rs`).
+        let defines = |sym: &String| {
+            (program.statics.iter())
+                .any(|s| s.symbol.as_ref() == Some(sym) && s.linkage == vir::Linkage::Export)
+        };
+        if let Some(missing) = f.statics.iter().find(|s| !defines(s)) {
+            return Err(format!(
+                "ICE: the object of `{module_entry}` imports `{missing}`, which the program does \
+                 not define"
+            ));
+        }
+        objects.push(f.object.clone());
+        tls.extend(f.tls.iter().cloned());
     }
     Ok((objects, tls))
 }

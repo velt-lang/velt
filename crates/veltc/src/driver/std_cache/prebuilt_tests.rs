@@ -43,6 +43,7 @@ fn an_object_gone_from_the_cache_by_the_link_is_still_linked() {
         entries: vec![line],
         files: vec![],
         tls: vec![],
+        statics: vec![],
     };
     write_atomically(&finder.manifest_path(&key), &manifest.render()).unwrap();
 
@@ -145,6 +146,7 @@ fn an_object_gone_before_the_check_is_a_miss() {
         entries: vec![],
         files: vec![],
         tls: vec![],
+        statics: vec![],
     };
     write_atomically(&finder.manifest_path(&key), &manifest.render()).unwrap();
     assert!(!finder.linked(hook));

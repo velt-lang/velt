@@ -15,10 +15,11 @@
 //! copy in the object would split in two: module state (`velt_rt_module_state`, the executor's
 //! module hooks and the blocks of module_blocks.velt: [`holds_no_module_state`]), thread-local
 //! values (`velt_tls_*`), static atomics (process statics such as `STR_EPOCH` among them) and
-//! named statics. The exception is state of the module's own: the thread-local values and static
-//! atomics declared in its private modules (`prebuilt.rs` "State"), which no program that links
-//! the object loads ([`own_state`]), and the blocks of module state in module_blocks.velt's own
-//! object.
+//! named statics. The exceptions are state of the module's own: the thread-local values and
+//! static atomics declared in its private modules (`prebuilt.rs` "State"), which no program that
+//! links the object loads ([`own_state`]), and the blocks of module state in module_blocks.velt's
+//! own object; and std's process statics, whose words the object imports from the program
+//! ([`import_process_statics`]), which defines them and hands the runtime their addresses.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -39,6 +40,9 @@ pub(super) struct Built {
     /// The externs of the thread-local values its code uses (its module's own: [`own_state`]),
     /// which the program linking it defines.
     pub tls: Vec<String>,
+    /// The symbols of the process statics its code uses (`prebuilt::static_symbol`), whose words
+    /// the program linking it defines.
+    pub statics: Vec<String>,
 }
 
 /// Compile the object of module `module_entry` (a std module table entry) for `target` and
@@ -103,6 +107,7 @@ pub(super) fn build(
     program.files.clear();
     program.funcs.iter_mut().for_each(|f| f.locs.clear());
     let entries = entry_points(&mut program, &hooks)?;
+    import_process_statics(&mut program);
     velt_opt::optimize(&mut program, velt_opt::OptLevel::Speed);
     // The entry stays declared (`dead_funcs` drops a declaration nothing calls).
     if !program.funcs.iter().any(|f| f.symbol == "velt_main") {
@@ -112,6 +117,7 @@ pub(super) fn build(
     shares_nothing(&program, &own)?;
     holds_no_module_state(&program, prebuilt::private(module_entry))?;
     let tls = thread_locals(&program);
+    let statics = process_statics(&program);
     velt_vir::verify(&program).map_err(|errs| errs.join("; "))?;
     let cg = velt_codegen_cl::CodegenOptions {
         target: target.to_string(),
@@ -127,7 +133,38 @@ pub(super) fn build(
         entries,
         files,
         tls,
+        statics,
     })
+}
+
+/// Make the word of each process static the world defines (under its symbol, as every program's:
+/// `velt_vir` `static_atomic.rs`) an import of the program's: the runtime bumps the program's
+/// word, whose address `velt_main` hands it, so a copy in the object would never change.
+fn import_process_statics(program: &mut vir::Program) {
+    for s in &mut program.statics {
+        let named = s.symbol.as_deref().and_then(prebuilt::of_static_symbol);
+        if named.is_some() && s.linkage == Linkage::Export {
+            s.linkage = Linkage::Import;
+        }
+    }
+}
+
+/// The symbols of the process statics the code of `program` reaches, sorted.
+fn process_statics(program: &vir::Program) -> Vec<String> {
+    let (_, statics) = reached(program);
+    let mut out: Vec<String> = (statics.iter())
+        .filter_map(|&s| program.statics[s].symbol.clone())
+        .filter(|sym| prebuilt::of_static_symbol(sym).is_some())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Is `s` a process static's word, imported from the program ([`import_process_statics`])?
+fn imported_process_static(s: &vir::StaticData) -> bool {
+    s.linkage == Linkage::Import
+        && (s.symbol.as_deref()).is_some_and(|sym| prebuilt::of_static_symbol(sym).is_some())
 }
 
 /// The world's root: it imports the hooks of `hooks` from `spec` and calls each once, with
@@ -264,7 +301,9 @@ fn shares_nothing(program: &vir::Program, own: &HashSet<u64>) -> Result<(), Stri
         return Err(format!("its code reaches `{}`", e.symbol));
     }
     let shared_static = |s: &vir::StaticData| {
-        s.linkage != Linkage::Internal || s.mutable.is_some_and(|id| !own.contains(&id))
+        let shared =
+            s.linkage != Linkage::Internal || s.mutable.is_some_and(|id| !own.contains(&id));
+        shared && !imported_process_static(s)
     };
     if statics.iter().any(|&s| shared_static(&program.statics[s])) {
         return Err("its code reaches a static atomic or a named static".into());

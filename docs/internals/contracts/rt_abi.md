@@ -934,6 +934,11 @@ the program's data. No call when every field would be NULL.
   or moved. The word is Velt's, so the runtime needs no symbol of the program (the shared runtime
   of debug builds is linked before the program exists).
 
+Every program defines each process static's word and exports it as `velt_process_<entry name>`
+(`velt_process_str_epoch`; velt_common `std_hooks/prebuilt.rs` `static_symbol`), hidden: the
+objects of prebuilt hook modules import it instead of keeping a copy the runtime never bumps
+(`prebuilt.rs` "State"). The runtime does not use the symbol.
+
 ## Breadcrumbs
 
 The position translation of long non-ASCII heap strings (UTF-16 units ↔ WTF-8 bytes) is done by
