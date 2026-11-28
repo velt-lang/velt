@@ -22,6 +22,7 @@ import { JsonValue } from "velt/prelude/json/json_value";
 import { JsonReplacer } from "velt/prelude/json/layout";
 import { callToJSON, entryCount, entryName, entryValue, identity, typeOf } from "velt/reflect";
 import { RuntimeType } from "velt/reflect/runtime_type";
+import { noInline } from "velt/lang/intrinsics";
 
 // The depth levels a walk of a replacer's result (`replaceJsonResult`) counts for its frames.
 const RESULT_WALK_DEPTH: i64 = 1;
@@ -83,7 +84,7 @@ function replaceAny(
   let through = true;
   let walkReads = reads;
   let from = at + 1;
-  let end = at >= 0 ? reads!.next(at) : 0;
+  let end = at >= 0 ? nextRead(reads!, at) : 0;
   if (raw != null) {
     view = raw!;
   } else if (!hook && hooked && t.name == "Date") {
@@ -208,6 +209,21 @@ function replaceResult(
   return replaceRead(v, t, null, replacerOf(f), depth);
 }
 
+/** The entry of `reads` after entry `at`'s, out of line for the reason `memberOf` gives. */
+@noInline
+function nextRead(reads: JsonReads, at: i64): i64 {
+  return reads.next(at);
+}
+
+/**
+ * Member `i` (named `name`) of the list or object `view`. Out of line: what reading it inlines
+ * stays off the frames of `replaceKept`, which recurses once per level of a replacer's results.
+ */
+@noInline
+function memberOf(view: JsonValue, list: bool, i: i64, name: string): JsonValue {
+  return list ? view.at(i)! : view.get(name)!;
+}
+
 /**
  * The members of `v` (of type `t`) at `depth`, whose view (`view`) the replacer kept, replaced;
  * `reads`: what writing `view` read (its members' entries from `from` to `end`), or null.
@@ -244,13 +260,13 @@ function replaceKept(
   let next = from;
   for (let i: i64 = 0; i < n; i++) {
     const name = list ? `${i}` : names![i];
-    const x = list ? view.at(i)! : view.get(name)!;
+    const x = memberOf(view, list, i, name);
     let e: JsonValue | undefined = undefined;
     if (next < end && reads!.position(next) == i) {
       const value = reads!.value(next);
       const type = reads!.type(next);
       e = replaceAny(value, type, name, x, replacer, depth + 1, true, reads, next);
-      next = reads!.next(next);
+      next = nextRead(reads!, next);
     } else {
       e = jsonReplaced(name, x, replacer, depth + 1);
     }
