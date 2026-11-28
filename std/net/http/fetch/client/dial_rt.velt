@@ -59,3 +59,13 @@ export async function tlsOn(
   velt_rt_tcp_close(fd);
   throw new IoError("ENOTSUP", `fetch failed: no TLS in this build (connecting to ${addr})`);
 }
+
+/** `c.readableWithin(ms)`: this build's waits are the runtime's (no HTTP/2 session reaches it). */
+export async function idleReadable(c: TcpStream, ms: i64): Promise<bool> {
+  return await c.readableWithin(ms as number);
+}
+
+/** Never: this build's waits are the runtime's. */
+export function idleEnding(): bool {
+  return false;
+}
