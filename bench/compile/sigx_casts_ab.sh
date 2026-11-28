@@ -32,11 +32,14 @@ count() { # velt std mode program tag
     VELT_HOME="$home" VELT_STD="$2" valgrind --tool=cachegrind --cache-sim=no \
       --cachegrind-out-file=/dev/null "$1" "${args[@]}" 2> "$OUT/cg-$5.txt" >/dev/null || true
   fi
-  grep -E "I +refs" "$OUT/cg-$5.txt" | awk '{gsub(",","",$NF); print $NF}'
+  { grep -E "I +refs" "$OUT/cg-$5.txt" || true; } | awk '{gsub(",","",$NF); print $NF}'
 }
 printf "program\tmode\tbase\thead\tdelta\n"
-progs=(hello app10k iface_downcast iface_downcast_class_shaped bound_result_widen
-  object_copy_optional_unknown iface_downcast_union)
+default="hello app10k iface_downcast iface_downcast_class_shaped bound_result_widen"
+default+=" object_copy_optional_unknown iface_downcast_union"
+read -ra progs <<< "${PROGS:-$default}"
+# The area's new programs, which the base refuses: their rows are head only.
+new=" bound_result_widen object_copy_optional_unknown iface_downcast_union "
 for n in "${progs[@]}"; do
   case $n in
     hello) p="$OUT/src/hello.velt" ;;
@@ -46,8 +49,8 @@ for n in "${progs[@]}"; do
   modes=(check build)
   case $n in hello|app10k) ;; *) modes+=(run) ;; esac
   for m in "${modes[@]}"; do
-    # The area's new programs don't compile at the base: their rows are head only.
-    b=$(count "$BV" "$BS" $m "$p" "b-$n-$m"); b=${b:-0}
+    b=0
+    [[ $new == *" $n "* ]] || b=$(count "$BV" "$BS" $m "$p" "b-$n-$m")
     h=$(count "$HV" "$HS" $m "$p" "h-$n-$m")
     printf "%s\t%s\t%s\t%s\t%s\n" "$n" $m "$b" "$h" \
       "$(awk -v b="$b" -v h="$h" 'BEGIN{ if (b == 0) print "n/a"; else printf "%+.2f%%", (h-b)*100/b }')"
