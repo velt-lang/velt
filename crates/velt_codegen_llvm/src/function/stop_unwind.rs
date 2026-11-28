@@ -1,12 +1,17 @@
 //! The functions C calls (`vir::Function::stops_unwind`, `@export("c_name")`): a panic that
 //! unwinds into one aborts the process, as clang does for a `noexcept` function and Rust for an
 //! `extern "C"` one. Each call in it that can unwind is an `invoke` whose unwind edge goes to one
-//! landing pad calling `abort`, with the personality function of the runtime's panics: Rust's
-//! (`rust_eh_personality`, the runtime defines it) for the Itanium unwinder of Linux and macOS;
-//! on Windows a `cleanuppad` under `__C_specific_handler`, a termination handler (`__finally`),
-//! which runs for every exception that unwinds the frame: Velt's (`RaiseException`) and Rust's
-//! panics (C++ exceptions) alike. (`__CxxFrameHandler3` skips its cleanups for an exception that
-//! is not C++, so a Velt panic passed it.)
+//! landing pad calling `abort`, for the Itanium unwinder of Linux and macOS a personality that
+//! runs a cleanup for any exception, Rust's panics among them. Against glibc and macOS it is the C
+//! library's (`__gcc_personality_v0`, libgcc's and libSystem's): the runtime's
+//! `rust_eh_personality` is in its static archive only, not exported by the shared library debug
+//! builds link (`velt_rt_shared`), so a debug LLVM build of a program with an `@export` failed to
+//! link with it. Against musl it is Rust's (`rust_eh_personality`): a musl program always links
+//! the static runtime, which defines it, and the musl kit has no libgcc. On Windows a `cleanuppad`
+//! under `__C_specific_handler`, a termination handler (`__finally`), which runs for every
+//! exception that unwinds the frame: Velt's
+//! (`RaiseException`) and Rust's panics (C++ exceptions) alike. (`__CxxFrameHandler3` skips its
+//! cleanups for an exception that is not C++, so a Velt panic passed it.)
 //!
 //! Missing unwind information alone would not do: LLVM writes it anyway with `-g` (its CFI goes to
 //! `.eh_frame` as the other functions'), and a call in tail position becomes a jump, which leaves
@@ -23,8 +28,10 @@ const PAD: &str = "velt.abort";
 /// How a function C calls stops an unwind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Pad {
-    /// Itanium: `landingpad … cleanup` with Rust's personality.
+    /// Itanium: `landingpad … cleanup` with the C library's personality (glibc, macOS).
     Landing,
+    /// Itanium against musl: `landingpad … cleanup` with Rust's personality.
+    LandingMusl,
     /// Windows: `cleanuppad` under `__C_specific_handler`.
     Cleanup,
 }
@@ -34,13 +41,15 @@ impl Pad {
     pub(super) fn of(function: &velt_vir::vir::Function, target: &Target) -> Option<Pad> {
         function.stops_unwind.then_some(match target.os {
             Os::Windows => Pad::Cleanup,
+            _ if target.is_musl() => Pad::LandingMusl,
             _ => Pad::Landing,
         })
     }
 
     fn personality(self) -> &'static str {
         match self {
-            Pad::Landing => "@rust_eh_personality",
+            Pad::Landing => "@__gcc_personality_v0",
+            Pad::LandingMusl => "@rust_eh_personality",
             Pad::Cleanup => "@__C_specific_handler",
         }
     }
@@ -77,7 +86,7 @@ impl Emitter<'_> {
             .need("declare void @abort() noreturn nounwind".to_string());
         self.label(PAD);
         match pad {
-            Pad::Landing => {
+            Pad::Landing | Pad::LandingMusl => {
                 self.line("%velt.lp = landingpad { ptr, i32 } cleanup".into());
                 self.line("call void @abort() noreturn nounwind".into());
             }
