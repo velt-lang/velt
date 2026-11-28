@@ -255,10 +255,13 @@ function sourceCell(out: Output, t: Type, s: string): string {
   out.line(`const k = ${s}.kind(c);`);
   out.line(`let code: u8 = k == CellKind.Null ? 2 : 0;`);
   if (t.kind == "number" && t.repr != "f64" && t.repr != "f32") {
-    out.line(`let si: RowsI64 = { v: 0 };`);
-    out.line(`if (k == CellKind.Int) { si = { v: ${s}.int(c) }; code = 1; }`);
-    out.line(`else if (k == CellKind.Float) { code = velt_rt_rows_exact_i64(${s}.float(c), si); }`);
-    return integer(out, t, "si.v");
+    out.line(`let si: i64 = 0;`);
+    out.line(`if (k == CellKind.Int) { si = ${s}.int(c); code = 1; }`);
+    out.line(`else if (k == CellKind.Float) {`);
+    out.line(`  const sf = ${s}.float(c);`);
+    out.line(`  if (rowsExactI64(sf)) { si = sf as i64; code = 1; }`);
+    out.line(`}`);
+    return integer(out, t, "si");
   }
   if (t.kind == "number") {
     out.line(`let fv: f64 = 0;`);

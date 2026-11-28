@@ -973,8 +973,8 @@ most 2^52 - 1 bytes (`cap * size(T)`), so a byte size never wraps. Generated cod
 chooses a length (`velt_vir` `lower/array`: `with_capacity`, `reserve`, an array adopted from native
 code, and the growth of an array of zero-sized elements); `velt_rt_realloc`, which generated code
 calls only to grow an array, refuses a `new_size` past it (`velt_rt_alloc` does not check: it is on
-every `new`); the runtime checks the length in `VeltBytes::from_vec`, `VeltArray::from_vec` and
-`VeltStrArray::from_vec` before handing a Rust `Vec` over. Past it, both stop with `panic:
+every `new`); the runtime checks the length in `VeltBytes::from_vec` and `VeltStrArray::from_vec`
+before handing a Rust `Vec` over. Past it, both stop with `panic:
 RangeError: Invalid array length: an array holds at most 2^52 - 1 elements, and its elements at most
 2^52 - 1 bytes` (exit code 101). Optimizations may rely on it: `velt_opt`'s `numrep` takes an
 array's `len` to be at most 2^53 - 3 (all an index running to `len` inclusive needs). A typed
@@ -991,12 +991,12 @@ array owns; 0, no buffer or memory the array does not own (a constant table, std
 negative, memory with an owner, whose block's address is `cap` without bit 63 (std's
 `addressArrayOwned`: dropping the array calls the function in the block's first word with the
 block). An array of the last two kinds is never passed to the runtime by value: the runtime's
-`cap > 0` tests (`velt_rt_bytes_drop`, `VeltBytes::take_vec`, `velt_rt_str_array_drop`) are
-unsigned and would free it.
+`cap > 0` test (`VeltBytes::take_vec`) is unsigned and would free it.
 
 ## Host values
 
 ```c
+/* WebAssembly (velt_rt_wasm): */
 void velt_rt_host_release(uint32_t slot);
 uint32_t velt_rt_host_clone(uint32_t slot);
 /* WebAssembly (velt_rt_wasm), exported from browser modules for the JS glue: */
@@ -1009,10 +1009,11 @@ void velt_host_bytes_new(VeltBytes *out, uint8_t *buf, size_t len);
 
 What host functions (https://veltlang.com/docs/reference/host-functions/) need. A `HostRef`
 (std/host/host_ref.velt) holds a slot of the JS glue's table of values (`velt_web.mjs`), 0 once
-released (and natively); its drop calls `velt_rt_host_release` and `clone()` `velt_rt_host_clone`,
-which on `wasm32-unknown-unknown` call the glue's imports `velt.host_release` / `velt.host_clone`.
-Natively and under WASI no `HostRef` exists (no host function can be called): velt_rt's versions do
-nothing and return 0.
+released (and natively); its drop calls `velt_rt_host_release` and `clone()` `velt_rt_host_clone`
+(std/host/rt.velt, `#host-rt`), which on `wasm32-unknown-unknown` call the glue's imports
+`velt.host_release` / `velt.host_clone`. Natively and under WASI no `HostRef` exists (no host
+function can be called): natively std's variant (std/host/rt_native.velt) does nothing and returns
+0, without the runtime; under WASI velt_rt_wasm's do.
 
 The glue reads a string argument (passed as `const VeltStr *`) through `velt_host_str_ptr` and
 `velt_host_str_len`. A string or `u8[]` result goes through a trailing out-pointer: the glue
