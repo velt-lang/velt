@@ -282,6 +282,8 @@ whether it is implemented, partly implemented, accepted or proposed.
 - [Workspaces](design/workspaces.md): monorepos of Velt packages.
 - [Build architecture: units with interfaces](design/build-architecture.md): caching and
   separate compilation.
+- [Release codegen units that survive an edit](design/release-edit-units.md): library units
+  that depend on the library only, and units per app module.
 - [Fast dev loop and hot reload](design/hot-reload.md) and
   [a warm front end for `velt dev`](design/dev-warm-front-end.md).
 - [Variables in the debugger](design/debug-variables.md).
