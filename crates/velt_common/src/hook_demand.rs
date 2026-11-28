@@ -115,11 +115,16 @@ pub enum Construct {
     /// (std/lang/hooks/string_number.velt, #2196). Demanded on its own, so that a program that
     /// prints an integer and holds nothing as `any` loads none of number parsing.
     DynamicNumber,
+    /// `==` or `!=` on operands that may be aggregates (a struct, a tuple, an object value, an
+    /// array, a type parameter's value): lowering compares them by content, under deep
+    /// equality's cycle guard (std/lang/hooks/deep_eq.velt) where a value can hold itself.
+    /// `deepEqual` and `toEqual` reach the guard through std's generated code (`hookCall`).
+    DeepEq,
 }
 
 impl Construct {
     /// Every construct, in bit order ([`ConstructSet`]).
-    pub const ALL: [Construct; 19] = [
+    pub const ALL: [Construct; 20] = [
         Construct::TextInt,
         Construct::TextUint,
         Construct::Format,
@@ -139,6 +144,7 @@ impl Construct {
         Construct::ErrorMessage,
         Construct::CharCode,
         Construct::DynamicNumber,
+        Construct::DeepEq,
     ];
 
     /// The construct as the ICE names it.
@@ -165,6 +171,7 @@ impl Construct {
             Construct::ErrorMessage => "ErrorMessage (a get message() on a class extending Error)",
             Construct::CharCode => "CharCode (strCharCodeAt: a code unit of a string)",
             Construct::DynamicNumber => "DynamicNumber (Number(s) of a string held as any)",
+            Construct::DeepEq => "DeepEq (== on operands that may be aggregates)",
         }
     }
 

@@ -133,10 +133,10 @@ with_any_hooks! {
     /// The cycle guard of deep equality (std/lang/hooks/deep_eq.velt): lowering's `==` on an
     /// aggregate that can hold itself starts comparing a pair of objects with it.
     deep_eq_enter => lang_hooks_deep_eq, "deepEqEnter", sig((u64, u64) -> u8), lowered,
-        replaces("velt_rt_deep_eq_enter"), bench("deep_equal");
+        constructs(DeepEq), replaces("velt_rt_deep_eq_enter"), bench("deep_equal");
     /// Ends the comparison `deep_eq_enter` last started.
     deep_eq_leave => lang_hooks_deep_eq, "deepEqLeave", sig(() -> void), lowered,
-        replaces("velt_rt_deep_eq_leave"), bench("deep_equal");
+        constructs(DeepEq), replaces("velt_rt_deep_eq_leave"), bench("deep_equal");
     /// `String(x)` of any float by std's float printing (velt/lang/number/format), for code that
     /// doesn't load it: std's own (the JSON writers, `StringBuilder`, the digits of
     /// `toExponential()`) and the float hooks of velt/lang/hooks/number_text and number_write.

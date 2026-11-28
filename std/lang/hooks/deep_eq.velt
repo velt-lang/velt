@@ -10,6 +10,9 @@
 // The pairs are a block of words `[capacity, length, a0, b0, a1, b1, …]` from `rawAlloc`, kept in
 // a thread-local: the first pair allocates it, and it is given back when the last pair ends, so a
 // thread keeps nothing between comparisons.
+//
+// Only a program that compares deeply loads this module (velt_common `ON_DEMAND_MODULES`):
+// generated.velt calls it by role, and lowering's `==` is demanded by `Construct::DeepEq`.
 
 import { addressLoad, addressStore, noInline, rawAlloc, rawFree } from "velt/lang/intrinsics";
 
@@ -76,6 +79,11 @@ export function deepEqEnter(a: u64, b: u64): u8 {
   return 0;
 }
 
+/** This thread's block of pairs, 0 when no comparison is open (for deep_eq.test.velt). */
+export function pairsBlock(): u64 {
+  return PAIRS.get();
+}
+
 /** Ends the comparison `deepEqEnter` last started. */
 export function deepEqLeave(): void {
   const p = PAIRS.get() as usize;
@@ -85,7 +93,6 @@ export function deepEqLeave(): void {
     unsafe {
       rawFree(p, bytesOf(load(p) as usize));
     }
-    ;
     PAIRS.set(0);
     return;
   }
@@ -107,7 +114,6 @@ function grown(p: usize, len: usize): usize {
     unsafe {
       rawFree(p, bytesOf(load(p) as usize));
     }
-    ;
   }
   PAIRS.set(q as u64);
   return q;

@@ -14,11 +14,11 @@ import {
   anyReflectInfo,
   anyReflectName,
   anyReflectValue,
+  hookCall,
   identity as valueIdentity,
   keyEq,
   toAny,
 } from "velt/lang/intrinsics";
-import { deepEqEnter, deepEqLeave } from "velt/lang/hooks/deep_eq";
 import { recordEntriesOf } from "velt/lang/hooks/record";
 
 /**
@@ -54,12 +54,12 @@ function dynamicOf<T>(v: T): any {
  * on one side only: different).
  */
 function beginPair(a: u64, b: u64): u8 {
-  return deepEqEnter(a, b);
+  return hookCall("deep_eq_enter", a, b);
 }
 
 /** Ends the comparison `beginPair` last started. */
 function endPair(): void {
-  deepEqLeave();
+  hookCall("deep_eq_leave");
 }
 
 /** SameValueZero of two dynamic values (`any`, `unknown`): `===`, with `NaN` equal to itself. */

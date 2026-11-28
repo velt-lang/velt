@@ -1,0 +1,41 @@
+// velt/lang/hooks (tests): tests of deep_eq.velt, run by `velt test std/`: the guard's answers
+// (the runtime's guard pinned the same ones), the block of pairs grown past its first room with
+// every earlier pair still found, and the block given back when the last pair ends.
+import { describe, expect, it } from "velt/test";
+import { deepEqEnter, deepEqLeave, pairsBlock } from "velt/lang/hooks/deep_eq";
+
+describe("deepEqEnter", () => {
+  it("is equal for a pair met again and different for one side met again", () => {
+    const a: u64 = 8;
+    const b: u64 = 16;
+    const c: u64 = 24;
+    expect(deepEqEnter(a, b)).toBe(0);
+    expect(deepEqEnter(a, b)).toBe(1);
+    // `a` with another partner, or `b` with another one: a cycle on one side.
+    expect(deepEqEnter(a, c)).toBe(2);
+    expect(deepEqEnter(c, b)).toBe(2);
+    deepEqLeave();
+    expect(pairsBlock()).toBe(0);
+    expect(deepEqEnter(a, c)).toBe(0);
+    deepEqLeave();
+    expect(pairsBlock()).toBe(0);
+  });
+
+  it("keeps every pair when the block grows", () => {
+    // 40 pairs nested: the first block has room for 8, so it grows three times.
+    const n: u64 = 40;
+    for (let i: u64 = 0; i < n; i++) {
+      expect(deepEqEnter(100 + i * 8, 10000 + i * 8)).toBe(0);
+    }
+    for (let i: u64 = 0; i < n; i++) {
+      expect(deepEqEnter(100 + i * 8, 10000 + i * 8)).toBe(1);
+      expect(deepEqEnter(100 + i * 8, 8)).toBe(2);
+      expect(deepEqEnter(8, 10000 + i * 8)).toBe(2);
+    }
+    for (let i: u64 = 0; i < n; i++) {
+      expect(pairsBlock() != 0).toBe(true);
+      deepEqLeave();
+    }
+    expect(pairsBlock()).toBe(0);
+  });
+});
