@@ -7,8 +7,8 @@ time an optimized C# ("C# new") against the original C# and ten other languages.
 data structure plus a driver that runs 10 test cases and prints one JSON line per case (`ops`,
 `ns` of the timed region, `checksum`, `verify`).
 
-Each folder here holds a Velt port: `<structure>.velt` (the data structure) and `driver.velt` (a
-case-by-case port of the benchmark's C# `Driver.cs`, sharing `common.velt`). The ports print the
+Each folder here holds a Velt port: `_<structure>.velt` (the data structure) and `driver.velt` (a
+case-by-case port of the benchmark's C# `Driver.cs`, sharing `_common.velt`). The ports print the
 same `ops`, `checksum` and `verify` as the C# programs for every case and size.
 
 | folder | structure | entries (n) | algorithm and layout of the Velt port |

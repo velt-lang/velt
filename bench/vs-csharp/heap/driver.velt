@@ -12,8 +12,8 @@ import {
   rnd,
   runDriver,
   since,
-} from "../common";
-import { Heap } from "./heap";
+} from "../_common";
+import { Heap } from "./_heap";
 
 const I64_MIN: i64 = -9223372036854775808;
 const I64_MAX: i64 = 9223372036854775807;

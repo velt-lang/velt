@@ -12,8 +12,8 @@ import {
   rnd,
   runDriver,
   since,
-} from "../common";
-import { SkipList } from "./skiplist";
+} from "../_common";
+import { SkipList } from "./_skiplist";
 
 const I64_MIN: i64 = -9223372036854775807 - 1;
 const I64_MAX: i64 = 9223372036854775807;

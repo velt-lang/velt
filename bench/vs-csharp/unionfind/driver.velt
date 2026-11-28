@@ -1,12 +1,24 @@
 // Union-find benchmark driver: a case-by-case port of the benchmark's C# driver (Driver.cs),
 // printing the same "checksum" and "verify" values. usage: driver <case|all> <n> <reps> <warmup>
-import { FOLD_INIT, Result, fail, fold, maxU64, minU64, nowNs, rnd, runDriver, since } from "../common";
-import { UnionFind } from "./unionfind";
+import {
+  FOLD_INIT,
+  Result,
+  fail,
+  fold,
+  maxU64,
+  minU64,
+  nowNs,
+  rnd,
+  runDriver,
+  since,
+} from "../_common";
+import { UnionFind } from "./_unionfind";
 
 // The low and high element of the j-th random pair below m of stream `salt`.
 function pairA(r: u64, m: u64): i32 {
   return ((r & 0xffffffff) % m) as i32;
 }
+
 function pairB(r: u64, m: u64): i32 {
   return ((r >> 32) % m) as i32;
 }
@@ -71,6 +83,7 @@ function walkRoot(caseName: string, n: u64, uf: UnionFind, x: u32, cap: u32): u6
 function rootPart(w: u64): u32 {
   return (w & 0xffffffff) as u32;
 }
+
 function depthPart(w: u64): u32 {
   return (w >> 32) as u32;
 }
@@ -193,7 +206,11 @@ function verifyFull(caseName: string, n: u64, uf: UnionFind): u64 {
   for (let x: u32 = 0; x < m; x++) {
     const f = uf.find(x as i32) as u32;
     if (f != root[x]) {
-      fail(caseName, n, `find(${x}) = ${f} is not the root reached by following parent() (${root[x]})`);
+      fail(
+        caseName,
+        n,
+        `find(${x}) = ${f} is not the root reached by following parent() (${root[x]})`,
+      );
     }
     if (cnt[f] == 0) {
       low[f] = x;

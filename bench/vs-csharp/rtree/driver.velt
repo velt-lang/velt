@@ -12,8 +12,8 @@ import {
   rnd,
   runDriver,
   since,
-} from "../common";
-import { RTree } from "./rtree";
+} from "../_common";
+import { RTree } from "./_rtree";
 
 // ------------------------------------------------------------------ helpers
 

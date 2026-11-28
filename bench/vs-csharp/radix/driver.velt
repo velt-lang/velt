@@ -15,8 +15,8 @@ import {
   rnd,
   runDriver,
   since,
-} from "../common";
-import { RadixTree } from "./radix";
+} from "../_common";
+import { RadixTree } from "./_radix";
 
 const I64_MAX: i64 = 9223372036854775807;
 const I64_MIN: i64 = -I64_MAX - 1;
