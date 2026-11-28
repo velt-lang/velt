@@ -1,0 +1,68 @@
+// An object literal that fills an interface's field with `get v()` and `set v(x)` prints the
+// field `[Getter/Setter]` through the interface and through `any`, as Node does, written
+// through or not (#2739); the setter runs on a write either way.
+interface Settable {
+  v: number;
+  w: number;
+  show(): string;
+}
+
+interface Pair {
+  get a(): string;
+  set a(x: string);
+  b: number;
+}
+
+interface OnlyGet {
+  g: number;
+  tag(): string;
+}
+
+let store = 1;
+const gs: Settable = {
+  get v() {
+    return store;
+  },
+  set v(x) {
+    store = x * 10;
+  },
+  w: 2,
+  show() {
+    return "s" + store;
+  },
+};
+console.log(gs);
+const a: any = gs;
+console.log(a);
+a.v = 3;
+console.log(store, gs.v, gs.show());
+gs.v = 4;
+console.log(store, gs);
+console.log(JSON.stringify(a), Object.keys(a).join(","));
+console.log({ inner: gs, n: 1 });
+console.log([gs]);
+
+let held = "x";
+const p: Pair = {
+  get a() {
+    return held;
+  },
+  set a(x) {
+    held = x + "!";
+  },
+  b: 1,
+};
+console.log(p);
+p.a = "y";
+const pa: any = p;
+console.log(held, p.a, JSON.stringify(pa));
+
+const og: OnlyGet = {
+  get g() {
+    return 4;
+  },
+  tag() {
+    return "t";
+  },
+};
+console.log(og, og.g);
