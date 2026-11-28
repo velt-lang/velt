@@ -1,6 +1,6 @@
 //! The functions C calls (`vir::Function::stops_unwind`, `@export("c_name")`): their calls are
-//! `invoke`s whose landing pad aborts, with the personality of the target's panics, and their
-//! small integer parameters carry no extension attribute.
+//! `invoke`s whose landing pad aborts, under a personality that runs cleanups for the target's
+//! panics, and their small integer parameters carry no extension attribute.
 
 use super::*;
 
@@ -48,16 +48,28 @@ fn an_export_s_calls_abort_when_a_panic_unwinds_into_them() {
     for (triple, personality, pad) in [
         (
             "x86_64-unknown-linux-gnu",
-            "@rust_eh_personality",
+            "@__gcc_personality_v0",
             "landingpad { ptr, i32 } cleanup",
         ),
         (
             "aarch64-unknown-linux-gnu",
-            "@rust_eh_personality",
+            "@__gcc_personality_v0",
             "landingpad { ptr, i32 } cleanup",
         ),
         (
             "aarch64-apple-darwin",
+            "@__gcc_personality_v0",
+            "landingpad { ptr, i32 } cleanup",
+        ),
+        // musl links the static runtime, which defines Rust's personality; its kit has no
+        // libgcc, so `__gcc_personality_v0` would be undefined at the link.
+        (
+            "x86_64-unknown-linux-musl",
+            "@rust_eh_personality",
+            "landingpad { ptr, i32 } cleanup",
+        ),
+        (
+            "aarch64-unknown-linux-musl",
             "@rust_eh_personality",
             "landingpad { ptr, i32 } cleanup",
         ),
@@ -156,8 +168,8 @@ fn with_cleanup_pad(name: &str, stops_unwind: bool) -> Program {
     pb.finish()
 }
 
-/// A function has one personality: an export keeps only its abort pad (Rust's personality), as
-/// its cleanups could only run before the `abort`; any other function lands at its cleanup pad
+/// A function has one personality: an export keeps only its abort pad (the C library's
+/// personality), as its cleanups could only run before the `abort`; any other function lands at its cleanup pad
 /// with Velt's personality and resumes.
 #[test]
 fn an_export_s_unwind_edges_go_to_its_abort_pad() {
@@ -166,7 +178,7 @@ fn an_export_s_unwind_edges_go_to_its_abort_pad() {
         let f = define(&ir, "ex_pads");
         let first = f.lines().next().unwrap();
         assert!(
-            first.contains("personality ptr @rust_eh_personality"),
+            first.contains("personality ptr @__gcc_personality_v0"),
             "{triple}:\n{f}"
         );
         assert!(f.contains("unwind label %velt.abort"), "{triple}:\n{f}");

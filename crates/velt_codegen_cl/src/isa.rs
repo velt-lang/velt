@@ -15,7 +15,7 @@
 //! - Cranelift's IR verifier only in the compiler's own debug builds (`VELT_CL_VERIFY=1` turns
 //!   it on), and the register allocator Cranelift's default unless `VELT_CL_REGALLOC` names one.
 
-use cranelift_codegen::isa::{self, OwnedTargetIsa};
+use cranelift_codegen::isa::{self, OwnedTargetIsa, TargetIsa};
 use cranelift_codegen::settings::{self, Configurable, TlsModel};
 use target_lexicon::{Architecture, BinaryFormat, DeploymentTarget, OperatingSystem, Triple};
 
@@ -107,6 +107,16 @@ pub(crate) fn make_isa(
         .map_err(|e| format!("codegen: cannot build ISA for `{triple}`: {e}"))
 }
 
+/// The ISA of an object's start-up code (`vir::Function::baseline`, the code that runs before the
+/// start-up check of the CPU): `isa`'s target and settings for the baseline CPU. Always an
+/// object's (a `velt dev` version, the JIT's, has no baseline ISA): telling a JIT ISA by its PIC
+/// flag took every Windows object for one, since COFF code is never PIC, and the baseline code
+/// then had no thread-local storage while the module inlined its thread-local values.
+pub(crate) fn baseline_of(isa: &dyn TargetIsa) -> CodegenResult<OwnedTargetIsa> {
+    let optimize = isa.flags().opt_level() != settings::OptLevel::None;
+    make_isa(&isa.triple().to_string(), Some("baseline"), optimize, false)
+}
+
 /// Whether a program for `target` has thread-local storage that LLVM-built objects can share
 /// (`velt_tls_data_<id>`), not the operating system's thread keys (tls.rs).
 pub fn has_thread_local_data(target: &str) -> bool {
@@ -167,5 +177,37 @@ fn check_supported(triple: &Triple) -> CodegenResult<()> {
             "codegen: unsupported target `{triple}` (supported: x86_64/aarch64 × windows-msvc, \
              apple-darwin, unknown-linux-gnu)"
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The start-up code of an object keeps the object's thread-local storage: on Windows too,
+    /// whose objects are not PIC, so a test of PIC took them for JIT code, which has none.
+    #[test]
+    fn baseline_code_keeps_thread_local_storage() {
+        for target in [
+            "x86_64-pc-windows-msvc",
+            "x86_64-unknown-linux-gnu",
+            "aarch64-apple-darwin",
+        ] {
+            let isa = make_isa(
+                target,
+                target.starts_with("x86").then_some("x86-64-v3"),
+                false,
+                false,
+            )
+            .unwrap();
+            let base = baseline_of(&*isa).unwrap();
+            assert_eq!(
+                base.flags().tls_model(),
+                isa.flags().tls_model(),
+                "{target}"
+            );
+            assert_ne!(base.flags().tls_model(), TlsModel::None, "{target}");
+            assert_eq!(base.flags().is_pic(), isa.flags().is_pic(), "{target}");
+        }
     }
 }
