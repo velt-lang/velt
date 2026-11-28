@@ -133,6 +133,18 @@ describe("velt/ffi strings", () => {
     // SAFETY: both strings have 3 bytes.
     expect(unsafe { memcmp$ns("abc", "abd", 3) } < 0).toBe(true);
   });
+
+  it("replaces every lone surrogate, keeping pairs and the characters around them", () => {
+    const high = String.fromCharCode(0xd83d);
+    const low = String.fromCharCode(0xde00);
+    // U+D7FF (`ED 9F BF`) is no surrogate; a high and a low joined are the pair 😀.
+    const s = low + "é\u{d7ff}" + high + "x" + high + low + "€" + low + low + "😀" + high;
+    const want = "\u{fffd}é\u{d7ff}\u{fffd}x😀€\u{fffd}\u{fffd}😀\u{fffd}";
+    expect(strBytesOf(s)).toBe(want);
+    expect(byteLength(strBytesOf(s))).toBe(byteLength(s));
+    expect(strBytesOf(high)).toBe("\u{fffd}");
+    expect(strBytesOf("😀" + low)).toBe("😀\u{fffd}");
+  });
 });
 
 describe("velt/ffi C strings and reads", () => {
