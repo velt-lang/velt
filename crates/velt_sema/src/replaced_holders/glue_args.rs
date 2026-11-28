@@ -34,6 +34,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::AnyIndex
         | I::AnyCall
         | I::AnyApply
+        | I::AnyApplyThis
         | I::AnySet
         | I::AnySetIndex
         // `key in p` runs a proxy's `has` trap (and a proxy's `get` / `set` slots its traps).

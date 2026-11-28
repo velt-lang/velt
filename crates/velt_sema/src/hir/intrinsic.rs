@@ -672,6 +672,12 @@ pub enum Intrinsic {
     /// `(f: borrow any, text: string, args: owned any...) -> any`: calling the function value `f`
     /// holds (`text` as for `AnyCall`).
     AnyApply,
+    /// `(f: borrow any, this: borrow any, text: string, args: owned any...) -> any`: `AnyApply`
+    /// with `this` for a function expression taking `this` (std/lang/this_fn's `ThisFn`), the
+    /// member call `o[k](args)` of a member `f` already read from `o` (`this` = `o`); any other
+    /// value is called as by `AnyApply`, a proxy through its own apply. A program with
+    /// such functions only (velt_sema this_fn_call.rs). Additive (#3931).
+    AnyApplyThis,
     /// `(x: borrow any, key: borrow string | any, v: owned any) -> void`: `x.key = v` / `x[key] =
     /// v` (an `any` key holding a number: as `AnySetIndex`): `v` converted to the member's type as
     /// by `AnyTo` and stored, or passed to its setter; a `TypeError` for a `null` / `undefined`

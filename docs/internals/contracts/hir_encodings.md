@@ -1582,7 +1582,14 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   each argument is boxed and moved in, `text` is a string literal naming the callee for a
   `TypeError` (`x.m is not a function`), and the result is an `any`. A call with a spread
   argument passes one argument instead, an `any[]` (the array literal `[a..., ...xs]`, never a
-  boxed `any`), whose elements move into the call. An `unknown` receiver is
+  boxed `any`), whose elements move into the call. In a program with function expressions
+  taking `this` (std/lang/this_fn's `ThisFn`), a member call whose function is a value read
+  some other way (`o[k](a...)`, `o.m?.(a...)`, `arr[0](a...)`, a typed `o` with an `any` or
+  `Function` member `m`) is `AnyApplyThis(f, this, text, a...)` (#3931): `f` the member read
+  and `this` the object, both borrowed `any`s held in temporaries, read before the arguments.
+  A `ThisFn` gets `this`; any other value is called as by `AnyApply`, its result and `TypeError`
+  as `AnyApply`'s. It is one call of a glue function per program (velt_vir `this_fn.rs`), not a
+  table slot. An `unknown` receiver is
   an error until narrowed. When a program has any of these, `Program::dyn_members` lists the
   methods and accessors (`DynMember`: name, kind, def, declaring type, and whether a method's
   last parameter is a rest parameter, which a call by name packs its remaining arguments into)
