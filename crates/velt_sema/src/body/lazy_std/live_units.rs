@@ -127,8 +127,17 @@ fn walk_units_live_set(cx: &mut Ctx) -> FxHashSet<DefId> {
     for d in waiting {
         set.remove(&d);
     }
+    let constructs = cx.lazy.live.present;
     cx.lazy = saved;
+    cx.lazy.units_live_constructs = constructs;
     set
+}
+
+/// Does the std code a program has in a check by units ([`units_live_set`]) call
+/// `catchUnwind`, which demands std's panic path as it does in lazy std ([`super::demanded`])?
+pub(crate) fn units_catch(cx: &mut Ctx) -> bool {
+    units_live_set(cx);
+    cx.lazy.units_live_constructs & velt_common::std_hooks::Construct::CatchUnwind.bit() != 0
 }
 
 /// The modules lazy std loads before the check demands more: the program's,

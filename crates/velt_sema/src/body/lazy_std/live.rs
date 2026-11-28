@@ -214,15 +214,19 @@ impl Walk {
 /// The hooks lowering may call (`hir::Program::hooks_demanded`): those the constructs of live
 /// code demand; when nothing is deferred (laziness off), every hook but std's panic path, which
 /// only a live `catchUnwind` asks for and laziness off doesn't look for (its programs then panic
-/// through the runtime, as every program did before; the VIR stays the same either way).
-pub(crate) fn demanded(cx: &Ctx) -> HookSet {
+/// through the runtime, as every program did before; the VIR stays the same either way). A check
+/// by units has all of std checked too, and the panic path when the std code the program has
+/// calls `catchUnwind` (`units_catch`), as lazy std demands it: without it a panic under
+/// `catchPanic` gets no cleanup pads to unwind through and ends the process (#3948).
+pub(crate) fn demanded(cx: &mut Ctx) -> HookSet {
     #[cfg(test)]
     tests::note_demanded(cx);
     match cx.lazy.modules.is_empty() && !cx.lazy.live.units {
         true => {
             let mut all = HookSet::default();
+            let catches = cx.units && units_walk::units_catch(cx);
             let catch_only = |h: &velt_common::std_hooks::Hook| {
-                h.constructs == [Construct::CatchUnwind].as_slice()
+                !catches && h.constructs == [Construct::CatchUnwind].as_slice()
             };
             for (i, _) in HOOKS.iter().enumerate().filter(|(_, h)| !catch_only(h)) {
                 all.insert(i);

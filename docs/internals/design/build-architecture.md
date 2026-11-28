@@ -100,6 +100,10 @@ by units, with three differences from a whole-program build:
 - A source generator's host (`sess.generator_build`) is still built as one program, as a check
   by units builds it.
 
+The hooks it may call are every hook, as with laziness off, and std's panic path (`panicRaise`,
+which gives calls their cleanup pads) only when the std code the program has calls `catchUnwind`
+(`lazy_std::units_catch`), as lazy std demands it: a program that never catches gets no pads.
+
 The nightly's `golden-units` runs every end-to-end test this way, and those of overrides and
 classes with std and the program in one context (`VELT_UNITS=1`); the goldens that fail only by
 units are listed `units` in `crates/veltc/tests/golden_known_failing.txt` (#2943's U6 list), or
