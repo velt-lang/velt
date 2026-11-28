@@ -25,7 +25,6 @@ pub(crate) fn is_promise_callback_fn(name: &str) -> bool {
     matches!(
         name,
         "promiseThen"
-            | "promiseConvert"
             | "promiseThenThrows"
             | "promiseThenAsync"
             | "promiseThenAsyncThrows"

@@ -20,7 +20,8 @@ let f = a;
 f <<= 2n;
 let g = a;
 g >>= 2n;
-console.log(a.toString(), b.toString(), c.toString(), d.toString(), e.toString(), f.toString(), g.toString());
+console.log(a.toString(), b.toString(), c.toString(), d.toString());
+console.log(e.toString(), f.toString(), g.toString());
 
 class Acc {
   total = n(0);

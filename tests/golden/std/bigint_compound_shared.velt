@@ -24,7 +24,8 @@ let f = a;
 f <<= 2;
 let g = a;
 g >>= 2;
-console.log(a.toString(), b.toString(), c.toString(), d.toString(), e.toString(), f.toString(), g.toString());
+console.log(a.toString(), b.toString(), c.toString(), d.toString());
+console.log(e.toString(), f.toString(), g.toString());
 
 class Acc {
   total: BigInt = n(0);

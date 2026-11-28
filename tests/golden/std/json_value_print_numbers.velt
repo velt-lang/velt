@@ -18,6 +18,7 @@ console.log(v.get("z")!, v.get("i")!, v.get("m")!, v.get("q")!);
 const a = v.get("a")!;
 console.log(`${a}|${v}|${nums}|${v.get("s")!}|${v.get("n")!}|${v.get("z")!}|${v.get("i")!}`);
 console.log(String(a), String(v), String(nums), a.toString(), nums.toString());
-console.log(`${JsonValue.array()}|${JsonValue.object()}|${JsonValue.of(null)}|${JsonValue.of(true)}`);
+const [ea, eo] = [JsonValue.array(), JsonValue.object()];
+console.log(`${ea}|${eo}|${JsonValue.of(null)}|${JsonValue.of(true)}`);
 console.log(JSON.stringify(v));
 console.log(JSON.stringify(nums));

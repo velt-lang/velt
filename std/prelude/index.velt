@@ -34,6 +34,7 @@ import "./object";
 import "./object_prototype";
 import "./process";
 import "./promise";
+import "./promise_convert";
 import "./record";
 import "./rw_lock";
 import "./set_like";

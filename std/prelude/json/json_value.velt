@@ -403,7 +403,7 @@ export class JsonValue {
     return this.stringify();
   }
 
-  /** `String(v)` of the parsed value, as JavaScript writes it: `1,2` for `[1, 2]`, `[object Object]`. */
+  /** `String(v)` of the parsed value, as JavaScript writes it (`1,2` for `[1, 2]`). */
   toString(): string {
     return jsonValueString(this);
   }
