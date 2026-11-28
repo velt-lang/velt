@@ -276,10 +276,9 @@ impl Finder {
         if restated {
             let _ = write_atomically(&self.manifest_path(&key), &manifest.render());
         }
-        let object_key = object_key(&key, &manifest.files);
-        if object_key.hex() != manifest.object {
-            return None;
-        }
+        // The fill recorded the object's key (`object_key`), of this lookup key and the hashes
+        // and paths of the files just found unchanged: not hashed again in every build.
+        let object_key = key_of_hex(&manifest.object)?;
         if !manifest.tls.is_empty() && !velt_codegen_cl::has_thread_local_data(&self.target) {
             return None;
         }
@@ -456,6 +455,24 @@ fn object_key(lookup: &Key, files: &[String]) -> Key {
         }
     }
     h.finish()
+}
+
+/// The key whose lowercase hex is `text` (`Key::hex`); `None` for anything else.
+fn key_of_hex(text: &str) -> Option<Key> {
+    let digits = text.as_bytes();
+    if digits.len() != 64 {
+        return None;
+    }
+    let nibble = |c: u8| match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        _ => None,
+    };
+    let mut key = [0u8; 32];
+    for (i, b) in key.iter_mut().enumerate() {
+        *b = (nibble(digits[2 * i])? << 4) | nibble(digits[2 * i + 1])?;
+    }
+    Some(Key(key))
 }
 
 /// Is the file of stamp `file` entry `entry` as it records: `Some(None)` with the same size and

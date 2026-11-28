@@ -56,18 +56,31 @@ pub struct Hook {
 impl Hook {
     /// The canonical path of the module that defines it: `std/lang/hooks/number`.
     pub fn module(&self) -> String {
+        self.module_with(0)
+    }
+
+    /// The qualified name: `std/lang/hooks/number::f64ToString`.
+    pub fn qualified(&self) -> String {
+        let mut s = self.module_with(2 + self.item.len());
+        s.push_str("::");
+        s.push_str(self.item);
+        s
+    }
+
+    /// [`Hook::module`] with room for `more` bytes after it. Built without `format!`: sema asks
+    /// for every hook's name in each check (`seed_hooks`), and formatting was most of that.
+    fn module_with(&self, more: usize) -> String {
         let rel = crate::std_modules::rel(self.module_entry).unwrap_or_else(|| {
             panic!(
                 "ICE: hook module `{}` is not a std module",
                 self.module_entry
             )
         });
-        format!("{}{rel}", crate::std_modules::CANONICAL_PREFIX)
-    }
-
-    /// The qualified name: `std/lang/hooks/number::f64ToString`.
-    pub fn qualified(&self) -> String {
-        format!("{}::{}", self.module(), self.item)
+        let prefix = crate::std_modules::CANONICAL_PREFIX;
+        let mut s = String::with_capacity(prefix.len() + rel.len() + more);
+        s.push_str(prefix);
+        s.push_str(rel);
+        s
     }
 }
 

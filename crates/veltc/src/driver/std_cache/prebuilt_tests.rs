@@ -153,6 +153,56 @@ fn an_object_gone_before_the_check_is_a_miss() {
     assert!(finder.found().is_empty());
 }
 
+/// The lookup takes the object's key the manifest records, not one hashed again from its files:
+/// a std file that changed since the fill is still a miss, and a file copied with the same
+/// contents (another time) still finds the object.
+#[test]
+fn a_changed_std_file_is_a_miss_and_a_copy_of_the_same_is_not() {
+    let check = |change: fn(&Path)| {
+        let tmp = tempfile::tempdir().unwrap();
+        let finder = finder(tmp.path());
+        let hook = prebuilt::of_symbol("velt_hook_prebuilt_probe_text").unwrap();
+        let key = finder.lookup_key(HOOKS[hook].module_entry);
+        let std_file = tmp.path().join("probe.velt");
+        std::fs::write(&std_file, "export function f() {}\n").unwrap();
+        let files = vec![file_entry(&std_file, "export function f() {}\n")];
+        let object_key = object_key(&key, &files);
+        let built = tmp.path().join("built.o");
+        std::fs::write(&built, b"object bytes").unwrap();
+        assert!(finder.cache.unwrap().put_file(KIND, &object_key, &built));
+        let manifest = Manifest {
+            object: object_key.hex(),
+            entries: vec![],
+            files,
+            tls: vec![],
+        };
+        write_atomically(&finder.manifest_path(&key), &manifest.render()).unwrap();
+        change(&std_file);
+        finder.linked(hook)
+    };
+    assert!(check(|_| {}));
+    assert!(!check(
+        |f| std::fs::write(f, "export function g() {}\n").unwrap()
+    ));
+    assert!(check(|f| {
+        let t = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        let file = std::fs::File::options().write(true).open(f).unwrap();
+        file.set_modified(t).unwrap();
+    }));
+}
+
+/// A manifest's object line is the key's lowercase hex; anything else finds nothing.
+#[test]
+fn an_object_line_reads_back_as_its_key() {
+    let key = Key::of(&[b"probe"]);
+    assert_eq!(key_of_hex(&key.hex()), Some(key));
+    let key = Key([0xab; 32]);
+    assert_eq!(key_of_hex(&key.hex()), Some(key));
+    assert_eq!(key_of_hex(&key.hex()[1..]), None);
+    assert_eq!(key_of_hex(&key.hex().to_uppercase()), None);
+    assert_eq!(key_of_hex(&"g".repeat(64)), None);
+}
+
 /// A debug build for arm64 Linux looks prebuilt objects up like one for x86-64 Linux (#3315: its
 /// link gets the outline-atomics helpers the objects call, `crate::link`), where this machine's
 /// std root and settings let a finder be made, as in this repository's tests.
