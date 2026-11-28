@@ -10,6 +10,8 @@
 //! - `o[k](x)` (an `any` `o`, or an element of an `any[]`, `arr[0](x)`);
 //! - `o.m?.(x)` (`undefined` when `o.m` is `null` or `undefined`, without evaluating the
 //!   arguments);
+//! - `o?.m?.(x)`, `o?.[k]?.(x)`, `o?.[k](x)` on an `any` `o` (`undefined` when `o` is `null` or
+//!   `undefined`, without reading the member or evaluating the arguments);
 //! - `o.m(x)` on a typed `o` whose member `m` is a `Function` or an `any`.
 //!
 //! `o` is evaluated once, into a temporary, then the member is read, then the arguments are
@@ -54,11 +56,20 @@ impl FnCx<'_, '_> {
         optional: bool,
         span: Span,
     ) -> hir::Expr {
-        let object = match &callee.kind {
-            ast::ExprKind::Index { object, .. } | ast::ExprKind::Member { object, .. } => object,
+        let (object, object_optional) = match &callee.kind {
+            ast::ExprKind::Index {
+                object,
+                optional: o,
+                ..
+            }
+            | ast::ExprKind::Member {
+                object,
+                optional: o,
+                ..
+            } => (object, *o),
             _ => unreachable!("ICE: a this-function call of another callee"),
         };
-        self.call_on(callee, object, args, optional, span)
+        self.call_on(callee, object, args, (object_optional, optional), span)
     }
 
     /// The object of `callee` when its call goes through `callOn`.
@@ -67,17 +78,14 @@ impl FnCx<'_, '_> {
         callee: &'e ast::Expr,
         optional: bool,
     ) -> Option<&'e ast::Expr> {
-        let (object, index) = match &callee.kind {
+        // `o?.m` / `o?.[k]`: an optional read of the object, on an `any` only (below).
+        let (object, index, object_optional) = match &callee.kind {
             ast::ExprKind::Index {
-                object,
-                optional: false,
-                ..
-            } => (object, true),
+                object, optional, ..
+            } => (object, true, *optional),
             ast::ExprKind::Member {
-                object,
-                optional: false,
-                ..
-            } => (object, false),
+                object, optional, ..
+            } => (object, false, *optional),
             _ => return None,
         };
         // A declared function's `f.call(...)` / `f.apply(...)` (`call_apply.rs`): not read as
@@ -89,6 +97,9 @@ impl FnCx<'_, '_> {
         }
         let ot = self.trial_type(object)?;
         let dynamic_object = self.cx.dynamic(ot).is_some();
+        if object_optional && !dynamic_object {
+            return None;
+        }
         let ct = match (&callee.kind, dynamic_object) {
             // `o.m?.(x)` on an `any`: its member is an `any`; `o.m(x)` is the slot call.
             (ast::ExprKind::Member { .. }, true) => return optional.then_some(&**object),
@@ -126,13 +137,14 @@ impl FnCx<'_, '_> {
     /// function`) and goes to the program's own `catch` (velt_vir `any_not_fn.rs`); `callOn`'s
     /// own call of a value that is no function would stop the program naming its parameter. An
     /// optional call (`o.m?.(x)`) is `undefined` when the member is `null` or `undefined`, without
-    /// evaluating the arguments.
+    /// evaluating the arguments; an optional read of the object (`o?.m?.(x)`, `o?.[k](x)`:
+    /// `object_optional`) is `undefined` when the object is, without reading the member either.
     fn call_on(
         &mut self,
         callee: &ast::Expr,
         object: &ast::Expr,
         args: &[ast::Expr],
-        optional: bool,
+        (object_optional, optional): (bool, bool),
         span: Span,
     ) -> hir::Expr {
         let build = |lw: &mut Self, o: &ast::Expr| {
@@ -167,17 +179,7 @@ impl FnCx<'_, '_> {
                 let Some(any) = lw.any_ty() else {
                     return lw.error_expr(span);
                 };
-                let null = synth(ast::ExprKind::Lit(ast::Lit::Null), span);
-                let nullish = binary(ast::BinaryOp::Eq, f.clone(), null, span);
-                let cond = lw.expr(&nullish, Some(lw.cx.ty.bool_), crate::body::Want::Move);
-                let undefined = lw.dynamic_nothing(hir::Nothing::Undefined, any, span);
-                let els = call(lw);
-                let kind = hir::ExprKind::If {
-                    cond: Box::new(cond),
-                    then: Box::new(undefined),
-                    els: Box::new(els),
-                };
-                lw.mk(kind, any, span)
+                lw.undefined_if_nullish(f, any, span, call)
             })
         };
         // The object is held in a temporary, read before the member and the arguments: `callOn`
@@ -194,8 +196,36 @@ impl FnCx<'_, '_> {
                     lw.f.chain_texts.push((l, text));
                 }
             }
-            build(lw, o)
+            if !object_optional {
+                return build(lw, o);
+            }
+            let Some(any) = lw.any_ty() else {
+                return lw.error_expr(span);
+            };
+            lw.undefined_if_nullish(o, any, span, |lw| build(lw, o))
         })
+    }
+
+    /// `x == null ? undefined : then()` (`x` names a held `any`), an `any`: an optional chain's
+    /// short-circuit, which evaluates nothing of `then` when `x` is `null` or `undefined`.
+    fn undefined_if_nullish(
+        &mut self,
+        x: &ast::Expr,
+        any: hir::TyId,
+        span: Span,
+        then: impl FnOnce(&mut Self) -> hir::Expr,
+    ) -> hir::Expr {
+        let null = synth(ast::ExprKind::Lit(ast::Lit::Null), span);
+        let nullish = binary(ast::BinaryOp::Eq, x.clone(), null, span);
+        let cond = self.expr(&nullish, Some(self.cx.ty.bool_), crate::body::Want::Move);
+        let undefined = self.dynamic_nothing(hir::Nothing::Undefined, any, span);
+        let els = then(self);
+        let kind = hir::ExprKind::If {
+            cond: Box::new(cond),
+            then: Box::new(undefined),
+            els: Box::new(els),
+        };
+        self.mk(kind, any, span)
     }
 
     /// `AnyApplyThis(f, o, text, args)`: one call, which passes `o` as `this` to a function
