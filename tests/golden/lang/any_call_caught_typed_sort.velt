@@ -1,0 +1,103 @@
+// Comparators of typed arrays in a program whose calls through `any` throw (it converts a
+// throwing function to `any`, #1938): `toSorted` with or without a comparator compiles, and a
+// comparator that calls a helper, a method or a closure that calls through `any` throws what
+// that call throws to the caller's `catch`, leaving the array as it was, as in JavaScript.
+function check(x: number): number {
+  if (x < 0) throw new RangeError("negative " + x);
+  return x;
+}
+const table: any = { check };
+console.log(table.check(1));
+
+// `toSorted` of number[] and string[], without a comparator and with an arrow.
+const nums: number[] = [3, 1, 2];
+console.log(nums.toSorted().join(","), nums.toSorted((a, b) => b - a).join(","));
+const strs: string[] = ["b", "c", "a"];
+console.log(strs.toSorted().join(","), strs.toSorted((a, b) => (a < b ? 1 : -1)).join(","));
+const floats = new Float64Array([2, 1]);
+console.log(floats.toSorted().join(","));
+
+// A helper that calls through `any`.
+function weight(x: number): number {
+  return table.check(x) as number;
+}
+nums.sort((a, b) => weight(a) - weight(b));
+console.log(nums.join(","), nums.toSorted((a, b) => weight(b) - weight(a)).join(","));
+const signed: number[] = [2, -1, 3];
+try {
+  signed.sort((a, b) => weight(a) - weight(b));
+} catch (e) {
+  console.log("helper caught", (e as Error).message, signed.join(","));
+}
+try {
+  console.log(signed.toSorted((a, b) => weight(a) - weight(b)).join(","));
+} catch (e) {
+  console.log("toSorted caught", (e as Error).message, signed.join(","));
+}
+
+// A method of a typed object reading an `any` field.
+class Order {
+  k: any;
+  constructor(k: any) {
+    this.k = k;
+  }
+  cmp(a: number, b: number): number {
+    return (this.k.check(a) as number) - (this.k.check(b) as number);
+  }
+}
+const ord = new Order(table);
+const more: number[] = [9, 8];
+more.sort((a, b) => ord.cmp(a, b));
+console.log(more.join(","));
+try {
+  signed.sort((a, b) => ord.cmp(b, a));
+} catch (e) {
+  console.log("method caught", (e as Error).message);
+}
+
+// A closure inside the comparator.
+const three: number[] = [3, 2, 1];
+three.sort((a, b) => {
+  const g = (): number => table.check(a) as number;
+  return g() - b;
+});
+console.log(three.join(","));
+
+// A local holding the comparator, and a named one.
+const byWeight = (a: number, b: number): number => weight(b) - weight(a);
+three.sort(byWeight);
+console.log(three.join(","));
+function byCheck(a: number, b: number): number {
+  return weight(a) - weight(b);
+}
+three.sort(byCheck);
+console.log(three.join(","), three.toSorted(byWeight).join(","));
+try {
+  signed.sort(byCheck);
+} catch (e) {
+  console.log("named caught", (e as Error).message, signed.join(","));
+}
+
+// i64[], whose comparators return an i64.
+function intWeight(x: i64): i64 {
+  return (table.check(x as number) as number) as i64;
+}
+function byInt(a: i64, b: i64): i64 {
+  return intWeight(a) - intWeight(b);
+}
+const ints: i64[] = [3, 1, 2];
+ints.sort(byInt);
+console.log(ints.join(","), ints.toSorted((a, b) => intWeight(b) - intWeight(a)).join(","));
+const badInts: i64[] = [1, -4];
+try {
+  badInts.sort(byInt);
+} catch (e) {
+  console.log("i64 caught", (e as Error).message, badInts.join(","));
+}
+
+// A named comparator that calls nothing through `any` sorts as before.
+function plain(a: number, b: number): number {
+  return a - b;
+}
+signed.sort(plain);
+console.log(signed.join(","));

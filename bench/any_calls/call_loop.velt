@@ -1,0 +1,24 @@
+// Calls through `any` in a program whose calls through `any` throw (#1938): 600,000 calls of a
+// function held in an `any`, inside a `try` that takes their errors (bench/any_calls/ab.sh).
+function check(x: number): number {
+  if (x < 0) throw new RangeError("negative");
+  return x;
+}
+const table: any = { check };
+let sum = 0;
+try {
+  for (let i = 0; i < 600000; i++) {
+    sum += table.check(i) as number;
+  }
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
+let inner = 0;
+for (let i = 0; i < 600000; i++) {
+  try {
+    inner += table.check(i) as number;
+  } catch (e) {
+    inner = -1;
+  }
+}
+console.log(sum, inner);

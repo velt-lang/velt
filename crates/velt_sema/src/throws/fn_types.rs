@@ -86,6 +86,10 @@ pub(crate) struct FnTypeSeeds {
     /// The program converts to `any` a function that throws (`throws::any_calls`): a call
     /// through `any` in a user module throws `any`.
     pub(crate) any_calls_throw: bool,
+    /// The comparators of a typed array's `sort` / `toSorted` that the previous check found to
+    /// throw `any` (calling what calls through `any`), by span: they sort as an `any[]`'s
+    /// comparators that may throw do (`body/expr/in_place_chain.rs`).
+    pub(crate) any_sorts: FxHashSet<Span>,
 }
 
 /// The sites of one check: the sets it applies and what it found.
@@ -108,6 +112,10 @@ pub(crate) struct FnSites {
     pub(super) var_values: FxHashSet<TyId>,
     /// A user module calls through `any` (`throws::any_calls`).
     pub(crate) any_calls: bool,
+    /// The comparators of typed arrays' `sort` / `toSorted` calls in user modules of this
+    /// check, by span, that sort as before: one found to throw `any` is added to the seeds'
+    /// `any_sorts` ([`Ctx::any_sort_found`]).
+    pub(crate) sort_cmps: FxHashSet<Span>,
     /// Structural matches of a converted value's errors (its type, the sites, the errors),
     /// added at the end of the check unless the value reached a site through its variable
     /// ([`Ctx::flush_structural`]).

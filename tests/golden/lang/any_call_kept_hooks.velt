@@ -1,0 +1,86 @@
+// The methods glue calls (`toString`, `toJSON`, `get message()`), which cannot throw, calling
+// through `any` in a program whose calls through `any` throw (it converts a throwing function
+// to `any`, #1938), directly or through a helper: they compile as in a program that converts
+// none, and a `catch` inside one still takes the error.
+function check(x: number): number {
+  if (x < 0) throw new RangeError("negative");
+  return x;
+}
+const table: any = { check, show: (): string => "shown" };
+try {
+  table.check(-1);
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
+
+class Shown {
+  data: any;
+  constructor(data: any) {
+    this.data = data;
+  }
+  toString(): string {
+    return this.data.show() as string;
+  }
+}
+console.log(`${new Shown(table)}`, String(new Shown(table)));
+
+class Json {
+  data: any;
+  constructor(data: any) {
+    this.data = data;
+  }
+  toJSON(): any {
+    return { j: this.data.check(3) as number };
+  }
+}
+console.log(JSON.stringify(new Json(table)));
+
+class Safe {
+  data: any;
+  constructor(data: any) {
+    this.data = data;
+  }
+  toString(): string {
+    try {
+      return String(this.data.check(-2) as number);
+    } catch (e) {
+      return "safe: " + (e as Error).message;
+    }
+  }
+}
+console.log(`${new Safe(table)}`);
+
+class Failed extends Error {
+  data: any;
+  constructor(data: any) {
+    super();
+    this.data = data;
+  }
+  get message(): string {
+    return "failed: " + (this.data.show() as string);
+  }
+}
+try {
+  throw new Failed(table);
+} catch (e) {
+  console.log((e as Error).message);
+}
+
+// Through a helper that calls through `any`.
+class Described {
+  data: any;
+  constructor(data: any) {
+    this.data = data;
+  }
+  describe(): string {
+    return "described " + (this.data.show() as string);
+  }
+  toString(): string {
+    return this.describe();
+  }
+  toJSON(): any {
+    return { d: this.describe() };
+  }
+}
+const d = new Described(table);
+console.log(`${d}`, JSON.stringify(d));

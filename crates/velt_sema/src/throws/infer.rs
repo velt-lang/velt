@@ -57,6 +57,7 @@ pub(crate) fn infer_all(cx: &mut Ctx) {
             let mut acc = None;
             for &m in &g.members {
                 let t = member_final(cx, m);
+                let t = cx.kept_errors(m, t);
                 acc = cx.join_errors(acc, t);
             }
             for &m in &g.members {
@@ -172,6 +173,7 @@ impl Worklist {
                 true => cx.join_errors(cx.fn_throws(d), t),
                 false => t,
             };
+            let t = cx.kept_errors(d, t);
             if set_throws(cx, d, t) | moved {
                 changed = true;
                 self.queue_callers(d);

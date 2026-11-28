@@ -78,6 +78,46 @@ impl FnCx<'_, '_> {
     }
 }
 
+impl Ctx<'_> {
+    /// The comparator at `span` of a typed array's `sort` or `toSorted` call that sorts as
+    /// before (`FnSites::sort_cmps`) throws `m`, which the comparator type of that sort does not
+    /// allow: when `m` is `any` (it calls what calls through `any`), the program is checked
+    /// again with the call sorting as an `any[]`'s comparators that may throw do, which sends
+    /// the error to the caller (`body/expr/in_place_chain.rs`), and this check's report is
+    /// dropped. True when so.
+    pub(crate) fn any_sort_found(&mut self, span: Span, m: TyId) -> bool {
+        let any = self.any_type();
+        let sites = &mut self.fn_sites;
+        if any != Some(m) || sites.is_last() || !sites.sort_cmps.contains(&span) {
+            return false;
+        }
+        sites.found.any_sorts.insert(span);
+        sites.grew = true;
+        true
+    }
+
+    /// The error type `t` inferred for function `d`, without `any` when `d` is a method glue
+    /// calls, which cannot throw (`hooks::cannot_throw`), in a program whose calls through `any`
+    /// throw: what it calls that calls through `any` throws nothing out of it, and lowering
+    /// reports such an error as uncaught where it leaves the method (velt_vir `route_error`),
+    /// as in a program that converts no throwing function. Its other errors stay errors.
+    pub(crate) fn kept_errors(&mut self, d: hir::DefId, t: Option<TyId>) -> Option<TyId> {
+        let any = self.any_type();
+        let (Some(t), Some(any)) = (t, any) else {
+            return t;
+        };
+        if !self.fn_sites.seeds.any_calls_throw || !crate::hooks::cannot_throw(self, d) {
+            return Some(t);
+        }
+        let members = self.error_members(t);
+        if !members.contains(&any) {
+            return Some(t);
+        }
+        let rest: Vec<TyId> = members.into_iter().filter(|m| *m != any).collect();
+        self.error_union(&rest)
+    }
+}
+
 /// After inference: when user code calls through `any` and the program converts a throwing
 /// function to `any`, and this check didn't assume it, the program is checked again with it
 /// (module docs).

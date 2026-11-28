@@ -50,6 +50,18 @@ extend Array<i64> {
     out.sort(cmp);
     return out;
   }
+
+  /** `sort(cmp)` with a comparator that may throw, as the compiler calls it (`Array<T>.sortDynamic`). */
+  sortDynamic<E>(cmp: (x: i64, y: i64) => i64 throws E) throws E {
+    sortCaught(this, (a, b) => (cmp(a, b) < 0 ? -1.0 : 0.0));
+  }
+
+  /** `toSorted(cmp)` with a comparator that may throw, as [`sortDynamic`]. */
+  toSortedDynamic<E>(cmp: (x: i64, y: i64) => i64 throws E): i64[] throws E {
+    const out = this.slice();
+    out.sortDynamic(cmp);
+    return out;
+  }
 }
 
 extend Array<i32> {
@@ -102,6 +114,18 @@ extend Array<u64> {
     out.sort(cmp);
     return out;
   }
+
+  /** `sort(cmp)` with a comparator that may throw, as the compiler calls it (`Array<T>.sortDynamic`). */
+  sortDynamic<E>(cmp: (x: u64, y: u64) => i64 throws E) throws E {
+    sortCaught(this, (a, b) => (cmp(a, b) < 0 ? -1.0 : 0.0));
+  }
+
+  /** `toSorted(cmp)` with a comparator that may throw, as [`sortDynamic`]. */
+  toSortedDynamic<E>(cmp: (x: u64, y: u64) => i64 throws E): u64[] throws E {
+    const out = this.slice();
+    out.sortDynamic(cmp);
+    return out;
+  }
 }
 
 extend Array<usize> {
@@ -126,6 +150,18 @@ extend Array<usize> {
   toSorted(cmp: ((x: usize, y: usize) => i64) | null = null): usize[] {
     const out = this.slice();
     out.sort(cmp);
+    return out;
+  }
+
+  /** `sort(cmp)` with a comparator that may throw, as the compiler calls it (`Array<T>.sortDynamic`). */
+  sortDynamic<E>(cmp: (x: usize, y: usize) => i64 throws E) throws E {
+    sortCaught(this, (a, b) => (cmp(a, b) < 0 ? -1.0 : 0.0));
+  }
+
+  /** `toSorted(cmp)` with a comparator that may throw, as [`sortDynamic`]. */
+  toSortedDynamic<E>(cmp: (x: usize, y: usize) => i64 throws E): usize[] throws E {
+    const out = this.slice();
+    out.sortDynamic(cmp);
     return out;
   }
 }
@@ -230,25 +266,7 @@ extend<T> Array<T> {
    * the first error ends the comparing, and as in Node the array stays as it was.
    */
   sortDynamic<E>(cmp: (x: T, y: T) => number throws E) throws E {
-    const before = this.slice();
-    const caught: E[] = [];
-    this.sort((a, b) => {
-      if (caught.length > 0) {
-        return 0;
-      }
-      try {
-        return cmp(a, b);
-      } catch (e) {
-        caught.push(e);
-        return 0;
-      }
-    });
-    if (caught.length > 0) {
-      for (let i = 0; i < before.length; i++) {
-        this[i] = before[i];
-      }
-      throw caught[0];
-    }
+    sortCaught(this, cmp);
   }
 
   /**
@@ -295,6 +313,37 @@ extend<T> Array<T | undefined> {
     const out = this.slice();
     out.sort(cmp);
     return out;
+  }
+}
+
+/**
+ * `xs.sort(cmp)` (stable) with a comparator that may throw, for `sortDynamic`: the sort moves
+ * elements through a scratch buffer and can't stop halfway, so the first error ends the comparing
+ * (every later comparison is 0), and as in Node the array stays as it was.
+ */
+function sortCaught<T, E>(xs: T[], cmp: (x: T, y: T) => number throws E) throws E {
+  const before = xs.slice();
+  const caught: E[] = [];
+  stableSort(
+    xs,
+    (a, b) => {
+      if (caught.length > 0) {
+        return 0.0;
+      }
+      try {
+        return cmp(a, b);
+      } catch (e) {
+        caught.push(e);
+        return 0.0;
+      }
+    },
+    (c) => c < 0.0,
+  );
+  if (caught.length > 0) {
+    for (let i = 0; i < before.length; i++) {
+      xs[i] = before[i];
+    }
+    throw caught[0];
   }
 }
 

@@ -37,6 +37,15 @@ impl FnLower<'_, '_> {
             self.goto(handler);
             return;
         }
+        // An `any` a call through `any` threw, leaving a method glue calls (`toString`, which
+        // cannot throw: velt_sema `Ctx::kept_errors`): reported as uncaught, as in a program whose
+        // calls through `any` throw nothing.
+        if self.cx.hir.any_calls_throw && from == self.cx.any_ty() {
+            let to = self.throws;
+            if !to.is_some_and(|t| self.takes_error(t, from)) {
+                return self.uncaught_error(err, from);
+            }
+        }
         let Some(to) = self.throws else {
             ice("error thrown outside a throwing function or try block")
         };

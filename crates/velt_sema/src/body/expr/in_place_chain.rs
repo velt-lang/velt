@@ -18,6 +18,14 @@ use crate::body::places::set_place_mode;
 use crate::body::{FnCx, LocalKind};
 use crate::hir::{self, ExprKind as H, StmtKind as S, TyKind, UseMode};
 
+/// What a comparator written as a name names (`FnCx::named_cmp`).
+enum NamedCmp {
+    /// A function.
+    Fn(hir::DefId),
+    /// A local or module variable, of this type.
+    Value(hir::TyId),
+}
+
 /// The receiver of a member access, with the statements that must run before it.
 pub(super) struct Receiver {
     pub before: Vec<hir::Stmt>,
@@ -40,7 +48,7 @@ impl FnCx<'_, '_> {
         };
         let elem = self.cx.ty.array_elem(recv)?;
         if self.cx.dynamic(elem) != Some(crate::any::Dynamic::Any) {
-            return self.named_sort_name(elem, prop, cmp);
+            return self.typed_sort_name(prop, cmp);
         }
         let name = match (prop.name.as_str(), self.returns_dynamic(cmp)) {
             ("sort", true) => "sortAnyResult",
@@ -55,24 +63,25 @@ impl FnCx<'_, '_> {
         })
     }
 
-    /// `sort(cmp)` or `toSorted(cmp)` of an array of `elem` values in a program whose calls
-    /// through `any` throw (`throws::any_calls`): a comparator named here (not an arrow, whose
-    /// calls through `any` throw nothing where its type allows no error) may throw `any`, so it
-    /// sorts as [`Self::dynamic_sort_name`]'s do. An array of `i64`, `u64` or `usize` values,
-    /// whose comparators return an `i64`, sorts as before.
-    fn named_sort_name(
-        &mut self,
-        elem: hir::TyId,
-        prop: &ast::Ident,
-        cmp: &ast::Expr,
-    ) -> Option<ast::Ident> {
-        let arrow = matches!(
-            super::method_value::strip_parens(cmp).kind,
-            ast::ExprKind::Arrow { .. }
-        );
-        let ints = [self.cx.ty.i64, self.cx.ty.u64, self.cx.ty.usize];
-        if !self.cx.fn_sites.seeds.any_calls_throw || arrow || ints.contains(&elem) {
+    /// `sort(cmp)` or `toSorted(cmp)` of a typed array in a user module of a program whose calls
+    /// through `any` throw (`throws::any_calls`). The comparator type of a typed sort allows no
+    /// error, so a comparator that calls what calls through `any` (a helper, a method, a closure
+    /// of its own) throws what that type can't hold: the check that finds it so
+    /// (`Ctx::any_sort_found`, for the comparators noted here in `FnSites::sort_cmps`) has the
+    /// program checked again, and there it sorts as [`Self::dynamic_sort_name`]'s comparators
+    /// that may throw do (`sortDynamic`, which sends the error to the caller as in JavaScript).
+    /// Any other comparator sorts as before, at its cost; so does every sort in the standard
+    /// library (`toSorted` passing its comparator on to `sort`).
+    fn typed_sort_name(&mut self, prop: &ast::Ident, cmp: &ast::Expr) -> Option<ast::Ident> {
+        if !self.cx.fn_sites.seeds.any_calls_throw || self.cx.scopes[self.module].is_std {
             return None;
+        }
+        if !self.throws_any_now(cmp) {
+            let key = self.sort_cmp_key(cmp)?;
+            if !self.cx.fn_sites.seeds.any_sorts.contains(&key) {
+                self.cx.fn_sites.sort_cmps.insert(key);
+                return None;
+            }
         }
         let name = match prop.name.as_str() {
             "sort" => "sortDynamic",
@@ -82,6 +91,62 @@ impl FnCx<'_, '_> {
             name: name.to_string(),
             span: prop.span,
         })
+    }
+
+    /// The span a typed sort's comparator `cmp` is known by from one check to the next (the
+    /// span its errors are reported at): an arrow's own, a named function's where it is used,
+    /// the closure a variable holds where it was written (`const byKey = (a, b) => ...`). `None`
+    /// for another comparator (a member, a call's result).
+    fn sort_cmp_key(&mut self, cmp: &ast::Expr) -> Option<Span> {
+        let cmp = super::method_value::strip_parens(cmp);
+        match &cmp.kind {
+            ast::ExprKind::Arrow { .. } | ast::ExprKind::Function(_) => Some(cmp.span),
+            ast::ExprKind::Ident(id) => match self.named_cmp(id)? {
+                NamedCmp::Fn(_) => Some(cmp.span),
+                NamedCmp::Value(t) => match self.cx.ty.kind(t) {
+                    TyKind::Closure(d) => Some(self.cx.fn_info(*d).span),
+                    _ => None,
+                },
+            },
+            _ => None,
+        }
+    }
+
+    /// Is comparator `cmp` a named function, or a variable holding a function, already known to
+    /// throw `any` (checked before this use)? Its type says so where it is used, so it sorts as
+    /// one the previous check found to throw `any` does ([`Self::typed_sort_name`]).
+    fn throws_any_now(&mut self, cmp: &ast::Expr) -> bool {
+        let ast::ExprKind::Ident(id) = &super::method_value::strip_parens(cmp).kind else {
+            return false;
+        };
+        let Some(any) = self.cx.any_type() else {
+            return false;
+        };
+        let throws = match self.named_cmp(id) {
+            Some(NamedCmp::Fn(d)) => crate::throws::throws_now(self.cx, d, &[]),
+            Some(NamedCmp::Value(t)) => match self.cx.ty.kind(t).clone() {
+                TyKind::FnPtr { throws, .. } => Some(throws),
+                TyKind::Closure(d) => crate::throws::throws_now(self.cx, d, &[]),
+                _ => None,
+            },
+            None => None,
+        };
+        throws.is_some_and(|t| self.cx.error_members(t).contains(&any))
+    }
+
+    /// What comparator `id` names: a function, or a local or module variable of a type.
+    fn named_cmp(&mut self, id: &ast::Ident) -> Option<NamedCmp> {
+        if let Some(l) = self.lookup_local(&id.name, id.span) {
+            return Some(NamedCmp::Value(self.local_ty(l)));
+        }
+        let Some(crate::ctx::Item::Def(d)) = self.lookup_item(&id.name, id.span) else {
+            return None;
+        };
+        match &self.cx.info[d.0 as usize] {
+            crate::defs::DefInfo::Fn(_) => Some(NamedCmp::Fn(d)),
+            crate::defs::DefInfo::Global(_) => self.cx.global(d).map(|g| NamedCmp::Value(g.ty)),
+            _ => None,
+        }
     }
 
     /// Does comparator `cmp` return an `any` or `unknown`: an arrow or a function declared so, or a

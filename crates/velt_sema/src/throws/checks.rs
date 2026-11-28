@@ -156,6 +156,11 @@ fn first_site(cx: &mut Ctx, srcs: &[ThrowSrc], m: TyId) -> Option<Span> {
 }
 
 fn clause_violation(cx: &mut Ctx, d: DefId, m: TyId, allowed: Option<TyId>, clause: Span) {
+    // A typed array's comparator that throws `any`: checked again sorting as an `any[]`'s.
+    let (kind, span) = (cx.fn_info(d).kind, cx.fn_info(d).span);
+    if kind == FnKind::Closure && cx.any_sort_found(span, m) {
+        return;
+    }
     let at = site_of(cx, d, m);
     let mn = cx.display(m);
     let f = cx.fn_info(d);
@@ -369,6 +374,11 @@ fn observed(cx: &mut Ctx, c: &ThrowCheck) {
         cx.error_outside(obs, fin).is_none()
     };
     if ok || slots_found_late(cx, &c.srcs) || cx.recursion_found_late(&c.srcs) {
+        return;
+    }
+    // A named function as a typed array's comparator that throws `any` (`any_sort_found`).
+    let outside = cx.error_outside(obs, fin);
+    if !c.exact && outside.is_some_and(|m| cx.any_sort_found(c.span, m)) {
         return;
     }
     let fs = fin.map_or("nothing".to_string(), |t| {

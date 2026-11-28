@@ -1596,7 +1596,12 @@ that was only variables solved empty is no error type (`FnDef::throws` is `None`
   empty (in the value, its fields, elements, options or results, through generic instantiations
   too; a standard library class counts only through its type arguments, not by its own
   methods), `Program::any_calls_throw` is set and every `AnyCall` and `AnyApply` in a user module
-  throws `any` (sema counts it as a throw source of the enclosing `try` or function). The call
+  throws `any` (sema counts it as a throw source of the enclosing `try` or function), except
+  outside a `try` with a `catch` in a closure whose function type allows no `any` error and in
+  the methods glue calls (`toString`, `toJSON`, `get message()`), where it is reported as
+  uncaught as in another program. A comparator of a typed array's `sort` or `toSorted` that
+  throws `any` through what it calls sorts through `sortDynamic` / `toSortedDynamic`
+  (std/prelude/sort.velt), found by a check of the program and applied by the next one. The call
   slots then return 4 (the function threw; `*out` holds its error boxed as an `any`), which a
   call in a user function throws as `throw` does and any other caller reports as uncaught. In
   another program the slots run a throwing function so that its error ends the process with

@@ -104,6 +104,23 @@ fn hook_methods(cx: &Ctx) -> Vec<(DefId, DefId, &'static str)> {
     out
 }
 
+/// Is `def` a method that cannot throw since glue calls it: a class's own `toString` or
+/// `toJSON` instance method ([`check_throws`]), or the `get message()` of a class extending
+/// `Error` (`error_message::check_throws`)? What a call through `any` throws doesn't leave it
+/// (`Ctx::kept_errors`).
+pub(crate) fn cannot_throw(cx: &Ctx, def: DefId) -> bool {
+    let Some(owner) = cx.fn_info(def).owner else {
+        return false;
+    };
+    let Some(a) = cx.adt(owner).filter(|a| a.kind == AdtKind::Class) else {
+        return false;
+    };
+    [TO_STRING, TO_JSON, crate::error_message::KEY]
+        .iter()
+        .filter_map(|n| a.methods.get(*n))
+        .any(|m| m.def == def && !m.is_static)
+}
+
 /// After the bodies are checked: report a `toString` / `toJSON` method of a shape glue cannot
 /// call, and give each other one that is not already a plain hook its adapter.
 pub(crate) fn check_shapes(cx: &mut Ctx) {

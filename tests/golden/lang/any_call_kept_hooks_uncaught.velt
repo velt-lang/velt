@@ -1,0 +1,28 @@
+// A `toString` (which cannot throw) calling a helper whose call through `any` throws, in a
+// program whose calls through `any` throw (#1938): the error is reported as uncaught where it
+// leaves `toString`, with exit code 1, as in a program that converts no throwing function.
+function check(x: number): number {
+  if (x < 0) throw new RangeError("negative");
+  return x;
+}
+const table: any = { check };
+class Shown {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+  value(): number {
+    return table.check(this.n) as number;
+  }
+  toString(): string {
+    return "n=" + this.value();
+  }
+}
+try {
+  console.log(new Shown(-2).value());
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
+console.log(`${new Shown(1)}`);
+console.log(`${new Shown(-1)}`);
+console.log("not reached");
