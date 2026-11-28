@@ -103,7 +103,7 @@ export async function velt_rt_udp_send_to(
   addr: string,
 ): Promise<IoResult<u64>> {
   // A hand-off: the receiver (often a task of this program) may get the datagram at once, so
-  // what this thread printed comes first (the runtime's `publish_before_handoff`).
+  // what this thread printed comes first (`wk.publish`).
   const w = t.here();
   if (w !== 0 && (m.ld32(w + t.E_MODE) !== 0 || m.ld(w + t.E_LAZY) !== 0)) {
     wk.publish(w);

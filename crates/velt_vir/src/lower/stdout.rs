@@ -1,7 +1,7 @@
 //! Standard output and standard error through std's hooks (std/lang/hooks/stdout.velt, #2196):
 //! the writers `console.log`, `console.error` and an uncaught error's report call, and the flush
-//! before every exit Velt code reaches (the end of `velt_main`, `process.exit`, a panic). The
-//! writer behind them is the runtime's for now (out_rt.velt).
+//! before every exit Velt code reaches (the end of `velt_main`, `process.exit`, a panic). On a
+//! native target the writer is std's (out_native.velt), elsewhere the runtime's (out_rt.velt).
 
 use super::hook_calls::{self as hooks, ty, HookTy};
 use super::{cint, FnLower};
@@ -40,14 +40,13 @@ impl FnLower<'_, '_> {
     }
 
     /// `velt_main`'s start: stdout's mode (a terminal or not) is asked once, before any task
-    /// writes, so that the first `console.log` of a task doesn't wait for the answer; and outside
-    /// the dev JIT, whose reload replaces the code a C library's exit handler would call, std's
-    /// flush is registered with `atexit`, for the exits the runtime takes by itself.
+    /// writes, so that the first `console.log` of a task doesn't wait for the answer; and std's
+    /// flush is registered with the end of the process, for the exits the runtime takes by
+    /// itself. In the dev JIT too: its code stays mapped for the rest of the process, whatever
+    /// a reload swaps in.
     pub(super) fn init_output(&mut self) {
         hooks::init_output(self).emit(self);
-        if !self.cx.jit {
-            hooks::flush_at_exit(self).emit(self);
-        }
+        hooks::flush_at_exit(self).emit(self);
     }
 
     /// Is the function being lowered part of the writer (`WRITER_MODULES`)?

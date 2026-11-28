@@ -1,0 +1,21 @@
+// An exit the runtime takes by itself (here: a write to a value an `RwLock` holds, inside its
+// `read` callback) still writes out what the program printed before it: under `velt dev`'s JIT
+// too, where std's flush at the end of the process is registered as in an executable (#2196).
+class Item {
+  name: string = "a";
+}
+
+class Store {
+  items: Item[] = [new Item()];
+}
+
+function main() {
+  const rw = shared(new RwLock<Store>(new Store()));
+  console.log("before");
+  rw.read((v) => {
+    const mine: Item[] = [];
+    mine.push(v.items[0]);
+    mine[0].name = "x";
+  });
+  console.log("not reached");
+}

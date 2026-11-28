@@ -37,6 +37,13 @@ fn loaded(src: &str, sm: &mut SourceMap) -> crate::Loaded {
 /// does one that is gone.
 const KNOWN: &[&str] = &["host_async demands std/io/error: class `IoError` extends `Error`"];
 
+/// Modules loaded on demand elsewhere that a program of `console.log` alone may load already on
+/// some target, so a demand of them there serves nothing: `Mutex`'s lock, with which the writer of
+/// stdout and stderr locks its shared buffer (`#thread-lock`, #2196), loaded with the writer on
+/// Windows; on Linux and macOS it comes with the writer's on-demand module. Where such a program
+/// doesn't load one of them, its demand is checked as any other.
+const LOADED_WITH_HELLO_ON_SOME_TARGET: &[&str] = &["std/lang/hooks/mutex"];
+
 #[test]
 fn every_module_a_reach_time_hook_demands_may_be_served_in_place() {
     let index = load(&real_std(), None);
@@ -54,6 +61,13 @@ fn every_module_a_reach_time_hook_demands_may_be_served_in_place() {
     for path in velt_common::std_hooks::ON_DEMAND_MODULES {
         let mut sm = SourceMap::default();
         let mut l = loaded("console.log(\"hello\");\n", &mut sm);
+        if l.modules.iter().any(|m| m.path == *path) {
+            assert!(
+                LOADED_WITH_HELLO_ON_SOME_TARGET.contains(path),
+                "{path}: loaded by a program of `console.log` alone, so its demand serves nothing"
+            );
+            continue;
+        }
         let opts = LoadOptions {
             std_root: Some(real_std()),
             demand_std: true,

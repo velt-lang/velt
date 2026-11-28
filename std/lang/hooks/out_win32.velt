@@ -1,0 +1,260 @@
+// velt/lang/hooks (internal): standard output's and standard error's writes to the OS on Windows
+// (`#stdout-os`). To a pipe or a file,
+// `WriteFile` until every byte is out. To a console, the UTF-8 as UTF-16 through `WriteConsoleW`,
+// which shows any text whatever the console's code page; a character whose bytes a write splits
+// (a buffer that filled mid-character) waits for the rest with the next write, as Rust's stdout
+// does, instead of showing as two U+FFFD. Errors drop the bytes, as `console.log` does in Node.
+// Scratch memory comes from the C library (stdout_block.velt), not arrays: an array's bounds
+// checks would bring number printing into every program.
+
+import { Ptr } from "velt/ffi/ptr";
+import { addressLoad, addressStore, noInline } from "velt/lang/intrinsics";
+import { HEADER, freeBlock, newBlock } from "./stdout_block";
+
+declare c("c") function GetStdHandle(which: u32): Ptr<void> | null;
+declare c("c") function SwitchToThread$out(): i32;
+declare c("c") function FlsAlloc$out(callback: Ptr<u8> | null): u32;
+declare c("c") function FlsSetValue$out(slot: u32, value: Ptr<u8> | null): i32;
+declare c("c") function Sleep$out(ms: u32): void;
+declare c("c") function GetTickCount64$out(): u64;
+declare c("c") function GetConsoleMode$out(handle: Ptr<void> | null, mode: Ptr<u32> | null): i32;
+declare c("c") function WriteFile$out(
+  handle: Ptr<void> | null,
+  buf: Ptr<u8> | null,
+  count: u32,
+  wrote: Ptr<u32> | null,
+  overlapped: Ptr<void> | null,
+): i32;
+declare c("c") function WriteConsoleW$out(
+  handle: Ptr<void> | null,
+  units: Ptr<u16> | null,
+  count: u32,
+  wrote: Ptr<u32> | null,
+  reserved: Ptr<void> | null,
+): i32;
+declare c("c") function MultiByteToWideChar$out(
+  codePage: u32,
+  flags: u32,
+  bytes: Ptr<u8> | null,
+  count: i32,
+  units: Ptr<u16> | null,
+  size: i32,
+): i32;
+
+const CP_UTF8: u32 = 65001;
+/** The most one call is asked to write. */
+const MAX_CALL: usize = 1 << 30;
+
+/** Per stream: the bytes of a split character kept for the next write (count in the low byte). */
+const CARRY = new Atomic<u64>(0);
+const CARRY_ERR = new Atomic<u64>(0);
+
+/**
+ * Waits a millisecond or more (the exit flush's wait for the writer's lock): the milliseconds
+ * waited, by the tick count. `Sleep(1)` lasts a timer period, 15.6 ms unless a process asked for
+ * a finer one, so a count of calls would wait up to 16 times as long as asked; the tick count
+ * moves by the period, so its steps add up to the time waited.
+ */
+export function pauseMs(): u32 {
+  // SAFETY: no precondition.
+  const from = unsafe { GetTickCount64$out() };
+  // SAFETY: no precondition.
+  unsafe {
+    Sleep$out(1);
+  }
+  // SAFETY: no precondition.
+  return (unsafe { GetTickCount64$out() } - from) as u32;
+}
+
+/** Gives the core to another thread that is ready to run, if any (a spin at the writer's lock). */
+export function yieldThread(): void {
+  // SAFETY: no precondition.
+  unsafe {
+    SwitchToThread$out();
+  }
+}
+
+/** `FlsAlloc`'s failure, and the slot before `registerAtExit` took one. */
+const NO_SLOT: u32 = 0xffffffff;
+/** The fiber-local slot whose callback is the exit flush (`registerAtExit`), plus one: 0 is none. */
+const EXIT_SLOT = new Atomic<u32>(0);
+
+/**
+ * Has the end of the process call the C function at `f`, of C type `void f(void *)`. The runtime's
+ * own exits end the process with `ExitProcess`, which runs no `atexit` function, but it does run
+ * the exiting thread's fiber-local callbacks: `f` is the callback of a fiber-local slot, set on
+ * every thread that writes stdout (`watchThreadExit`). It also runs when such a thread ends
+ * without giving its buffer back, which then goes out.
+ * Out of line: the calls stay the writer's (veltc `outside.rs`), however its callers are inlined.
+ */
+@noInline
+export function registerAtExit(f: usize): void {
+  // SAFETY: `f` is a C function taking a `void *`, as `FlsAlloc`'s callback is.
+  const slot = unsafe { FlsAlloc$out(Ptr.orNull<u8>(f)) };
+  if (slot !== NO_SLOT) {
+    EXIT_SLOT.store(slot + 1, "release");
+    watchThreadExit();
+  }
+}
+
+/** This thread writes stdout: the end of the process from it, or its own end, runs the flush. */
+@noInline
+export function watchThreadExit(): void {
+  const slot = EXIT_SLOT.load("acquire");
+  if (slot !== 0) {
+    // SAFETY: a slot `FlsAlloc` gave; any value but null has the callback run.
+    unsafe {
+      FlsSetValue$out(slot - 1, Ptr.orNull<u8>(1));
+    }
+  }
+}
+
+/** This thread gave its buffer back (`threadEnd`): its end runs no flush. */
+@noInline
+export function unwatchThreadExit(): void {
+  const slot = EXIT_SLOT.load("acquire");
+  if (slot !== 0) {
+    // SAFETY: a slot `FlsAlloc` gave; null runs no callback.
+    unsafe {
+      FlsSetValue$out(slot - 1, null);
+    }
+  }
+}
+
+/**
+ * Whether standard output's handle is a console, as libuv decides it for Node (std/process/
+ * tty_win32.velt): asked once by the writer, which keeps the answer.
+ */
+export function stdoutIsTerminal(): bool {
+  // SAFETY: no precondition (STD_OUTPUT_HANDLE, -11 as unsigned).
+  const h = unsafe { GetStdHandle(0xfffffff5) };
+  const cell = newBlock(8);
+  if (h === null || cell === 0) {
+    freeBlock(cell);
+    return false;
+  }
+  // SAFETY: the cell holds the u32 written; fails (0) for anything but a console.
+  const isConsole = unsafe { GetConsoleMode$out(h, Ptr.orNull<u32>(cell + HEADER)) } !== 0;
+  freeBlock(cell);
+  return isConsole;
+}
+
+/** Writes the `n` bytes at `p` to standard output (`fd` 1) or standard error (2). */
+export function osWrite(fd: i32, p: usize, n: usize): void {
+  // STD_OUTPUT_HANDLE (-11) or STD_ERROR_HANDLE (-12), as unsigned.
+  // SAFETY: no precondition.
+  const h = unsafe { GetStdHandle(fd === 2 ? 0xfffffff4 : 0xfffffff5) };
+  if (h === null || n === 0) {
+    return;
+  }
+  const cell = newBlock(8);
+  if (cell === 0) {
+    return;
+  }
+  // SAFETY: the cell holds the u32 written; fails (0) for anything but a console.
+  const isConsole = unsafe { GetConsoleMode$out(h, Ptr.orNull<u32>(cell + HEADER)) } !== 0;
+  if (isConsole) {
+    writeConsole(h, fd === 2, p, n, cell + HEADER);
+  } else {
+    writeAll(h, p, n, cell + HEADER);
+  }
+  freeBlock(cell);
+}
+
+/** The u32 a call wrote at `w`. */
+function wroteAt(w: usize): usize {
+  // SAFETY: the caller's cell, which the last call wrote.
+  return unsafe { addressLoad<u32>(w) } as usize;
+}
+
+/** `WriteFile` until the `n` bytes at `p` are written or a call fails; `w` is a u32's room. */
+function writeAll(h: Ptr<void>, p: usize, n: usize, w: usize): void {
+  let done: usize = 0;
+  while (done < n) {
+    const k = n - done < MAX_CALL ? n - done : MAX_CALL;
+    let ok: i32 = 0;
+    // SAFETY: `k` of the caller's bytes at `p + done`; `w` holds the count written.
+    unsafe {
+      ok = WriteFile$out(h, Ptr.orNull<u8>(p + done), k as u32, Ptr.orNull<u32>(w), null);
+    }
+    if (ok === 0 || wroteAt(w) === 0) {
+      return;
+    }
+    done += wroteAt(w);
+  }
+}
+
+/** The number of bytes at the end of the `n` at `p` that begin a character they don't finish. */
+function splitTail(p: usize, n: usize): usize {
+  for (let back: usize = 1; back <= 3 && back <= n; back++) {
+    // SAFETY: byte `n - back` of the caller's `n`.
+    const b = unsafe { addressLoad<u8>(p + n - back) };
+    if ((b & 0xc0) !== 0x80) {
+      const need: usize = b >= 0xf0 ? 4 : b >= 0xe0 ? 3 : b >= 0xc0 ? 2 : 1;
+      return need > back ? back : 0;
+    }
+  }
+  return 0;
+}
+
+/** Writes the `n` bytes at `p` to the console `h` (stderr's if `err`) as UTF-16, after the
+ * bytes of a split character the last write kept; `w` is a u32's room. */
+function writeConsole(h: Ptr<void>, err: bool, p: usize, n: usize, w: usize): void {
+  const kept = err ? CARRY_ERR.exchange(0, "relaxed") : CARRY.exchange(0, "relaxed");
+  const keptLen = (kept & 0xff) as usize;
+  const tail = splitTail(p, n);
+  const total = keptLen + n - tail;
+  // The bytes (`total`), then as many UTF-16 units (never more), in one block.
+  const block = newBlock(total * 3 + 2);
+  if (block === 0) {
+    return;
+  }
+  const at = block + HEADER;
+  const units = at + ((total + 1) & ~1);
+  // SAFETY: `at` has room for `total` bytes; the caller's `n` bytes are at `p`.
+  unsafe {
+    for (let i: usize = 0; i < keptLen; i++) {
+      addressStore<u8>(at + i, ((kept >> ((8 * (i + 1)) as u64)) & 0xff) as u8);
+    }
+    for (let i: usize = 0; i < n - tail; i++) {
+      addressStore<u8>(at + keptLen + i, addressLoad<u8>(p + i));
+    }
+  }
+  let next: u64 = tail as u64;
+  for (let i: usize = 0; i < tail; i++) {
+    // SAFETY: the split character's bytes at the end of the caller's `n`.
+    next |= (unsafe { addressLoad<u8>(p + n - tail + i) } as u64) << ((8 * (i + 1)) as u64);
+  }
+  if (err) {
+    CARRY_ERR.store(next, "relaxed");
+  } else {
+    CARRY.store(next, "relaxed");
+  }
+  if (total !== 0) {
+    writeUnits(h, at, total, units, w);
+  }
+  freeBlock(block);
+}
+
+/** The `total` bytes at `at` as UTF-16 at `units` (room for `total`), written to console `h`. */
+function writeUnits(h: Ptr<void>, at: usize, total: usize, units: usize, w: usize): void {
+  const n = total as i32;
+  let count: i32 = 0;
+  // SAFETY: `at` holds `n` bytes and `units` room for as many UTF-16 units (never more).
+  unsafe {
+    count = MultiByteToWideChar$out(CP_UTF8, 0, Ptr.orNull<u8>(at), n, Ptr.orNull<u16>(units), n);
+  }
+  let done: usize = 0;
+  while (done < (count as usize)) {
+    const left = (count as usize - done) as u32;
+    let ok: i32 = 0;
+    // SAFETY: the units `done..count` at `units`; `w` holds the count written.
+    unsafe {
+      ok = WriteConsoleW$out(h, Ptr.orNull<u16>(units + done * 2), left, Ptr.orNull<u32>(w), null);
+    }
+    if (ok === 0 || wroteAt(w) === 0) {
+      return;
+    }
+    done += wroteAt(w);
+  }
+}

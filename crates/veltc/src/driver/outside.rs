@@ -203,7 +203,7 @@ pub(crate) fn reaches(program: &Program) -> String {
     let files = harness_files(program);
     if files == 0 {
         return describe(program, &|symbol| {
-            is_test_runner(symbol) || is_cpu_start(symbol)
+            is_test_runner(symbol) || is_cpu_start(symbol) || is_output_writer(symbol)
         });
     }
     let each: Vec<String> = (0..files)
@@ -218,6 +218,7 @@ pub(crate) fn reaches(program: &Program) -> String {
                 true => describe(program, &|symbol: &str| {
                     is_test_runner(symbol)
                         || is_cpu_start(symbol)
+                        || is_output_writer(symbol)
                         || harness_file(symbol).is_some_and(|j| j != i)
                 }),
             }
@@ -306,6 +307,7 @@ pub(crate) fn generator_reaches(program: &Program) -> String {
             || symbol.starts_with("_V3stdP8generateP")
             || symbol.starts_with("std_sched_")
             || is_cpu_start(symbol)
+            || is_output_writer(symbol)
     })
 }
 
@@ -320,6 +322,32 @@ fn is_test_runner(symbol: &str) -> bool {
 /// depends on, so it doesn't count.
 fn is_cpu_start(symbol: &str) -> bool {
     symbol.starts_with("_V3stdP4langP5hooksP3cpuN8cpuStart")
+}
+
+/// std's writer of standard output and standard error (std/lang/hooks/stdout.velt and the
+/// files behind `#stdout-sys`, #2196): printing is not input, as the runtime's writer was not
+/// (`write` in [`PURE_RUNTIME`]). What it calls besides `write` doesn't change what the program
+/// computes either: whether stdout is a terminal (line flushing), `VELT_STDOUT_STATS`, waiting on
+/// a full pipe or for its lock at an exit, `sched_yield` at its lock, the end of the process's
+/// flush it registers, and ending the process on a closed pipe as `SIGPIPE` would.
+fn is_output_writer(symbol: &str) -> bool {
+    /// The writer's files as their symbols name them, through the `N` before the item: the
+    /// mangling doubles an underscore, and the length counts it doubled.
+    const FILES: [&str; 7] = [
+        "6stdoutN",
+        "11out__nativeN",
+        "11out__hookedN",
+        "10out__posixN",
+        "10out__win32N",
+        "14stdout__bufferN",
+        "13stdout__blockN",
+    ];
+    if symbol == "std_stdout_flush_at_exit" {
+        return true;
+    }
+    symbol
+        .strip_prefix("_V3stdP4langP5hooksP")
+        .is_some_and(|rest| FILES.iter().any(|f| rest.starts_with(f)))
 }
 
 /// The C functions std reads the clocks through (`Date.now()`, `performance.now()`:
@@ -649,6 +677,34 @@ mod tests {
             "GetLastError",
         ] {
             assert_eq!(reason(inside), None, "{inside}");
+        }
+    }
+
+    /// The writer's files by their mangled names: each file's items are the writer's, a file
+    /// whose name only starts like one of them (`stdout_x`) or another module's item is not.
+    #[test]
+    fn the_writer_s_items_are_those_of_its_files() {
+        for file in [
+            "stdout",
+            "out_native",
+            "out_hooked",
+            "out_posix",
+            "out_win32",
+            "stdout_buffer",
+            "stdout_block",
+        ] {
+            let name = file.replace('_', "__");
+            let symbol = format!("_V3stdP4langP5hooksP{}{name}N5flush", name.len());
+            assert!(super::is_output_writer(&symbol), "{symbol}");
+        }
+        assert!(super::is_output_writer("std_stdout_flush_at_exit"));
+        for other in [
+            "_V3stdP4langP5hooksP9stdout__xN5flush",
+            "_V3stdP4langP5hooksP5sched5flush",
+            "_V3stdP4langP5hooksP5schedN5flush",
+            "_V3stdP2fsP6stdoutN5flush",
+        ] {
+            assert!(!super::is_output_writer(other), "{other}");
         }
     }
 }

@@ -65,7 +65,7 @@ function checkNow(h: u64): IoStatus {
 
 /**
  * Before a send hands work to the peer (a task of this program may run it on another worker at
- * once): what this thread printed comes first (the runtime's `publish_before_handoff` at its
+ * once): what this thread printed comes first (`wk.publish`, as the runtime did at its
  * socket writes). Nothing to do with one worker and no monitor; a lazy worker 0 (`E_LAZY`) does
  * it too, as the monitor may move the peer to a spare while this poll runs on.
  */

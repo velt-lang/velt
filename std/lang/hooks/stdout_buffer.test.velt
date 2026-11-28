@@ -1,0 +1,42 @@
+// velt/lang/hooks (tests): the exit flush's wait for the shared buffer's lock (stdout_buffer.velt
+// `lockForExit`, `tryLockFor`). An exit must never wait forever for another thread's write:
+// - a thread that holds the lock itself (an exit under it) doesn't wait for it at all;
+// - a lock held elsewhere is waited for a bounded time, about as long as asked: by what the
+//   pauses waited, not by their count (on Windows a pause of 1 ms lasts a timer period, up to
+//   15.6 ms);
+// - a free lock is taken.
+// The test holds the lock on its own thread, so `tryLockFor`, which doesn't look at who holds
+// it, sees it as another thread's. Nothing prints while it is held.
+import { describe, expect, it } from "velt/test";
+import * as buf from "./stdout_buffer";
+
+describe("the exit flush's lock", () => {
+  it("is not waited for by the thread that holds it", () => {
+    buf.lockShared();
+    const from = performance.now();
+    const took = buf.lockForExit(2000);
+    const ms = performance.now() - from;
+    buf.unlockShared();
+    expect(took).toBe(false);
+    expect(ms < 1000).toBe(true);
+  });
+
+  it("is waited for about as long as asked while it is held", () => {
+    buf.lockShared();
+    const from = performance.now();
+    const took = buf.tryLockFor(300);
+    const ms = performance.now() - from;
+    buf.unlockShared();
+    expect(took).toBe(false);
+    expect(ms >= 250).toBe(true);
+    expect(ms < 2000).toBe(true);
+  });
+
+  it("is taken when it is free", () => {
+    const took = buf.lockForExit(2000);
+    if (took) {
+      buf.unlockShared();
+    }
+    expect(took).toBe(true);
+  });
+});
