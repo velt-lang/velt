@@ -355,7 +355,7 @@ function unfinished(e: usize): never {
   process.exit(13);
 }
 
-/** Is every character of `s` a digit? (The string iterator reads bytes: no position, #2816.) */
+/** Is every character of `s` a digit? (`for of` walks a string's bytes: no position, #2816.) */
 function allDigits(s: string): bool {
   for (const c of s) {
     if (c < "0" || c > "9") {

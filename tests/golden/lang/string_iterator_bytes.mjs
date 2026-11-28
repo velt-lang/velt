@@ -2,7 +2,8 @@
 // ASCII, 2- and 3-byte BMP text, astral characters (one 4-byte sequence, two units), lone
 // surrogates (a high or a low one alone, from slicing a pair, String.fromCharCode),
 // a lone high and a lone low concatenated into a pair, and the empty string; through `for of`,
-// spread, `Array.from`, a manual `next()` and a record whose keys look like array indexes.
+// the iterator of each string walked as an `Iterable<string>`, spread, `Array.from` and a
+// manual `next()`; and a record whose keys look like array indexes.
 
 function units(c) {
   const out = [];
@@ -12,12 +13,23 @@ function units(c) {
   return out.join(",");
 }
 
+// The string as an `Iterable<string>`: its iterator (`StringIterator`), not the `for of` hook.
+function walk(it) {
+  const parts = [];
+  for (const c of it) {
+    parts.push(`${c.length}:${units(c)}`);
+  }
+  return parts;
+}
+
 function show(label, s) {
   const parts = [];
   for (const c of s) {
     parts.push(`${c.length}:${units(c)}`);
   }
   console.log(label, s.length, parts.length, parts.join(" "));
+  const walked = walk(s);
+  console.log("  iterator", walked.length, walked.join(" "));
 }
 
 const smile = "😀";

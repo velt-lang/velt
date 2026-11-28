@@ -1,15 +1,27 @@
 ascii 7 7 1:61 1:62 1:63 1:20 1:31 1:32 1:33
+  iterator 7 1:61 1:62 1:63 1:20 1:31 1:32 1:33
 bmp 4 4 1:e9 1:20ac 1:436 1:4e2d
+  iterator 4 1:e9 1:20ac 1:436 1:4e2d
 astral 6 4 1:61 2:d83d,de00 1:62 2:d834,dd1e
+  iterator 4 1:61 2:d83d,de00 1:62 2:d834,dd1e
 lone high 3 3 1:78 1:d83d 1:79
+  iterator 3 1:78 1:d83d 1:79
 lone low 2 2 1:de00 1:7a
+  iterator 2 1:de00 1:7a
 high at end 2 2 1:71 1:d83d
+  iterator 2 1:71 1:d83d
 low then high 2 2 1:de00 1:d83d
+  iterator 2 1:de00 1:d83d
 fromCharCode 3 3 1:d83d 1:41 1:dc00
+  iterator 3 1:d83d 1:41 1:dc00
 units 3 3 1:d800 1:e9 1:dfff
+  iterator 3 1:d800 1:e9 1:dfff
 joined 2 1 2:d83d,de00
+  iterator 1 2:d83d,de00
 empty 0 0 
+  iterator 0 
 mixed 7 6 1:61 1:e9 1:20ac 2:d83d,de00 1:d83d 1:7a
+  iterator 6 1:61 1:e9 1:20ac 2:d83d,de00 1:d83d 1:7a
 spread 3 1,2,1
 from 4 a|b|😀|€
 next € false 😀 false undefined true
