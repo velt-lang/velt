@@ -16,7 +16,7 @@ import { delay } from "velt/time/timers";
 import { getEnv } from "#env-sys";
 import { monotonicNs } from "#clock";
 import { AbortSignal } from "velt/task";
-import { signalAbort, signalFree, signalNew, signalRetain } from "#task-signal";
+import { signalAbort, signalFree, signalNew, signalRetain } from "velt/task/signal_sched";
 import * as w from "#dev-stop";
 
 /** Longest time in-flight requests get to finish after a stop request (and some for the turns). */

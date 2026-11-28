@@ -7,7 +7,7 @@ import { describe, expect, it } from "velt/test";
 import { blockOf, Channel, channel } from "./channel";
 import { ld, RECV, st, waiting } from "./channel_block";
 import { dropCell, newCell, pollCell } from "./channel_wait";
-import { dropAddress, pollAddress } from "#sync-chan-entry";
+import { dropAddress, pollAddress } from "./channel_entry";
 import { fnAddress, promiseAt, rawAlloc, rawFree } from "velt/lang/intrinsics";
 
 const DROPS = new Atomic<i64>(0);

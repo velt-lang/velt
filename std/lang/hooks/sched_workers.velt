@@ -136,8 +136,11 @@ function startOn(e: usize): void {
     dbg.handlePauseSetup();
   }
   t.install(e);
-  // The runtime's leaves that need its timers and I/O find them from this thread.
-  velt_rt_set_scheduler(2);
+  // The runtime's leaves that need its timers and I/O find them from this thread (none on
+  // WebAssembly's one thread, which awaits no runtime leaf).
+  if (th.SUPPORTED) {
+    velt_rt_set_scheduler(2);
+  }
   startWorkers(e);
 }
 
@@ -193,11 +196,16 @@ function rescues(n: usize): bool {
  * (each worker's start at `i << 48`, so tickets stay distinct across workers).
  */
 function setUp(e: usize, w: usize, i: usize): void {
-  // SAFETY: the runtime's entries make a latch and open it; the handle is kept for good.
-  const l = unsafe { velt_rt_latch_new$rt() };
-  // SAFETY: as above.
-  unsafe {
-    velt_rt_latch_open$rt(l);
+  // One thread (WebAssembly) has no output to publish (sched_wake.velt `publish`): no latch, so
+  // its module links none of the runtime's executor.
+  let l: u64 = 0;
+  if (th.SUPPORTED) {
+    // SAFETY: the runtime's entries make a latch and open it; the handle is kept for good.
+    l = unsafe { velt_rt_latch_new$rt() };
+    // SAFETY: as above.
+    unsafe {
+      velt_rt_latch_open$rt(l);
+    }
   }
   m.st(w + t.E_LATCH, l as usize);
   m.st(w + t.E_TICKET, i << 48);

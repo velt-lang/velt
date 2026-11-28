@@ -36,8 +36,6 @@ import { parkStream, unparkStream } from "velt/net/tcp_sched_pool";
 import { isTls } from "velt/net/tls/fd_hook";
 import * as tlsOps from "velt/net/tls/fd_hook";
 
-// std's own signals, not `#task-signal`: this file is the executor in Velt's only (a file shared
-// with WebAssembly, whose signals are its runtime's, imports `#task-signal`).
 import { signalAborted, signalWait } from "velt/task/signal_sched";
 
 /**

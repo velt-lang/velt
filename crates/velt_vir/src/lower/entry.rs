@@ -12,10 +12,10 @@
 //! Before it returns, `velt_main` hands the runtime the function releasing what static atomics
 //! hold at exit, when there are any (static_atomic.rs).
 //!
-//! On a JS host (`wasm32-unknown-unknown`) the thread cannot wait: instead of
-//! `velt_rt_block_on`, `velt_main` hands the root to `velt_rt_host_main` with the code that
-//! runs after it (`MainFinish`: the uncaught error, the exit code), which the runtime calls when
-//! the root is done, in whichever turn of the host that is (velt_rt_wasm host_turn.rs).
+//! On a JS host (`wasm32-unknown-unknown`) the thread cannot wait: instead of blocking on it,
+//! `velt_main` hands the root to `velt_rt_host_main` (std's `schedHostMain`, lower/sched.rs) with
+//! the code that runs after it (`MainFinish`: the uncaught error, the exit code), which the turns
+//! call when the root is done, in whichever turn of the host that is (sched_host.velt).
 
 use velt_sema::hir::{self, DefId, TyId, TyKind};
 
@@ -152,14 +152,15 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     /// The root task `poll` with its state in `s` (unpolled): natively `velt_rt_block_on`, and
     /// the state's address (the code after it follows); on a JS host `velt_rt_host_main`, and
-    /// `None` (the runtime runs the code after it, `MainFinish`; module docs).
+    /// `None` (the turns run the code after it, `MainFinish`; module docs).
     fn run_root(&mut self, poll: Operand, s: vir::Local) -> Option<Operand> {
         let a = self.addr(Place::local(s));
-        if self.std_sched() {
+        let js_host = super::host::js_host(&self.cx.target);
+        if self.std_sched() && !js_host {
             self.sched_block_on(poll, a.clone());
             return Some(a);
         }
-        if !super::host::js_host(&self.cx.target) {
+        if !js_host {
             self.call_rt(Rt::BlockOn, vec![poll, a.clone()], None);
             return Some(a);
         }

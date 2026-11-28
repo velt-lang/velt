@@ -4,7 +4,7 @@
 
 import { anyIsPromise, holdsDynamic, needsTransfer, transfer } from "velt/lang/intrinsics";
 
-export { raceTakesStep, settledAtCall } from "#promise-race-step";
+export { raceTakesStep, settledAtCall } from "./race_step_sched";
 
 declare function velt_rt_latch_new(): u64;
 

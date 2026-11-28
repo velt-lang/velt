@@ -1,0 +1,50 @@
+// velt/lang/hooks (internal): the executor's reactor on a JS host (#3905), where the executor in
+// Velt runs the program in the turns the host drives (sched_host.velt). No sockets, as
+// reactor_none.velt, whose API this is; the idle wait differs: the thread is the host's event
+// loop, so it never waits here. The wait is noted (host_wait.velt) and the turn returns to the
+// host, which calls the next one when the timer is due (`timeoutMs`) or a host promise settles.
+
+import * as hw from "./host_wait";
+
+export {
+  SUPPORTED,
+  EAGAIN,
+  EINPROGRESS,
+  EINTR,
+  EPIPE,
+  MONOTONIC,
+  SEND_FLAGS,
+  SOCKET_FLAGS,
+  SC_NPROCESSORS_ONLN,
+  PTHREAD_CREATE_DETACHED,
+  errno,
+  open,
+  add,
+  del,
+  source,
+  bits,
+  wake,
+  accept,
+  prepare,
+  wordWait,
+  wordWake,
+  wordWaitFor,
+  threadClock,
+  threadCpu,
+  EXIT_FD_OWNED,
+  exitFd,
+  watchExit,
+  EXITED,
+  SPAWN_FLAGS,
+  pipeCloexec,
+  spawnInherit,
+  REARMS,
+  DEREGISTERS,
+  rearm,
+} from "./reactor_none";
+
+/** Notes the wait (`timeoutMs`: the next timer, -1 without one) for the host; no events: 0. */
+export function wait(r: usize, timeoutMs: i64): usize {
+  hw.ask(timeoutMs);
+  return 0;
+}
