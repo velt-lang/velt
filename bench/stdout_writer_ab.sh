@@ -4,7 +4,8 @@
 #   bench/stdout_writer_ab.sh BASE_VELT BASE_STD HEAD_VELT HEAD_STD [WORK]
 #
 # Each side is a release `velt` with its own std (and the runtime next to it, as a cargo target
-# directory holds it). Rows, each `name base head change`:
+# directory holds it, or an installed toolchain's layout: bench/stdout_writer_prefix.sh makes one
+# from a checkout, with the writer's shipped object). Rows, each `name base head change`:
 # - run: a release build of hello, and of 100,000 `console.log` lines (bench/stdout_lines.velt),
 #   its stdout to a file and to a pipe; VELT_THREADS=1.
 # - compile: `velt build` of hello and of a generated 10,000-line program (compile/scale/gen.py),
