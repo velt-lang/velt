@@ -27,7 +27,7 @@ async function headOf(conn: TcpStream): Promise<string> {
   return input;
 }
 
-/** Copies `from` to `to` until `from` ends, then ends `to`'s writing side. */
+/** Copies `from` to `to` until `from` ends, then closes `to`: a tunnel ends with either side. */
 async function pipe(from: TcpStream, to: TcpStream) {
   try {
     while (true) {
@@ -37,7 +37,7 @@ async function pipe(from: TcpStream, to: TcpStream) {
       }
       await to.writeBytes(bytes);
     }
-    to.shutdown();
+    to.close();
   } catch (e) {
     to.close();
   }
