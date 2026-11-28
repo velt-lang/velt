@@ -14,6 +14,7 @@ mod hot_swap_state;
 mod jit;
 mod jit_relocs;
 mod link;
+mod math_ops;
 mod objects;
 mod parallel;
 mod rounding;

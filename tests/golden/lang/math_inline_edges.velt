@@ -1,0 +1,85 @@
+// The math operations every backend emits inline (no runtime functions since #2196), at their
+// edges, through values the compiler cannot fold: JS's ToInt32 (`| 0`, `>> 0`, `~`, `>>> 0`)
+// below and above 2^63, where it leaves its fast path (up to 2^84 + 2^31, the last whole
+// number with a bit left in the low 32), NaN and ±Infinity; `(a + x) | 0` and `Math.imul`;
+// `Math.clz32` of wrapped values; `Math.round` with negative halves and 2^52 ± 0.5; and
+// `floor`, `ceil`, `trunc`, `sqrt` and `abs` of signed zeros, infinities and NaN.
+function show(r: number): string {
+  if (r === 0) {
+    return 1 / r > 0 ? "0" : "-0";
+  }
+  return `${r}`;
+}
+
+function main(): void {
+  const xs: number[] = [
+    0,
+    -0.0,
+    -1.5,
+    2147483648,
+    -2147483649,
+    4294967297.5,
+    3000000000.7,
+    9007199254740994,
+    9223372036854775000,
+    9223372036854775808,
+    -9223372036854775808,
+    9223372036854777856,
+    -9223372036854777856,
+    18446744073709555712,
+    -18446744073709555712,
+    1e19,
+    -1e19,
+    1e21,
+    -1e21,
+    9671406556917035545133056,
+    -9671406556917035545133056,
+    19342813113834066795298816,
+    19342813113834071090266112,
+    1e300,
+    Number.MAX_VALUE,
+    Infinity,
+    -Infinity,
+    NaN,
+  ];
+  for (const x of xs) {
+    console.log(`${x}: ${x | 0} ${x >> 0} ${~x} ${x >>> 0} ${(7 + x) | 0} ${Math.clz32(x)}`);
+  }
+  const ints: number[] = [0, 1, -1, 7, 2147483647, -2147483648, 65537, 0x2c1b3c6d];
+  for (const a of ints) {
+    const row: string[] = [];
+    for (const b of ints) {
+      row.push(`${Math.imul(a, b)}`);
+    }
+    console.log(`imul ${a}: ${row.join(" ")}`);
+  }
+  const rs: number[] = [
+    0.5,
+    -0.5,
+    -0.2,
+    1.5,
+    -1.5,
+    2.5,
+    -2.5,
+    -3.5,
+    0.49999999999999994,
+    -0.49999999999999994,
+    4503599627370495.5,
+    -4503599627370495.5,
+    4503599627370496.5,
+    4503599627370497,
+    -4503599627370497,
+    Infinity,
+    -Infinity,
+    NaN,
+  ];
+  for (const x of rs) {
+    console.log(
+      `${x}: round ${show(Math.round(x))} floor ${show(Math.floor(x))} ceil ${show(Math.ceil(x))} trunc ${show(Math.trunc(x))}`,
+    );
+  }
+  const ss: number[] = [0, -0.0, 2, -1, 1e-320, Infinity, -Infinity, NaN];
+  for (const x of ss) {
+    console.log(`${show(x)}: sqrt ${show(Math.sqrt(x))} abs ${show(Math.abs(x))}`);
+  }
+}

@@ -55,12 +55,11 @@
 //! 11. `Linkage::Import` (additive; contracts README): defined elsewhere, never emitted; passes treat it as `Export`.
 //! 12. Intrinsics (additive, #1981): `Rvalue::Intrinsic(op, operands)` is a pure operation the
 //!     compiler knows, with the operand and result types of `Intrinsic::signature`; for
-//!     `Intrinsic::Math(op)` the program declares `op`'s runtime function (`velt_vir::math`),
-//!     which backends call where they have no inline code for it (both checked by `verify`);
-//!     a `velt_math_*` operation (`MathOp::has_runtime_function` false) has none, and every
-//!     backend emits it inline. It reads only its operands and never touches memory, panics or
-//!     unwinds. A math operation is never a direct call of its runtime function (checked by
-//!     `verify`; an indirect call through its address, a function value, is an ordinary call).
+//!     `Intrinsic::Math(op)` the program declares `op`'s extern (`velt_vir::math`, checked by
+//!     `verify`), which no runtime defines: every backend emits the operation inline. It reads
+//!     only its operands and never touches memory, panics or unwinds. A math operation is never
+//!     a direct call of its extern (checked by `verify`), and std never takes its address (no
+//!     object defines the symbol).
 //! 13. Static symbols (additive, #2189): `StaticData::symbol` is `None` (the static is private
 //!     to the program's objects) unless `linkage` is `Export` (defined here, visible to the
 //!     link's other objects under the symbol) or `Import` (defined by another object of the link

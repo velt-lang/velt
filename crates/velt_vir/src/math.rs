@@ -2,11 +2,11 @@
 //! extern means (rt_abi.md "Math"), and what every runtime function may do to memory
 //! ([`Effects`]).
 //!
-//! Those named `velt_rt_*` are real runtime functions (velt_rt's `math.rs`), which are the
-//! reference for what each computes; backends emit most of them inline (one instruction, or a
-//! short sequence with the runtime call on a cold path). Those named `velt_math_*` have no
-//! runtime function: every backend emits them inline, as the SIMD externs, and
-//! [`MathOp::eval`] is their reference. Optimizers treat all of them as arithmetic. This module
+//! None of them is a runtime function: every backend emits each inline (one instruction or a
+//! short sequence), as the SIMD externs, and [`MathOp::eval`] is the reference for what each
+//! computes. Those named `velt_rt_math_*` keep the names they had when velt_rt defined them
+//! (sema and std call them by these names; #2196 moved them out of the runtime); the newer
+//! ones are `velt_math_*`. Optimizers treat all of them as arithmetic. This module
 //! is the one place that says which symbols those are, with their signatures: backends and
 //! passes match on [`MathOp`], not on symbol strings, and the verifier rejects one of these
 //! externs whose signature is not its operation's.
@@ -52,27 +52,25 @@ pub enum MathOp {
     Ctz64,
     /// `(u64) -> u64`: set bits, `x.countOnes()`.
     Popcount64,
-    /// `(f32) -> u32`: the IEEE 754 bits, `x.toBits()` (no runtime function).
+    /// `(f32) -> u32`: the IEEE 754 bits, `x.toBits()`.
     F32Bits,
-    /// `(u32) -> f32`: the float with those bits, `f32.fromBits(b)` (no runtime function).
+    /// `(u32) -> f32`: the float with those bits, `f32.fromBits(b)`.
     BitsF32,
-    /// `(u16) -> f32`: the f16 with those bits, widened (exact; [`half`]; no runtime function).
+    /// `(u16) -> f32`: the f16 with those bits, widened (exact; [`half`]).
     F16ToF32,
-    /// `(f32) -> u16`: the bits of the nearest f16 (no runtime function).
+    /// `(f32) -> u16`: the bits of the nearest f16.
     F32ToF16,
-    /// `(f64) -> u16`: the bits of the nearest f16, rounded once (no runtime function).
+    /// `(f64) -> u16`: the bits of the nearest f16, rounded once.
     F64ToF16,
-    /// `(u16) -> f32`: the bf16 with those bits, widened (exact; no runtime function).
+    /// `(u16) -> f32`: the bf16 with those bits, widened (exact).
     Bf16ToF32,
-    /// `(f32) -> u16`: the bits of the nearest bf16 (no runtime function).
+    /// `(f32) -> u16`: the bits of the nearest bf16.
     F32ToBf16,
-    /// `(f64) -> u16`: the bits of the nearest bf16, rounded once (no runtime function).
+    /// `(f64) -> u16`: the bits of the nearest bf16, rounded once.
     F64ToBf16,
-    /// `(i64) -> u16`: the bits of the bf16 nearest the integer, rounded once (no runtime
-    /// function).
+    /// `(i64) -> u16`: the bits of the bf16 nearest the integer, rounded once.
     I64ToBf16,
-    /// `(u64) -> u16`: the bits of the bf16 nearest the integer, rounded once (no runtime
-    /// function).
+    /// `(u64) -> u16`: the bits of the bf16 nearest the integer, rounded once.
     U64ToBf16,
     /// `(u16) -> u16`: an `f16`'s bits, `w.toBits()` (the identity: the value is its bits).
     F16Bits,
@@ -82,12 +80,12 @@ pub enum MathOp {
     Bf16Bits,
     /// `(u16) -> u16`: the `bf16` with those bits (the identity).
     BitsBf16,
-    /// `(f32) -> f32`: the correctly rounded square root of an `f32` (no runtime function).
+    /// `(f32) -> f32`: the correctly rounded square root of an `f32`.
     /// Lowering emits it for `Math.sqrt` of an `f16`/`bf16` stored to the same format, where it
     /// rounds as the f64 square root does (`lower/half.rs`).
     SqrtF32,
     /// `(f64, f64, f64) -> f64`: `a * b + c` rounded once (IEEE 754's fusedMultiplyAdd, C's
-    /// `fma`; no runtime function): one instruction where the target has FMA (arm64, x86-64 with
+    /// `fma`): one instruction where the target has FMA (arm64, x86-64 with
     /// `--cpu x86-64-v3`), C's `fma` elsewhere. std's `pow` is built on it
     /// (std/lang/math/fma.velt).
     FmaF64,
@@ -130,7 +128,7 @@ impl MathOp {
         MathOp::FmaF64,
     ];
 
-    /// The runtime function's symbol.
+    /// The extern's symbol.
     pub const fn symbol(self) -> &'static str {
         match self {
             MathOp::Sqrt => "velt_rt_math_sqrt",
@@ -168,23 +166,16 @@ impl MathOp {
         }
     }
 
-    /// Whether velt_rt defines the operation's symbol (`velt_rt_*`), which a backend may call
-    /// where it has no inline code; a `velt_math_*` operation is always emitted inline.
-    pub fn has_runtime_function(self) -> bool {
-        self.symbol().starts_with("velt_rt_")
-    }
-
-    /// The operation's name: the symbol without its `velt_rt_math_` / `velt_rt_` /
-    /// `velt_math_` prefix (`sqrt`, `to_int32`, `f32_bits`).
+    /// The operation's name: the symbol without its `velt_rt_math_` / `velt_math_` prefix
+    /// (`sqrt`, `to_int32`, `f32_bits`).
     pub fn name(self) -> &'static str {
         let s = self.symbol();
         s.strip_prefix("velt_rt_math_")
-            .or_else(|| s.strip_prefix("velt_rt_"))
             .or_else(|| s.strip_prefix("velt_math_"))
             .unwrap_or(s)
     }
 
-    /// The operation the runtime function `symbol` is, if it is one.
+    /// The operation the extern `symbol` is, if it is one.
     pub fn of_symbol(symbol: &str) -> Option<MathOp> {
         MathOp::ALL.into_iter().find(|op| op.symbol() == symbol)
     }
@@ -246,9 +237,9 @@ impl MathOp {
 impl MathOp {
     /// The operation on constants, for folding: each argument and the result as the bits of its
     /// type ([`MathOp::signature`]) zero-extended to 64 (an `i32` is its 32-bit pattern, an
-    /// `f32` and an `f64` their IEEE 754 bits). Computes exactly what velt_rt's function does
-    /// (a test of veltc compares the two); for a `velt_math_*` operation, which has no runtime
-    /// function, this is the reference. `None` where folding could differ from running: a NaN
+    /// `f32` and an `f64` their IEEE 754 bits). The reference for what each operation computes,
+    /// which backends' inline code matches (velt_codegen_cl's `math_ops` test compares the two
+    /// on edge and random values). `None` where folding could differ from running: a NaN
     /// argument or result of a double operation (a NaN's bits depend on the instruction that
     /// makes it).
     pub fn eval(self, args: &[u64]) -> Option<u64> {
@@ -347,7 +338,7 @@ impl MathOp {
     }
 }
 
-/// JS's `Math.round` (velt_rt's `velt_rt_math_round`).
+/// JS's `Math.round`: ties toward +Infinity, `-0` for `[-0.5, -0]`.
 fn js_round(x: f64) -> f64 {
     if !x.is_finite() {
         return x;
@@ -361,7 +352,7 @@ fn js_round(x: f64) -> f64 {
     }
 }
 
-/// JS's ToInt32 (velt_rt's `velt_rt_math_to_int32`).
+/// JS's ToInt32.
 fn to_int32(x: f64) -> i32 {
     if !x.is_finite() {
         return 0;
@@ -470,14 +461,10 @@ pub fn effects(symbol: &str) -> Effects {
 }
 
 /// Every runtime function [`effects`] knows more of than [`Effects::Any`] (the runtime must
-/// define each: a test of velt_opt checks). The `velt_math_*` operations are not runtime
-/// functions, so they are not listed.
+/// define each: a test of velt_opt checks). The [`MathOp`]s are not runtime functions, so they
+/// are not listed.
 pub fn with_effects() -> impl Iterator<Item = &'static str> {
-    let ops = MathOp::ALL
-        .into_iter()
-        .filter(|op| op.has_runtime_function());
-    ops.map(MathOp::symbol)
-        .chain(EFFECTS.iter().map(|&(s, _)| s))
+    EFFECTS.iter().map(|&(s, _)| s)
 }
 
 #[cfg(test)]
@@ -514,13 +501,10 @@ mod tests {
         assert_eq!(MathOp::of_extern(&ext(vec![Ty::U64], Ty::U32)), None);
     }
 
-    /// The `velt_math_*` operations have no runtime function; the `velt_rt_*` ones do.
+    /// An operation's name drops the symbol's prefix.
     #[test]
-    fn runtime_functions() {
-        assert!(MathOp::Sqrt.has_runtime_function());
-        assert!(MathOp::ToInt32.has_runtime_function());
-        assert!(!MathOp::F32Bits.has_runtime_function());
-        assert!(!MathOp::BitsF32.has_runtime_function());
+    fn names() {
+        assert_eq!(MathOp::ToInt32.name(), "to_int32");
         assert_eq!(MathOp::F32Bits.name(), "f32_bits");
         assert_eq!(MathOp::BitsF64.name(), "bits_f64");
     }
@@ -558,7 +542,6 @@ mod tests {
     fn f32_sqrt_folds() {
         let f = |x: f32| u64::from(x.to_bits());
         let op = MathOp::SqrtF32;
-        assert!(!op.has_runtime_function());
         assert_eq!(op.eval(&[f(16.0)]), Some(f(4.0)));
         assert_eq!(op.eval(&[f(2.0)]), Some(f(std::f32::consts::SQRT_2)));
         assert_eq!(op.eval(&[f(-0.0)]), Some(f(-0.0)));
