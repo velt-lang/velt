@@ -150,13 +150,14 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    system linker (MSVC `link.exe`, or `cc`), with the runtime library ([Linking](linking.md)).
 
 The **runtime** (`velt_rt`) is a Rust static library: memory allocation (mimalloc), strings,
-formatting, JSON, regular expressions, promise combinators, and the tokio-based I/O the standard
-library builds on (file system, sockets, timers, processes). TLS (`std/net/tls`) and HTTP are
+formatting, JSON, regular expressions, promise combinators, and velt dev's listener handover. The
+standard library does its own I/O (file system, sockets, timers, processes) on its executor's
+reactor (`std/lang/hooks/reactor_*.velt`). TLS (`std/net/tls`) and HTTP are
 written in Velt (`std/net/http`), and the database drivers are packages (`packages/sqlite`,
 `packages/postgres`, `packages/redis`). On native targets the executor that runs tasks, microtasks
 and timers is written in Velt (`std/lang/hooks/sched.velt`): lowering calls its hooks where it would
-call the runtime's executor (`crates/velt_vir/src/lower/sched.rs`), and the runtime's I/O wakes its
-tasks through a C waker. `velt_rt_wasm` is the single-threaded WebAssembly runtime, which keeps its
+call the runtime's executor (`crates/velt_vir/src/lower/sched.rs`), and the runtime's few remaining
+leaves wake its tasks through a C waker. `velt_rt_wasm` is the single-threaded WebAssembly runtime, which keeps its
 own executor.
 
 ## Crates

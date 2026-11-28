@@ -25,8 +25,8 @@ pub fn init() {
     crate::debug_alloc::claim_faults();
 }
 
-/// Writing to a socket whose peer is gone must fail with `EPIPE`, not kill the process: tokio
-/// writes with plain `write(2)` on Linux (macOS sockets opt out with `SO_NOSIGPIPE`), so a
+/// Writing to a socket whose peer is gone must fail with `EPIPE`, not kill the process: std's
+/// reactor writes with plain `write(2)` on Linux (macOS sockets opt out with `SO_NOSIGPIPE`), so a
 /// server whose client hung up died of `SIGPIPE`. Rust's own start-up does the same.
 fn ignore_sigpipe() {
     #[cfg(unix)]

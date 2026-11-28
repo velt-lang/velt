@@ -1,9 +1,9 @@
 //! The `cx` of every poll call in C terms (rt_abi_async.md §1): the task's await word and its
-//! waker, one pointer to a header whose first word is a table of C functions (the layout of
-//! tokio's task headers), so an executor written in Velt (#2649) can make one without Rust.
+//! waker, one pointer to a header whose first word is a table of C functions, so an executor
+//! written in Velt (#2649) can make one without Rust.
 //! Compiled into velt_rt_wasm too (`#[path]`).
 //!
-//! * **Rust executors** (the velt and tokio backends, velt_rt_wasm) pass `raw_cx`'s
+//! * **Rust executors** (velt_rt_wasm's, and the ABI tests' fake driver) pass `raw_cx`'s
 //!   [`RustCx`]: the header sits in the same stack value, with the table `RUST_VT` and the
 //!   executor's `&mut Context` after it. A runtime leaf recognizes the table and uses that
 //!   `Context` as it is ([`with_context`]): nothing built. Called from C, the table's `clone`

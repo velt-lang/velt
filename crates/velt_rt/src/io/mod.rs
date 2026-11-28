@@ -73,11 +73,6 @@ pub(crate) mod handoff_probe {
     }
 }
 
-/// Runtime idle hook (a worker is about to park): write pending output to the OS.
-pub fn flush_idle() {
-    stdout::flush_idle();
-}
-
 fn os_write_stderr(bytes: &[u8]) {
     let _ = std::io::stderr().lock().write_all(bytes);
 }
