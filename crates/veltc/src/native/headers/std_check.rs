@@ -126,7 +126,6 @@ const CHECKED: &[&str] = &[
     "lang/hooks/pid_win32.velt",
     "lang/hooks/reactor_epoll.velt",
     "lang/hooks/reactor_kqueue.velt",
-    "lang/hooks/sched_cells.velt",
     "lang/hooks/sched_io_write.velt",
     "lang/hooks/sched_node_loc.velt",
     "lang/hooks/sched_read.velt",
