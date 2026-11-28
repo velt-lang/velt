@@ -186,7 +186,7 @@ impl FnLower<'_, '_> {
     /// caller's, which it held uncounted) once more and keeps them, and copies only what the
     /// reader made and still shares (std's `xferKeepBegin`).
     pub(in crate::lower) fn reader_keep(&mut self, v: Operand, ty: TyId) -> Operand {
-        if self.dead() || !self.cx.transfers(ty) || !self.cx.holds_counted(ty) {
+        if self.dead() || !self.cx.root_transfers(ty) || !self.cx.holds_counted(ty) {
             return v;
         }
         let vt = self.cx.ty(ty);
