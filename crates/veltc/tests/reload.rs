@@ -525,13 +525,24 @@ fn a_stop_channel_with_no_pipe_gives_up_in_seconds() {
         &dir.path().join("main.velt"),
         "import { joinStop } from \"velt/dev\";\nfunction main() {\n  console.log(joinStop() == null);\n}\n",
     );
+    // Built first, so only the run is timed: a loaded machine's build time cannot push the
+    // fixed version over the bound, or hide most of the old loop's.
+    let built = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["build", "main.velt", "-o", "main.exe"])
+        .current_dir(dir.path())
+        .output()
+        .expect("run velt build");
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
     let started = Instant::now();
-    let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["run", "main.velt"])
+    let out = crate::no_window::command(dir.path().join("main.exe"))
         .env("VELT_DEV_SOCKET", r"\\.\pipe\velt-dev-no-such-pipe")
         .current_dir(dir.path())
         .output()
-        .expect("run velt");
+        .expect("run the program");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(
         stdout.trim(),
@@ -539,9 +550,10 @@ fn a_stop_channel_with_no_pipe_gives_up_in_seconds() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    // The build takes some of it; the 5 s deadline plus a build stays well under this.
+    // The 5 s deadline plus the process's start and exit; the old count of 1 ms sleeps took
+    // about 60-80 s.
     assert!(
-        started.elapsed() < Duration::from_secs(45),
+        started.elapsed() < Duration::from_secs(20),
         "joinStop took {:?}",
         started.elapsed()
     );
