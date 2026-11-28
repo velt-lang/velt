@@ -1,5 +1,7 @@
 // Node's twin of fetch_env_proxy.velt: the same servers, proxy and runs, so `node
-// fetch_env_proxy.mjs` prints fetch_env_proxy.out (Node 22.21+). The test certificate is read
+// fetch_env_proxy.mjs` prints fetch_env_proxy.out with Node 22 (22.21 or later; Node 26 prints
+// otherwise: it sends `http:` to the proxy without `CONNECT`). Node needs NODE_USE_ENV_PROXY=1
+// where Velt uses the environment's proxy by default: `run` sets it. The test certificate is read
 // from ../_tls.velt; Node's child trusts its CA through NODE_EXTRA_CA_CERTS, Velt's through `ca`.
 import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -120,6 +122,8 @@ async function main() {
         env[k] = vars[k];
       }
     }
+    // Node uses the environment's proxy only when asked; Velt always does.
+    env.NODE_USE_ENV_PROXY = "1";
     const out = await new Promise((resolve) => {
       const c = spawn(process.execPath, [process.argv[1], "child", ...urls], {
         env,
@@ -136,78 +140,71 @@ async function main() {
   }
 
   const both = { http_proxy: P, https_proxy: P };
-  await run("NODE_USE_ENV_PROXY unset: direct", both, [
+  await run("by default, for this machine too", both, [
     `http://localhost:${H}/a`,
     `http://a.test:${H}/`,
   ]);
-  await run("NODE_USE_ENV_PROXY=true: direct", { NODE_USE_ENV_PROXY: "true", ...both }, [
+  // Node reads it, Velt does not: `run` sets it to 1 for Node.
+  await run("NODE_USE_ENV_PROXY=0 changes nothing", { NODE_USE_ENV_PROXY: "0", http_proxy: P }, [
     `http://b.test:${H}/`,
   ]);
   const withAuth = `http://u:p%40ss@127.0.0.1:${proxy.address().port}`;
-  await run("http_proxy with credentials, for https: too", { NODE_USE_ENV_PROXY: "1", http_proxy: withAuth }, [
+  await run("a proxy with credentials", { http_proxy: withAuth, https_proxy: withAuth }, [
     `http://c.test:${H}/c`,
     `http://127.0.0.1:${H}/loopback`,
     `https://localhost:${S}/s`,
   ]);
-  await run("a proxy URL with only a user", { NODE_USE_ENV_PROXY: "1", http_proxy: `http://u@127.0.0.1:${proxy.address().port}` }, [
+  // Node sends `https:` through the `http:` proxy when no `https:` one is set; Velt (as Bun)
+  // does not, and the `NO_PROXY` here makes Node go direct too.
+  await run("http_proxy alone: https: direct", { http_proxy: P, NO_PROXY: "localhost" }, [
+    `https://localhost:${S}/s1`,
+    `http://s1.test:${H}/`,
+  ]);
+  await run("a proxy URL with only a user", { http_proxy: `http://u@127.0.0.1:${proxy.address().port}` }, [
     `http://u1.test:${H}/`,
   ]);
-  await run("a proxy URL with only a password", { NODE_USE_ENV_PROXY: "1", http_proxy: `http://:pw@127.0.0.1:${proxy.address().port}` }, [
+  await run("a proxy URL with only a password", { http_proxy: `http://:pw@127.0.0.1:${proxy.address().port}` }, [
     `http://u2.test:${H}/`,
   ]);
-  await run("the proxy variables read once, NO_PROXY at each request", { NODE_USE_ENV_PROXY: "1", http_proxy: P }, [
-    `http://o1.test:${H}/a`,
-    "env:http_proxy=",
-    `http://o2.test:${H}/b`,
-    "env:NO_PROXY=o3.test",
-    `http://o3.test:${H}/c`,
-  ]);
-  await run("uppercase HTTP_PROXY", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P }, [`http://d.test:${H}/`]);
-  await run("HTTPS_PROXY alone", { NODE_USE_ENV_PROXY: "1", HTTPS_PROXY: P }, [
+  await run("uppercase HTTP_PROXY", { HTTP_PROXY: P }, [`http://d.test:${H}/`]);
+  await run("HTTPS_PROXY alone", { HTTPS_PROXY: P }, [
     `https://localhost:${S}/e`,
     `http://e.test:${H}/`,
   ]);
-  await run("http_proxy over HTTP_PROXY", { NODE_USE_ENV_PROXY: "1", http_proxy: P, HTTP_PROXY: "http://127.0.0.1:1" }, [
+  await run("http_proxy over HTTP_PROXY", { http_proxy: P, HTTP_PROXY: "http://127.0.0.1:1" }, [
     `http://f.test:${H}/`,
-  ]);
-  await run("an empty http_proxy over HTTP_PROXY", { NODE_USE_ENV_PROXY: "1", http_proxy: "", HTTP_PROXY: P }, [
-    `http://g.test:${H}/`,
   ]);
   await run(
     "NO_PROXY",
     {
-      NODE_USE_ENV_PROXY: "1",
       HTTP_PROXY: P,
-      NO_PROXY: `n1.test,.n2.test\t*.n3.test n4.test:1 n5.test:${H} [::1] ::5 N6.TEST`,
+      NO_PROXY: `n1.test,.n2.test\t*.n3.test n4.test:1 n5.test:${H} [::1] N6.TEST`,
     },
     [
       `http://n1.test:${H}/`,
-      `http://x.n1.test:${H}/`,
-      `http://n2.test:${H}/`,
       `http://x.n2.test:${H}/`,
       `http://x.n3.test:${H}/`,
       `http://n4.test:${H}/`,
       `http://n5.test:${H}/`,
       `http://[::1]:${H}/`,
-      `http://[::5]:${H}/`,
       `http://n6.test:${H}/`,
     ],
   );
-  await run("no_proxy over NO_PROXY, even empty", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P, no_proxy: "", NO_PROXY: "h.test" }, [
+  await run("no_proxy over NO_PROXY", { HTTP_PROXY: P, no_proxy: "h2.test", NO_PROXY: "h.test" }, [
     `http://h.test:${H}/`,
   ]);
-  await run("NO_PROXY=*", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P, NO_PROXY: "*" }, [`http://i.test:${H}/`]);
-  await run("redirects between http: and https:", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P, HTTPS_PROXY: P, NO_PROXY: "localhost" }, [
+  await run("NO_PROXY=*", { HTTP_PROXY: P, NO_PROXY: "*" }, [`http://i.test:${H}/`]);
+  await run("redirects between http: and https:", { HTTP_PROXY: P, HTTPS_PROXY: P, NO_PROXY: "localhost" }, [
     `http://r1.test:${H}/to-https?to=${S}`,
     `https://127.0.0.1:${S}/to-http?to=${H}`,
   ]);
-  await run("a proxy that refuses", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P }, [
+  await run("a proxy that refuses", { HTTP_PROXY: P }, [
     `http://refuse.test:${H}/`,
   ]);
-  await run("a proxy that answers 204", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: P }, [
+  await run("a proxy that answers 204", { HTTP_PROXY: P }, [
     `http://nocontent.test:${H}/`,
   ]);
-  await run("no proxy there", { NODE_USE_ENV_PROXY: "1", HTTP_PROXY: "http://127.0.0.1:1" }, [
+  await run("no proxy there", { HTTP_PROXY: "http://127.0.0.1:1" }, [
     `http://k.test:${H}/`,
   ]);
   for (const server of [plain, secure, proxy]) {

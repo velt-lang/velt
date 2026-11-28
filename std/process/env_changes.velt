@@ -1,0 +1,17 @@
+// velt/process (internal): a count of the changes `setEnv` and `removeEnv` (std/process/env.velt)
+// made to the environment, so a reader that keeps what it read from variables (`fetch`'s proxy,
+// std/net/http/fetch/client/proxy.velt) reads them again only after a change. C code that sets
+// variables itself (`setenv` through FFI) is not counted.
+
+/** The count. Starts at a literal: an atomic started at a constant's name is built anew at every use. */
+const CHANGES = new Atomic<u64>(0);
+
+/** How many changes the environment has had. */
+export function envChanges(): u64 {
+  return CHANGES.load("acquire");
+}
+
+/** Counts a change, after it is made. */
+export function countEnvChange() {
+  CHANGES.add(1, "release");
+}

@@ -1,14 +1,14 @@
 // `fetch` through a proxy (#3693): `https:` and `http:` requests through a `CONNECT` tunnel to
 // velt/http servers (the `https:` one with the test certificate), a proxy that refuses the tunnel
-// or is not there, and the proxy the environment sets with `NODE_USE_ENV_PROXY=1`. The proxy is
-// written here on velt/net. (Which proxy a request takes, and `NO_PROXY`, are white-box tests:
-// std/net/http/fetch/client/proxy.test.velt; tests/golden/std/fetch_env_proxy.velt runs them
-// beside Node.)
+// or is not there, and the proxy the environment sets (used by default). The proxy is written
+// here on velt/net. (Which proxy a request takes, and `NO_PROXY`, are white-box tests:
+// std/net/http/fetch/client/proxy.test.velt; tests/golden/std/http_server/fetch_env_proxy.velt
+// runs them beside Node.)
 import { Channel, channel } from "velt/sync";
 import { HttpServer, serve } from "http-server";
 import { IoError } from "velt/io";
 import { utf8DecodeLossy } from "velt/encoding";
-import { connect, listen, TcpListener, TcpStream } from "velt/net";
+import { connect, listen, listenTls, TcpListener, TcpStream } from "velt/net";
 import { removeEnv, setEnv } from "velt/process";
 import { describe, expect, it } from "velt/test";
 import "velt/test/http";
@@ -72,6 +72,15 @@ async function proxyOne(conn: TcpStream, heads: Channel<string>, inner: Channel<
   await pipe(conn, origin);
 }
 
+/** `proxyOne`, closing `conn` on an error (a TLS proxy's, when the client does not trust it). */
+async function proxyGuarded(conn: TcpStream, heads: Channel<string>, inner: Channel<string>) {
+  try {
+    await proxyOne(conn, heads, inner);
+  } catch (e) {
+    conn.close();
+  }
+}
+
 /** Proxies each connection `listener` accepts until it is closed. */
 function proxyAll(listener: TcpListener, heads: Channel<string>, inner: Channel<string>) {
   spawn(async () => {
@@ -82,7 +91,7 @@ function proxyAll(listener: TcpListener, heads: Channel<string>, inner: Channel<
       } catch (e) {
         return;
       }
-      spawn(proxyOne(conn, heads, inner));
+      spawn(proxyGuarded(conn, heads, inner));
     }
   });
 }
@@ -124,7 +133,8 @@ async function answer(req: Request): Promise<Response> {
   );
 }
 
-async function setup(): Promise<Setup> {
+/** The origins and the proxy; with `tls`, an `https://` proxy (the test certificate's). */
+async function setup(tls: bool = false): Promise<Setup> {
   const s = new Setup();
   const server = await serve({ port: 0, tls: { cert: TEST_CERT, key: TEST_KEY } }, answer);
   s.server = server;
@@ -132,9 +142,15 @@ async function setup(): Promise<Setup> {
   const plainServer = await serve({ port: 0 }, answer);
   s.plainServer = plainServer;
   s.plain = plainServer.port as number;
-  const listener = await listen("127.0.0.1:0");
+  const listener =
+    tls
+      ? await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: TEST_KEY })
+      : await listen("127.0.0.1:0");
   s.listener = listener;
-  s.proxy = `http://al%40ice:pw@127.0.0.1:${listener.port}`;
+  s.proxy =
+    tls
+      ? `https://al%40ice:pw@localhost:${listener.port}`
+      : `http://al%40ice:pw@127.0.0.1:${listener.port}`;
   proxyAll(listener, s.heads, s.inner);
   return s;
 }
@@ -197,11 +213,8 @@ describe("fetch through a proxy", () => {
     ).toBe(true);
   });
 
-  // The first request of this program without a `proxy` option: `NODE_USE_ENV_PROXY` is read
-  // then, once, as Node reads it when it starts.
-  it("takes the environment's proxy with NODE_USE_ENV_PROXY=1, for this machine too", async () => {
+  it("takes the environment's proxy by default, for this machine too", async () => {
     const s = await setup();
-    setEnv("NODE_USE_ENV_PROXY", "1");
     setEnv("http_proxy", s.proxy);
     setEnv("https_proxy", s.proxy);
     removeEnv("no_proxy");
@@ -222,4 +235,52 @@ describe("fetch through a proxy", () => {
     expect(s.heads.tryReceive() ?? "none").toBe("none");
     s.close();
   });
+
+  it("speaks TLS to an https:// proxy, for https: (TLS within TLS) and http:", async () => {
+    const s = await setup(true);
+    const port = s.listener?.port ?? 0;
+    const secure = await outcome(`https://localhost:${s.origin}/tls`, {
+      ca: TEST_CA,
+      proxy: s.proxy,
+    });
+    const plain = await outcome(`http://localhost:${s.plain}/p`, { ca: TEST_CA, proxy: s.proxy });
+    expect(secure).toBe("200 origin GET /tls - ");
+    expect(plain).toBe("200 origin GET /p - ");
+    const first = s.heads.tryReceive() ?? "";
+    expect(first.startsWith(`CONNECT localhost:${s.origin} `)).toBe(true);
+    // base64("al@ice:pw")
+    expect(first.includes("proxy-authorization: Basic YWxAaWNlOnB3")).toBe(true);
+    expect((s.heads.tryReceive() ?? "").startsWith(`CONNECT localhost:${s.plain} `)).toBe(true);
+    // The proxy's certificate is checked as an origin's: without the test CA it is not trusted.
+    const untrusted = await outcome(`http://localhost:${s.plain}/u`, { proxy: s.proxy });
+    expect(untrusted.endsWith(`(connecting to proxy localhost:${port})`)).toBe(true);
+    // A fetch of an `http:` literal that follows no redirect has no TLS client (fetch.velt).
+    let plainOnly = "";
+    try {
+      await fetch("http://localhost:1/none", { redirect: "manual", proxy: s.proxy });
+    } catch (e) {
+      plainOnly = e instanceof IoError ? `${e.code} ${e.message}` : e.message;
+    }
+    expect(plainOnly.startsWith(`ENOTSUP fetch failed: the https:// proxy localhost:${port}`)).toBe(
+      true,
+    );
+    expect(s.heads.tryReceive() ?? "none").toBe("none");
+    s.close();
+  });
+
+  it(
+    "goes directly when the environment's proxy is socks5://, which it does not speak",
+    async () => {
+      const s = await setup();
+      for (const name of ["HTTP_PROXY", "all_proxy", "ALL_PROXY", "no_proxy", "NO_PROXY"]) {
+        removeEnv(name);
+      }
+      setEnv("http_proxy", "socks5://127.0.0.1:1");
+      const got = await outcome(`http://localhost:${s.plain}/direct`, {});
+      removeEnv("http_proxy");
+      expect(got).toBe("200 origin GET /direct - ");
+      expect(s.heads.tryReceive() ?? "none").toBe("none");
+      s.close();
+    },
+  );
 });
