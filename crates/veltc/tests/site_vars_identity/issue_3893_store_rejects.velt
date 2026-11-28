@@ -1,0 +1,26 @@
+// As `issue_3893_store`, but the promise rejects: the variable assumed empty is not, so the
+// program is checked again with the solved sets, and the variable's site holds `Negative`.
+class Negative extends Error {}
+
+function later(n: number): Promise<number> {
+  return new Promise((r, reject) => {
+    if (n < 0) {
+      reject(new Negative("negative"));
+      return;
+    }
+    setTimeout(() => r(n), 1);
+  });
+}
+
+async function main(): Promise<void> {
+  const maybe: Promise<number> | null = later(-1);
+  try {
+    if (maybe != null) {
+      console.log(await maybe);
+    }
+  } catch (e) {
+    console.log("caught", e instanceof Negative);
+  }
+}
+
+main();

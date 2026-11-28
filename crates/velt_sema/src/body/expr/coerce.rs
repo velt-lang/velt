@@ -290,6 +290,15 @@ impl FnCx<'_, '_> {
             Ok(h) => return Ok(h),
             Err(h) => h,
         };
+        // A promise rejecting with error-set variables stored there: as written, the variables
+        // assumed empty (`Ctx::promise_store_of_vars`).
+        let h = match self.cx.promise_store_of_vars(h.ty, exp) {
+            true => match self.coerce_as_written(h, exp, false) {
+                Ok(h) => return Ok(h),
+                Err(h) => h,
+            },
+            false => h,
+        };
         // Stored into a `Promise<T>` written without an error type: the program is checked
         // again with this promise's errors written there (`throws::promise_sites`).
         if self.cx.seed_promise_site(h.ty, exp) {
