@@ -1,6 +1,6 @@
 // velt/lang/hooks (internal): the process lifetime under the executor in Velt (sched.velt,
-// #2649), as the runtime's (velt_rt task/quiet.rs) and Node's: the program runs while something
-// can still happen, and ends when the worker would park with nothing left that can wake it:
+// #2649), as Node's: the program runs while something can still happen, and ends when the
+// worker would park with nothing left that can wake it:
 // - no task queued (worker 0's queue and its inbox are empty: it is about to park), and every
 //   other worker asleep in its reactor with nothing queued, no wait linked into its sources and
 //   no pending `sleep` (a worker that parks while worker 0 sleeps wakes it to look again:
@@ -8,14 +8,12 @@
 // - no keep-alive reference (a ref'd timer: std/prelude/timers.velt's externs route here);
 // - no wait linked into a source of the Velt reactor (a socket read, an accept, a deadline);
 // - no pending `sleep` (sched_sleep.velt; Node's timers count through their keep-alive
-//   references, so an `unref()`'d one does not);
-// - no runtime leaf outstanding: a Rust leaf polled `PENDING` that waits for a timer or I/O
-//   counts until it is ready or dropped. The runtime counts those itself (leaf.rs `External`,
-//   child processes, native futures); the executor asks it with the runtime's own question of a
-//   due `unref()`'d timer (`velt_rt_timer_unref_due`, quiet.rs `UnrefDue`: ready with 0 when a
-//   leaf is pending, a keep-alive reference held or a task queued in the runtime; pending when
-//   nothing of that is left), polled once with a waker that does nothing and dropped. No new
-//   runtime entry, nothing per poll: only a park reads any of this.
+//   references, so an `unref()`'d one does not).
+// The runtime is not asked: what a program waits for on native is the executor's (its timers,
+// its reactor's sockets, its blocking pool). The runtime leaves std still awaits there are the
+// listener `velt dev`'s supervisor hands over, which holds a keep-alive reference while it waits,
+// and the runtime's TCP streams std/net/tcp_sched.velt falls back to without a reactor, which no
+// native target lacks. Only a park reads any of this, nothing per poll.
 // Tasks that wait only for each other (a promise nobody settles, a channel nobody sends on) can
 // never be woken then. With `main` still running, the program ends as the runtime's
 // `exit_unfinished`: a top-level `await` waiting (the last `velt_rt_tla_at`) writes Node's warning
@@ -24,7 +22,7 @@
 //
 // A due `unref()`'d timer asks whether the process is ending (`schedUnrefDue`): when its turn came
 // in a pass that began alive (sched_order_alive.velt), or something else can still happen (a
-// keep-alive reference, pending I/O or leaf, a queued task), its callback runs at once; otherwise
+// keep-alive reference, pending I/O, a queued task), its callback runs at once; otherwise
 // it waits for the next park, which ends the process (the callback never runs, as in Node) or
 // finds something pending and wakes it to ask again. A worker that never parks (code that keeps
 // yielding) wakes it every I/O tick, and after a second it runs, as the runtime's patience does.
@@ -33,8 +31,6 @@ import { export as cExport } from "velt/ffi";
 import {
   exportedAddress,
   fnAddress,
-  futDrop,
-  futPoll,
   noInline,
   slotPut,
   slotTake,
@@ -52,9 +48,6 @@ import * as sl from "./sched_sleep";
 import * as t from "./sched_task";
 import * as wk from "./sched_wake";
 
-/** The runtime's question of a due `unref()`'d timer, asked as a probe (a heap future). */
-declare c("c") function velt_rt_timer_unref_due$probe(): usize;
-
 /** How long a due `unref()`'d timer waits for the worker to park, in nanoseconds. */
 const PATIENCE: u64 = 1000000000;
 
@@ -69,7 +62,10 @@ const U_LINKED: usize = 48;
 const U_SINCE: usize = 56;
 const U_SIZE: usize = 64;
 
-/** Sets up the probe's waker (a table whose entries do nothing) and `cx` in executor `e`. */
+/**
+ * Sets up the probe's waker (a table whose entries do nothing) and `cx` in executor `e`, for a
+ * poll whose waker is brought by another (std/net/rt_later_flush.velt `prime`).
+ */
 export function open(e: usize): void {
   // SAFETY: `@export`ed functions of a waker table's slots' C signatures.
   unsafe {
@@ -115,22 +111,6 @@ export function tlaAt(e: usize, site: string): void {
     slotPut<string>(e + t.E_TLA, site.slice(0));
   }
   m.st(e + t.E_TLA_SET, 1);
-}
-
-/** Has the runtime nothing outstanding: no pending leaf, keep-alive reference or queued task? */
-function runtimeQuiet(e: usize): bool {
-  // SAFETY: the runtime's entry takes nothing and returns a new heap future, owned here.
-  const f = unsafe { velt_rt_timer_unref_due$probe() };
-  // SAFETY: `f` is a live heap future; the probe's `cx` lives in the executor.
-  const r = unsafe { futPoll(f, e + t.E_PROBE_CX) };
-  // The probe's contract (quiet.rs `UnrefDue`): pending while the runtime may be quiet, ready
-  // with 1 when it saw its own end (quiet too), ready with 0 when something is outstanding.
-  const quiet = r === 0 || (m.ld(f + U_RESULT) & 255) !== 0;
-  // SAFETY: owned, polled no more.
-  unsafe {
-    futDrop(f);
-  }
-  return quiet;
 }
 
 /** Has worker `w` a pending `sleep`? */
@@ -198,16 +178,6 @@ function unparks(g: usize): usize {
  * worker 0's block, which holds what is process-wide. `asking`: as `workerBusy`'s.
  */
 function busy(g: usize, self: usize, asking: bool): bool {
-  if (veltBusy(g, self, asking)) {
-    return true;
-  }
-  // The runtime first, the inbox again after: a leaf counts until its task polled it ready, and
-  // its wake reaches the inbox before that.
-  return !runtimeQuiet(g) || m.load(self + t.E_INBOX) !== 0;
-}
-
-/** `busy` but for what the runtime has outstanding. */
-function veltBusy(g: usize, self: usize, asking: bool): bool {
   // Keep-alive references, and tasks in the monitor's hands between two workers.
   if (m.load(g + t.E_KEEP) !== 0 || m.load(g + t.E_MOVING) !== 0) {
     return true;

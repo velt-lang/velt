@@ -1,0 +1,4 @@
+main done
+unref'd timeout runs: the listener keeps the process alive
+read: hi
+listener closed

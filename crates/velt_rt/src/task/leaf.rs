@@ -5,11 +5,9 @@
 //! because the box never moves. It is dropped as soon as it completes so that resources (sockets,
 //! timers) are released before generated code gets around to `drop_fut`.
 //!
-//! A leaf made with [`new_leaf`] waits for a timer or I/O: while it is pending it keeps the
-//! process alive, as a Node request does (quiet.rs, through [`External`]). One that waits for
-//! other tasks or promises ([`new_inner_leaf`]: a combinator, `new Promise`, a timer's turn, whose
-//! timer holds its own keep-alive reference) does not: what it waits for keeps the process alive
-//! or nothing does. It costs nothing extra.
+//! Whether a leaf keeps the process alive is not the runtime's to say: the executor in Velt
+//! decides the end from what it sees (std/lang/hooks/sched_end.velt), and std holds a keep-alive
+//! reference around a runtime leaf that waits for the outside world (std/net/tcp_sched.velt).
 
 use super::waker::context_or_repoll;
 use super::{VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
@@ -27,20 +25,16 @@ struct Leaf<R, F> {
 }
 
 /// Box `fut`, which waits for a timer or I/O, as a `VeltFut` whose result slot receives `fut`'s
-/// output (layout `R`, align <= 16).
+/// output (layout `R`, align <= 16). The same as [`new_inner_leaf`].
 pub fn new_leaf<R, F>(fut: F) -> *mut VeltFut
 where
     R: Send + 'static,
     F: Future<Output = R> + Send + 'static,
 {
-    new_inner_leaf(External {
-        fut,
-        counted: false,
-    })
+    new_inner_leaf(fut)
 }
 
-/// [`new_leaf`] for a future that waits only for other tasks or promises (it does not keep the
-/// process alive by itself).
+/// Box `fut` as a `VeltFut` whose result slot receives `fut`'s output (layout `R`, align <= 16).
 pub fn new_inner_leaf<R, F>(fut: F) -> *mut VeltFut
 where
     R: Send + 'static,
@@ -91,45 +85,6 @@ unsafe extern "C-unwind" fn leaf_poll<R, F: Future<Output = R>>(
 unsafe extern "C-unwind" fn leaf_drop<R, F>(f: *mut VeltFut) {
     // The result slot is `MaybeUninit`: its value (if any) belongs to the awaiter.
     drop(Box::from_raw(f as *mut Leaf<R, F>));
-}
-
-/// A future that counts as a pending timer or I/O (quiet.rs) from its first `Pending` until it
-/// finishes or is dropped.
-struct External<F> {
-    fut: F,
-    counted: bool,
-}
-
-impl<F: Future> Future for External<F> {
-    type Output = F::Output;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<F::Output> {
-        // SAFETY: structural pinning of `fut`; `counted` is plain data.
-        let this = unsafe { self.get_unchecked_mut() };
-        match unsafe { Pin::new_unchecked(&mut this.fut) }.poll(cx) {
-            Poll::Pending => {
-                if !this.counted {
-                    this.counted = true;
-                    super::quiet::external_begin();
-                }
-                Poll::Pending
-            }
-            ready => {
-                if std::mem::take(&mut this.counted) {
-                    super::quiet::external_end();
-                }
-                ready
-            }
-        }
-    }
-}
-
-impl<F> Drop for External<F> {
-    fn drop(&mut self) {
-        if self.counted {
-            super::quiet::external_end();
-        }
-    }
 }
 
 /// Native only: `velt_rt_wasm` has no `new_inner_leaf`, and `waker_tests.rs` is compiled
