@@ -1,7 +1,7 @@
 // velt/host (internal): `HostRef`, a slot of the JS host's table of values, and the functions
 // lowering calls to pass one to a host function and to take one from it.
 
-import { velt_rt_host_clone, velt_rt_host_release } from "velt/host/rt";
+import { hostClone, hostRelease } from "#host-rt";
 
 /**
  * A JS value the host keeps for the program: a slot of the table the JS glue keeps
@@ -16,13 +16,13 @@ export class HostRef {
 
   /** A second reference to the same JS value (a slot of its own). */
   clone(): HostRef {
-    return new HostRef(velt_rt_host_clone(this.handle));
+    return new HostRef(hostClone(this.handle));
   }
 
   /** Drop hook: the host forgets the value. */
   [Symbol.dispose]() {
     if (this.handle != 0) {
-      velt_rt_host_release(this.handle);
+      hostRelease(this.handle);
       this.handle = 0;
     }
   }

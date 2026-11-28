@@ -128,7 +128,7 @@ mod tests {
         unsafe { velt_rt_process_args(a.as_mut_ptr()) };
         let mut a = unsafe { a.assume_init() };
         assert!(a.len >= 1);
-        unsafe { crate::str_array::velt_rt_str_array_drop(&mut a) };
+        unsafe { a.free() };
     }
 
     #[test]

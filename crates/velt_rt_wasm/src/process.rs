@@ -101,7 +101,7 @@ mod tests {
         unsafe { velt_rt_process_args(args.as_mut_ptr()) };
         let mut args = unsafe { args.assume_init() };
         assert!(args.len >= 1);
-        unsafe { crate::str_array::velt_rt_str_array_drop(&mut args) };
+        unsafe { args.free() };
 
         let name = VeltStr::from_static(b"VELT_RT_WASM_TEST_ENV");
         let value = VeltStr::from_static(b"yes");
@@ -126,7 +126,7 @@ mod tests {
             .expect("the variable just set is listed");
         assert_eq!(pairs[2 * at + 1], "yes");
         assert!(pairs.iter().step_by(2).all(|k| !k.starts_with('=')));
-        unsafe { crate::str_array::velt_rt_str_array_drop(&mut all) };
+        unsafe { all.free() };
         unsafe {
             velt_rt_env_remove(&name);
             assert_eq!(velt_rt_env_get(&name, &mut out), 0);

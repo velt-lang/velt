@@ -1,7 +1,16 @@
-// velt/host (internal): the runtime functions behind `HostRef` (rt_abi.md "Host values").
+// velt/host (internal): the runtime functions behind `HostRef` (rt_abi.md "Host values") off
+// native targets (`#host-rt`): WebAssembly's runtime keeps the JS glue's table of values. Native
+// programs have no JS host (host/rt_native.velt).
+
+declare function velt_rt_host_release(handle: u32): void;
+declare function velt_rt_host_clone(handle: u32): u32;
 
 /** Tells the host to forget the value in slot `handle` of its table. */
-export declare function velt_rt_host_release(handle: u32): void;
+export function hostRelease(handle: u32): void {
+  velt_rt_host_release(handle);
+}
 
 /** A new slot of the host's table holding the value of slot `handle`. */
-export declare function velt_rt_host_clone(handle: u32): u32;
+export function hostClone(handle: u32): u32 {
+  return velt_rt_host_clone(handle);
+}

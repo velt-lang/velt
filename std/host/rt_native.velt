@@ -1,0 +1,11 @@
+// velt/host (internal): `HostRef`'s release and clone in a native program (`#host-rt`): it has no
+// JS host, so no host function can make a `HostRef` (calling one is a compile error), and these
+// only let code that drops or clones one compile. WebAssembly's are host/rt.velt.
+
+/** Releases slot `handle` of the host's table: there is none. */
+export function hostRelease(handle: u32): void {}
+
+/** Copies slot `handle` of the host's table: there is none, and no `HostRef` holds a slot. */
+export function hostClone(handle: u32): u32 {
+  return 0;
+}

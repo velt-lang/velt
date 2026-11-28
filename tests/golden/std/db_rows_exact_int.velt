@@ -1,0 +1,86 @@
+// A `RowSource`'s float cell fills an integer field when it is an integer exactly, as JSON.parse
+// takes `3.0` for one: within the field's range (an `i64`: [-2^63, 2^63)), else the row does not
+// fit. `-0.0` is 0; a fraction, NaN and the infinities do not fit.
+import { CellKind, readRows, RowSource } from "velt/db";
+
+// One column of float cells, given as numbers.
+class Floats implements RowSource {
+  cells: f64[];
+  row: i64 = -1;
+
+  constructor(cells: f64[]) {
+    this.cells = cells;
+  }
+
+  columnCount(): i64 {
+    return 1;
+  }
+  columnName(i: i64): string {
+    return "n";
+  }
+  next(): bool {
+    this.row++;
+    return this.row < (this.cells.length as i64);
+  }
+  kind(i: i64): CellKind {
+    return CellKind.Float;
+  }
+  bool(i: i64): bool {
+    return false;
+  }
+  int(i: i64): i64 {
+    return 0;
+  }
+  float(i: i64): f64 {
+    return this.cells[this.row];
+  }
+  text(i: i64): string {
+    return "";
+  }
+  blob(i: i64): u8[] {
+    return [];
+  }
+  json(i: i64): string {
+    return "";
+  }
+}
+
+struct Wide {
+  n: i64;
+}
+
+struct Small {
+  n: u8;
+}
+
+function wide(v: f64): void {
+  try {
+    console.log(readRows<Wide, Floats>(new Floats([v]))[0].n);
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+
+function small(v: f64): void {
+  try {
+    console.log(readRows<Small, Floats>(new Floats([v]))[0].n);
+  } catch (e) {
+    console.log(e.message);
+  }
+}
+
+function main() {
+  wide(3.0);
+  wide(-0.0);
+  wide(-7.0);
+  wide(9007199254740992.0);
+  wide(-9223372036854775808.0);
+  wide(9223372036854775808.0);
+  wide(2.5);
+  wide(NaN);
+  wide(Infinity);
+  wide(-Infinity);
+  small(255.0);
+  small(256.0);
+  small(-1.0);
+}
