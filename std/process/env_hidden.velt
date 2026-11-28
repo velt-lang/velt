@@ -6,6 +6,11 @@
 // runtime removed them at start-up. Once the program sets or removes one itself (`ownVar`), that
 // one is the program's own variable and is read as any other, as it was then.
 
+import { Ptr } from "velt/ffi/ptr";
+import { noInline, strByteAt, strByteLen, strDataAddress } from "velt/lang/intrinsics";
+
+declare c("c") function memcmp$hidden(a: Ptr<u8> | null, b: Ptr<u8> | null, n: usize): i32;
+
 /** `VELT_SCRIPT`: the source file `velt run` and `velt dev` run (Node's `process.argv[1]`). */
 export const SCRIPT_VAR = "VELT_SCRIPT";
 
@@ -22,21 +27,63 @@ export const ARGV_C: u8[] = [86, 69, 76, 84, 95, 65, 82, 71, 86, 0];
 /** Which of them the program has set or removed itself (`ownVar`): bit 1 `VELT_SCRIPT`, 2 `VELT_ARGV`. */
 const OWN = new Atomic<u32>(0);
 
-/** `name`'s bit (`OWN`), 0 for any other name; `fold`: without regard to ASCII case (Windows). */
+/**
+ * `name`'s bit (`OWN`), 0 for any other name; `fold`: without regard to ASCII case (Windows). By
+ * its bytes (`memcmp`), the length first, inline, and the comparison one call compiled once
+ * (`namedBit`; the loop of `foldedBit` only where names fold).
+ */
 function bitOf(name: string, fold: bool): u32 {
-  return same(name, SCRIPT_VAR, fold) ? 1 : same(name, ARGV_VAR, fold) ? 2 : 0;
+  const n = strByteLen(name);
+  if (n !== 11 && n !== 9) {
+    return 0;
+  }
+  return fold ? foldedBit(name) : namedBit(name);
 }
 
-/** Whether `name` is one of them, still velt's (not set or removed by the program, `ownVar`). */
+/** `bitOf` of a name as long as one of them, compared exactly (`memcmp`). */
+@noInline
+function namedBit(name: string): u32 {
+  const n = strByteLen(name);
+  const other = n === 11 ? SCRIPT_VAR : ARGV_VAR;
+  // SAFETY: `name`'s data address, its `n` bytes alive during the call below.
+  const a = unsafe { Ptr.orNull<u8>(strDataAddress(name)) };
+  // SAFETY: `other`'s, a constant as long as `name`.
+  const b = unsafe { Ptr.orNull<u8>(strDataAddress(other)) };
+  // SAFETY: `n` bytes at `a` and at `b`.
+  const got = unsafe { memcmp$hidden(a, b, n) };
+  return got !== 0 ? 0 : n === 11 ? 1 : 2;
+}
+
+/** `bitOf` of a name as long as one of them, a lower-case ASCII letter as its upper case. */
+@noInline
+function foldedBit(name: string): u32 {
+  if (strByteLen(name) === 11) {
+    return same(name, SCRIPT_C) ? 1 : 0;
+  }
+  return same(name, ARGV_C) ? 2 : 0;
+}
+
+/**
+ * Whether `name` is one of them, still velt's (not set or removed by the program, `ownVar`). Out
+ * of line, as `ownVar`: every read and change of a variable calls it, and the std cache compiles
+ * it once, where inline it would be the program's to compile.
+ */
+@noInline
 export function hiddenVar(name: string, fold: bool): bool {
   const bit = bitOf(name, fold);
-  return bit !== 0 && (OWN.load("acquire") & bit) === 0;
+  return bit !== 0 && stillVelts(bit);
+}
+
+/** Whether the variable of `bit` is still velt's (`OWN`). */
+function stillVelts(bit: u32): bool {
+  return (OWN.load("acquire") & bit) === 0;
 }
 
 /**
  * Before the program sets or removes `name`: when it is one of them, it is the program's own from
  * then on, no longer hidden. The program's arguments were read first (`argsReady`).
  */
+@noInline
 export function ownVar(name: string, fold: bool) {
   const bit = bitOf(name, fold);
   if (bit !== 0) {
@@ -56,18 +103,18 @@ export function withoutHidden(pairs: string[], fold: bool): string[] {
   return out;
 }
 
-/** Whether `a` is `b` (upper-case ASCII), `fold`: a lower-case ASCII letter of `a` too. */
-function same(a: string, b: string, fold: bool): bool {
-  if (a.length !== b.length) {
-    return false;
-  }
-  const n = a.length as i64;
-  for (let i: i64 = 0; i < n; i++) {
-    let c = a.charCodeAt(i);
-    if (fold && c >= 97 && c <= 122) {
+/**
+ * Whether the bytes of `a` are `b`'s before its NUL (upper-case ASCII, as long as `a`), a
+ * lower-case ASCII letter of `a` as its upper case.
+ */
+function same(a: string, b: readonly u8[]): bool {
+  const n = strByteLen(a);
+  for (let i: usize = 0; i < n; i++) {
+    let c = strByteAt(a, i as u64);
+    if (c >= 97 && c <= 122) {
       c -= 32;
     }
-    if (c !== b.charCodeAt(i)) {
+    if (c !== b[i]) {
       return false;
     }
   }
