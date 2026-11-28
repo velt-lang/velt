@@ -469,12 +469,12 @@ impl FnLower<'_, '_> {
         if self.fn_props(ty) {
             self.fn_prop_call((data, key, argv, argc, out), ty);
         }
-        if let Some(prefix) = self.builtin_prefix(ty) {
-            return self.any_builtin_call(prefix, (data, key, argv, argc, out), ty);
+        if let Some(r) = self.builtin_receiver(ty) {
+            return self.any_builtin_call(r, (data, key, argv, argc, out), ty);
         }
         self.this_fn_call_keys((data, key, argv, argc, out), ty);
         if self.prelude_record(ty).is_some() {
-            // The prelude's `__anyRec_` functions (std/lang/record/reflect.velt: what
+            // std's methods of a record (std/lang/record/reflect.velt: what
             // `Reflect` does to a record's symbol keys); a record's function values come later.
             return self.any_record_call((data, key, argv, argc, out), ty);
         }

@@ -11,8 +11,9 @@
 //! `std_hook!(f64_to_string)` is its qualified name (`"std/lang/hooks/number::f64ToString"`), the
 //! form sema resolves in the code it writes (`Ctx::std_def`: an identifier or type name spelled
 //! that way, which no source can write) and lowering finds a definition by. The built-in methods
-//! of values held as `any` are found by name prefix instead (`anyStr_<method>`, std/lang/hooks/
-//! any_methods.velt; `velt_vir` `any_builtin.rs`).
+//! of values held as `any` (`anyStr_<method>`, std/lang/hooks/any_methods.velt) are rows too,
+//! flagged `method(…)` with their receiver ([`any_methods`]): lowering finds a receiver's
+//! methods by row (`velt_vir` `any_builtin.rs`), not by a name prefix.
 //!
 //! Each entry gives the hook's signature in a small type language (`sig(<A>(&string, i64) ->
 //! void)`, `class`, or `decorator` for a compile-time decorator the compiler acts on, #2203;
@@ -49,6 +50,9 @@ mod hook;
 pub use hook::Hook;
 #[macro_use]
 mod transfer_hooks;
+#[macro_use]
+pub mod any_methods;
+pub use any_methods::Receiver;
 #[macro_use]
 mod yield_hooks;
 #[macro_use]
@@ -131,7 +135,7 @@ with_any_hooks! {
     /// `toExponential()`) and the float hooks of velt/lang/hooks/number_text and number_write.
     number_shortest => lang_hooks_number_shortest, "shortestText", sig((f64) -> string),
         replaces("velt_rt_str_from_f64"), prebuilt;
-    /// `s.localeCompare(t)` (only std calls it: the method, and `anyStr_localeCompare`).
+    /// `s.localeCompare(t)` (only std calls it: the method, and `any_str_locale_compare`).
     locale_order => lang_string_collate, "localeOrder", sig((&string, &string) -> i64),
         replaces("velt_rt_str_locale_compare"), bench("locale_compare");
     /// `String(v)` of a signed integer: `${v}` alone, `v.toString()` (`velt_vir` `template.rs`).

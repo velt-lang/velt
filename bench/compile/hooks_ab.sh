@@ -6,6 +6,9 @@
 #
 #   bench/compile/hooks_ab.sh <base velt> <base std> <head velt> <head std> <work dir> <program>...
 #
+# The rows of #2197's name-based lookups: tests/golden/m1/hello.velt, bench/compile/any_methods.velt
+# and the directory `bench/compile/scale/app.py 10000 <dir>` writes.
+#
 # A program is a .velt file or a directory (its main.velt). Prints
 # `<row> <program> base=<n> head=<n> change=<%>` lines. Needs valgrind.
 set -euo pipefail

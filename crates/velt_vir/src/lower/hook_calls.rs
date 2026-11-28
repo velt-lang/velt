@@ -68,7 +68,8 @@ pub mod ty {
         HostSettled,
         Map,
         Ptr,
-        Record
+        Record,
+        Set
     );
     pub struct Array<E>(PhantomData<E>);
     pub struct OrNull<E>(PhantomData<E>);
