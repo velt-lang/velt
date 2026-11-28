@@ -132,3 +132,21 @@ fn a_program_module_under_a_std_directory_is_not_a_second_name() {
     );
     lower_ok(&p);
 }
+
+const SPAWNS_A_GRAPH: &str = "class N {\n  next: N | null = null;\n}\n\
+    async function take(n: N): Promise<number> {\n  return n.next === null ? 0 : 1;\n}\n\
+    async function main() {\n  const n = new N();\n  const keep = n;\n  \
+    console.log(await spawn(take(n)), keep.next === null);\n}\n";
+
+/// The transfer map's hook, demanded by a `spawn` of a value, missing from its loaded module: an
+/// ICE, not transfers left out. Both lower/transfer_map.rs's gate and the glue's calls of the
+/// hook ask through `std_hook_if_loaded`, so either stops here.
+#[test]
+#[should_panic(
+    expected = "ICE: std hook `std/lang/hooks/transfer::xferBegin` missing from its module, \
+                which the program loads"
+)]
+fn a_demanded_transfer_hook_its_loaded_module_lacks_is_an_ice() {
+    let p = std_src::check_src(SPAWNS_A_GRAPH);
+    lower_ok(&without(p, velt_common::std_hook!(xfer_begin)));
+}
