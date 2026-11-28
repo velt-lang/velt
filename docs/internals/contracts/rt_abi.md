@@ -1144,7 +1144,9 @@ stdout, buffered; 2 = stderr, written after what stdout holds), `initOutput()` f
 `velt_main`, and `flushForExit()` before every exit Velt code reaches: each return of
 `velt_main`, `velt_rt_exit` (`process.exit`, an uncaught error's exit) and `velt_rt_panic`. On a
 native target the writer is std's own (out_native.velt) and velt_rt has no output functions; an
-exit the runtime takes by itself (a fatal runtime error) does not flush. On WebAssembly the hooks
+exit the runtime takes by itself (a fatal runtime error) flushes through the end of the process,
+where `registerExitFlush()` (called at `velt_main`'s start, the dev JIT's too) registered std's
+flush (rt_abi_async.md §10), after the runtime's message. On WebAssembly the hooks
 call velt_rt_wasm's writer (out_rt.velt):
 
 | Symbol | Signature |

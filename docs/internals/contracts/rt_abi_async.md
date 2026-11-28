@@ -880,9 +880,9 @@ servers logging to a pipe show output promptly, `flushIdle`), before stderr writ
 dev`'s stop of a server is one, std/dev/stop.velt). An exit the runtime takes by itself (a fatal
 error inside the runtime's Rust) flushes through the end of the process: std registers its flush
 with the C library's `exit` (`__cxa_atexit`), and on Windows, which ends the process with
-`ExitProcess`, as the exiting thread's fiber-local callback. In the dev JIT, whose reload replaces
-that code, it registers nothing, and such an exit loses what was printed since a worker last went
-idle. On WebAssembly velt_rt_wasm's single-threaded writer does this (`velt_rt_flush`).
+`ExitProcess`, as the exiting thread's fiber-local callback; the runtime's message comes first
+there. The dev JIT registers it too: its code stays mapped for the rest of the process. On
+WebAssembly velt_rt_wasm's single-threaded writer does this (`velt_rt_flush`).
 
 ## 11. Worked example (what lowering emits)
 

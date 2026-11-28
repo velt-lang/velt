@@ -1,8 +1,8 @@
 //! std's stdout and stderr writer (std/lang/hooks/stdout*.velt, #2196), as Node behaves: every
 //! exit a program takes writes out everything it printed (the end of `main`, `process.exit`, an
-//! uncaught error), stdout and stderr sent to one pipe interleave in the order the program wrote
-//! them, large output reaches a pipe complete, and a non-blocking pipe that is full makes the
-//! writer wait instead of losing bytes.
+//! uncaught error, a panic), stdout and stderr sent to one pipe interleave in the order the
+//! program wrote them, large output reaches a pipe complete, in order and in large writes, and a
+//! non-blocking pipe that is full makes the writer wait instead of losing bytes.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -44,7 +44,8 @@ fn build(dir: &Path, name: &str, source: &str) -> PathBuf {
 }
 
 /// Prints many lines from tasks and a partial line, then ends as its argument says: `exit`
-/// (`process.exit(3)`), `throw` (an uncaught error) or nothing (the end of `main`).
+/// (`process.exit(3)`), `throw` (an uncaught error), `panic` (a Velt panic: an integer division
+/// by zero) or nothing (the end of `main`).
 const EXITS: &str = r#"async function printer(id: i64): Promise<void> {
   for (let i = 0; i < 2000; i++) {
     console.log(`task ${id} line ${i}`);
@@ -66,6 +67,11 @@ async function main() {
   }
   if (how == "throw") {
     throw new Error("boom");
+  }
+  if (how == "panic") {
+    const zero: i64 = (process.argv.length - 3) as i64;
+    const ten: i64 = 10;
+    console.log(ten / zero);
   }
 }
 "#;
@@ -89,12 +95,13 @@ fn check_complete(out: &str) {
 fn every_exit_writes_out_everything_printed() {
     let dir = test_dir::TestDir::new();
     let exe = build(dir.path(), "exits", EXITS);
-    for (how, code) in [("", 0), ("exit", 3), ("throw", 1)] {
+    for (how, code) in [("", 0), ("exit", 3), ("throw", 1), ("panic", 101)] {
         let o = command(&exe).arg(how).output().unwrap();
         assert_eq!(o.status.code(), Some(code), "{how:?}");
         check_complete(&String::from_utf8_lossy(&o.stdout));
         let err = String::from_utf8_lossy(&o.stderr);
         assert_eq!(err.contains("boom"), how == "throw", "{how:?}: {err}");
+        assert_eq!(err.contains("panic: "), how == "panic", "{how:?}: {err}");
     }
 }
 
@@ -109,10 +116,8 @@ const ORDER: &str = r#"function main() {
 }
 "#;
 
-#[test]
-fn stdout_and_stderr_on_one_pipe_keep_the_program_order() {
-    let dir = test_dir::TestDir::new();
-    let exe = build(dir.path(), "order", ORDER);
+/// What `exe` writes to stdout and stderr together, both on one pipe (`2>&1`).
+fn one_pipe(exe: &Path) -> String {
     // cmd's own quoting: an argument `Command` quoted would come with its quotes escaped.
     #[cfg(windows)]
     let o = {
@@ -126,15 +131,62 @@ fn stdout_and_stderr_on_one_pipe_keep_the_program_order() {
     let o = command("sh")
         .arg("-c")
         .arg("\"$0\" 2>&1")
-        .arg(&exe)
+        .arg(exe)
         .output()
         .unwrap();
-    let out = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
+    String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n")
+}
+
+#[test]
+fn stdout_and_stderr_on_one_pipe_keep_the_program_order() {
+    let dir = test_dir::TestDir::new();
+    let exe = build(dir.path(), "order", ORDER);
+    let out = one_pipe(&exe);
     assert!(out.starts_with("one\ntwo\nthree 4\nfive\n"), "{out:?}");
     assert!(out[18..].contains("six"), "{out:?}");
 }
 
-/// About 1.2 MB: lines, then a large byte array (written past the buffers), then two lines.
+/// An exit the runtime takes by itself: a write to a value an `RwLock` holds, inside its `read`
+/// callback (lang/rwlock_read_write_panics.velt).
+const RUNTIME_EXIT: &str = r#"class Item {
+  name: string = "a";
+}
+
+class Store {
+  items: Item[] = [new Item()];
+}
+
+function main() {
+  const rw = shared(new RwLock<Store>(new Store()));
+  console.log("before");
+  rw.read((v) => {
+    const mine: Item[] = [];
+    mine.push(v.items[0]);
+    mine[0].name = "x";
+  });
+  console.log("not reached");
+}
+"#;
+
+/// An exit the runtime takes by itself writes its message, and then the end of the process
+/// writes out what stdout holds (std's flush, registered at the start; the runtime calls no std
+/// code): on one pipe the message comes first. Nothing printed is lost.
+#[test]
+fn a_runtime_exit_s_message_comes_before_the_stdout_flushed_after_it() {
+    let dir = test_dir::TestDir::new();
+    let exe = build(dir.path(), "runtime_exit", RUNTIME_EXIT);
+    let out = one_pipe(&exe);
+    assert!(
+        out.starts_with("panic: cannot modify a value an `RwLock` holds"),
+        "{out:?}"
+    );
+    assert!(out.ends_with("\nbefore\n"), "{out:?}");
+    assert!(!out.contains("not reached"), "{out:?}");
+}
+
+/// About 1.2 MB: lines, then a large byte array (written past the buffers), then two lines. That
+/// the array goes out after what the buffers hold (`writeThrough`) the golden std/stdout_write
+/// holds: here the lines before it have reached the OS already.
 const BIG: &str = r#"import { stdout } from "velt/process";
 
 function main() {
@@ -164,11 +216,33 @@ fn check_big(out: &[u8]) {
 fn large_output_reaches_a_pipe_complete() {
     let dir = test_dir::TestDir::new();
     let exe = build(dir.path(), "big", BIG);
-    let mut child = command(&exe).stdout(Stdio::piped()).spawn().unwrap();
+    let mut child = command(&exe)
+        .env("VELT_STDOUT_STATS", "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
     let mut out = Vec::new();
     child.stdout.take().unwrap().read_to_end(&mut out).unwrap();
+    let mut err = String::new();
+    child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut err)
+        .unwrap();
     assert!(child.wait().unwrap().success());
     check_big(&out);
+    // Large writes: 64 KiB blocks and the array in one, about 20 in all; a write per line would
+    // be 10,000.
+    let writes: usize = err
+        .lines()
+        .find_map(|l| l.strip_prefix("stdout stats: writes="))
+        .unwrap_or_else(|| panic!("no stats in {err:?}"))
+        .trim()
+        .parse()
+        .unwrap();
+    assert!((2..=40).contains(&writes), "{writes} writes");
 }
 
 /// A non-blocking pipe that fills up (`EAGAIN`) while its reader is busy: the writer waits for
