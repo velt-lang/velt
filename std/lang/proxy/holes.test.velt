@@ -1,0 +1,89 @@
+// velt/lang/proxy (tests): white-box tests, run by `velt test std/`.
+//
+// The records of the array methods a proxy runs (holes.velt): holes are recorded only in a trap
+// call of a method on the array, reported when its last method ends, and the blocks are given
+// back when the outermost method ends (the leak check sees them).
+import { describe, expect, it } from "velt/test";
+import {
+  cutHoles,
+  forgetHole,
+  isHole,
+  methodBegin,
+  methodEnd,
+  recordHole,
+  trapBegin,
+  trapEnd,
+} from "velt/lang/proxy/holes";
+
+describe("proxy array holes", () => {
+  it("are recorded only in a trap call on the target and reported at the end", () => {
+    const a: any = [1, 2, 3, 4, 5, 6];
+    const b: any = [1, 2];
+    // No method running: nothing is recorded.
+    expect(recordHole(a, 2)).toBe(-1);
+    methodBegin(a);
+    // Between trap calls (a user callback) neither.
+    expect(recordHole(a, 2)).toBe(-1);
+    trapBegin(a);
+    expect(recordHole(a, 2)).toBe(0);
+    expect(recordHole(a, 2)).toBe(1);
+    // Another array is not the target.
+    expect(recordHole(b, 2)).toBe(-1);
+    // A method on another proxy inside the trap call.
+    methodBegin(b);
+    expect(recordHole(a, 3)).toBe(-1);
+    trapBegin(b);
+    expect(recordHole(b, 0)).toBe(0);
+    trapEnd();
+    expect(methodEnd(b)).toBe(0);
+    expect(isHole(b, 0)).toBe(false);
+    // Back in `a`'s trap call.
+    expect(recordHole(a, 5)).toBe(0);
+    expect(recordHole(a, 4)).toBe(0);
+    expect(forgetHole(a, 4)).toBe(true);
+    expect(forgetHole(a, 4)).toBe(false);
+    cutHoles(a, 3);
+    expect(isHole(a, 5)).toBe(false);
+    expect(isHole(a, 2)).toBe(true);
+    trapEnd();
+    expect(methodEnd(a)).toBe(2);
+    expect(isHole(a, 2)).toBe(false);
+    expect(recordHole(a, 2)).toBe(-1);
+  });
+
+  it("stay with the outer method on the same target", () => {
+    const a: any = [1, 2, 3];
+    methodBegin(a);
+    trapBegin(a);
+    methodBegin(a);
+    trapBegin(a);
+    expect(recordHole(a, 1)).toBe(0);
+    trapEnd();
+    // The outer method still runs on `a`: the hole is its own.
+    expect(methodEnd(a)).toBe(-1);
+    expect(isHole(a, 1)).toBe(true);
+    trapEnd();
+    expect(methodEnd(a)).toBe(1);
+    expect(isHole(a, 1)).toBe(false);
+  });
+
+  it("grow past a block's first capacity and give it back", () => {
+    for (let round = 0; round < 3; round++) {
+      const arrays: any[] = [];
+      for (let i = 0; i < 40; i++) {
+        const x: any = [i, i];
+        arrays.push(x);
+        methodBegin(x);
+        trapBegin(x);
+        expect(recordHole(x, 0)).toBe(0);
+        expect(recordHole(x, 1)).toBe(0);
+      }
+      for (let i = 39; i >= 0; i--) {
+        expect(isHole(arrays[i], 1)).toBe(true);
+        trapEnd();
+        expect(methodEnd(arrays[i])).toBe(0);
+      }
+      expect(isHole(arrays[0], 0)).toBe(false);
+    }
+  });
+});
