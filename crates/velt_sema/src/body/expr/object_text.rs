@@ -11,7 +11,7 @@
 //! shows that object (`Sq { kind: 'sq' }`, `{ kind: 'lit', area: [Function: area] }`).
 
 use crate::body::FnCx;
-use crate::hir::{self, DefId, TyId, TyKind};
+use crate::hir::{self, TyId, TyKind};
 
 impl FnCx<'_, '_> {
     /// The text of `h`, which [`Self::printable`] refused (`what` names the site in errors):
@@ -73,12 +73,11 @@ impl FnCx<'_, '_> {
         if self.printable(t) {
             return Some(false);
         }
-        if let TyKind::Dyn(d, _) = *self.cx.ty.kind(t) {
+        if let TyKind::Dyn(..) = *self.cx.ty.kind(t) {
             if self.cx.dynamic(t).is_some() {
                 return Some(false);
             }
-            let refused = self.may_hold_lock(t, &mut vec![]) || self.literal_setter_impl(d);
-            return (!refused).then_some(true);
+            return (!self.may_hold_lock(t, &mut vec![])).then_some(true);
         }
         if depth > 8 || self.cx.holds_lock(t) {
             return None;
@@ -138,18 +137,5 @@ impl FnCx<'_, '_> {
             k => crate::types::contents(&k),
         };
         parts.into_iter().any(|p| self.may_hold_lock(p, seen))
-    }
-
-    /// Does the program fill a field of interface `d` (or one extending it) with an object
-    /// literal's `set f(v)`? Node prints such a property `[Getter/Setter]`, which the glue of a
-    /// value held as the interface doesn't know yet: printing it stays refused.
-    fn literal_setter_impl(&self, d: DefId) -> bool {
-        (self.cx.impls.iter())
-            .filter(|i| i.iface == d || self.cx.iface_extends_def(i.iface, d, 0))
-            .any(|i| match self.cx.ty.kind(i.ty) {
-                TyKind::Adt(s, _) if self.cx.literal_structs.contains(s) => (self.cx.adt(*s))
-                    .is_some_and(|a| a.fields.iter().any(|f| f.name.starts_with("set "))),
-                _ => false,
-            })
     }
 }

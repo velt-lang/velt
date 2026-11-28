@@ -473,24 +473,36 @@ fn field_getters(cx: &Ctx, d: DefId, i: &crate::defs::IfaceInfo) -> Vec<(usize, 
 fn literal_accessors(cx: &mut Ctx, d: DefId, members: &mut Vec<DynMember>) {
     let own = args_of(cx, d);
     let owner = cx.ty.intern(TyKind::Adt(d, own));
-    let found = cx.impls.iter().find(|i| i.ty == owner);
-    let Some((iface, defs)) = found.map(|i| (i.iface, i.methods.clone())) else {
+    let found = cx.impls.iter().position(|i| i.ty == owner);
+    let Some(index) = found else {
         return;
     };
+    let (iface, defs) = (cx.impls[index].iface, cx.impls[index].methods.clone());
     let Some(i) = cx.iface(iface) else {
         return;
     };
     let slots: Vec<(String, bool, TyId, usize)> = (i.methods.iter())
         .map(|m| (m.name.clone(), m.is_getter, m.ret, m.params.len()))
         .collect();
-    // An interface field filled by `get f() { … }`: its getter slot runs the function (a
-    // setter next to it is not listed: printing such a literal through its interface is
-    // refused, `body::expr::object_text`).
-    for (_, name, def) in field_getters(cx, d, i) {
-        if !members.iter().any(|m| m.name == name) {
+    // An interface field filled by `get f() { … }`: its getter slot runs the function, and
+    // the setter slot of a `set f(v)` next to it runs that one (Node prints the field
+    // `[Getter/Setter]`).
+    for (k, name, def) in field_getters(cx, d, i) {
+        if members.iter().any(|m| m.name == name) {
+            continue;
+        }
+        let setter = cx.literal_field_setter(index as u32, k);
+        members.push(DynMember {
+            name: name.clone(),
+            kind: DynMemberKind::Getter,
+            def,
+            owner,
+            rest: false,
+        });
+        if let Some(def) = setter {
             members.push(DynMember {
                 name,
-                kind: DynMemberKind::Getter,
+                kind: DynMemberKind::Setter,
                 def,
                 owner,
                 rest: false,

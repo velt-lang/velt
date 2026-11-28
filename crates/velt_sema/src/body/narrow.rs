@@ -173,6 +173,9 @@ impl FnCx<'_, '_> {
                         } else {
                             self.common_class(*l, *ta, tb)
                         };
+                        // `el instanceof HTMLElement || el instanceof SVGElement`: one of
+                        // the two `lib.dom` interfaces, as under `tsc`.
+                        let c = c.or_else(|| self.dom_join(*ta, tb));
                         // `u instanceof Map || u instanceof Box` on an `unknown`: read through
                         // `any` either way (`dynamic_narrow`).
                         let c = c.or_else(|| self.dynamic_join(*l));
