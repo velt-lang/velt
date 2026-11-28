@@ -128,10 +128,7 @@ export const imports: Imports = {
     "std-scheduler": "./lang/promise/race_step_sched.velt",
     default: "./lang/promise/race_step_rt.velt",
   },
-  // velt/net's TCP functions: the runtime's (std/net/rt.velt), or, compiled with the executor in
-  // Velt (`VELT_SCHEDULER=std`, the `std-scheduler` condition), non-blocking sockets on its
-  // reactor (std/net/tcp_sched.velt), which hands the runtime's handles (TLS, `fetch`'s pool) and
-  // an OS without a reactor back to the runtime.
+  // The OS's socket constants and layouts for the reactor's sockets (std/net/sys_*.velt).
   "#net-sys": {
     darwin: "./net/sys_darwin.velt",
     linux: "./net/sys_linux.velt",
@@ -168,6 +165,9 @@ export const imports: Imports = {
     js: "./sync/channel_entry_wasm.velt",
     default: "./sync/channel_entry.velt",
   },
+  // velt/net's TCP functions: compiled with the executor in Velt (the `std-scheduler` condition),
+  // non-blocking sockets on its reactor (std/net/tcp_sched.velt; an OS without a reactor gets
+  // `ENOTSUP`), else the runtime's (std/net/rt.velt: WebAssembly's, without a network).
   "#net-tcp": { "std-scheduler": "./net/tcp_sched.velt", default: "./net/rt.velt" },
   // The C library's socket functions those sockets call (std/net/fd_socket.velt, fd_io.velt,
   // fd_addr.velt, std/lang/hooks/sched_io_write.velt), or Winsock's under the same names.
@@ -229,8 +229,8 @@ export const imports: Imports = {
     win32: "./process/child/exec_sync_win32.velt",
     default: "./process/child/exec_sync.velt",
   },
-  // `fetch`'s plain-TCP connections: under the executor in Velt (every native build) sockets on
-  // its reactor, pooled in Velt (`https:` stays the runtime's); otherwise the runtime's.
+  // `fetch`'s connections: under the executor in Velt (every native build) sockets on its
+  // reactor, plain or TLS in Velt, pooled in Velt; otherwise the runtime's (WebAssembly: none).
   "#fetch-dial": {
     "std-scheduler": "./net/http/fetch/client/dial_sched.velt",
     default: "./net/http/fetch/client/dial_rt.velt",

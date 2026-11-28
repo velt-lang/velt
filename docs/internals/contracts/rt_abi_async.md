@@ -678,38 +678,33 @@ no path (`EISDIR: illegal operation on a directory, read`), and a directory open
 
 ## 6. std/net (TCP)
 
-Stream handles (`VeltStream`: §3.2) are `Arc`s; in-flight operations keep the socket
-alive, so `close` may be called at any time. A `VeltStream` is a TCP socket, and one task may
-read while another writes. TLS is Velt's, over these streams or the reactor's sockets (§14.8).
+Native programs' TCP sockets are std's, on the executor's reactor (std/net/tcp_sched.velt); TLS
+is Velt's over them (§14.8). velt_rt keeps one function here, `velt_rt_tcp_listen`, for the
+listener `velt dev`'s supervisor hands over (§13.1). The stream functions below are WebAssembly
+only: velt_rt_wasm defines them without a network (crates/velt_rt_wasm/src/net.rs), so that
+programs that reach `fetch` link and run, and std/net/rt.velt declares them for that build.
+Connecting fails with `ENOTSUP` (`fetch failed: WebAssembly programs have no network access`),
+so no stream ever exists: an operation on one fails with `EBADF` (`handle is closed`), as for a
+closed handle.
 
 | Symbol | Signature | Result slot / notes |
 |---|---|---|
 | `velt_rt_tcp_listen` | `(const VeltStr* addr) -> VeltFut*` | `IoResult<u64>`: the listening socket (a non-blocking descriptor, or a `SOCKET` on Windows), which the caller owns; `addr` = `"host:port"`, port 0 = any free port. Only std/net/tcp_sched.velt calls it, under `velt dev` (§13.1), and registers the socket with the executor's reactor; listeners are std's. Outside `velt dev` it fails (unsupported): the runtime binds nothing itself |
-| `velt_rt_tcp_connect` | `(const VeltStr* addr) -> VeltFut*` | `IoResult<VeltStream>` |
-| `velt_rt_tcp_read` | `(VeltStream s, u64 max) -> VeltFut*` | `IoResult<VeltBytes>` 1..max bytes, empty = EOF; `max == 0` ⇒ 64 KiB |
-| `velt_rt_tcp_read_string` | `(VeltStream s, u64 max) -> VeltFut*` | `IoResult<VeltStr>` next chunk as UTF-8 (split characters are completed on the next call, invalid bytes → U+FFFD), `""` = EOF |
-| `velt_rt_tcp_write` | `(VeltStream s, const VeltStr* data) -> VeltFut*` | `IoResult<()>` after all bytes are written; `data` is copied. Writes go out in call order: a write that cannot finish at the call goes on in its first poll (at the `await`, which a std `write` reaches at its call), and later ones wait for it |
-| `velt_rt_tcp_write_bytes` | `(VeltStream s, const VeltBytes* data) -> VeltFut*` | same for a `u8[]` |
-| `velt_rt_tcp_try_read_into` | `(VeltStream s, const VeltBytes* data, u64 start, u64 end, IoResult<i64>* out)` | `readInto`: reads what is there into `data[start..end]` (a `u8[]` the caller lends for the call and the runtime writes; sema's written-parameter list has it), without waiting: the bytes read, 0 at the end of the stream, -1 when nothing has arrived yet. It reads straight into the range. An empty or out-of-range range reads nothing (0). |
-| `velt_rt_tcp_readable` | `(VeltStream s) -> VeltFut*` | result `IoStatus` once a `velt_rt_tcp_try_read_into` may find data, the end of the stream or an error (it may also find nothing yet: try again); holds no buffer of the caller's. |
-| `velt_rt_tcp_readable_within` | `(VeltStream s, i64 ms, u64 signal) -> VeltFut*` (`IoResult<u8>`) | 1 once a `tryRead` may find something, 0 when `ms` passed first (`ms < 0`: no limit) or the signal (0: none) was aborted |
-| `velt_rt_tcp_write_range` | `(VeltStream s, const VeltBytes* data, u64 start, u64 end) -> VeltFut*` | `velt_rt_tcp_write_bytes` of `data[start..end]` (clamped): a `Uint8Array`'s range. |
-| `velt_rt_tcp_try_write_range` | `(VeltStream s, const VeltBytes* data, u64 start, u64 end) -> u64` | `velt_rt_tcp_try_write` of `data[start..end]` (clamped). |
-| `velt_rt_tcp_write_later` | `(VeltStream s, const VeltStr* data, IoResult<u64>* out)` | queues `data` (copied), sent after the current task poll with everything else queued on the stream; the bytes still to be sent; fails once sending failed, after `abort`, on a closed handle. |
-| `velt_rt_tcp_write_later_range` | `(VeltStream s, const VeltBytes* data, u64 start, u64 end, IoResult<u64>* out)` | `velt_rt_tcp_write_later` of `data[start..end]` (clamped). |
-| `velt_rt_tcp_drained` | `(VeltStream s, u64 max) -> VeltFut*` (`IoResult<()>`) | once at most `max` queued bytes (and writes after them) are still to be sent, or the error that stopped sending. |
-| `velt_rt_tcp_try_write` | `(VeltStream s, const VeltBytes* data) -> u64` | writes what the socket takes right now, without waiting; the number of bytes written (0: nothing now, an earlier write still going on, a closed handle, or an error, which the next write reports) |
-| `velt_rt_tcp_shutdown` | `(VeltStream s, VeltErr* out)` | half-close (peer reads EOF) |
-| `velt_rt_tcp_peer_addr` | `(VeltStream s, VeltStr* out)` | `"ip:port"` |
-| `velt_rt_tcp_abort` | `(VeltStream s)` | operations in flight and every later one fail with `ECONNRESET` (code 8, message `the stream was aborted`; a raw socket is shut down both ways, which ends a waiting read; the read then reports the abort, not EOF); the handle stays open |
-| `velt_rt_tcp_close` | `(VeltStream s)` | releases the handle |
-| `velt_rt_tcp_park` | `(VeltStream s, const VeltStr* key)` | keeps idle stream `s` under `key` (the `fetch` client's origin) for a later `velt_rt_tcp_unpark` in any task; closed instead when the key holds 512 already. The caller gives the handle up. |
-| `velt_rt_tcp_unpark` | `(const VeltStr* key, u32 settled) -> VeltStream` | the stream most recently parked under `key` that is still open (each is checked with a look at the socket that must find nothing; one idle over 60 s is closed), or 0. With `settled` not 0, only a stream idle for at least 5 ms, so a close its server sent shortly after the response has arrived (for a request that may not be sent twice). Process-wide runtime state, so no Velt memory is kept and tasks do not take the module lock for it. The WebAssembly runtime defines the client's §6 symbols without a network: connecting fails with `ENOTSUP` (`fetch failed: WebAssembly programs have no network access`). |
+| `velt_rt_tcp_connect` | `(const VeltStr* addr) -> VeltFut*` | WebAssembly only. `IoResult<VeltStream>`: ready at once with `ENOTSUP` |
+| `velt_rt_tcp_try_read_into` | `(VeltStream s, const VeltBytes* data, u64 start, u64 end, IoResult<i64>* out)` | WebAssembly only. `readInto`'s probe (`data` is a `u8[]` the caller lends for the call; sema's written-parameter list has it): writes `EBADF` to `out` |
+| `velt_rt_tcp_readable` | `(VeltStream s) -> VeltFut*` | WebAssembly only. `IoStatus`: ready at once with `EBADF` |
+| `velt_rt_tcp_readable_within` | `(VeltStream s, i64 ms, u64 signal) -> VeltFut*` (`IoResult<u8>`) | WebAssembly only. ready at once with `EBADF` |
+| `velt_rt_tcp_write_range` | `(VeltStream s, const VeltBytes* data, u64 start, u64 end) -> VeltFut*` | WebAssembly only. `IoResult<()>`: ready at once with `EBADF` |
+| `velt_rt_tcp_try_write_range` | `(VeltStream s, const VeltBytes* data, u64 start, u64 end) -> u64` | WebAssembly only. 0 (nothing written) |
+| `velt_rt_tcp_abort` | `(VeltStream s)` | WebAssembly only. does nothing |
+| `velt_rt_tcp_close` | `(VeltStream s)` | WebAssembly only. does nothing |
+| `velt_rt_tcp_park` | `(VeltStream s, const VeltStr* key)` | WebAssembly only. does nothing (`fetch`'s keep-alive pool) |
+| `velt_rt_tcp_unpark` | `(const VeltStr* key, u32 settled) -> VeltStream` | WebAssembly only. 0 (no stream parked) |
 
 ## 7. HTTP (no runtime functions)
 
 The HTTP client (std/net/http/fetch/client) and server (packages/http-server) are written in Velt
-on the streams of §6 (TLS in Velt, §14.8): the runtime has no HTTP of its own. Under `velt dev` a server
+on std/net's sockets (§6; TLS in Velt, §14.8): the runtime has no HTTP of its own. Under `velt dev` a server
 joins the graceful stop through velt/dev (std/dev, §13.2), which has no runtime functions.
 
 ## 8. Process
@@ -1251,8 +1246,8 @@ velt_rt_wasm: on WebAssembly every open fails with `ENOTSUP` (std/fs/stream_none
 ### 14.8 TLS
 
 The runtime has no TLS (#2392). The TLS 1.3 and 1.2 client and server are Velt code
-(`std/net/tls/`), over the reactor's sockets or the runtime's streams of §6 (listeners under
-`velt dev`, an OS without a reactor): `connectTls`, `listenTls`, `startTls`, the HTTP server, the
+(`std/net/tls/`), over the reactor's sockets (a listener `velt dev` hands over is adopted onto the
+reactor; an OS without a reactor gets `ENOTSUP`): `connectTls`, `listenTls`, `startTls`, the HTTP server, the
 `fetch` client and WebSockets. Clients trust Mozilla's root certificates (a std table generated
 from Mozilla's list) plus optional extra PEM CAs; no system trust store is read.
 

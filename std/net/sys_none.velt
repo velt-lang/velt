@@ -1,6 +1,6 @@
 // velt/net (internal): the socket constants of an OS without the reactor of the executor in
 // Velt (std/lang/hooks/reactor_none.velt): Linux's values, never used, since std/net/tcp_sched.velt
-// hands every call to the runtime there.
+// opens no socket there (`listen` and `connect` fail with `ENOTSUP`).
 
 import { addressLoad } from "velt/lang/intrinsics";
 

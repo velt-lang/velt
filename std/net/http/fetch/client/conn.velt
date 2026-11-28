@@ -2,9 +2,9 @@
 // uses it: the stream, a read buffer, and the request's signal, which every wait races so an
 // abort stops the request at once (the stream is then closed, never pooled). Between requests a
 // keep-alive connection is parked in the process's pool under its origin (`TcpStream.park`), which
-// every task takes connections from: the runtime's (crates/velt_rt/src/net/park.rs), or under the
-// executor in Velt, for its connections on the reactor (plain and TLS), Velt's
-// (std/net/fd_pool.velt; which connections those are: `#fetch-dial`, dial_sched.velt).
+// every task takes connections from: Velt's, for the connections on the executor's reactor
+// (plain and TLS; std/net/fd_pool.velt, dial_sched.velt), or in a build without the executor
+// (WebAssembly, no network) the runtime's (`#fetch-dial`, dial_rt.velt).
 //
 // Reads go straight into the buffer (`tryRead`, nothing copied on the way for plain TCP). I/O
 // errors become `fetch failed: …` with the code of the error, as Node words them.
