@@ -5,11 +5,10 @@
 // and converts the other arguments itself (velt_sema `console_format.rs`).
 
 import { anyString } from "velt/lang/hooks/any_text";
-import { anyReflectInfo, inspectNested, strByteAt } from "velt/lang/intrinsics";
+import { anyReflectInfo, hookCall, inspectNested, strByteAt } from "velt/lang/intrinsics";
 
 declare function velt_rt_strbuf_new(cap: u64, out: string);
 declare function velt_rt_strbuf_finish(buf: string, out: string);
-declare function velt_rt_strbuf_inspect_layout(buf: string, start: u64);
 
 /** A number as Node's `%s` writes it: `String(n)`, but `-0` for negative zero. */
 function numberText(n: number): string {
@@ -36,7 +35,9 @@ function consoleString(v: any): string {
   velt_rt_strbuf_new(64, b);
   // Node's depth 0: the value's own entries, the objects in it as `[Object]`.
   inspectNested(b, v, 2);
-  velt_rt_strbuf_inspect_layout(b, 0);
+  // Broken across lines as Node breaks it (std/lang/hooks/inspect_layout.velt), loaded only by
+  // the programs whose live code formats an object with `%s`.
+  hookCall("inspect_layout", b, 0);
   let s = "";
   velt_rt_strbuf_finish(b, s);
   return s;

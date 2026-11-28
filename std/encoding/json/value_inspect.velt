@@ -6,13 +6,11 @@
 
 import { JsonValue } from "velt/prelude/json/json_value";
 import { inspectMore } from "velt/lang/hooks/inspect";
-import { hookCall } from "velt/lang/intrinsics";
+import { hookCall, strByteLen } from "velt/lang/intrinsics";
 
 declare function velt_rt_strbuf_push_str(buf: string, s: string);
 declare function velt_rt_strbuf_push_inspect_str(buf: string, s: string);
 declare function velt_rt_strbuf_push_inspect_key(buf: string, s: string);
-declare function velt_rt_strbuf_len(buf: string): u64;
-declare function velt_rt_strbuf_inspect_layout(buf: string, start: u64);
 
 /** The array elements Node shows before `... n more items`. */
 const MAX_ARRAY_LENGTH: i64 = 100;
@@ -35,9 +33,10 @@ export function inspectJsonValue(buf: string, v: JsonValue, top: bool, depth: u3
     }
   }
   if (top && (v.isArray() || v.isObject())) {
-    const start = velt_rt_strbuf_len(buf);
+    const start = strByteLen(buf) as u64;
     inspectAt(buf, v, depth);
-    velt_rt_strbuf_inspect_layout(buf, start);
+    // Broken across lines as Node breaks it (std/lang/hooks/inspect_layout.velt).
+    hookCall("inspect_layout", buf, start);
     return;
   }
   inspectAt(buf, v, depth);
