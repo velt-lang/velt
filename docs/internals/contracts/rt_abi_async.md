@@ -711,9 +711,22 @@ joins the graceful stop through velt/dev (std/dev, §13.2), which has no runtime
 
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_process_args` | `(VeltStrArray* out)` | UTF-8 (wide APIs on Windows), argv[0] included |
-| `velt_rt_process_node_argv` | `(VeltStrArray* out)` | Node's `process.argv`: `[current executable, script, ...args]`; the script is `$VELT_SCRIPT` (read and removed at start-up; `velt run` sets it) or the JIT host's `set_script`, else the executable. wasm: `[program, program, ...args]` (WASI: the module path; the browser passes none, so `["", ""]`) |
 | `velt_rt_exit` | see rt_abi.md | |
+
+The command-line arguments (`argv()`, `args()`, Node's `process.argv`) are std code
+(std/process/args_read.velt), which reads them from the OS (`#args-sys`: `_NSGetArgv` on macOS,
+`/proc/self/cmdline` on Linux, `GetCommandLineW` split by the C runtime's rules on Windows, WASI's
+`args_get`; none in the browser). A program velt runs in its own process (`velt dev`, the
+generator host) gets them in `VELT_ARGV` (each argument as its length in UTF-8 bytes, `:` and
+its text); `velt run`, `velt test` and `velt dev` pass Node's `process.argv[1]` in
+`VELT_SCRIPT`. std's reads of the environment leave both out until the program sets or removes
+one itself, and so do the environments of the program's child processes. The lists are read once
+per process, on first use, and kept in a block of the C library's (std/process/args_keep.velt) by
+a prebuilt hook module loaded on demand (std/lang/hooks/process_argv.velt: `process_arg_count`,
+`process_arg_at`), which programs reach by role, one argument at a time (std/lang/hooks/
+process.velt `argList`). That first read takes velt's two variables without the environment's
+lock; std's `setEnv` and `removeEnv` finish it first (`process_args_ready`), so no change of the
+environment overlaps it.
 
 `process.memoryUsage()` is std code on native targets (`#memory-sys`: std/process/
 memory_linux.velt reads `/proc/self/statm`, its resident pages and, for `heapUsed`, those no file
@@ -1139,10 +1152,6 @@ It exposes:
   in the tables of rt_abi.md and this file. Other symbols (`memcpy`, `fmod`, ...) resolve from the
   process.
 - `entry::run_main(velt_main)`: what `main` does (runtime init, call, flush stdout) → exit code.
-- `process::set_args(argv)`: `argv()` / `args()` for the hosted program (`velt`'s own arguments
-  are not the program's).
-- `process::set_script(path)`: the script of Node's `process.argv[1]` for the hosted program
-  (`velt dev`); otherwise the runtime reads `$VELT_SCRIPT` once at start-up and removes it.
 
 On Windows x64 the JIT (`velt_codegen_cl::DevSession`) registers each loaded program's unwind
 info with `RtlAddFunctionTable` (code and records in one arena), so stack walks get through JIT

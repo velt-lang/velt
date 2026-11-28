@@ -10,9 +10,26 @@ use crate::driver::{self, Artifact, BuildError, BuildOptions, Session};
 
 use super::project::Project;
 
-/// Node's `process.argv[1]`: the script `velt run` / `velt test` runs, passed in this
-/// environment variable, which the runtime reads (and removes) once at start-up.
+/// Node's `process.argv[1]`: the script `velt run` / `velt test` / `velt dev` runs, passed in
+/// this environment variable, which std reads (std/process/args_read.velt) and hides from the
+/// program's own reads of its environment and from its child processes.
 pub(crate) const SCRIPT_VAR: &str = "VELT_SCRIPT";
+
+/// The arguments of a program velt runs in its own process (`velt dev`, the generator host),
+/// whose OS arguments are velt's: [`argv_env`]'s text, read and hidden like [`SCRIPT_VAR`].
+pub(crate) const ARGV_VAR: &str = "VELT_ARGV";
+
+/// `args` (program path first) as [`ARGV_VAR`]'s text: each argument's length in UTF-8 bytes,
+/// `:`, the argument (`5:hello3:a b`).
+pub(crate) fn argv_env(args: &[String]) -> String {
+    let mut out = String::new();
+    for a in args {
+        out.push_str(&a.len().to_string());
+        out.push(':');
+        out.push_str(a);
+    }
+    out
+}
 
 /// `velt build`.
 pub fn build_command(args: &BuildArgs) -> ExitCode {

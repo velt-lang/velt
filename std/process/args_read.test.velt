@@ -1,0 +1,28 @@
+// velt/process (tests): `VELT_ARGV`'s text (args_read.velt `decodeArgv`), which `velt dev` and the
+// source-generator host pass a program its arguments in.
+import { describe, expect, it } from "velt/test";
+import { decodeArgv } from "velt/process/args_read";
+
+function decoded(text: string): string {
+  const out = decodeArgv(text);
+  return out === undefined ? "undefined" : JSON.stringify(out);
+}
+
+describe("decodeArgv", () => {
+  it("reads each argument's length and text", () => {
+    expect(decoded("5:hello3:a b0:5:ü日")).toBe('["hello","a b","","ü日"]');
+    expect(decoded("3:a:b1:1")).toBe('["a:b","1"]');
+    expect(decoded("")).toBe("[]");
+  });
+
+  it("refuses other text", () => {
+    expect(decodeArgv("5:hell") === undefined).toBe(true);
+    expect(decodeArgv("hello") === undefined).toBe(true);
+    expect(decodeArgv(":a") === undefined).toBe(true);
+    expect(decodeArgv("2a") === undefined).toBe(true);
+    expect(decodeArgv("99999999999999999999:a") === undefined).toBe(true);
+    // A length in UTF-16 units, or one that ends inside a character.
+    expect(decodeArgv("2:ü日") === undefined).toBe(true);
+    expect(decodeArgv("1:ü") === undefined).toBe(true);
+  });
+});

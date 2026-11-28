@@ -25,13 +25,19 @@ fn release_vir(golden: &str) -> String {
     }
 }
 
-/// The number of allocations in each function of `vir` that allocates, by function header.
+/// The number of allocations in each function of `vir` that allocates, by function header: the
+/// program's functions, not std's (`process.argv`, which the goldens read, is std code that
+/// allocates its list).
 fn allocations(vir: &str) -> Vec<(String, usize)> {
     let mut out: Vec<(String, usize)> = Vec::new();
     let mut current = String::new();
+    let mut std_fn = false;
     for line in vir.lines() {
         if line.starts_with("fn#") {
             current = line.to_string();
+            std_fn = line.contains(" _V3std");
+        } else if std_fn {
+            continue;
         } else if (line.contains("= call extern#") && line.contains(" velt_rt_alloc("))
             // A release build's allocation of a known size, through std's hook (#2196).
             || (line.contains("= call fn#") && line.contains("P4heapN9heapAlloc"))

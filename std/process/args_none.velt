@@ -1,0 +1,31 @@
+// velt/process (internal): the arguments under a JS host (`#args-sys`' default variant,
+// std/imports.velt): none, and nowhere to keep them, nor a need to.
+
+/** The arguments the program was started with: a JS host passes none. */
+export function osArgs(): string[] {
+  return [];
+}
+
+/** The running program's path: none under a JS host. */
+export function executablePath(): string {
+  return "";
+}
+
+/**
+ * Where std/lang/hooks/process_argv.velt keeps a list: nowhere (the JS host has no C library),
+ * and none is needed, as each is all empty strings (`argv()`'s none, `process.argv`'s two, from
+ * `osArgs` and `executablePath`). A token stands for it: its length, plus 1 so it is not 0.
+ */
+export function keepArgs(list: string[]): usize {
+  return list.length + 1;
+}
+
+/** The number of arguments of the list the token `at` stands for (`keepArgs`). */
+export function keptCount(at: usize): u64 {
+  return (at - 1) as u64;
+}
+
+/** Each is empty (`keepArgs`). */
+export function keptArg(at: usize, i: u64): string {
+  return "";
+}

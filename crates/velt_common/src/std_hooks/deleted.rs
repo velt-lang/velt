@@ -179,4 +179,9 @@ pub const DELETED: &[&str] = &[
     "velt_rt_fnprop_key",
     "velt_rt_fnprop_identity",
     "velt_rt_fnprop_identity_of",
+    // #2196: the command-line arguments and Node's `process.argv`, std's
+    // (std/process/args_read.velt, each OS's reader in `#args-sys`), with the runtime's capture of
+    // `main`'s `argv`.
+    "velt_rt_process_args",
+    "velt_rt_process_node_argv",
 ];

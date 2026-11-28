@@ -1,0 +1,11 @@
+// velt/process (internal): the one call through which the arguments' readers (std/process/
+// args_read.velt, args_posix.velt, args_linux.velt) decode bytes as text, so that a program reading
+// its arguments compiles the UTF-8 decoder into it once, not inlined at each of their sites.
+
+import { noInline } from "velt/lang/intrinsics";
+
+/** The bytes of `bytes` in [start, end) as text (an invalid sequence as U+FFFD). */
+@noInline
+export function textOf(bytes: u8[], start: usize, end: usize): string {
+  return bytes.utf8Slice(start as i64, end as i64);
+}

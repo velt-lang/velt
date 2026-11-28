@@ -10,6 +10,7 @@
 use std::path::Path;
 use std::process::{Command, ExitCode};
 
+use crate::commands::{argv_env, ARGV_VAR, SCRIPT_VAR};
 use crate::driver::{self, stamp, Artifact, BuildError, BuildOptions, Session};
 
 use super::{guard, process, HOST_COMMAND};
@@ -107,17 +108,24 @@ fn executable(
         let _ = l.unlock();
         let _ = l.lock_shared();
     }
+    let mut command = Command::new(exe);
+    // Its arguments are its own: not those a `velt dev` host passes its program.
+    command.env_remove(ARGV_VAR).env_remove(SCRIPT_VAR);
     Some(Ok(Host {
-        command: Command::new(exe),
+        command,
         files,
         _lock: lock,
     }))
 }
 
+/// `velt __generate-host <root>`, whose program's arguments (std/process/args_read.velt) are
+/// `[root]`, and whose `process.argv[1]` is the running `velt`, as the runtime's arguments are.
 fn jit_command(root: &Path, src: &str) -> Result<Command, String> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot find `velt`: {e}"))?;
     let mut cmd = Command::new(exe);
     cmd.arg(HOST_COMMAND).arg(root).env(ROOT_SOURCE_ENV, src);
+    cmd.env(ARGV_VAR, argv_env(&[root.display().to_string()]));
+    cmd.env_remove(SCRIPT_VAR);
     guard::pass_depth(&mut cmd);
     Ok(cmd)
 }
@@ -163,7 +171,6 @@ pub fn host_main(root: &Path) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    velt_rt_host::process::set_args(vec![root.display().to_string()]);
     let code = velt_rt_host::entry::run_main(loaded.main());
     std::process::exit(code)
 }
