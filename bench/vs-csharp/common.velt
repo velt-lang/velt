@@ -1,0 +1,107 @@
+// Helpers every driver of bench/vs-csharp shares: the benchmark's u64 random stream and hash
+// (as its C# drivers write them), the timer, argument parsing and the JSON result line.
+
+// splitmix64 finalizer: a bijection on 64-bit integers.
+export function mix64(x0: u64): u64 {
+  let x = x0 + 0x9e3779b97f4a7c15;
+  x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9;
+  x = (x ^ (x >> 27)) * 0x94d049bb133111eb;
+  return x ^ (x >> 31);
+}
+
+// The j-th pseudo-random number of stream `salt`.
+export function rnd(salt: u64, j: u64): u64 {
+  return mix64(mix64(salt) + j);
+}
+
+export const FOLD_INIT: u64 = 0xcbf29ce484222325;
+
+// Order-sensitive hash step (FNV-1a over 64-bit words).
+export function fold(h: u64, x: u64): u64 {
+  return (h ^ x) * 0x100000001b3;
+}
+
+// Nanoseconds since an arbitrary start.
+export function nowNs(): f64 {
+  return performance.now() * 1000000;
+}
+
+// Elapsed nanoseconds since `t0` (from nowNs()).
+export function since(t0: f64): u64 {
+  return Math.round(nowNs() - t0) as u64;
+}
+
+export function fail(caseName: string, n: u64, msg: string): never {
+  console.error(`FAIL ${caseName} n=${n}: ${msg}`);
+  process.exit(1);
+}
+
+// Like strtoull(s, nullptr, 10): leading decimal digits, 0 if there are none.
+export function parseU64(s: string): u64 {
+  let v: u64 = 0;
+  let i = 0;
+  while (i < s.length && s[i] == " ") {
+    i++;
+  }
+  if (i < s.length && s[i] == "+") {
+    i++;
+  }
+  for (; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 48 || c > 57) {
+      break;
+    }
+    v = v * 10 + ((c - 48) as u64);
+  }
+  return v;
+}
+
+export class Result {
+  constructor(
+    readonly ops: u64,
+    readonly ns: u64,
+    readonly checksum: u64,
+    readonly verify: u64,
+  ) {}
+}
+
+// The driver's main loop: `<case|all> <n> <reps> <warmup>`, one JSON line per repetition.
+export function runDriver(cases: string[], run: (name: string, n: u64) => Result, maxN: u64) {
+  const args = process.argv.slice(2);
+  if (args.length != 4) {
+    console.error("usage: driver <case|all> <n> <reps> <warmup>");
+    process.exit(2);
+  }
+  const which = args[0];
+  const n = parseU64(args[1]);
+  const reps = parseU64(args[2]);
+  const warmup = parseU64(args[3]);
+  if (n < 1) {
+    console.error("n must be at least 1");
+    process.exit(2);
+  }
+  if (n > maxN) {
+    console.error("n is too large for the driver");
+    process.exit(2);
+  }
+  for (const name of cases) {
+    if (which != "all" && which != name) {
+      continue;
+    }
+    for (let rep: u64 = 0; rep < warmup + reps; rep++) {
+      const r = run(name, n);
+      const w = rep < warmup ? "true" : "false";
+      console.log(
+        `{"case":"${name}","n":${n},"rep":${rep},"warmup":${w},"ops":${r.ops},"ns":${r.ns},"checksum":"${r.checksum}","verify":"${r.verify}"}`,
+      );
+    }
+  }
+}
+
+export function minU64(a: u64, b: u64): u64 {
+  return a < b ? a : b;
+}
+
+export function maxU64(a: u64, b: u64): u64 {
+  return a > b ? a : b;
+}

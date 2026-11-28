@@ -1,0 +1,469 @@
+// Binary heap benchmark driver: a case-by-case port of the benchmark's C# driver (Driver.cs),
+// printing the same "checksum" and "verify" values. usage: driver <case|all> <n> <reps> <warmup>
+import {
+  FOLD_INIT,
+  Result,
+  fail,
+  fold,
+  maxU64,
+  minU64,
+  mix64,
+  nowNs,
+  rnd,
+  runDriver,
+  since,
+} from "../common";
+import { Heap } from "./heap";
+
+const I64_MIN: i64 = -9223372036854775808;
+const I64_MAX: i64 = 9223372036854775807;
+
+// The i-th workload key. Distinct i give distinct keys.
+function keyAt(i: u64): i64 {
+  return mix64(i) as i64;
+}
+
+// The value that goes with a key.
+function valOf(k: i64): i64 {
+  return (mix64((k as u64) ^ 0xa5a5a5a5a5a5a5a5) | 1) as i64;
+}
+
+// Combine the j-th entry a timed loop received into its checksum.
+function take(acc: u64, j: u64, key: i64, value: i64): u64 {
+  return acc + (((key as u64) ^ j) + ((value as u64) ^ (j << 32)));
+}
+
+function b(x: boolean): u64 {
+  return x ? 1 : 0;
+}
+
+function entryLess(ak: i64, av: i64, bk: i64, bv: i64): boolean {
+  return ak < bk || (ak == bk && av < bv);
+}
+
+function minI32(a: i32, c: i32): i32 {
+  return a < c ? a : c;
+}
+
+// Entries pushed during verification: extreme keys and values, equal keys with different
+// values, and one entry twice. Pairs of (key, value).
+const EDGE: i64[] = [
+  I64_MIN,
+  5,
+  I64_MAX,
+  0,
+  I64_MIN,
+  -5,
+  0,
+  0,
+  I64_MIN,
+  -5,
+  -1,
+  I64_MIN,
+  I64_MAX,
+  I64_MAX,
+  I64_MIN,
+  I64_MIN,
+];
+
+// Hash the observable state of the heap (see Driver.cs VerifyFull). The heap is modified.
+function verifyFull(caseName: string, n: u64, hp: Heap): u64 {
+  let h = FOLD_INIT;
+  const len = (hp.size() as i64) as u64;
+  h = fold(h, len);
+
+  const bk = new Array<i64>(len).fill(0);
+  const bv = new Array<i64>(len).fill(0);
+  for (let i: u64 = 0; i < len; i++) {
+    hp.slot(i as i32);
+    bk[i] = hp.outKey;
+    bv[i] = hp.outValue;
+  }
+  let sum: u64 = 0;
+  let xr: u64 = 0;
+  for (let i: u64 = 0; i < len; i++) {
+    if (i > 0) {
+      const p = (i - 1) / 2;
+      if (entryLess(bk[i], bv[i], bk[p], bv[p])) {
+        fail(
+          caseName,
+          n,
+          `heap property violated: slot(${i}) is smaller than its parent slot(${p})`,
+        );
+      }
+    }
+    const e = mix64((bk[i] as u64) ^ mix64(bv[i] as u64));
+    sum += e;
+    xr ^= e;
+  }
+  h = fold(h, sum);
+  h = fold(h, xr);
+
+  let t = hp.tryPeek();
+  h = fold(h, b(t));
+  if (t) {
+    h = fold(h, hp.outKey as u64);
+    h = fold(h, hp.outValue as u64);
+  }
+
+  for (let j = 0; j < 8; j++) {
+    hp.push(EDGE[2 * j], EDGE[2 * j + 1]);
+  }
+  h = fold(h, (hp.size() as i64) as u64);
+  hp.tryPeek();
+  h = fold(h, hp.outKey as u64);
+  h = fold(h, hp.outValue as u64);
+
+  // The smallest entries, in order.
+  const takes = minU64(len + 8, 72);
+  for (let j: u64 = 0; j < takes; j++) {
+    t = hp.tryPop();
+    h = fold(h, b(t));
+    h = fold(h, hp.outKey as u64);
+    h = fold(h, hp.outValue as u64);
+  }
+  h = fold(h, (hp.size() as i64) as u64);
+
+  // Replace and PushPop, with a new entry that is smaller than everything and one that is
+  // larger than everything.
+  t = hp.tryReplace(I64_MIN, I64_MIN);
+  h = fold(h, b(t));
+  if (t) {
+    h = fold(h, hp.outKey as u64);
+    h = fold(h, hp.outValue as u64);
+  }
+  hp.tryReplace(I64_MAX, I64_MAX);
+  h = fold(h, hp.outKey as u64);
+  h = fold(h, hp.outValue as u64);
+  hp.pushPop(I64_MIN, I64_MIN);
+  h = fold(h, hp.outKey as u64);
+  h = fold(h, hp.outValue as u64);
+  hp.pushPop(I64_MAX, I64_MAX);
+  h = fold(h, hp.outKey as u64);
+  h = fold(h, hp.outValue as u64);
+  h = fold(h, (hp.size() as i64) as u64);
+
+  if (len + 8 <= 72) {
+    // Small heap: empty it completely.
+    while (hp.tryPop()) {
+      h = fold(h, hp.outKey as u64);
+      h = fold(h, hp.outValue as u64);
+    }
+    h = fold(h, (hp.size() as i64) as u64);
+    t = hp.tryPeek();
+    h = fold(h, b(t));
+    t = hp.tryPop();
+    h = fold(h, b(t));
+    hp.pushPop(3, 4); // on an empty heap: returns the new entry
+    h = fold(h, hp.outKey as u64);
+    h = fold(h, hp.outValue as u64);
+    h = fold(h, (hp.size() as i64) as u64);
+    t = hp.tryReplace(1, 2); // on an empty heap: adds the entry
+    h = fold(h, b(t));
+    hp.push(1, 1);
+    hp.tryPop();
+    h = fold(h, hp.outKey as u64);
+    h = fold(h, hp.outValue as u64);
+    h = fold(h, (hp.size() as i64) as u64);
+  }
+  return h;
+}
+
+// push_random / push_descending: rounds of n pushes into an empty heap.
+function casePush(name: string, n: u64, descending: boolean): Result {
+  const rounds: u64 = descending ? 6 : 8;
+  const len = n as i32;
+  const ks = new Array<i64>(len).fill(0);
+  const vs = new Array<i64>(len).fill(0);
+  for (let i: i32 = 0; i < len; i++) {
+    ks[i] = descending ? (2 * (n - (i as u64))) as i64 : keyAt(i as u64);
+    vs[i] = valOf(ks[i]);
+  }
+  let acc: u64 = 0;
+  let ns: u64 = 0;
+  let h = FOLD_INIT;
+  for (let round: u64 = 0; round < rounds; round++) {
+    const hp = new Heap();
+    const t0 = nowNs();
+    for (let i: i32 = 0; i < len; i++) {
+      hp.push(ks[i], vs[i]);
+    }
+    ns += since(t0);
+    acc += (hp.size() as i64) as u64;
+    hp.tryPeek();
+    h = fold(h, hp.outKey as u64);
+    h = fold(h, hp.outValue as u64);
+    if (round + 1 == rounds) {
+      h = fold(h, verifyFull(name, n, hp));
+    }
+  }
+  return new Result(rounds * n, ns, acc, h);
+}
+
+// build: rounds that each build a heap of n entries from arrays in random order.
+function caseBuild(name: string, n: u64): Result {
+  const rounds: u64 = 12;
+  const len = n as i32;
+  const ks = new Array<i64>(len).fill(0);
+  const vs = new Array<i64>(len).fill(0);
+  for (let i: i32 = 0; i < len; i++) {
+    ks[i] = keyAt(i as u64);
+    vs[i] = valOf(ks[i]);
+  }
+  let acc: u64 = 0;
+  let ns: u64 = 0;
+  let h = FOLD_INIT;
+  for (let round: u64 = 0; round < rounds; round++) {
+    const t0 = nowNs();
+    const hp = Heap.build(ks, vs, len);
+    ns += since(t0);
+    acc += (hp.size() as i64) as u64;
+    hp.tryPeek();
+    h = fold(h, hp.outKey as u64);
+    h = fold(h, hp.outValue as u64);
+    if (round + 1 == rounds) {
+      h = fold(h, verifyFull(name, n, hp));
+    }
+  }
+  return new Result(rounds * n, ns, acc, h);
+}
+
+// pop_all: pop every entry of a heap of n entries.
+function casePopAll(name: string, n: u64): Result {
+  const len = n as i32;
+  const ks = new Array<i64>(len).fill(0);
+  const vs = new Array<i64>(len).fill(0);
+  for (let i: i32 = 0; i < len; i++) {
+    ks[i] = keyAt(i as u64);
+    vs[i] = valOf(ks[i]);
+  }
+  const hp = Heap.build(ks, vs, len);
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let j: i32 = 0; j < len; j++) {
+    hp.tryPop();
+    acc = take(acc, j as u64, hp.outKey, hp.outValue);
+  }
+  const ns = since(t0);
+  return new Result(n, ns, acc, verifyFull(name, n, hp));
+}
+
+// hold: pop the smallest entry and push a new one, n times; replace: one tryReplace per step.
+function caseHold(name: string, n: u64, useReplace: boolean): Result {
+  const step: u64 = 4096;
+  const span = n * step;
+  const ahead = span / 8 + 1;
+  const len = n as i32;
+  const ks = new Array<i64>(len).fill(0);
+  const vs = new Array<i64>(len).fill(0);
+  const nk = new Array<i64>(len).fill(0);
+  const nv = new Array<i64>(len).fill(0);
+  for (let i: i32 = 0; i < len; i++) {
+    const r = rnd(4, i as u64);
+    ks[i] = (r % span) as i64;
+    vs[i] = (mix64(r) | 1) as i64;
+  }
+  for (let j: i32 = 0; j < len; j++) {
+    const r = rnd(5, j as u64);
+    nk[j] = (((j as u64) + 1) * step + (r % ahead)) as i64;
+    nv[j] = (mix64(r) | 1) as i64;
+  }
+  const hp = Heap.build(ks, vs, len);
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  if (useReplace) {
+    for (let j: i32 = 0; j < len; j++) {
+      hp.tryReplace(nk[j], nv[j]);
+      acc = take(acc, j as u64, hp.outKey, hp.outValue);
+    }
+  } else {
+    for (let j: i32 = 0; j < len; j++) {
+      hp.tryPop();
+      acc = take(acc, j as u64, hp.outKey, hp.outValue);
+      hp.push(nk[j], nv[j]);
+    }
+  }
+  const ns = since(t0);
+  return new Result(n, ns, acc, verifyFull(name, n, hp));
+}
+
+// merge: a k-way merge of k = min(n, 4096) sorted runs holding 4n entries in total.
+function caseMerge(name: string, n: u64): Result {
+  const k = minU64(n, 4096);
+  const per = (4 * n) / k;
+  const rk = new Array<i64>(k * per).fill(0);
+  const pos = new Array<u64>(k).fill(0);
+  const end = new Array<u64>(k).fill(0);
+  const hp = new Heap();
+  for (let r: u64 = 0; r < k; r++) {
+    let key = rnd(6, r) % 1024;
+    for (let i: u64 = 0; i < per; i++) {
+      rk[r * per + i] = key as i64;
+      key += (rnd(7, r * per + i) % 1024) + 1;
+    }
+    hp.push(rk[r * per], r as i64); // the run's first entry
+    pos[r] = r * per + 1;
+    end[r] = (r + 1) * per;
+  }
+  const count = k * per;
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let j: u64 = 0; j < count; j++) {
+    hp.tryPeek();
+    const r = (hp.outValue as u64) as i32;
+    if (pos[r] < end[r]) {
+      hp.tryReplace(rk[pos[r]], r as i64);
+      pos[r]++;
+    } else {
+      hp.tryPop();
+    }
+    acc = take(acc, j, hp.outKey, hp.outValue);
+  }
+  const ns = since(t0);
+  return new Result(count, ns, acc, verifyFull(name, n, hp));
+}
+
+// top_k: keep the k = max(1, n / 4) largest of a stream of 4n random entries.
+function caseTopK(name: string, n: u64): Result {
+  const k = maxU64(1, n / 4) as i32;
+  const count = (4 * n) as i32;
+  const ks = new Array<i64>(count).fill(0);
+  const vs = new Array<i64>(count).fill(0);
+  for (let j: i32 = 0; j < count; j++) {
+    ks[j] = keyAt(j as u64);
+    vs[j] = valOf(ks[j]);
+  }
+  const hp = new Heap();
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let j: i32 = 0; j < k; j++) {
+    hp.push(ks[j], vs[j]);
+  }
+  for (let j = k; j < count; j++) {
+    hp.pushPop(ks[j], vs[j]);
+    acc = take(acc, j as u64, hp.outKey, hp.outValue);
+  }
+  const ns = since(t0);
+  return new Result(count as u64, ns, acc, verifyFull(name, n, hp));
+}
+
+// sort_blocks: 2 passes that sort the n entries in blocks of 1024 on one heap.
+function caseSortBlocks(name: string, n: u64): Result {
+  const passes: u64 = 2;
+  const block: i32 = 1024;
+  const len = n as i32;
+  const ks = new Array<i64>(len).fill(0);
+  const vs = new Array<i64>(len).fill(0);
+  for (let i: i32 = 0; i < len; i++) {
+    ks[i] = keyAt(i as u64);
+    vs[i] = valOf(ks[i]);
+  }
+  const hp = new Heap();
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let pass: u64 = 0; pass < passes; pass++) {
+    for (let lo: i32 = 0; lo < len; lo += block) {
+      const hi = minI32(len, lo + block);
+      for (let i = lo; i < hi; i++) {
+        hp.push(ks[i], vs[i]);
+      }
+      for (let i = lo; i < hi; i++) {
+        hp.tryPop();
+        acc = take(acc, i as u64, hp.outKey, hp.outValue);
+      }
+    }
+  }
+  const ns = since(t0);
+  return new Result(passes * 2 * n, ns, acc, verifyFull(name, n, hp));
+}
+
+const OP_PUSH: u8 = 0;
+const OP_POP: u8 = 1;
+const OP_PEEK: u8 = 2;
+
+// mixed: 2n operations on a heap of n entries: 50% push, 40% pop, 10% peek.
+function caseMixed(name: string, n: u64): Result {
+  const domain = n / 16 + 1;
+  const len = n as i32;
+  const count = (2 * n) as i32;
+  const ks = new Array<i64>(len).fill(0);
+  const vs = new Array<i64>(len).fill(0);
+  for (let i: i32 = 0; i < len; i++) {
+    const r = rnd(8, i as u64);
+    ks[i] = (r % domain) as i64;
+    vs[i] = (mix64(r) | 1) as i64;
+  }
+  const op = new Array<u8>(count).fill(0);
+  const a = new Array<i64>(count).fill(0);
+  const bb = new Array<i64>(count).fill(0);
+  for (let j: i32 = 0; j < count; j++) {
+    const r = rnd(9, j as u64);
+    const p = r % 100;
+    a[j] = ((r >> 8) % domain) as i64;
+    bb[j] = (mix64(r) | 1) as i64;
+    op[j] = p < 50 ? OP_PUSH : p < 90 ? OP_POP : OP_PEEK;
+  }
+  const hp = Heap.build(ks, vs, len);
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let j: i32 = 0; j < count; j++) {
+    switch (op[j]) {
+      case OP_PUSH:
+        hp.push(a[j], bb[j]);
+        break;
+      case OP_POP:
+        if (hp.tryPop()) {
+          acc = take(acc, j as u64, hp.outKey, hp.outValue);
+        }
+        break;
+      default:
+        if (hp.tryPeek()) {
+          acc = take(acc, j as u64, hp.outKey, hp.outValue);
+        }
+        break;
+    }
+  }
+  const ns = since(t0);
+  return new Result(count as u64, ns, acc, verifyFull(name, n, hp));
+}
+
+const CASES = [
+  "push_random",
+  "push_descending",
+  "build",
+  "pop_all",
+  "hold",
+  "replace",
+  "merge",
+  "top_k",
+  "sort_blocks",
+  "mixed",
+];
+
+function runCase(name: string, n: u64): Result {
+  switch (name) {
+    case "push_random":
+      return casePush(name, n, false);
+    case "push_descending":
+      return casePush(name, n, true);
+    case "build":
+      return caseBuild(name, n);
+    case "pop_all":
+      return casePopAll(name, n);
+    case "hold":
+      return caseHold(name, n, false);
+    case "replace":
+      return caseHold(name, n, true);
+    case "merge":
+      return caseMerge(name, n);
+    case "top_k":
+      return caseTopK(name, n);
+    case "sort_blocks":
+      return caseSortBlocks(name, n);
+    default:
+      return caseMixed(name, n);
+  }
+}
+
+// All workload arrays are int-indexed in the C# driver; top_k and merge allocate 4n entries.
+runDriver(CASES, runCase, (2147483647 - 64) / 4);

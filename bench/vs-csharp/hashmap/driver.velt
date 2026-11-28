@@ -1,0 +1,481 @@
+// Hash map benchmark driver: a case-by-case port of the benchmark's C# driver (Driver.cs),
+// printing the same "checksum" and "verify" values. usage: driver <case|all> <n> <reps> <warmup>
+import {
+  FOLD_INIT,
+  Result,
+  fail,
+  fold,
+  maxU64,
+  minU64,
+  mix64,
+  nowNs,
+  rnd,
+  runDriver,
+  since,
+} from "../common";
+import { HashMap } from "./hashmap";
+
+const I64_MIN: i64 = -9223372036854775807 - 1;
+const I64_MAX: i64 = 9223372036854775807;
+
+// The i-th workload key. Distinct i give distinct keys.
+function keyAt(i: u64): i64 {
+  return mix64(i) as i64;
+}
+
+// The value first stored for a key. Always odd, so never I64_MIN.
+function valOf(k: i64): i64 {
+  return (mix64((k as u64) ^ 0xa5a5a5a5a5a5a5a5) | 1) as i64;
+}
+
+function b(x: boolean): u64 {
+  return x ? 1 : 0;
+}
+
+// The smallest capacity (a power of two, at least 16) whose load factor stays at or below 7/8
+// with `entries` entries.
+function minCapacity(entries: u64): u64 {
+  let c: u64 = 16;
+  while (entries * 8 > c * 7) {
+    c *= 2;
+  }
+  return c;
+}
+
+// capacity() must be a power of two of at least 16, must respect the maximum load factor of
+// 7/8, and must not exceed twice the smallest capacity that fits `maxKeys` entries, where
+// `maxKeys` is an upper bound on the number of entries the map can ever have held in this case.
+function checkCapacity(caseName: string, n: u64, len: u64, cap: u64, maxKeys: u64) {
+  if (cap < 16 || (cap & (cap - 1)) != 0) {
+    fail(caseName, n, `capacity() = ${cap} is not a power of two of at least 16`);
+  }
+  if (len * 8 > cap * 7) {
+    fail(caseName, n, `load factor above 7/8: len() = ${len} with capacity() = ${cap}`);
+  }
+  const limit = 2 * minCapacity(maxKeys);
+  if (cap > limit) {
+    fail(
+      caseName,
+      n,
+      `capacity() = ${cap} but a map that has held at most ${maxKeys} entries may have a capacity of at most ${limit}`,
+    );
+  }
+}
+
+// (u64)(i64) of an int count: sign-extends.
+function cnt(x: i32): u64 {
+  return (x as i64) as u64;
+}
+
+// Hash the observable state of the map: its length, a full scan (hashed independently of the
+// order the entries come in), some point lookups, and the behaviour of a few special keys. The
+// map is left as it was found.
+function verifyFull(caseName: string, n: u64, m: HashMap, maxKeys: u64): u64 {
+  const edgeKeys: i64[] = [0, -1, 1, I64_MIN, I64_MAX];
+  let h = FOLD_INIT;
+  const len = cnt(m.count());
+  h = fold(h, len);
+  checkCapacity(caseName, n, len, cnt(m.capacity()), maxKeys);
+
+  const bk = new Array<i64>(len + 1).fill(0);
+  const bv = new Array<i64>(len + 1).fill(0);
+  const c = cnt(m.scan(bk, bv));
+  h = fold(h, c);
+  let sum: u64 = 0;
+  let xr: u64 = 0;
+  for (let i: u64 = 0; i < c; i++) {
+    const e = mix64((bk[i] as u64) ^ mix64(bv[i] as u64));
+    sum += e;
+    xr ^= e;
+  }
+  h = fold(h, sum);
+  h = fold(h, xr);
+
+  for (let j: u64 = 0; j < 64; j++) {
+    const k = keyAt(rnd(101, j) % (2 * n));
+    const found = m.tryGet(k);
+    h = fold(h, b(found));
+    h = fold(h, found ? (m.value as u64) : 0);
+  }
+
+  for (let j = 0; j < 5; j++) {
+    const k = edgeKeys[j];
+    let found = m.tryGet(k);
+    h = fold(h, b(found));
+    h = fold(h, found ? (m.value as u64) : 0);
+    if (found) {
+      continue; // already an entry: leave it alone
+    }
+    h = fold(h, b(m.insert(k, 7))); // new key
+    found = m.tryGet(k);
+    h = fold(h, found ? (m.value as u64) : 0);
+    h = fold(h, b(m.insert(k, 9))); // replaces the value
+    found = m.tryGet(k);
+    h = fold(h, found ? (m.value as u64) : 0);
+    h = fold(h, cnt(m.count()));
+    h = fold(h, b(m.remove(k)));
+    h = fold(h, b(m.remove(k))); // already removed
+    found = m.tryGet(k);
+    h = fold(h, b(found));
+  }
+  h = fold(h, cnt(m.count()));
+  return h;
+}
+
+// Insert keyAt(0..count) with their initial values (untimed setup).
+function fillMap(m: HashMap, count: u64) {
+  for (let i: u64 = 0; i < count; i++) {
+    const k = keyAt(i);
+    m.insert(k, valOf(k));
+  }
+}
+
+// insert: 2 rounds of n inserts of new keys into an empty map, growing it from 16 slots. Each
+// round builds a new map; the previous one is destroyed outside the timed region.
+function caseInsert(name: string, n: u64): Result {
+  const rounds: u64 = 2;
+  const len = n as i32;
+  const ks = new Array<i64>(len).fill(0);
+  const vs = new Array<i64>(len).fill(0);
+  for (let i: i32 = 0; i < len; i++) {
+    ks[i] = keyAt(i as u64);
+    vs[i] = valOf(ks[i]);
+  }
+  let acc: u64 = 0;
+  let ns: u64 = 0;
+  let h = FOLD_INIT;
+  for (let round: u64 = 0; round < rounds; round++) {
+    const m = new HashMap();
+    const t0 = nowNs();
+    for (let i: i32 = 0; i < len; i++) {
+      acc += m.insert(ks[i], vs[i]) ? 1 : 0;
+    }
+    ns += since(t0);
+    h = fold(h, cnt(m.count()));
+    h = fold(h, cnt(m.capacity()));
+    if (round + 1 == rounds) {
+      h = fold(h, verifyFull(name, n, m, n));
+    }
+  }
+  return new Result(rounds * n, ns, acc, h);
+}
+
+// update: 6 passes of n inserts that each replace the value of a key that is already present.
+function caseUpdate(name: string, n: u64): Result {
+  const passes: u64 = 6;
+  const m = new HashMap();
+  fillMap(m, n);
+  const len = n as i32;
+  const ks = new Array<i64>(len).fill(0);
+  const vs = new Array<i64>(len).fill(0);
+  for (let j: i32 = 0; j < len; j++) {
+    const r = rnd(2, j as u64);
+    ks[j] = keyAt(r % n);
+    vs[j] = (mix64(r) | 1) as i64;
+  }
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let pass: u64 = 0; pass < passes; pass++) {
+    for (let j: i32 = 0; j < len; j++) {
+      acc += m.insert(ks[j], vs[j]) ? 1 : 0;
+    }
+  }
+  const ns = since(t0);
+  return new Result(passes * n, ns, acc, verifyFull(name, n, m, n));
+}
+
+// get_hit:  8 passes of n lookups of keys that are present, in random order.
+// get_miss: 4 passes of n lookups of keys that are absent.
+function caseGet(name: string, n: u64, hit: boolean): Result {
+  const passes: u64 = hit ? 8 : 4;
+  const m = new HashMap();
+  fillMap(m, n);
+  const len = n as i32;
+  const q = new Array<i64>(len).fill(0);
+  for (let j: i32 = 0; j < len; j++) {
+    q[j] = hit ? keyAt(rnd(3, j as u64) % n) : keyAt(n + (j as u64));
+  }
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let pass: u64 = 0; pass < passes; pass++) {
+    for (let j: i32 = 0; j < len; j++) {
+      if (m.tryGet(q[j])) {
+        acc += (m.value as u64) + 1;
+      }
+    }
+  }
+  const ns = since(t0);
+  return new Result(passes * n, ns, acc, verifyFull(name, n, m, n));
+}
+
+// get_dense: n lookups, half of present and half of absent keys, on a map filled to just under
+// the maximum load factor for its capacity.
+function caseGetDense(name: string, n: u64): Result {
+  const count = (minCapacity(n) * 7) / 8 - 2;
+  const m = new HashMap();
+  fillMap(m, count);
+  const len = n as i32;
+  const q = new Array<i64>(len).fill(0);
+  for (let j: i32 = 0; j < len; j++) {
+    const r = rnd(7, j as u64);
+    q[j] = (r & 1) != 0 ? keyAt((r >> 8) % count) : keyAt(count + (j as u64));
+  }
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let j: i32 = 0; j < len; j++) {
+    if (m.tryGet(q[j])) {
+      acc += (m.value as u64) + 1;
+    }
+  }
+  const ns = since(t0);
+  return new Result(n, ns, acc, verifyFull(name, n, m, count));
+}
+
+// scan: 80 full scans of a map of n entries.
+function caseScan(name: string, n: u64): Result {
+  const m = new HashMap();
+  fillMap(m, n);
+  const scans: u64 = 80;
+  const bk = new Array<i64>(n).fill(0);
+  const bv = new Array<i64>(n).fill(0);
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let s: u64 = 0; s < scans; s++) {
+    const c = m.scan(bk, bv);
+    acc += cnt(c);
+    for (let x: i32 = 0; x < c; x++) {
+      acc += (bk[x] as u64) + (bv[x] as u64);
+    }
+  }
+  const ns = since(t0);
+  return new Result(scans, ns, acc, verifyFull(name, n, m, n));
+}
+
+// delete_half: 4 rounds that each remove half of the keys of a map of n keys. Between rounds the
+// removed keys are inserted again (untimed).
+function caseDeleteHalf(name: string, n: u64): Result {
+  const rounds: u64 = 4;
+  const m = new HashMap();
+  fillMap(m, n);
+  const count = (n / 2) as i32;
+  const d = new Array<i64>(count).fill(0);
+  const dv = new Array<i64>(count).fill(0);
+  for (let j: i32 = 0; j < count; j++) {
+    d[j] = keyAt(2 * (j as u64) + 1);
+    dv[j] = valOf(d[j]);
+  }
+  let acc: u64 = 0;
+  let ns: u64 = 0;
+  for (let round: u64 = 0; round < rounds; round++) {
+    if (round > 0) {
+      // put the removed keys back (untimed)
+      for (let j: i32 = 0; j < count; j++) {
+        m.insert(d[j], dv[j]);
+      }
+    }
+    const t0 = nowNs();
+    for (let j: i32 = 0; j < count; j++) {
+      acc += m.remove(d[j]) ? 1 : 0;
+    }
+    ns += since(t0);
+  }
+
+  let h = verifyFull(name, n, m, n);
+  for (let i: u64 = 0; i < n; i++) {
+    // removed keys are gone, the rest remain
+    const found = m.tryGet(keyAt(i));
+    h = fold(h, b(found));
+    h = fold(h, found ? (m.value as u64) : 0);
+  }
+  for (let j: u64 = 0; j < 16; j++) {
+    // removing keys that were never present
+    h = fold(h, b(m.remove(keyAt(n + j))));
+  }
+  if (n >= 2) {
+    h = fold(h, b(m.remove(keyAt(1)))); // already removed
+  }
+  h = fold(h, cnt(m.count()));
+  return new Result(rounds * cnt(count), ns, acc, h);
+}
+
+// delete_all: 3 rounds that each remove every key of a map of n keys, in an order unrelated to
+// the order of insertion, leaving an empty map that must still be usable. The map is filled
+// before each round (untimed): the first time from new, after that by refilling the emptied map.
+function caseDeleteAll(name: string, n: u64): Result {
+  const rounds: u64 = 3;
+  const m = new HashMap();
+  const len = n as i32;
+  const ks = new Array<i64>(len).fill(0);
+  const vs = new Array<i64>(len).fill(0);
+  const d = new Array<i64>(len).fill(0);
+  for (let i: i32 = 0; i < len; i++) {
+    ks[i] = keyAt(i as u64);
+    vs[i] = valOf(ks[i]);
+  }
+  for (let j: i32 = 0; j < len; j++) {
+    d[j] = ks[(((j as u64) * 1000000007) % n) as i32];
+  }
+  let acc: u64 = 0;
+  let ns: u64 = 0;
+  for (let round: u64 = 0; round < rounds; round++) {
+    for (let i: i32 = 0; i < len; i++) {
+      m.insert(ks[i], vs[i]); // (re)fill, untimed
+    }
+    const t0 = nowNs();
+    for (let j: i32 = 0; j < len; j++) {
+      acc += m.remove(d[j]) ? 1 : 0;
+    }
+    ns += since(t0);
+  }
+
+  let h = verifyFull(name, n, m, n);
+  const again = minU64(n, 100); // an emptied map must be usable again
+  for (let i: u64 = 0; i < again; i++) {
+    const k = keyAt(i);
+    h = fold(h, b(m.insert(k, valOf(k))));
+  }
+  h = fold(h, verifyFull(name, n, m, n));
+  return new Result(rounds * n, ns, acc, h);
+}
+
+const OP_GET: u8 = 0;
+const OP_INSERT: u8 = 1;
+const OP_REMOVE: u8 = 2;
+
+// Run a precomputed operation stream; shared by `mixed` and `churn`.
+function runOps(m: HashMap, op: u8[], a: i64[], bs: i64[]): u64 {
+  let acc: u64 = 0;
+  const n = op.length as i32;
+  for (let j: i32 = 0; j < n; j++) {
+    switch (op[j]) {
+      case OP_GET:
+        if (m.tryGet(a[j])) {
+          acc += (m.value as u64) + 1;
+        }
+        break;
+      case OP_INSERT:
+        acc += m.insert(a[j], bs[j]) ? 1 : 0;
+        break;
+      default:
+        acc += m.remove(a[j]) ? 1 : 0;
+        break;
+    }
+  }
+  return acc;
+}
+
+// mixed: 4 passes over a stream of n operations on a map of n keys: 70% get, 15% insert, 15%
+// remove. Keys are drawn from a domain of 2n keys, half of which start out present. Each pass
+// starts from the map the previous one left behind.
+function caseMixed(name: string, n: u64): Result {
+  const passes: u64 = 4;
+  const m = new HashMap();
+  fillMap(m, n);
+  const len = n as i32;
+  const op = new Array<u8>(len).fill(0);
+  const a = new Array<i64>(len).fill(0);
+  const bs = new Array<i64>(len).fill(0);
+  for (let j: i32 = 0; j < len; j++) {
+    const r = rnd(9, j as u64);
+    const p = r % 100;
+    a[j] = keyAt((r >> 8) % (2 * n));
+    if (p < 70) {
+      op[j] = OP_GET;
+      bs[j] = 0;
+    } else if (p < 85) {
+      op[j] = OP_INSERT;
+      bs[j] = (mix64(r) | 1) as i64;
+    } else {
+      op[j] = OP_REMOVE;
+      bs[j] = 0;
+    }
+  }
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let pass: u64 = 0; pass < passes; pass++) {
+    acc += runOps(m, op, a, bs);
+  }
+  const ns = since(t0);
+  return new Result(passes * n, ns, acc, verifyFull(name, n, m, 2 * n));
+}
+
+// churn: 2 passes over a stream of 2n write-heavy operations on an initially empty map, over a
+// domain of n/4 keys. The stream alternates between growing phases (75% insert, 5% remove) and
+// shrinking phases (5% insert, 75% remove); the rest is get. The second pass starts from the map
+// the first left behind.
+function caseChurn(name: string, n: u64): Result {
+  const passes: u64 = 2;
+  const m = new HashMap();
+  const domain = maxU64(1, n / 4);
+  const count = 2 * n;
+  const len = count as i32;
+  const op = new Array<u8>(len).fill(0);
+  const a = new Array<i64>(len).fill(0);
+  const bs = new Array<i64>(len).fill(0);
+  for (let j: i32 = 0; j < len; j++) {
+    const r = rnd(10, j as u64);
+    const p = r % 100;
+    const grow = (((j as u64) * 8) / count) % 2 == 0;
+    const insertBelow: u64 = grow ? 75 : 5;
+    a[j] = keyAt((r >> 8) % domain);
+    if (p < insertBelow) {
+      op[j] = OP_INSERT;
+      bs[j] = (mix64(r) | 1) as i64;
+    } else if (p < 80) {
+      op[j] = OP_REMOVE;
+      bs[j] = 0;
+    } else {
+      op[j] = OP_GET;
+      bs[j] = 0;
+    }
+  }
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let pass: u64 = 0; pass < passes; pass++) {
+    acc += runOps(m, op, a, bs);
+  }
+  const ns = since(t0);
+  return new Result(passes * count, ns, acc, verifyFull(name, n, m, domain));
+}
+
+const CASES = [
+  "insert",
+  "update",
+  "get_hit",
+  "get_miss",
+  "get_dense",
+  "scan",
+  "delete_half",
+  "delete_all",
+  "mixed",
+  "churn",
+];
+
+function runCase(name: string, n: u64): Result {
+  switch (name) {
+    case "insert":
+      return caseInsert(name, n);
+    case "update":
+      return caseUpdate(name, n);
+    case "get_hit":
+      return caseGet(name, n, true);
+    case "get_miss":
+      return caseGet(name, n, false);
+    case "get_dense":
+      return caseGetDense(name, n);
+    case "scan":
+      return caseScan(name, n);
+    case "delete_half":
+      return caseDeleteHalf(name, n);
+    case "delete_all":
+      return caseDeleteAll(name, n);
+    case "mixed":
+      return caseMixed(name, n);
+    default:
+      return caseChurn(name, n);
+  }
+}
+
+// All workload arrays are int-indexed in the C# driver; churn allocates 2n entries, and
+// get_dense fills up to about 1.75n keys.
+runDriver(CASES, runCase, (2147483647 - 64) / 2);

@@ -1,0 +1,507 @@
+// Binary min-heap over (i64 key, i64 value) entries, ordered by key and then by value: a port of
+// the benchmark's C# solution (Heap.cs).
+//
+// Layout: a 1-indexed complete binary heap of entries stored interleaved in one i64 array (the
+// C# Entry struct array): entry i has its key at e[2i] and its value at e[2i + 1].
+// - Entry 0 holds the sentinel (I64_MIN, I64_MIN), which stops every sift-up at the root.
+// - Tree position p (0 <= p < count) is entry p + 1.
+// - The children of entry i are entries 2i and 2i + 1.
+
+const I64_MIN: i64 = -9223372036854775808;
+const I32_MAX: i32 = 2147483647;
+
+// Index of the smaller child of the pair starting at entry `left` (left or left + 1).
+function smallerChild(e: i64[], left: u64): u64 {
+  const lk = e[2 * left];
+  const rk = e[2 * left + 2];
+  if (rk == lk) {
+    return e[2 * left + 3] < e[2 * left + 1] ? left + 1 : left;
+  }
+  return rk < lk ? left + 1 : left;
+}
+
+// Copy `len` entries from keys/values starting at `src` to entries starting at `dst`.
+function copyRange(e: i64[], dst: u64, keys: i64[], values: i64[], src: u64, len: u64) {
+  for (let j: u64 = 0; j < len; j++) {
+    e[2 * (dst + j)] = keys[src + j];
+    e[2 * (dst + j) + 1] = values[src + j];
+  }
+}
+
+function swapEntries(e: i64[], a: u64, b: u64) {
+  const k = e[2 * a];
+  const v = e[2 * a + 1];
+  e[2 * a] = e[2 * b];
+  e[2 * a + 1] = e[2 * b + 1];
+  e[2 * b] = k;
+  e[2 * b + 1] = v;
+}
+
+// Order the parent `idx` and its only child `child`.
+function siftLeafParentSingle(e: i64[], idx: u64, child: u64) {
+  const pk = e[2 * idx];
+  const ck = e[2 * child];
+  if (ck < pk || (ck == pk && e[2 * child + 1] < e[2 * idx + 1])) {
+    swapEntries(e, idx, child);
+  }
+}
+
+// Order the parent `idx` and its two leaf children.
+function siftLeafParentTwo(e: i64[], idx: u64) {
+  const c = smallerChild(e, idx << 1);
+  const ck = e[2 * c];
+  const pk = e[2 * idx];
+  if (pk < ck) {
+    return;
+  }
+  if (pk == ck && e[2 * idx + 1] <= e[2 * c + 1]) {
+    return;
+  }
+  swapEntries(e, idx, c);
+}
+
+// Sift entry i down in a heap of n entries (build phase).
+function siftDownBuild(e: i64[], n: u64, i0: u64) {
+  let i = i0;
+  let left = i << 1;
+  if (left >= n) {
+    if (left == n) {
+      siftLeafParentSingle(e, i, n);
+    }
+    return;
+  }
+
+  // Check the first level before extracting (no writes when already heap-ordered).
+  let c = smallerChild(e, left);
+  let ck = e[2 * c];
+  const key = e[2 * i];
+  if (key < ck) {
+    return;
+  }
+  const value = e[2 * i + 1];
+  if (key == ck && value <= e[2 * c + 1]) {
+    return;
+  }
+  e[2 * i] = ck;
+  e[2 * i + 1] = e[2 * c + 1];
+  i = c;
+  left = i << 1;
+
+  while (left < n) {
+    c = smallerChild(e, left);
+    ck = e[2 * c];
+    if (key <= ck) {
+      if (key < ck || value <= e[2 * c + 1]) {
+        e[2 * i] = key;
+        e[2 * i + 1] = value;
+        return;
+      }
+    }
+    e[2 * i] = ck;
+    e[2 * i + 1] = e[2 * c + 1];
+    i = c;
+    left = i << 1;
+  }
+
+  if (left == n) {
+    ck = e[2 * n];
+    if (ck < key || (ck == key && e[2 * n + 1] < value)) {
+      e[2 * i] = ck;
+      e[2 * i + 1] = e[2 * n + 1];
+      i = n;
+    }
+  }
+  e[2 * i] = key;
+  e[2 * i + 1] = value;
+}
+
+// Bottom-up Floyd heapify for heaps that fit in L2 (n <= 65536).
+function heapifySmall(e: i64[], n: u64) {
+  const half = n >> 1;
+  const quarter = n >> 2;
+  let hi = half;
+  const lo = quarter + 1;
+  if ((n & 1) == 0) {
+    siftLeafParentSingle(e, hi, n);
+    if (hi > lo) {
+      hi--;
+      for (let idx = hi; idx >= lo; idx--) {
+        siftLeafParentTwo(e, idx);
+      }
+    }
+  } else {
+    for (let idx = hi; idx >= lo; idx--) {
+      siftLeafParentTwo(e, idx);
+    }
+  }
+  for (let idx = quarter; idx >= 1; idx--) {
+    siftDownBuild(e, n, idx);
+  }
+}
+
+// Cache-blocked copy and bottom-up heapify for large heaps (n > 65536): each subtree rooted at
+// r in [s, 2s) has at most 32768 entries, so it is copied and heapified while it is in L2.
+function buildSubtreeFused(e: i64[], keys: i64[], values: i64[], n: u64) {
+  let s: u64 = 2;
+  while (n / s > 32768) {
+    s <<= 1;
+  }
+  const half = n >> 1;
+  const nIsEven = (n & 1) == 0;
+  const rEnd = s << 1;
+
+  for (let r = s; r < rEnd; r++) {
+    let maxD: u64 = 0;
+    while (r << (maxD + 1) <= n) {
+      maxD++;
+    }
+
+    // Copy all levels of subtree r.
+    for (let d: u64 = 0; d <= maxD; d++) {
+      const lo = r << d;
+      let hi = ((r + 1) << d) - 1;
+      if (hi > n) {
+        hi = n;
+      }
+      copyRange(e, lo, keys, values, lo - 1, hi - lo + 1);
+    }
+
+    // Heapify subtree r bottom-up.
+    for (let d = (maxD as i64) - 1; d >= 0; d--) {
+      const lo = r << (d as u64);
+      let hi = ((r + 1) << (d as u64)) - 1;
+      if (hi > half) {
+        hi = half;
+      }
+      if (lo > hi) {
+        continue;
+      }
+      if (d == (maxD as i64) - 1) {
+        if (nIsEven && hi == half) {
+          siftLeafParentSingle(e, hi, n);
+          if (hi == lo) {
+            continue;
+          }
+          hi--;
+        }
+        for (let idx = hi; idx >= lo; idx--) {
+          siftLeafParentTwo(e, idx);
+        }
+      } else {
+        for (let idx = hi; idx >= lo; idx--) {
+          siftDownBuild(e, n, idx);
+        }
+      }
+    }
+  }
+
+  // Copy and heapify the top s - 1 nodes.
+  copyRange(e, 1, keys, values, 0, s - 1);
+  for (let idx = s - 1; idx >= 1; idx--) {
+    siftDownBuild(e, n, idx);
+  }
+}
+
+export class Heap {
+  private e: i64[];
+  private count: i32;
+  private capacity: i32;
+  private pfSink: i64 = 0;
+  // The entry returned by the last tryPeek, tryPop, tryReplace, pushPop or slot (the C#
+  // version's out parameters).
+  outKey: i64 = 0;
+  outValue: i64 = 0;
+
+  constructor() {
+    this.e = [];
+    this.count = 0;
+    this.capacity = 0;
+  }
+
+  // A heap of the first `count` entries of keys/values.
+  static build(keys: i64[], values: i64[], count: i32): Heap {
+    const hp = new Heap();
+    if (count <= 0) {
+      return hp;
+    }
+    // 25% headroom, so workloads that grow after the build do not reallocate at once.
+    const headroom = (count >> 2) + 16;
+    const bufLen = count <= I32_MAX - headroom ? count + headroom : count + 1;
+    const e = new Array<i64>(2 * (bufLen as i64)).fill(0);
+    e[0] = I64_MIN;
+    e[1] = I64_MIN;
+    hp.e = e;
+    hp.count = count;
+    hp.capacity = bufLen - 1;
+    const n = count as u64;
+    if (n <= 65536) {
+      copyRange(e, 1, keys, values, 0, n);
+      if (n > 1) {
+        heapifySmall(e, n);
+      }
+    } else {
+      buildSubtreeFused(e, keys, values, n);
+    }
+    return hp;
+  }
+
+  size(): i32 {
+    return this.count;
+  }
+
+  // Tree position i into outKey/outValue.
+  slot(i: i32) {
+    const p = 2 * ((i + 1) as u64);
+    this.outKey = this.e[p];
+    this.outValue = this.e[p + 1];
+  }
+
+  tryPeek(): boolean {
+    if (this.count != 0) {
+      this.outKey = this.e[2];
+      this.outValue = this.e[3];
+      return true;
+    }
+    this.outKey = 0;
+    this.outValue = 0;
+    return false;
+  }
+
+  push(key: i64, value: i64) {
+    const count = this.count;
+    if (count == this.capacity) {
+      this.grow();
+    }
+    const newCount = count + 1;
+    this.count = newCount;
+    const e = this.e;
+    let i = newCount as u64;
+    // Sift up; the sentinel at entry 0 stops it at the root.
+    for (;;) {
+      const p = i >> 1;
+      const pk = e[2 * p];
+      if (key >= pk) {
+        if (key > pk) {
+          break;
+        }
+        const pv = e[2 * p + 1];
+        if (value >= pv) {
+          break;
+        }
+        e[2 * i] = pk;
+        e[2 * i + 1] = pv;
+        i = p;
+        continue;
+      }
+      e[2 * i] = pk;
+      e[2 * i + 1] = e[2 * p + 1];
+      i = p;
+    }
+    e[2 * i] = key;
+    e[2 * i + 1] = value;
+  }
+
+  tryPop(): boolean {
+    const count = this.count;
+    if (count == 0) {
+      this.outKey = 0;
+      this.outValue = 0;
+      return false;
+    }
+    const e = this.e;
+    this.outKey = e[2];
+    this.outValue = e[3];
+    const newCount = count - 1;
+    this.count = newCount;
+    if (newCount == 0) {
+      return true;
+    }
+
+    const last = count as u64;
+    const lastK = e[2 * last];
+    const lastV = e[2 * last + 1];
+    const n = newCount as u64;
+
+    // Floyd's sift-down: move the hole all the way to a leaf (one compare per level), then
+    // sift the last entry up from there.
+    let i: u64 = 1;
+    let left: u64 = 2;
+    if (n > 2048) {
+      const pfLimit = n >> 3;
+      let pf: i64 = 0;
+      while (i <= pfLimit) {
+        pf ^= e[2 * (i << 3)];
+        const c = smallerChild(e, left);
+        e[2 * i] = e[2 * c];
+        e[2 * i + 1] = e[2 * c + 1];
+        i = c;
+        left = i << 1;
+      }
+      this.pfSink = pf;
+    }
+    while (left < n) {
+      const c = smallerChild(e, left);
+      e[2 * i] = e[2 * c];
+      e[2 * i + 1] = e[2 * c + 1];
+      i = c;
+      left = i << 1;
+    }
+    if (left == n) {
+      e[2 * i] = e[2 * n];
+      e[2 * i + 1] = e[2 * n + 1];
+      i = n;
+    }
+
+    // Sift (lastK, lastV) up from leaf i; the sentinel stops it at the root.
+    for (;;) {
+      const p = i >> 1;
+      const pk = e[2 * p];
+      if (lastK >= pk) {
+        if (lastK > pk) {
+          break;
+        }
+        const pv = e[2 * p + 1];
+        if (lastV >= pv) {
+          break;
+        }
+        e[2 * i] = pk;
+        e[2 * i + 1] = pv;
+        i = p;
+        continue;
+      }
+      e[2 * i] = pk;
+      e[2 * i + 1] = e[2 * p + 1];
+      i = p;
+    }
+    e[2 * i] = lastK;
+    e[2 * i + 1] = lastV;
+    return true;
+  }
+
+  // Replace the smallest entry (returned in outKey/outValue) with (key, value); on an empty
+  // heap, add the entry and return false.
+  tryReplace(key: i64, value: i64): boolean {
+    const count = this.count;
+    if (count == 0) {
+      if (this.capacity == 0) {
+        this.grow();
+      }
+      this.e[2] = key;
+      this.e[3] = value;
+      this.count = 1;
+      this.outKey = 0;
+      this.outValue = 0;
+      return false;
+    }
+    const e = this.e;
+    this.outKey = e[2];
+    this.outValue = e[3];
+    this.siftDownRoot(e, count as u64, key, value);
+    return true;
+  }
+
+  // Push (key, value) and pop the smallest entry into outKey/outValue.
+  pushPop(key: i64, value: i64) {
+    if (this.count == 0) {
+      this.outKey = key;
+      this.outValue = value;
+      return;
+    }
+    const e = this.e;
+    const rk = e[2];
+    if (key <= rk) {
+      if (key < rk || value <= e[3]) {
+        this.outKey = key;
+        this.outValue = value;
+        return;
+      }
+    }
+    this.outKey = rk;
+    this.outValue = e[3];
+    this.siftDownRoot(e, this.count as u64, key, value);
+  }
+
+  // Sift (key, value) down from the root with early exit, touching the great-grandchildren's
+  // cache line ahead on large heaps.
+  private siftDownRoot(e: i64[], n: u64, key: i64, value: i64) {
+    let i: u64 = 1;
+    let left: u64 = 2;
+    if (n > 2048) {
+      const pfLimit = n >> 3;
+      let pf: i64 = 0;
+      while (i <= pfLimit) {
+        pf ^= e[2 * (i << 3)];
+        const c = smallerChild(e, left);
+        const ck = e[2 * c];
+        if (key <= ck) {
+          if (key < ck || value <= e[2 * c + 1]) {
+            this.pfSink = pf;
+            e[2 * i] = key;
+            e[2 * i + 1] = value;
+            return;
+          }
+        }
+        e[2 * i] = ck;
+        e[2 * i + 1] = e[2 * c + 1];
+        i = c;
+        left = i << 1;
+      }
+      this.pfSink = pf;
+    }
+    while (left < n) {
+      const c = smallerChild(e, left);
+      const ck = e[2 * c];
+      if (key <= ck) {
+        if (key < ck || value <= e[2 * c + 1]) {
+          e[2 * i] = key;
+          e[2 * i + 1] = value;
+          return;
+        }
+      }
+      e[2 * i] = ck;
+      e[2 * i + 1] = e[2 * c + 1];
+      i = c;
+      left = i << 1;
+    }
+    if (left == n) {
+      const ck = e[2 * n];
+      if (ck < key || (ck == key && e[2 * n + 1] < value)) {
+        e[2 * i] = ck;
+        e[2 * i + 1] = e[2 * n + 1];
+        i = n;
+      }
+    }
+    e[2 * i] = key;
+    e[2 * i + 1] = value;
+  }
+
+  private grow() {
+    const oldCap = this.capacity;
+    let newBufLen: i32;
+    if (oldCap == 0) {
+      newBufLen = 128;
+    } else {
+      const oldBufLen = oldCap + 1;
+      if (oldBufLen < 16384) {
+        newBufLen = oldBufLen << 2;
+      } else if (oldBufLen <= I32_MAX >> 1) {
+        newBufLen = oldBufLen << 1;
+      } else {
+        newBufLen = I32_MAX;
+      }
+    }
+    const next = new Array<i64>(2 * (newBufLen as i64)).fill(0);
+    if (oldCap != 0) {
+      const old = this.e;
+      const words = 2 * ((this.count + 1) as i64);
+      for (let j: i64 = 0; j < words; j++) {
+        next[j] = old[j];
+      }
+    } else {
+      next[0] = I64_MIN;
+      next[1] = I64_MIN;
+    }
+    this.e = next;
+    this.capacity = newBufLen - 1;
+  }
+}

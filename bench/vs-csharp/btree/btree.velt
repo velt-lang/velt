@@ -1,0 +1,1134 @@
+// In-memory B-tree (minimum degree t = 16) for 64-bit signed keys and values: a port of the
+// benchmark's C# solution (BTree.cs). Classic CLRS B-tree: entries live in internal nodes and
+// leaves, no sibling or parent pointers. Leaves and internal nodes live in two pools (flat
+// arrays indexed by node id) that double when full; freed nodes go on a free list threaded
+// through their count slot.
+//
+// Pool layout, one slot of `NODE` i64 per node in the key/value arrays (the C# struct's 512 or
+// 640 bytes):
+//   leafKv[id * NODE + i]         key i (i < 31)
+//   leafKv[id * NODE + VALS + i]  value i
+//   intKv                         the same for internal nodes
+//   intChildren[id * KIDS + i]    child i (i < 32) of an internal node
+//   leafCount / intCount[id]      number of keys, or the next free id when the node is free
+
+const MIN_KEYS: i32 = 15; // T - 1
+const MAX_KEYS: i32 = 31; // 2 * T - 1
+const SPLIT_LEFT: i32 = 16; // T
+const SPLIT_RIGHT: i32 = 15; // T - 1
+const MAX_HEIGHT: i32 = 16;
+
+const NODE: i32 = 64;
+const VALS: i32 = 32;
+const KIDS: i32 = 32;
+
+// Lower bound for non-root nodes (15 <= count <= 31): the smallest idx in [0, count] with
+// idx == count || keys[b + idx] >= key, in five comparisons.
+function lowerBoundNonRoot(keys: i64[], b: i32, count: i32, key: i64): i32 {
+  const r = count - 15;
+  const p = r > 0 ? r - 1 : 0;
+  let lo = keys[b + p] < key ? r : 0;
+  const c1 = lo + 8;
+  lo = keys[b + lo + 7] < key ? c1 : lo;
+  const c2 = lo + 4;
+  lo = keys[b + lo + 3] < key ? c2 : lo;
+  const c3 = lo + 2;
+  lo = keys[b + lo + 1] < key ? c3 : lo;
+  const c4 = lo + 1;
+  lo = keys[b + lo] < key ? c4 : lo;
+  return lo;
+}
+
+// Lower bound for any node (1 <= count <= 31).
+function lowerBoundAny(keys: i64[], b: i32, count: i32, key: i64): i32 {
+  if (count >= 15) {
+    return lowerBoundNonRoot(keys, b, count, key);
+  }
+  let lo: i32 = 0;
+  let len = count;
+  while (len > 1) {
+    const half = len >> 1;
+    const next = lo + (len - half);
+    lo = keys[b + lo + half] < key ? next : lo;
+    len = half;
+  }
+  const last = lo + 1;
+  return keys[b + lo] < key ? last : lo;
+}
+
+function copyLongs(dst: i64[], d: i32, src: i64[], s: i32, count: i32) {
+  for (let i: i32 = 0; i < count; i++) {
+    dst[d + i] = src[s + i];
+  }
+}
+
+function copyInts(dst: i32[], d: i32, src: i32[], s: i32, count: i32) {
+  for (let i: i32 = 0; i < count; i++) {
+    dst[d + i] = src[s + i];
+  }
+}
+
+// Copies a[s .. s + count) to a[d .. d + count), two different nodes of one pool.
+function moveLongs(a: i64[], d: i32, s: i32, count: i32) {
+  for (let i: i32 = 0; i < count; i++) {
+    a[d + i] = a[s + i];
+  }
+}
+
+function moveInts(a: i32[], d: i32, s: i32, count: i32) {
+  for (let i: i32 = 0; i < count; i++) {
+    a[d + i] = a[s + i];
+  }
+}
+
+// Moves a[from .. to) to a[from + 1 .. to + 1).
+function shiftRightLongs(a: i64[], from: i32, to: i32) {
+  for (let i = to; i > from; i--) {
+    a[i] = a[i - 1];
+  }
+}
+
+function shiftRightInts(a: i32[], from: i32, to: i32) {
+  for (let i = to; i > from; i--) {
+    a[i] = a[i - 1];
+  }
+}
+
+// Moves a[from + 1 .. to) to a[from .. to - 1).
+function shiftLeftLongs(a: i64[], from: i32, to: i32) {
+  const last = to - 1;
+  for (let i = from; i < last; i++) {
+    a[i] = a[i + 1];
+  }
+}
+
+function shiftLeftInts(a: i32[], from: i32, to: i32) {
+  const last = to - 1;
+  for (let i = from; i < last; i++) {
+    a[i] = a[i + 1];
+  }
+}
+
+export class BTree {
+  private leafKv: i64[];
+  private leafCount: i32[];
+  private intKv: i64[];
+  private intChildren: i32[];
+  private intCount: i32[];
+  private root: i32;
+  private levels: i32;
+  private size: i32;
+  private leafCap: i32;
+  private leafTop: i32;
+  private leafFree: i32;
+  private intCap: i32;
+  private intTop: i32;
+  private intFree: i32;
+  // The root-to-leaf path of the last insert or remove (C#: stackalloc'd per call).
+  private pathNodes: i32[];
+  private pathIdx: i32[];
+  // range()'s ancestor stack (C#: a stackalloc'd RangeFrame[MaxHeight]).
+  private stackNode: i32[];
+  private stackIdx: i32[];
+  private stackLevel: i32[];
+  // rangeSubtree()'s output position (C#: `ref int written`).
+  private written: i32;
+  // The value found by the last successful tryGet() (C#: `out long value`), 0 after a miss.
+  value: i64;
+
+  constructor() {
+    this.leafKv = [];
+    this.leafCount = [];
+    this.intKv = [];
+    this.intChildren = [];
+    this.intCount = [];
+    this.root = -1;
+    this.levels = 0;
+    this.size = 0;
+    this.leafCap = 0;
+    this.leafTop = 0;
+    this.leafFree = -1;
+    this.intCap = 0;
+    this.intTop = 0;
+    this.intFree = -1;
+    this.pathNodes = new Array<i32>(MAX_HEIGHT).fill(0);
+    this.pathIdx = new Array<i32>(MAX_HEIGHT).fill(0);
+    this.stackNode = new Array<i32>(MAX_HEIGHT).fill(0);
+    this.stackIdx = new Array<i32>(MAX_HEIGHT).fill(0);
+    this.stackLevel = new Array<i32>(MAX_HEIGHT).fill(0);
+    this.written = 0;
+    this.value = 0;
+  }
+
+  count(): i32 {
+    return this.size;
+  }
+
+  height(): i32 {
+    return this.levels;
+  }
+
+  // ---------------------------------------------------------------- pool management
+
+  private allocLeaf(): i32 {
+    const free = this.leafFree;
+    if (free >= 0) {
+      this.leafFree = this.leafCount[free];
+      return free;
+    }
+    const id = this.leafTop;
+    if (id == this.leafCap) {
+      this.growLeaves();
+    }
+    this.leafTop = id + 1;
+    return id;
+  }
+
+  private growLeaves() {
+    const newCap = this.leafCap == 0 ? 16 : this.leafCap * 2;
+    const kv = new Array<i64>(newCap * NODE).fill(0);
+    const cnt = new Array<i32>(newCap).fill(0);
+    copyLongs(kv, 0, this.leafKv, 0, this.leafTop * NODE);
+    copyInts(cnt, 0, this.leafCount, 0, this.leafTop);
+    this.leafKv = kv;
+    this.leafCount = cnt;
+    this.leafCap = newCap;
+  }
+
+  private freeLeaf(id: i32) {
+    this.leafCount[id] = this.leafFree;
+    this.leafFree = id;
+  }
+
+  private allocInternal(): i32 {
+    const free = this.intFree;
+    if (free >= 0) {
+      this.intFree = this.intCount[free];
+      return free;
+    }
+    const id = this.intTop;
+    if (id == this.intCap) {
+      this.growInternals();
+    }
+    this.intTop = id + 1;
+    return id;
+  }
+
+  private growInternals() {
+    const newCap = this.intCap == 0 ? 8 : this.intCap * 2;
+    const kv = new Array<i64>(newCap * NODE).fill(0);
+    const ch = new Array<i32>(newCap * KIDS).fill(0);
+    const cnt = new Array<i32>(newCap).fill(0);
+    copyLongs(kv, 0, this.intKv, 0, this.intTop * NODE);
+    copyInts(ch, 0, this.intChildren, 0, this.intTop * KIDS);
+    copyInts(cnt, 0, this.intCount, 0, this.intTop);
+    this.intKv = kv;
+    this.intChildren = ch;
+    this.intCount = cnt;
+    this.intCap = newCap;
+  }
+
+  private freeInternal(id: i32) {
+    this.intCount[id] = this.intFree;
+    this.intFree = id;
+  }
+
+  // ---------------------------------------------------------------- tryGet
+
+  // Whether `key` is present; its value is left in `value`.
+  tryGet(key: i64): boolean {
+    const h = this.levels;
+    if (h == 0) {
+      this.value = 0;
+      return false;
+    }
+    let nodeId = this.root;
+    if (h == 1) {
+      const kv = this.leafKv;
+      const b = nodeId * NODE;
+      const c = this.leafCount[nodeId];
+      const idx = lowerBoundAny(kv, b, c, key);
+      if (idx < c && kv[b + idx] == key) {
+        this.value = kv[b + VALS + idx];
+        return true;
+      }
+      this.value = 0;
+      return false;
+    }
+
+    const ikv = this.intKv;
+    const ich = this.intChildren;
+    const icnt = this.intCount;
+    // Root (level == h, count can be 1..31)
+    {
+      const b = nodeId * NODE;
+      const c = icnt[nodeId];
+      const idx = lowerBoundAny(ikv, b, c, key);
+      if (idx < c && ikv[b + idx] == key) {
+        this.value = ikv[b + VALS + idx];
+        return true;
+      }
+      nodeId = ich[nodeId * KIDS + idx];
+    }
+
+    // Non-root internal nodes (levels h-1 .. 2, count is 15..31)
+    for (let level = h - 1; level > 1; level--) {
+      const b = nodeId * NODE;
+      const c = icnt[nodeId];
+      const idx = lowerBoundNonRoot(ikv, b, c, key);
+      if (idx < c && ikv[b + idx] == key) {
+        this.value = ikv[b + VALS + idx];
+        return true;
+      }
+      nodeId = ich[nodeId * KIDS + idx];
+    }
+
+    // Non-root leaf (level == 1, count is 15..31)
+    {
+      const kv = this.leafKv;
+      const b = nodeId * NODE;
+      const c = this.leafCount[nodeId];
+      const idx = lowerBoundNonRoot(kv, b, c, key);
+      if (idx < c && kv[b + idx] == key) {
+        this.value = kv[b + VALS + idx];
+        return true;
+      }
+    }
+
+    this.value = 0;
+    return false;
+  }
+
+  // ---------------------------------------------------------------- insert
+
+  insert(key: i64, value: i64): boolean {
+    const h = this.levels;
+    if (h == 0) {
+      const rootId = this.allocLeaf();
+      const kv = this.leafKv;
+      const b = rootId * NODE;
+      this.leafCount[rootId] = 1;
+      kv[b] = key;
+      kv[b + VALS] = value;
+      this.root = rootId;
+      this.levels = 1;
+      this.size = 1;
+      return true;
+    }
+
+    const pathNodes = this.pathNodes;
+    const pathIdx = this.pathIdx;
+    let depth: i32 = 0;
+    let nodeId = this.root;
+
+    if (h > 1) {
+      const ikv = this.intKv;
+      const ich = this.intChildren;
+      const icnt = this.intCount;
+      // Root internal node
+      {
+        const b = nodeId * NODE;
+        const c = icnt[nodeId];
+        const idx = lowerBoundAny(ikv, b, c, key);
+        if (idx < c && ikv[b + idx] == key) {
+          ikv[b + VALS + idx] = value;
+          return false;
+        }
+        pathNodes[0] = nodeId;
+        pathIdx[0] = idx;
+        depth = 1;
+        nodeId = ich[nodeId * KIDS + idx];
+      }
+      // Non-root internal nodes
+      for (let level = h - 1; level > 1; level--) {
+        const b = nodeId * NODE;
+        const c = icnt[nodeId];
+        const idx = lowerBoundNonRoot(ikv, b, c, key);
+        if (idx < c && ikv[b + idx] == key) {
+          ikv[b + VALS + idx] = value;
+          return false;
+        }
+        pathNodes[depth] = nodeId;
+        pathIdx[depth] = idx;
+        depth++;
+        nodeId = ich[nodeId * KIDS + idx];
+      }
+    }
+
+    // Leaf node
+    const kv = this.leafKv;
+    const b = nodeId * NODE;
+    const leafCount = this.leafCount[nodeId];
+    const leafIdx =
+      h == 1 ? lowerBoundAny(kv, b, leafCount, key) : lowerBoundNonRoot(kv, b, leafCount, key);
+
+    if (leafIdx < leafCount && kv[b + leafIdx] == key) {
+      kv[b + VALS + leafIdx] = value;
+      return false;
+    }
+
+    this.size++;
+
+    // Fast path: leaf has room
+    if (leafCount < MAX_KEYS) {
+      shiftRightLongs(kv, b + leafIdx, b + leafCount);
+      shiftRightLongs(kv, b + VALS + leafIdx, b + VALS + leafCount);
+      kv[b + leafIdx] = key;
+      kv[b + VALS + leafIdx] = value;
+      this.leafCount[nodeId] = leafCount + 1;
+      return true;
+    }
+
+    // Slow path: split leaf and propagate upward
+    this.insertSplit(nodeId, leafIdx, key, value, depth);
+    return true;
+  }
+
+  private insertSplit(leafId: i32, leafIdx: i32, key: i64, value: i64, depth0: i32) {
+    let depth = depth0;
+    // Allocate the right leaf first (it may reallocate the pool, so read the arrays after).
+    const rightId = this.allocLeaf();
+    const kv = this.leafKv;
+    const lb = leafId * NODE;
+    const rb = rightId * NODE;
+
+    let pKey: i64 = 0;
+    let pVal: i64 = 0;
+    if (leafIdx < SPLIT_LEFT) {
+      pKey = kv[lb + SPLIT_LEFT - 1];
+      pVal = kv[lb + VALS + SPLIT_LEFT - 1];
+      moveLongs(kv, rb, lb + SPLIT_LEFT, SPLIT_RIGHT);
+      moveLongs(kv, rb + VALS, lb + VALS + SPLIT_LEFT, SPLIT_RIGHT);
+      shiftRightLongs(kv, lb + leafIdx, lb + SPLIT_LEFT - 1);
+      shiftRightLongs(kv, lb + VALS + leafIdx, lb + VALS + SPLIT_LEFT - 1);
+      kv[lb + leafIdx] = key;
+      kv[lb + VALS + leafIdx] = value;
+    } else if (leafIdx == SPLIT_LEFT) {
+      pKey = key;
+      pVal = value;
+      moveLongs(kv, rb, lb + SPLIT_LEFT, SPLIT_RIGHT);
+      moveLongs(kv, rb + VALS, lb + VALS + SPLIT_LEFT, SPLIT_RIGHT);
+    } else {
+      pKey = kv[lb + SPLIT_LEFT];
+      pVal = kv[lb + VALS + SPLIT_LEFT];
+      const before = leafIdx - (SPLIT_LEFT + 1);
+      if (before > 0) {
+        moveLongs(kv, rb, lb + SPLIT_LEFT + 1, before);
+        moveLongs(kv, rb + VALS, lb + VALS + SPLIT_LEFT + 1, before);
+      }
+      kv[rb + before] = key;
+      kv[rb + VALS + before] = value;
+      const after = MAX_KEYS - leafIdx;
+      if (after > 0) {
+        moveLongs(kv, rb + before + 1, lb + leafIdx, after);
+        moveLongs(kv, rb + VALS + before + 1, lb + VALS + leafIdx, after);
+      }
+    }
+    this.leafCount[leafId] = SPLIT_LEFT;
+    this.leafCount[rightId] = SPLIT_RIGHT;
+
+    let pChild = rightId;
+    let leftChild = leafId;
+
+    // Propagate splits up through internal ancestors
+    while (depth > 0) {
+      depth--;
+      const parentId = this.pathNodes[depth];
+      const idx = this.pathIdx[depth];
+      const count = this.intCount[parentId];
+
+      if (count < MAX_KEYS) {
+        const ikv = this.intKv;
+        const ich = this.intChildren;
+        const pb = parentId * NODE;
+        const pc = parentId * KIDS;
+        shiftRightLongs(ikv, pb + idx, pb + count);
+        shiftRightLongs(ikv, pb + VALS + idx, pb + VALS + count);
+        shiftRightInts(ich, pc + idx + 1, pc + count + 1);
+        ikv[pb + idx] = pKey;
+        ikv[pb + VALS + idx] = pVal;
+        ich[pc + idx + 1] = pChild;
+        this.intCount[parentId] = count + 1;
+        return;
+      }
+
+      // Parent is full: split internal node
+      const rightIntId = this.allocInternal();
+      const ikv = this.intKv;
+      const ich = this.intChildren;
+      const pb = parentId * NODE;
+      const pc = parentId * KIDS;
+      const rb2 = rightIntId * NODE;
+      const rc = rightIntId * KIDS;
+
+      let nextKey: i64 = 0;
+      let nextVal: i64 = 0;
+      if (idx < SPLIT_LEFT) {
+        nextKey = ikv[pb + SPLIT_LEFT - 1];
+        nextVal = ikv[pb + VALS + SPLIT_LEFT - 1];
+        moveLongs(ikv, rb2, pb + SPLIT_LEFT, SPLIT_RIGHT);
+        moveLongs(ikv, rb2 + VALS, pb + VALS + SPLIT_LEFT, SPLIT_RIGHT);
+        moveInts(ich, rc, pc + SPLIT_LEFT, SPLIT_RIGHT + 1);
+        shiftRightLongs(ikv, pb + idx, pb + SPLIT_LEFT - 1);
+        shiftRightLongs(ikv, pb + VALS + idx, pb + VALS + SPLIT_LEFT - 1);
+        shiftRightInts(ich, pc + idx + 1, pc + SPLIT_LEFT);
+        ikv[pb + idx] = pKey;
+        ikv[pb + VALS + idx] = pVal;
+        ich[pc + idx + 1] = pChild;
+      } else if (idx == SPLIT_LEFT) {
+        nextKey = pKey;
+        nextVal = pVal;
+        moveLongs(ikv, rb2, pb + SPLIT_LEFT, SPLIT_RIGHT);
+        moveLongs(ikv, rb2 + VALS, pb + VALS + SPLIT_LEFT, SPLIT_RIGHT);
+        ich[rc] = pChild;
+        moveInts(ich, rc + 1, pc + SPLIT_LEFT + 1, SPLIT_RIGHT);
+      } else {
+        nextKey = ikv[pb + SPLIT_LEFT];
+        nextVal = ikv[pb + VALS + SPLIT_LEFT];
+        const before = idx - (SPLIT_LEFT + 1);
+        if (before > 0) {
+          moveLongs(ikv, rb2, pb + SPLIT_LEFT + 1, before);
+          moveLongs(ikv, rb2 + VALS, pb + VALS + SPLIT_LEFT + 1, before);
+        }
+        ikv[rb2 + before] = pKey;
+        ikv[rb2 + VALS + before] = pVal;
+        const after = MAX_KEYS - idx;
+        if (after > 0) {
+          moveLongs(ikv, rb2 + before + 1, pb + idx, after);
+          moveLongs(ikv, rb2 + VALS + before + 1, pb + VALS + idx, after);
+        }
+        const childBefore = idx - SPLIT_LEFT;
+        moveInts(ich, rc, pc + SPLIT_LEFT + 1, childBefore);
+        ich[rc + childBefore] = pChild;
+        if (after > 0) {
+          moveInts(ich, rc + childBefore + 1, pc + idx + 1, after);
+        }
+      }
+
+      this.intCount[parentId] = SPLIT_LEFT;
+      this.intCount[rightIntId] = SPLIT_RIGHT;
+      pKey = nextKey;
+      pVal = nextVal;
+      leftChild = parentId;
+      pChild = rightIntId;
+    }
+
+    // Root split: create a new root internal node
+    const newRootId = this.allocInternal();
+    const ikv = this.intKv;
+    const ich = this.intChildren;
+    const nb = newRootId * NODE;
+    const nc = newRootId * KIDS;
+    this.intCount[newRootId] = 1;
+    ikv[nb] = pKey;
+    ikv[nb + VALS] = pVal;
+    ich[nc] = leftChild;
+    ich[nc + 1] = pChild;
+    this.root = newRootId;
+    this.levels++;
+  }
+
+  // ---------------------------------------------------------------- remove
+
+  remove(key: i64): boolean {
+    const h = this.levels;
+    if (h == 0) {
+      return false;
+    }
+
+    if (h == 1) {
+      const kv = this.leafKv;
+      const rootId = this.root;
+      const b = rootId * NODE;
+      const c = this.leafCount[rootId];
+      const idx = lowerBoundAny(kv, b, c, key);
+      if (idx >= c || kv[b + idx] != key) {
+        return false;
+      }
+      this.size--;
+      if (c == 1) {
+        this.freeLeaf(rootId);
+        this.root = -1;
+        this.levels = 0;
+        return true;
+      }
+      shiftLeftLongs(kv, b + idx, b + c);
+      shiftLeftLongs(kv, b + VALS + idx, b + VALS + c);
+      this.leafCount[rootId] = c - 1;
+      return true;
+    }
+
+    const pathNodes = this.pathNodes;
+    const pathIdx = this.pathIdx;
+    let depth: i32 = 0;
+    let nodeId = this.root;
+    const ikv = this.intKv;
+    const ich = this.intChildren;
+    const icnt = this.intCount;
+
+    // Descend through internal nodes
+    for (let level = h; level > 1; level--) {
+      const b = nodeId * NODE;
+      const c = icnt[nodeId];
+      const idx = level == h ? lowerBoundAny(ikv, b, c, key) : lowerBoundNonRoot(ikv, b, c, key);
+
+      if (idx < c && ikv[b + idx] == key) {
+        // Key found in internal node: replace with in-order predecessor
+        pathNodes[depth] = nodeId;
+        pathIdx[depth] = idx;
+        depth++;
+        let currId = ich[nodeId * KIDS + idx];
+        for (let subLevel = level - 1; subLevel > 1; subLevel--) {
+          const sc = icnt[currId];
+          pathNodes[depth] = currId;
+          pathIdx[depth] = sc;
+          depth++;
+          currId = ich[currId * KIDS + sc];
+        }
+        const kv = this.leafKv;
+        const pb = currId * NODE;
+        const plc = this.leafCount[currId] - 1;
+        ikv[b + idx] = kv[pb + plc];
+        ikv[b + VALS + idx] = kv[pb + VALS + plc];
+        this.leafCount[currId] = plc;
+        this.size--;
+        if (plc < MIN_KEYS) {
+          this.rebalanceFromLeaf(currId, depth);
+        }
+        return true;
+      }
+
+      pathNodes[depth] = nodeId;
+      pathIdx[depth] = idx;
+      depth++;
+      nodeId = ich[nodeId * KIDS + idx];
+    }
+
+    // Leaf node (non-root, since h > 1)
+    const kv = this.leafKv;
+    const b = nodeId * NODE;
+    const leafCount = this.leafCount[nodeId];
+    const leafIdx = lowerBoundNonRoot(kv, b, leafCount, key);
+    if (leafIdx >= leafCount || kv[b + leafIdx] != key) {
+      return false;
+    }
+
+    this.size--;
+    shiftLeftLongs(kv, b + leafIdx, b + leafCount);
+    shiftLeftLongs(kv, b + VALS + leafIdx, b + VALS + leafCount);
+    const newCount = leafCount - 1;
+    this.leafCount[nodeId] = newCount;
+
+    if (newCount < MIN_KEYS) {
+      this.rebalanceFromLeaf(nodeId, depth);
+    }
+    return true;
+  }
+
+  private rebalanceFromLeaf(leafId0: i32, depth0: i32) {
+    let leafId = leafId0;
+    const depth = depth0 - 1;
+    const parentId = this.pathNodes[depth];
+    const childIdx = this.pathIdx[depth];
+    const ikv = this.intKv;
+    const ich = this.intChildren;
+    const icnt = this.intCount;
+    const kv = this.leafKv;
+    const lcnt = this.leafCount;
+    const pb = parentId * NODE;
+    const pc = parentId * KIDS;
+    const cb = leafId * NODE;
+
+    // Try borrowing from left sibling (equalize surplus)
+    if (childIdx > 0) {
+      const leftId = ich[pc + childIdx - 1];
+      const lb = leftId * NODE;
+      const leftCount = lcnt[leftId];
+      if (leftCount > MIN_KEYS) {
+        const move = (leftCount - (MIN_KEYS - 1)) >> 1; // >= 1
+        const pIdx = childIdx - 1;
+        // Shift curr right by move
+        for (let i = MIN_KEYS - 2; i >= 0; i--) {
+          kv[cb + i + move] = kv[cb + i];
+          kv[cb + VALS + i + move] = kv[cb + VALS + i];
+        }
+        kv[cb + move - 1] = ikv[pb + pIdx];
+        kv[cb + VALS + move - 1] = ikv[pb + VALS + pIdx];
+        const newLeftCount = leftCount - move;
+        if (move > 1) {
+          moveLongs(kv, cb, lb + newLeftCount + 1, move - 1);
+          moveLongs(kv, cb + VALS, lb + VALS + newLeftCount + 1, move - 1);
+        }
+        ikv[pb + pIdx] = kv[lb + newLeftCount];
+        ikv[pb + VALS + pIdx] = kv[lb + VALS + newLeftCount];
+        lcnt[leftId] = newLeftCount;
+        lcnt[leafId] = MIN_KEYS - 1 + move;
+        return;
+      }
+    }
+
+    // Try borrowing from right sibling (equalize surplus), or merge with right sibling
+    const parentCount = icnt[parentId];
+    if (childIdx < parentCount) {
+      const rightId = ich[pc + childIdx + 1];
+      const rb = rightId * NODE;
+      const rightCount = lcnt[rightId];
+      if (rightCount > MIN_KEYS) {
+        const move = (rightCount - (MIN_KEYS - 1)) >> 1; // >= 1
+        kv[cb + MIN_KEYS - 1] = ikv[pb + childIdx];
+        kv[cb + VALS + MIN_KEYS - 1] = ikv[pb + VALS + childIdx];
+        if (move > 1) {
+          moveLongs(kv, cb + MIN_KEYS, rb, move - 1);
+          moveLongs(kv, cb + VALS + MIN_KEYS, rb + VALS, move - 1);
+        }
+        ikv[pb + childIdx] = kv[rb + move - 1];
+        ikv[pb + VALS + childIdx] = kv[rb + VALS + move - 1];
+        const remRight = rightCount - move;
+        for (let i: i32 = 0; i < remRight; i++) {
+          kv[rb + i] = kv[rb + i + move];
+          kv[rb + VALS + i] = kv[rb + VALS + i + move];
+        }
+        lcnt[leafId] = MIN_KEYS - 1 + move;
+        lcnt[rightId] = remRight;
+        return;
+      }
+
+      // Merge curr (14) + parent[childIdx] (1) + right (15) = 30 into curr
+      kv[cb + MIN_KEYS - 1] = ikv[pb + childIdx];
+      kv[cb + VALS + MIN_KEYS - 1] = ikv[pb + VALS + childIdx];
+      moveLongs(kv, cb + MIN_KEYS, rb, rightCount);
+      moveLongs(kv, cb + VALS + MIN_KEYS, rb + VALS, rightCount);
+      lcnt[leafId] = MIN_KEYS + rightCount;
+      this.freeLeaf(rightId);
+
+      shiftLeftLongs(ikv, pb + childIdx, pb + parentCount);
+      shiftLeftLongs(ikv, pb + VALS + childIdx, pb + VALS + parentCount);
+      shiftLeftInts(ich, pc + childIdx + 1, pc + parentCount + 1);
+      icnt[parentId] = parentCount - 1;
+    } else {
+      // Merge left (15) + parent[childIdx - 1] (1) + curr (14) = 30 into left
+      const pIdx = childIdx - 1;
+      const leftId = ich[pc + pIdx];
+      const lb = leftId * NODE;
+      const leftCount = lcnt[leftId];
+      kv[lb + leftCount] = ikv[pb + pIdx];
+      kv[lb + VALS + leftCount] = ikv[pb + VALS + pIdx];
+      moveLongs(kv, lb + leftCount + 1, cb, MIN_KEYS - 1);
+      moveLongs(kv, lb + VALS + leftCount + 1, cb + VALS, MIN_KEYS - 1);
+      lcnt[leftId] = leftCount + MIN_KEYS;
+      this.freeLeaf(leafId);
+
+      // childIdx == parentCount, so pIdx == parentCount - 1 (last key and child)
+      icnt[parentId] = parentCount - 1;
+      leafId = leftId; // survivor if the root shrinks
+    }
+
+    // Check if parent underflowed (or if root became empty)
+    if (depth == 0) {
+      if (icnt[parentId] == 0) {
+        this.freeInternal(parentId);
+        this.root = leafId;
+        this.levels--;
+      }
+      return;
+    }
+
+    if (icnt[parentId] < MIN_KEYS) {
+      this.rebalanceInternal(parentId, depth);
+    }
+  }
+
+  private rebalanceInternal(nodeId0: i32, depth0: i32) {
+    let nodeId = nodeId0;
+    let depth = depth0;
+    const ikv = this.intKv;
+    const ich = this.intChildren;
+    const icnt = this.intCount;
+    while (depth > 0) {
+      depth--;
+      const parentId = this.pathNodes[depth];
+      const childIdx = this.pathIdx[depth];
+      const pb = parentId * NODE;
+      const pc = parentId * KIDS;
+      const cb = nodeId * NODE;
+      const cc = nodeId * KIDS;
+
+      // Try borrowing from left internal sibling
+      if (childIdx > 0) {
+        const leftId = ich[pc + childIdx - 1];
+        const lb = leftId * NODE;
+        const lc = leftId * KIDS;
+        const leftCount = icnt[leftId];
+        if (leftCount > MIN_KEYS) {
+          const move = (leftCount - (MIN_KEYS - 1)) >> 1;
+          const pIdx = childIdx - 1;
+          for (let i = MIN_KEYS - 2; i >= 0; i--) {
+            ikv[cb + i + move] = ikv[cb + i];
+            ikv[cb + VALS + i + move] = ikv[cb + VALS + i];
+          }
+          for (let i = MIN_KEYS - 1; i >= 0; i--) {
+            ich[cc + i + move] = ich[cc + i];
+          }
+          ikv[cb + move - 1] = ikv[pb + pIdx];
+          ikv[cb + VALS + move - 1] = ikv[pb + VALS + pIdx];
+          const newLeftCount = leftCount - move;
+          if (move > 1) {
+            moveLongs(ikv, cb, lb + newLeftCount + 1, move - 1);
+            moveLongs(ikv, cb + VALS, lb + VALS + newLeftCount + 1, move - 1);
+          }
+          moveInts(ich, cc, lc + newLeftCount + 1, move);
+          ikv[pb + pIdx] = ikv[lb + newLeftCount];
+          ikv[pb + VALS + pIdx] = ikv[lb + VALS + newLeftCount];
+          icnt[leftId] = newLeftCount;
+          icnt[nodeId] = MIN_KEYS - 1 + move;
+          return;
+        }
+      }
+
+      // Try borrowing from right internal sibling, or merge
+      const parentCount = icnt[parentId];
+      if (childIdx < parentCount) {
+        const rightId = ich[pc + childIdx + 1];
+        const rb = rightId * NODE;
+        const rc = rightId * KIDS;
+        const rightCount = icnt[rightId];
+        if (rightCount > MIN_KEYS) {
+          const move = (rightCount - (MIN_KEYS - 1)) >> 1;
+          ikv[cb + MIN_KEYS - 1] = ikv[pb + childIdx];
+          ikv[cb + VALS + MIN_KEYS - 1] = ikv[pb + VALS + childIdx];
+          if (move > 1) {
+            moveLongs(ikv, cb + MIN_KEYS, rb, move - 1);
+            moveLongs(ikv, cb + VALS + MIN_KEYS, rb + VALS, move - 1);
+          }
+          moveInts(ich, cc + MIN_KEYS, rc, move);
+          ikv[pb + childIdx] = ikv[rb + move - 1];
+          ikv[pb + VALS + childIdx] = ikv[rb + VALS + move - 1];
+          const remRight = rightCount - move;
+          for (let i: i32 = 0; i < remRight; i++) {
+            ikv[rb + i] = ikv[rb + i + move];
+            ikv[rb + VALS + i] = ikv[rb + VALS + i + move];
+          }
+          for (let i: i32 = 0; i <= remRight; i++) {
+            ich[rc + i] = ich[rc + i + move];
+          }
+          icnt[nodeId] = MIN_KEYS - 1 + move;
+          icnt[rightId] = remRight;
+          return;
+        }
+
+        // Merge curr (14) + parent[childIdx] (1) + right (15) into curr
+        ikv[cb + MIN_KEYS - 1] = ikv[pb + childIdx];
+        ikv[cb + VALS + MIN_KEYS - 1] = ikv[pb + VALS + childIdx];
+        moveLongs(ikv, cb + MIN_KEYS, rb, rightCount);
+        moveLongs(ikv, cb + VALS + MIN_KEYS, rb + VALS, rightCount);
+        moveInts(ich, cc + MIN_KEYS, rc, rightCount + 1);
+        icnt[nodeId] = MIN_KEYS + rightCount;
+        this.freeInternal(rightId);
+
+        shiftLeftLongs(ikv, pb + childIdx, pb + parentCount);
+        shiftLeftLongs(ikv, pb + VALS + childIdx, pb + VALS + parentCount);
+        shiftLeftInts(ich, pc + childIdx + 1, pc + parentCount + 1);
+        icnt[parentId] = parentCount - 1;
+      } else {
+        // Merge left (15) + parent[childIdx - 1] (1) + curr (14) into left
+        const pIdx = childIdx - 1;
+        const leftId = ich[pc + pIdx];
+        const lb = leftId * NODE;
+        const lc = leftId * KIDS;
+        const leftCount = icnt[leftId];
+        ikv[lb + leftCount] = ikv[pb + pIdx];
+        ikv[lb + VALS + leftCount] = ikv[pb + VALS + pIdx];
+        moveLongs(ikv, lb + leftCount + 1, cb, MIN_KEYS - 1);
+        moveLongs(ikv, lb + VALS + leftCount + 1, cb + VALS, MIN_KEYS - 1);
+        moveInts(ich, lc + leftCount + 1, cc, MIN_KEYS);
+        icnt[leftId] = leftCount + MIN_KEYS;
+        this.freeInternal(nodeId);
+
+        icnt[parentId] = parentCount - 1;
+        nodeId = leftId;
+      }
+
+      if (depth == 0) {
+        if (icnt[parentId] == 0) {
+          this.freeInternal(parentId);
+          this.root = nodeId;
+          this.levels--;
+        }
+        return;
+      }
+
+      if (icnt[parentId] >= MIN_KEYS) {
+        return;
+      }
+      nodeId = parentId;
+    }
+  }
+
+  // ---------------------------------------------------------------- range
+
+  // Copies the entries with lo <= key <= hi, in key order and at most `limit` of them, into
+  // outKeys/outVals; returns how many.
+  range(lo: i64, hi: i64, outKeys: i64[], outVals: i64[], limit: i32): i32 {
+    const h = this.levels;
+    if (limit <= 0 || lo > hi || h == 0) {
+      return 0;
+    }
+    const kv = this.leafKv;
+    const lcnt = this.leafCount;
+
+    if (h == 1) {
+      const b = this.root * NODE;
+      const c = lcnt[this.root];
+      const start = lowerBoundAny(kv, b, c, lo);
+      const avail = c - start;
+      if (avail <= 0) {
+        return 0;
+      }
+      if (avail <= limit && kv[b + c - 1] <= hi) {
+        copyLongs(outKeys, 0, kv, b + start, avail);
+        copyLongs(outVals, 0, kv, b + VALS + start, avail);
+        return avail;
+      }
+      let written1: i32 = 0;
+      const end = start + (avail < limit ? avail : limit);
+      for (let i = start; i < end; i++) {
+        const key = kv[b + i];
+        if (key > hi) {
+          break;
+        }
+        outKeys[written1] = key;
+        outVals[written1] = kv[b + VALS + i];
+        written1++;
+      }
+      return written1;
+    }
+
+    const stackNode = this.stackNode;
+    const stackIdx = this.stackIdx;
+    const stackLevel = this.stackLevel;
+    let sp: i32 = 0;
+    let nodeId = this.root;
+    const ikv = this.intKv;
+    const ich = this.intChildren;
+    const icnt = this.intCount;
+    let exactLoInInternal = false;
+
+    // Descend to lo
+    for (let level = h; level > 1; level--) {
+      const b = nodeId * NODE;
+      const c = icnt[nodeId];
+      const idx = level == h ? lowerBoundAny(ikv, b, c, lo) : lowerBoundNonRoot(ikv, b, c, lo);
+      if (idx < c) {
+        stackNode[sp] = nodeId;
+        stackIdx[sp] = idx;
+        stackLevel[sp] = level;
+        sp++;
+        if (ikv[b + idx] == lo) {
+          exactLoInInternal = true;
+          break;
+        }
+      }
+      nodeId = ich[nodeId * KIDS + idx];
+    }
+
+    let written: i32 = 0;
+
+    // Process first leaf (unless lo matched an internal key exactly)
+    if (!exactLoInInternal) {
+      const b = nodeId * NODE;
+      const c = lcnt[nodeId];
+      const start = lowerBoundNonRoot(kv, b, c, lo);
+      const avail = c - start;
+      if (avail > 0) {
+        const lastKey = kv[b + c - 1];
+        if (avail <= limit && lastKey <= hi) {
+          copyLongs(outKeys, 0, kv, b + start, avail);
+          copyLongs(outVals, 0, kv, b + VALS + start, avail);
+          written = avail;
+          if (written == limit || lastKey == hi) {
+            return written;
+          }
+        } else {
+          const end = start + (avail < limit ? avail : limit);
+          for (let i = start; i < end; i++) {
+            const key = kv[b + i];
+            if (key > hi) {
+              return written;
+            }
+            outKeys[written] = key;
+            outVals[written] = kv[b + VALS + i];
+            written++;
+          }
+          return written;
+        }
+      }
+    }
+
+    // Unwind ancestor stack, emitting separator keys and right subtrees
+    while (sp > 0) {
+      sp--;
+      const node = stackNode[sp];
+      let idx = stackIdx[sp];
+      const level = stackLevel[sp];
+      const c = icnt[node];
+      const nb = node * NODE;
+      const nc = node * KIDS;
+
+      if (level == 2) {
+        // Children are leaves: inline bulk copy
+        for (; idx < c; idx++) {
+          const sepKey = ikv[nb + idx];
+          if (sepKey > hi) {
+            return written;
+          }
+          outKeys[written] = sepKey;
+          outVals[written] = ikv[nb + VALS + idx];
+          written++;
+          if (written == limit || sepKey == hi) {
+            return written;
+          }
+
+          const leaf = ich[nc + idx + 1];
+          const lb = leaf * NODE;
+          const lc = lcnt[leaf];
+          const rem = limit - written;
+          const lastKey = kv[lb + lc - 1];
+          if (lc <= rem && lastKey <= hi) {
+            copyLongs(outKeys, written, kv, lb, lc);
+            copyLongs(outVals, written, kv, lb + VALS, lc);
+            written += lc;
+            if (written == limit || lastKey == hi) {
+              return written;
+            }
+          } else {
+            const end = lc < rem ? lc : rem;
+            for (let j: i32 = 0; j < end; j++) {
+              const key = kv[lb + j];
+              if (key > hi) {
+                return written;
+              }
+              outKeys[written] = key;
+              outVals[written] = kv[lb + VALS + j];
+              written++;
+            }
+            return written;
+          }
+        }
+      } else {
+        for (; idx < c; idx++) {
+          const sepKey = ikv[nb + idx];
+          if (sepKey > hi) {
+            return written;
+          }
+          outKeys[written] = sepKey;
+          outVals[written] = ikv[nb + VALS + idx];
+          written++;
+          if (written == limit || sepKey == hi) {
+            return written;
+          }
+
+          this.written = written;
+          const done = this.rangeSubtree(ich[nc + idx + 1], level - 1, hi, outKeys, outVals, limit);
+          written = this.written;
+          if (done) {
+            return written;
+          }
+        }
+      }
+    }
+
+    return written;
+  }
+
+  // Emits the entries of a whole subtree whose keys are all > lo, stopping at hi or limit,
+  // from position `this.written` on (and leaves the new position there). Returns true if hi or
+  // limit was reached (the caller should stop immediately).
+  private rangeSubtree(
+    nodeId: i32,
+    level: i32,
+    hi: i64,
+    outKeys: i64[],
+    outVals: i64[],
+    limit: i32,
+  ): boolean {
+    const ikv = this.intKv;
+    const ich = this.intChildren;
+    const c = this.intCount[nodeId];
+    const nb = nodeId * NODE;
+    const nc = nodeId * KIDS;
+
+    if (level == 2) {
+      const kv = this.leafKv;
+      const lcnt = this.leafCount;
+      let w = this.written;
+      for (let i: i32 = 0;; i++) {
+        const leaf = ich[nc + i];
+        const lb = leaf * NODE;
+        const lc = lcnt[leaf];
+        const rem = limit - w;
+        const lastKey = kv[lb + lc - 1];
+        if (lc <= rem && lastKey <= hi) {
+          copyLongs(outKeys, w, kv, lb, lc);
+          copyLongs(outVals, w, kv, lb + VALS, lc);
+          w += lc;
+          if (w == limit || lastKey == hi) {
+            this.written = w;
+            return true;
+          }
+        } else {
+          const end = lc < rem ? lc : rem;
+          for (let j: i32 = 0; j < end; j++) {
+            const key = kv[lb + j];
+            if (key > hi) {
+              this.written = w;
+              return true;
+            }
+            outKeys[w] = key;
+            outVals[w] = kv[lb + VALS + j];
+            w++;
+          }
+          this.written = w;
+          return true;
+        }
+
+        if (i == c) {
+          this.written = w;
+          return false;
+        }
+
+        const sepKey = ikv[nb + i];
+        if (sepKey > hi) {
+          this.written = w;
+          return true;
+        }
+        outKeys[w] = sepKey;
+        outVals[w] = ikv[nb + VALS + i];
+        w++;
+        if (w == limit || sepKey == hi) {
+          this.written = w;
+          return true;
+        }
+      }
+    }
+
+    for (let i: i32 = 0;; i++) {
+      if (this.rangeSubtree(ich[nc + i], level - 1, hi, outKeys, outVals, limit)) {
+        return true;
+      }
+      if (i == c) {
+        return false;
+      }
+      const sepKey = ikv[nb + i];
+      if (sepKey > hi) {
+        return true;
+      }
+      const w = this.written;
+      outKeys[w] = sepKey;
+      outVals[w] = ikv[nb + VALS + i];
+      this.written = w + 1;
+      if (w + 1 == limit || sepKey == hi) {
+        return true;
+      }
+    }
+  }
+}

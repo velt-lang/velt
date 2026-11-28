@@ -1,0 +1,396 @@
+// Randomized skip list (Pugh 1990) over one growing arena: a port of the benchmark's C# solution
+// (SkipList.cs), with the same layout. The arena is addressed in 8-byte units; a node is a u32
+// offset in units, packed inside 128-byte cache lines (16 units) without straddling them:
+//   unit 0       i64 key
+//   unit 1       i64 value
+//   units 2..    u32 next[0 .. h-1], two links per unit (even levels in the low half)
+// Offset 0 is both the head (no link ever points back to it) and NIL; the head's links take
+// units 2..17 of the 32 units reserved for it. Heights are not stored: remove finds a node's
+// height while unlinking it. Nodes come from 12 height pools that keep tall towers apart from
+// height-1 nodes, each with its own intrusive free list (in the key unit of a free node).
+
+const MAX_LEVEL = 32;
+const NUM_POOLS = 12;
+const HEAD_UNITS: u32 = 32;
+const INITIAL_CAP_UNITS: u32 = 64; // 512 bytes
+const LOW: i64 = 0xffffffff;
+
+// Link `level` of the node at `node`.
+function linkOf(a: i64[], node: u32, level: i32): u32 {
+  const w = a[node + 2 + ((level >> 1) as u32)];
+  return (w >> (((level & 1) * 32) as i64)) as u32;
+}
+
+function setLink(a: i64[], node: u32, level: i32, v: u32) {
+  const i = node + 2 + ((level >> 1) as u32);
+  const w = a[i];
+  a[i] = (level & 1) == 0 ? (w & ~LOW) | (v as i64) : (w & LOW) | ((v as i64) << 32);
+}
+
+// Pool by tower height:
+//   pool 0: h = 1 (24B, 5/line)    pool 1: h = 2 (24B, 5/line)
+//   pool 2: h = 3 (32B, 4/line)    pool 3: h = 4 (32B, 4/line)
+//   pool 4: h = 5 (40B, 3/line)    pool 5: h = 6 (40B, 3/line)
+//   pool 6: h = 7 (64B, 2/line)    pool 7: h = 8 (64B, 2/line)
+//   pool 8: h = 9..10 (64B)        pool 9: h = 11..12 (64B)
+//   pool 10: h = 13..28 (128B, 1/line)   pool 11: h = 29..32 (256B, 2 lines)
+function heightToPool(h: i32): i32 {
+  if (h <= 8) {
+    return h - 1;
+  }
+  if (h <= 10) {
+    return 8;
+  }
+  if (h <= 12) {
+    return 9;
+  }
+  if (h <= 28) {
+    return 10;
+  }
+  return 11;
+}
+
+function poolSlotUnits(pool: i32): u32 {
+  if (pool < 6) {
+    return ((pool >> 1) + 3) as u32;
+  }
+  if (pool < 10) {
+    return 8;
+  }
+  return pool == 10 ? 16 : 32;
+}
+
+class PoolState {
+  freeHead: u32 = 0;
+  lineCur: u32 = 0;
+  lineEnd: u32 = 0;
+  blockCur: u32 = 0;
+  blockEnd: u32 = 0;
+  blockLines: u32 = 0;
+}
+
+export class SkipList {
+  private arena: i64[];
+  private rngState: u64;
+  private curHeight: i32;
+  private len: i32;
+  private arenaUsed: u32;
+  private arenaCap: u32;
+  private pools: PoolState[];
+  private update: u32[];
+
+  constructor() {
+    this.arena = new Array<i64>(INITIAL_CAP_UNITS).fill(0);
+    this.arenaUsed = HEAD_UNITS;
+    this.arenaCap = INITIAL_CAP_UNITS;
+    this.rngState = 0x243f6a8885a308d3;
+    this.curHeight = 0;
+    this.len = 0;
+    this.pools = [];
+    for (let i = 0; i < NUM_POOLS; i++) {
+      this.pools.push(new PoolState());
+    }
+    this.update = new Array<u32>(MAX_LEVEL).fill(0);
+  }
+
+  get count(): i32 {
+    return this.len;
+  }
+
+  height(): i32 {
+    return this.curHeight;
+  }
+
+  levelCount(level: i32): i32 {
+    if ((level as u32) >= (this.curHeight as u32)) {
+      return 0;
+    }
+    const a = this.arena;
+    let node = linkOf(a, 0, level);
+    let count: i32 = 0;
+    while (node != 0) {
+      count++;
+      node = linkOf(a, node, level);
+    }
+    return count;
+  }
+
+  // The value stored for `key`, or null.
+  get(key: i64): i64 | null {
+    let lvl = this.curHeight - 1;
+    if (lvl < 0) {
+      return null;
+    }
+    const a = this.arena;
+    let curr: u32 = 0; // HEAD
+    let stop: u32 = 0; // NIL
+    do {
+      const wo = 2 + ((lvl >> 1) as u32);
+      const sh = ((lvl & 1) * 32) as i64;
+      let next = (a[curr + wo] >> sh) as u32;
+      while (next != stop) {
+        const nk = a[next];
+        if (nk < key) {
+          curr = next;
+          next = (a[next + wo] >> sh) as u32;
+          continue;
+        }
+        if (nk == key) {
+          return a[next + 1];
+        }
+        stop = next;
+        break;
+      }
+      lvl--;
+    } while (lvl >= 0);
+    return null;
+  }
+
+  // Inserts `key`, or replaces its value; true when the key is new.
+  insert(key: i64, value: i64): boolean {
+    const update = this.update;
+    let a = this.arena;
+    const height = this.curHeight;
+    let curr: u32 = 0; // HEAD
+    if (height > 0) {
+      let stop: u32 = 0; // NIL
+      let lvl = height - 1;
+      do {
+        const wo = 2 + ((lvl >> 1) as u32);
+        const sh = ((lvl & 1) * 32) as i64;
+        let next = (a[curr + wo] >> sh) as u32;
+        while (next != stop) {
+          const nk = a[next];
+          if (nk < key) {
+            curr = next;
+            next = (a[next + wo] >> sh) as u32;
+            continue;
+          }
+          if (nk == key) {
+            a[next + 1] = value;
+            return false;
+          }
+          stop = next;
+          break;
+        }
+        update[lvl] = curr;
+        lvl--;
+      } while (lvl >= 0);
+    }
+
+    const newHeight = this.randomHeight();
+    if (newHeight > height) {
+      for (let i = height; i < newHeight; i++) {
+        update[i] = 0; // HEAD
+      }
+      this.curHeight = newHeight;
+    }
+
+    const node = this.allocNode(newHeight);
+    a = this.arena; // reload in case allocNode grew the arena
+    a[node] = key;
+    a[node + 1] = value;
+    for (let i: i32 = 0; i < newHeight; i++) {
+      const prev = update[i];
+      setLink(a, node, i, linkOf(a, prev, i));
+      setLink(a, prev, i, node);
+    }
+    this.len++;
+    return true;
+  }
+
+  // Removes `key`; true when it was present.
+  remove(key: i64): boolean {
+    let height = this.curHeight;
+    if (height == 0) {
+      return false;
+    }
+    const update = this.update;
+    const a = this.arena;
+    let curr: u32 = 0; // HEAD
+    let stop: u32 = 0; // NIL
+    let lvl = height - 1;
+    do {
+      const wo = 2 + ((lvl >> 1) as u32);
+      const sh = ((lvl & 1) * 32) as i64;
+      let next = (a[curr + wo] >> sh) as u32;
+      while (next != stop) {
+        const nk = a[next];
+        if (nk < key) {
+          curr = next;
+          next = (a[next + wo] >> sh) as u32;
+          continue;
+        }
+        stop = next;
+        break;
+      }
+      update[lvl] = curr;
+      lvl--;
+    } while (lvl >= 0);
+
+    if (stop == 0 || a[stop] != key) {
+      return false;
+    }
+    setLink(a, update[0], 0, linkOf(a, stop, 0));
+    let nodeHeight: i32 = 1;
+    while (nodeHeight < height) {
+      const prev = update[nodeHeight];
+      if (linkOf(a, prev, nodeHeight) != stop) {
+        break;
+      }
+      setLink(a, prev, nodeHeight, linkOf(a, stop, nodeHeight));
+      nodeHeight++;
+    }
+
+    if (nodeHeight == height) {
+      while (height > 0 && linkOf(a, 0, height - 1) == 0) {
+        height--;
+      }
+      this.curHeight = height;
+    }
+
+    this.freeNode(stop, nodeHeight);
+    this.len--;
+    return true;
+  }
+
+  // Writes the entries with lo <= key <= hi, in order, at most `limit` of them; returns how
+  // many it wrote.
+  range(lo: i64, hi: i64, outKeys: i64[], outVals: i64[], limit: i32): i32 {
+    if (limit <= 0 || lo > hi) {
+      return 0;
+    }
+    const height = this.curHeight;
+    if (height == 0) {
+      return 0;
+    }
+    const a = this.arena;
+    let curr: u32 = 0; // HEAD
+    let stop: u32 = 0; // NIL
+    let lvl = height - 1;
+    let found = false;
+    do {
+      const wo = 2 + ((lvl >> 1) as u32);
+      const sh = ((lvl & 1) * 32) as i64;
+      let next = (a[curr + wo] >> sh) as u32;
+      while (next != stop) {
+        const nk = a[next];
+        if (nk < lo) {
+          curr = next;
+          next = (a[next + wo] >> sh) as u32;
+          continue;
+        }
+        if (nk == lo) {
+          found = true;
+        }
+        stop = next;
+        break;
+      }
+      lvl--;
+    } while (!found && lvl >= 0);
+
+    if (stop == 0) {
+      return 0;
+    }
+    if (limit > outKeys.length || limit > outVals.length) {
+      throw new RangeError("limit is larger than the output arrays");
+    }
+    let written: i32 = 0;
+    let node = stop;
+    do {
+      const k = a[node];
+      if (k > hi) {
+        break;
+      }
+      const nextNode = a[node + 2] as u32;
+      outKeys[written] = k;
+      outVals[written] = a[node + 1];
+      written++;
+      node = nextNode;
+    } while (node != 0 && written < limit);
+    return written;
+  }
+
+  // Wyrand -> geometric (p = 1/2) height in [1, MAX_LEVEL].
+  private randomHeight(): i32 {
+    this.rngState += 0xa0761d6478bd642f;
+    const s = this.rngState;
+    const m = s ^ 0xe7037ed1a0b428db;
+    const r = s * m ^ Math.umulh(s, m);
+    return ((r | ((1 as u64) << 32)).leadingZeros() as i32) + 1;
+  }
+
+  private allocNode(height: i32): u32 {
+    const pool = heightToPool(height);
+    const p = this.pools[pool];
+    let idx = p.freeHead;
+    if (idx != 0) {
+      p.freeHead = this.arena[idx] as u32;
+      return idx;
+    }
+    idx = p.lineCur;
+    if (idx < p.lineEnd) {
+      p.lineCur = idx + poolSlotUnits(pool);
+      return idx;
+    }
+    return this.allocSlow(pool);
+  }
+
+  private freeNode(idx: u32, height: i32) {
+    const p = this.pools[heightToPool(height)];
+    this.arena[idx] = p.freeHead as i64;
+    p.freeHead = idx;
+  }
+
+  private allocSlow(pool: i32): u32 {
+    const p = this.pools[pool];
+    const slotUnits = poolSlotUnits(pool);
+    let lineStart = p.blockCur;
+    if (lineStart >= p.blockEnd) {
+      let lines = p.blockLines;
+      if (lines == 0) {
+        lines = pool == 11 ? 2 : 1;
+      }
+      const nextLines = lines << 2;
+      p.blockLines = nextLines <= 128 ? nextLines : 128;
+
+      const blockUnits = lines << 4; // 128B line = 16 units of 8B
+      const start = this.arenaUsed;
+      const needed = start + blockUnits;
+      if (needed > this.arenaCap) {
+        this.growArena(needed);
+      }
+      this.arenaUsed = needed;
+      lineStart = start;
+      p.blockEnd = needed;
+
+      if (slotUnits != 3 && slotUnits != 5) {
+        p.blockCur = needed;
+        p.lineCur = start + slotUnits;
+        p.lineEnd = needed;
+        return start;
+      }
+    }
+
+    // 24B (3 units) and 40B (5 units): 15 usable units per 16-unit (128B) cache line.
+    p.blockCur = lineStart + 16;
+    p.lineCur = lineStart + slotUnits;
+    p.lineEnd = lineStart + 15;
+    return lineStart;
+  }
+
+  private growArena(minUnits: u32) {
+    let newCap = this.arenaCap;
+    while (newCap < minUnits) {
+      const doubled = newCap << 1;
+      newCap = doubled > newCap ? doubled : minUnits;
+    }
+    const old = this.arena;
+    const grown = new Array<i64>(newCap).fill(0);
+    for (let i: u32 = 0; i < this.arenaUsed; i++) {
+      grown[i] = old[i];
+    }
+    this.arena = grown;
+    this.arenaCap = newCap;
+  }
+}

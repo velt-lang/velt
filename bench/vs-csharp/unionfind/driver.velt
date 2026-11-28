@@ -1,0 +1,670 @@
+// Union-find benchmark driver: a case-by-case port of the benchmark's C# driver (Driver.cs),
+// printing the same "checksum" and "verify" values. usage: driver <case|all> <n> <reps> <warmup>
+import { FOLD_INIT, Result, fail, fold, maxU64, minU64, nowNs, rnd, runDriver, since } from "../common";
+import { UnionFind } from "./unionfind";
+
+// The low and high element of the j-th random pair below m of stream `salt`.
+function pairA(r: u64, m: u64): i32 {
+  return ((r & 0xffffffff) % m) as i32;
+}
+function pairB(r: u64, m: u64): i32 {
+  return ((r >> 32) % m) as i32;
+}
+
+function tag(j: u64): u64 {
+  return (j & 1023) + 1;
+}
+
+function b(x: boolean): u64 {
+  return x ? 1 : 0;
+}
+
+function floorLog2(x0: u64): u32 {
+  let x = x0;
+  let r: u32 = 0;
+  while (x > 1) {
+    x >>= 1;
+    r++;
+  }
+  return r;
+}
+
+// A random permutation of 0 .. m-1 (Fisher-Yates over stream `salt`).
+function permutation(p: i32[], m: u64, salt: u64) {
+  for (let i: u64 = 0; i < m; i++) {
+    p[i] = i as i32;
+  }
+  for (let i = m; i > 1; i--) {
+    const k = rnd(salt, i - 1) % i;
+    const t = p[i - 1];
+    p[i - 1] = p[k];
+    p[k] = t;
+  }
+}
+
+// Follow parent() from x to its root; returns root | depth << 32.
+function walkRoot(caseName: string, n: u64, uf: UnionFind, x: u32, cap: u32): u64 {
+  const m = uf.count as u32;
+  let y = x;
+  let d: u32 = 0;
+  for (;;) {
+    const p = uf.parent(y as i32) as u32;
+    if (p == y) {
+      break;
+    }
+    if (p >= m) {
+      fail(caseName, n, `parent(${y}) = ${p} is not an element`);
+    }
+    d++;
+    if (d > cap) {
+      fail(
+        caseName,
+        n,
+        `following parent() from element ${x} does not reach a root within ${cap} steps; union by size or by rank keeps every tree of ${m} elements at most floor(log2(${m})) levels deep`,
+      );
+    }
+    y = p;
+  }
+  return (y as u64) | ((d as u64) << 32);
+}
+
+function rootPart(w: u64): u32 {
+  return (w & 0xffffffff) as u32;
+}
+function depthPart(w: u64): u32 {
+  return (w >> 32) as u32;
+}
+
+function rootOf(caseName: string, n: u64, uf: UnionFind, x: u32): u32 {
+  return rootPart(walkRoot(caseName, n, uf, x, floorLog2(uf.count as u64)));
+}
+
+function checkShortening(caseName: string, n: u64, uf: UnionFind, x: u32, d: u32, root: u32) {
+  const f = uf.find(x as i32) as u32;
+  if (f != root) {
+    fail(caseName, n, `find(${x}) is not the root reached by following parent()`);
+  }
+  const d2 = depthPart(walkRoot(caseName, n, uf, x, d));
+  if (d2 > (d + 1) / 2) {
+    fail(
+      caseName,
+      n,
+      `element ${x} was ${d} levels deep and is still ${d2} levels deep after find(); find must shorten the path (full compression, halving or splitting)`,
+    );
+  }
+}
+
+function verifyFresh(caseName: string, n: u64): u64 {
+  let h = FOLD_INIT;
+  {
+    const e = new UnionFind(0);
+    h = fold(h, e.count as u64);
+    h = fold(h, e.setCount() as u64);
+  }
+  {
+    const one = new UnionFind(1);
+    h = fold(h, one.count as u64);
+    h = fold(h, one.setCount() as u64);
+    h = fold(h, b(one.find(0) == 0));
+    h = fold(h, b(one.parent(0) == 0));
+    h = fold(h, one.setSize(0) as u64);
+    h = fold(h, b(one.connected(0, 0)));
+    h = fold(h, b(one.union(0, 0)));
+    h = fold(h, one.setCount() as u64);
+  }
+  const c: u32 = 1000;
+  for (let dir: u32 = 0; dir < 2; dir++) {
+    const ch = new UnionFind(c as i32);
+    for (let k: u32 = 0; k + 1 < c; k++) {
+      const i = dir == 0 ? k : c - 2 - k;
+      h = fold(h, b(ch.union(i as i32, (i + 1) as i32)));
+    }
+    h = fold(h, ch.setCount() as u64);
+    h = fold(h, b(ch.union(0, (c - 1) as i32)));
+    h = fold(h, b(ch.union((c / 2) as i32, (c / 3) as i32)));
+    const ccap = floorLog2(c as u64);
+    for (let x: u32 = 0; x < c; x++) {
+      walkRoot(caseName, n, ch, x, ccap);
+    }
+    h = fold(h, ch.setSize((c - 1) as i32) as u64);
+    h = fold(h, b(ch.connected(0, (c - 1) as i32)));
+    h = fold(h, ch.setCount() as u64);
+  }
+  const bn: u32 = 1024;
+  const bt = new UnionFind(bn as i32);
+  for (let s: u32 = 1; s < bn; s *= 2) {
+    for (let i: u32 = 0; i + s < bn; i += 2 * s) {
+      const ra = rootOf(caseName, n, bt, i);
+      const rb = rootOf(caseName, n, bt, i + s);
+      h = fold(h, b(bt.union(ra as i32, rb as i32)));
+    }
+    h = fold(h, bt.setCount() as u64);
+  }
+  const cap = floorLog2(bn as u64);
+  let deep: u32 = 0;
+  let dmax: u32 = 0;
+  let droot: u32 = 0;
+  for (let x: u32 = 0; x < bn; x++) {
+    const w = walkRoot(caseName, n, bt, x, cap);
+    const d = depthPart(w);
+    if (d > dmax) {
+      dmax = d;
+      deep = x;
+      droot = rootPart(w);
+    }
+  }
+  if (dmax >= 2) {
+    checkShortening(caseName, n, bt, deep, dmax, droot);
+  }
+  h = fold(h, bt.setSize(deep as i32) as u64);
+  h = fold(h, b(bt.connected(0, (bn - 1) as i32)));
+  h = fold(h, b(bt.union((bn - 1) as i32, 0)));
+  h = fold(h, bt.setCount() as u64);
+  return h;
+}
+
+function verifyFull(caseName: string, n: u64, uf: UnionFind): u64 {
+  let h = FOLD_INIT;
+  const m = uf.count as u32;
+  const s = uf.setCount() as u32;
+  h = fold(h, m as u64);
+  h = fold(h, s as u64);
+  const cap = m > 0 ? floorLog2(m as u64) : 0;
+  const root = new Array<u32>(m).fill(0);
+  const depth = new Array<u8>(m).fill(0);
+  let deep: u32 = 0;
+  let dmax: u32 = 0;
+  for (let x: u32 = 0; x < m; x++) {
+    const w = walkRoot(caseName, n, uf, x, cap);
+    const d = depthPart(w);
+    root[x] = rootPart(w);
+    depth[x] = d as u8;
+    if (d > dmax) {
+      dmax = d;
+      deep = x;
+    }
+  }
+  if (dmax >= 2) {
+    checkShortening(caseName, n, uf, deep, dmax, root[deep]);
+  }
+  const cnt = new Array<u32>(m).fill(0);
+  const low = new Array<u32>(m).fill(0);
+  let roots: u32 = 0;
+  for (let x: u32 = 0; x < m; x++) {
+    const f = uf.find(x as i32) as u32;
+    if (f != root[x]) {
+      fail(caseName, n, `find(${x}) = ${f} is not the root reached by following parent() (${root[x]})`);
+    }
+    if (cnt[f] == 0) {
+      low[f] = x;
+      roots++;
+    }
+    cnt[f]++;
+  }
+  if (roots != s) {
+    fail(caseName, n, `sets() = ${s}, but the forest has ${roots} trees`);
+  }
+  for (let x: u32 = 0; x < m; x++) {
+    const r = root[x];
+    if (((1 as u64) << (depth[x] as u64)) > (cnt[r] as u64)) {
+      fail(
+        caseName,
+        n,
+        `element ${x} is ${depth[x]} levels deep in a set of ${cnt[r]} elements; union by size or by rank never builds a tree deeper than floor(log2(size of the set))`,
+      );
+    }
+    h = fold(h, low[r] as u64);
+  }
+  const samples = minU64(m as u64, 65536);
+  for (let j: u64 = 0; j < samples; j++) {
+    const pr = rnd(11, j);
+    const ia = pairA(pr, m as u64);
+    const ib = pairB(pr, m as u64);
+    const a = ia as u32;
+    const bb = ib as u32;
+    const sz = uf.setSize(ia) as u32;
+    if (sz != cnt[root[a]]) {
+      fail(caseName, n, `set_size(${a}) = ${sz}, but its set has ${cnt[root[a]]} elements`);
+    }
+    h = fold(h, sz as u64);
+    const c1 = uf.connected(ia, ib);
+    if (c1 != (root[a] == root[bb])) {
+      fail(caseName, n, `connected(${a}, ${bb}) disagrees with find()`);
+    }
+    h = fold(h, b(c1));
+    const l = low[root[bb]];
+    const c2 = uf.connected(l as i32, ib);
+    if (!c2) {
+      fail(caseName, n, `connected(${l}, ${bb}) is false for two elements of one set`);
+    }
+    h = fold(h, l as u64);
+  }
+  if (m > 0) {
+    h = fold(h, b(uf.connected(0, (m - 1) as i32)));
+    h = fold(h, b(uf.union((m - 1) as i32, (m - 1) as i32)));
+    h = fold(h, uf.setCount() as u64);
+  }
+  h = fold(h, verifyFresh(caseName, n));
+  return h;
+}
+
+function caseRandomUnions(name: string, n: u64): Result {
+  const rounds: u64 = 4;
+  const len = n as i32;
+  const ua = new Array<i32>(len).fill(0);
+  const ub = new Array<i32>(len).fill(0);
+  for (let j: i32 = 0; j < len; j++) {
+    const r = rnd(1, j as u64);
+    ua[j] = pairA(r, n);
+    ub[j] = pairB(r, n);
+  }
+  let acc: u64 = 0;
+  let ns: u64 = 0;
+  let h = FOLD_INIT;
+  for (let round: u64 = 0; round < rounds; round++) {
+    const uf = new UnionFind(len);
+    const t0 = nowNs();
+    for (let j: i32 = 0; j < len; j++) {
+      acc += uf.union(ua[j], ub[j]) ? tag(j as u64) : 0;
+    }
+    ns += since(t0);
+    acc += uf.setCount() as u64;
+    if (round + 1 == rounds) {
+      h = fold(h, verifyFull(name, n, uf));
+    }
+  }
+  return new Result(rounds * n, ns, acc, h);
+}
+
+function caseChain(name: string, n: u64): Result {
+  const rounds: u64 = 28;
+  const len = n as i32;
+  let acc: u64 = 0;
+  let ns: u64 = 0;
+  let h = FOLD_INIT;
+  for (let round: u64 = 0; round < rounds; round++) {
+    const uf = new UnionFind(len);
+    const t0 = nowNs();
+    if (round % 2 == 0) {
+      for (let i: i32 = 0; i + 1 < len; i++) {
+        acc += uf.union(i, i + 1) ? tag(i as u64) : 0;
+      }
+    } else {
+      for (let i: i32 = len - 1; i > 0; i--) {
+        acc += uf.union(i - 1, i) ? tag(i as u64) : 0;
+      }
+    }
+    ns += since(t0);
+    acc += uf.setCount() as u64;
+    if (round + 1 == rounds) {
+      h = fold(h, verifyFull(name, n, uf));
+    }
+  }
+  return new Result(rounds * (n - 1), ns, acc, h);
+}
+
+function casePairwise(name: string, n: u64): Result {
+  const rounds: u64 = 7;
+  const len = n as i64;
+  const p = new Array<i32>(len).fill(0);
+  permutation(p, n, 3);
+  let acc: u64 = 0;
+  let ns: u64 = 0;
+  let h = FOLD_INIT;
+  for (let round: u64 = 0; round < rounds; round++) {
+    const uf = new UnionFind(len as i32);
+    let k: u64 = 0;
+    const t0 = nowNs();
+    for (let s: i64 = 1; s < len; s *= 2) {
+      for (let i: i64 = 0; i + s < len; i += 2 * s) {
+        acc += uf.union(p[i], p[i + s]) ? tag(k) : 0;
+        k++;
+      }
+    }
+    ns += since(t0);
+    acc += uf.setCount() as u64;
+    if (round + 1 == rounds) {
+      h = fold(h, verifyFull(name, n, uf));
+    }
+  }
+  return new Result(rounds * (n - 1), ns, acc, h);
+}
+
+function caseFindDeep(name: string, n: u64): Result {
+  const rounds: u64 = 7;
+  const cap = maxU64(1, n / 16);
+  const len = n as i32;
+  const p = new Array<i32>(len).fill(0);
+  const q = new Array<i32>(len).fill(0);
+  const r = new Array<i32>(len).fill(0);
+  const cur = new Array<i32>(len).fill(0);
+  const low = new Array<i32>(len).fill(0);
+  permutation(p, n, 3);
+  for (let j: i32 = 0; j < len; j++) {
+    q[j] = (rnd(4, j as u64) % n) as i32;
+  }
+  let acc: u64 = 0;
+  let ns: u64 = 0;
+  let h = FOLD_INIT;
+  for (let round: u64 = 0; round < rounds; round++) {
+    const uf = new UnionFind(len);
+    for (let i: u64 = 0; i < n; i++) {
+      cur[i] = p[i];
+    }
+    for (let s: u64 = 1; s < cap; s *= 2) {
+      for (let i: u64 = 0; i + s < n; i += 2 * s) {
+        const ra = cur[i];
+        uf.union(ra, cur[i + s]);
+        const nr = uf.parent(ra);
+        if (uf.parent(nr) != nr) {
+          fail(name, n, "after uniting two roots, the first is neither a root nor a child of one");
+        }
+        cur[i] = nr;
+      }
+    }
+    const t0 = nowNs();
+    for (let j: i32 = 0; j < len; j++) {
+      r[j] = uf.find(q[j]);
+    }
+    ns += since(t0);
+    for (let x = n; x > 0; x--) {
+      low[uf.find((x - 1) as i32)] = (x - 1) as i32;
+    }
+    for (let j: i32 = 0; j < len; j++) {
+      if (uf.parent(r[j]) != r[j]) {
+        fail(name, n, `find(${q[j] as u32}) returned ${r[j] as u32}, which is not a root`);
+      }
+      acc += ((low[r[j]] as u32) as u64) ^ ((j as u64) & 1023);
+    }
+    acc += uf.setCount() as u64;
+    if (round + 1 == rounds) {
+      h = fold(h, verifyFull(name, n, uf));
+    }
+  }
+  return new Result(rounds * n, ns, acc, h);
+}
+
+function caseConnected(name: string, n: u64, same: boolean): Result {
+  const passes: u64 = 14;
+  const g: u64 = 1024;
+  const len = n as i32;
+  const p = new Array<i32>(len).fill(0);
+  const qa = new Array<i32>(len).fill(0);
+  const qb = new Array<i32>(len).fill(0);
+  permutation(p, n, 3);
+  const uf = new UnionFind(len);
+  for (let i: u64 = 0; i < n; i++) {
+    const k = i % g;
+    if (k > 0) {
+      uf.union(p[i], p[i - 1 - (rnd(5, i) % k)]);
+    }
+  }
+  for (let j: u64 = 0; j < n; j++) {
+    const x = rnd(6, j);
+    if (same && x % 10 != 0) {
+      const i = (x >> 8) % n;
+      const g0 = i - (i % g);
+      const gs = minU64(g, n - g0);
+      qa[j] = p[i];
+      qb[j] = p[g0 + ((x >> 40) % gs)];
+    } else {
+      const pr = rnd(7, j);
+      qa[j] = pairA(pr, n);
+      qb[j] = pairB(pr, n);
+    }
+  }
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let pass: u64 = 0; pass < passes; pass++) {
+    for (let j: i32 = 0; j < len; j++) {
+      acc += uf.connected(qa[j], qb[j]) ? tag(j as u64) : 0;
+    }
+  }
+  const ns = since(t0);
+  acc += uf.setCount() as u64;
+  return new Result(passes * n, ns, acc, verifyFull(name, n, uf));
+}
+
+function caseSetSize(name: string, n: u64): Result {
+  const passes: u64 = 10;
+  const len = n as i32;
+  const q = new Array<i32>(len).fill(0);
+  const uf = new UnionFind(len);
+  for (let j: u64 = 0; j < n / 2; j++) {
+    const pr = rnd(8, j);
+    uf.union(pairA(pr, n), pairB(pr, n));
+  }
+  for (let j: i32 = 0; j < len; j++) {
+    q[j] = (rnd(9, j as u64) % n) as i32;
+  }
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let pass: u64 = 0; pass < passes; pass++) {
+    for (let j: i32 = 0; j < len; j++) {
+      acc += ((uf.setSize(q[j]) as u32) as u64) ^ ((j as u64) & 1023);
+    }
+  }
+  const ns = since(t0);
+  acc += uf.setCount() as u64;
+  return new Result(passes * n, ns, acc, verifyFull(name, n, uf));
+}
+
+const OP_UNION: u8 = 0;
+const OP_CONNECTED: u8 = 1;
+const OP_SET_SIZE: u8 = 2;
+
+function casePercolation(name: string, n: u64): Result {
+  const rounds: u64 = 6;
+  let w: u64 = 1;
+  while ((w + 1) * (w + 1) <= n / 2) {
+    w++;
+  }
+  const cells = w * w;
+  const top = cells as i32;
+  const bottom = (cells + 1) as i32;
+  const order = new Array<i32>(cells).fill(0);
+  permutation(order, cells, 10);
+  const open = new Array<u8>(cells).fill(0);
+  const capacity = 2 * cells + 2 * w;
+  const op = new Array<u8>(capacity).fill(0);
+  const a = new Array<i32>(capacity).fill(0);
+  const bb = new Array<i32>(capacity).fill(0);
+  let len: u64 = 0;
+  const nb = new Array<u64>(4).fill(0);
+  const ok = new Array<boolean>(4).fill(false);
+  for (let k: u64 = 0; k < cells; k++) {
+    const c = order[k] as u64;
+    const row = c / w;
+    const col = c % w;
+    open[c] = 1;
+    nb[0] = c - w;
+    nb[1] = c + w;
+    nb[2] = c - 1;
+    nb[3] = c + 1;
+    ok[0] = row > 0;
+    ok[1] = row + 1 < w;
+    ok[2] = col > 0;
+    ok[3] = col + 1 < w;
+    if (row == 0) {
+      op[len] = OP_UNION;
+      a[len] = c as i32;
+      bb[len] = top;
+      len++;
+    }
+    if (row + 1 == w) {
+      op[len] = OP_UNION;
+      a[len] = c as i32;
+      bb[len] = bottom;
+      len++;
+    }
+    for (let e: u64 = 0; e < 4; e++) {
+      if (ok[e] && open[nb[e]] != 0) {
+        op[len] = OP_UNION;
+        a[len] = c as i32;
+        bb[len] = nb[e] as i32;
+        len++;
+      }
+    }
+    if ((k + 1) % w == 0) {
+      op[len] = OP_CONNECTED;
+      a[len] = top;
+      bb[len] = bottom;
+      len++;
+    }
+  }
+  const count = len as i32;
+  let acc: u64 = 0;
+  let ns: u64 = 0;
+  let h = FOLD_INIT;
+  for (let round: u64 = 0; round < rounds; round++) {
+    const uf = new UnionFind((cells + 2) as i32);
+    const t0 = nowNs();
+    for (let j: i32 = 0; j < count; j++) {
+      const yes = op[j] == OP_UNION ? uf.union(a[j], bb[j]) : uf.connected(a[j], bb[j]);
+      acc += yes ? tag(j as u64) : 0;
+    }
+    ns += since(t0);
+    acc += uf.setCount() as u64;
+    if (round + 1 == rounds) {
+      h = fold(h, verifyFull(name, n, uf));
+    }
+  }
+  return new Result(rounds * len, ns, acc, h);
+}
+
+function caseKruskalSmall(name: string, n: u64): Result {
+  const passes: u64 = 20;
+  const v = minU64(n, 4096);
+  const e = 4 * v;
+  const graphs = maxU64(1, n / e);
+  const len = graphs * e;
+  const ea = new Array<i32>(len).fill(0);
+  const eb = new Array<i32>(len).fill(0);
+  for (let j: u64 = 0; j < len; j++) {
+    const pr = rnd(12, j);
+    ea[j] = pairA(pr, v);
+    eb[j] = pairB(pr, v);
+  }
+  const ng = graphs as i32;
+  const ne = e as i32;
+  let acc: u64 = 0;
+  let ns: u64 = 0;
+  let h = FOLD_INIT;
+  for (let pass: u64 = 0; pass < passes; pass++) {
+    const ufs: UnionFind[] = [];
+    for (let gi: i32 = 0; gi < ng; gi++) {
+      ufs.push(new UnionFind(v as i32));
+    }
+    const t0 = nowNs();
+    for (let gi: i32 = 0; gi < ng; gi++) {
+      const uf = ufs[gi];
+      const end = (gi + 1) * ne;
+      for (let j = gi * ne; j < end; j++) {
+        acc += uf.union(ea[j], eb[j]) ? tag(j as u64) : 0;
+      }
+    }
+    ns += since(t0);
+    for (let gi: i32 = 0; gi < ng; gi++) {
+      acc += ufs[gi].setCount() as u64;
+    }
+    if (pass + 1 == passes) {
+      h = fold(h, verifyFull(name, n, ufs[ng - 1]));
+    }
+  }
+  return new Result(passes * len, ns, acc, h);
+}
+
+function caseMixedSmall(name: string, n: u64): Result {
+  const passes: u64 = 10;
+  const v = minU64(n, 65536);
+  const e = 2 * v;
+  const streams = maxU64(1, n / e);
+  const len = streams * e;
+  const op = new Array<u8>(len).fill(0);
+  const a = new Array<i32>(len).fill(0);
+  const bb = new Array<i32>(len).fill(0);
+  for (let j: u64 = 0; j < len; j++) {
+    const x = rnd(13, j);
+    const pc = x % 100;
+    a[j] = ((x >> 8) % v) as i32;
+    bb[j] = ((x >> 36) % v) as i32;
+    op[j] = pc < 40 ? OP_UNION : pc < 90 ? OP_CONNECTED : OP_SET_SIZE;
+  }
+  const nst = streams as i32;
+  const ne = e as i32;
+  let acc: u64 = 0;
+  let ns: u64 = 0;
+  let h = FOLD_INIT;
+  for (let pass: u64 = 0; pass < passes; pass++) {
+    const ufs: UnionFind[] = [];
+    for (let si: i32 = 0; si < nst; si++) {
+      ufs.push(new UnionFind(v as i32));
+    }
+    const t0 = nowNs();
+    for (let si: i32 = 0; si < nst; si++) {
+      const uf = ufs[si];
+      const end = (si + 1) * ne;
+      for (let j = si * ne; j < end; j++) {
+        switch (op[j]) {
+          case OP_UNION:
+            acc += uf.union(a[j], bb[j]) ? tag(j as u64) : 0;
+            break;
+          case OP_CONNECTED:
+            acc += uf.connected(a[j], bb[j]) ? tag(j as u64) : 0;
+            break;
+          default:
+            acc += ((uf.setSize(a[j]) as u32) as u64) ^ ((j as u64) & 1023);
+            break;
+        }
+      }
+    }
+    ns += since(t0);
+    for (let si: i32 = 0; si < nst; si++) {
+      acc += ufs[si].setCount() as u64;
+    }
+    if (pass + 1 == passes) {
+      h = fold(h, verifyFull(name, n, ufs[nst - 1]));
+    }
+  }
+  return new Result(passes * len, ns, acc, h);
+}
+
+const CASES = [
+  "random_unions",
+  "chain",
+  "pairwise",
+  "find_deep",
+  "connected_same",
+  "connected_random",
+  "set_size",
+  "percolation",
+  "kruskal_small",
+  "mixed_small",
+];
+
+function runCase(name: string, n: u64): Result {
+  switch (name) {
+    case "random_unions":
+      return caseRandomUnions(name, n);
+    case "chain":
+      return caseChain(name, n);
+    case "pairwise":
+      return casePairwise(name, n);
+    case "find_deep":
+      return caseFindDeep(name, n);
+    case "connected_same":
+      return caseConnected(name, n, true);
+    case "connected_random":
+      return caseConnected(name, n, false);
+    case "set_size":
+      return caseSetSize(name, n);
+    case "percolation":
+      return casePercolation(name, n);
+    case "kruskal_small":
+      return caseKruskalSmall(name, n);
+    default:
+      return caseMixedSmall(name, n);
+  }
+}
+
+runDriver(CASES, runCase, 2147483647 - 131072);

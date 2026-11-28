@@ -1,0 +1,502 @@
+// Doubly linked list benchmark driver: a case-by-case port of the benchmark's C# driver
+// (Driver.cs), printing the same "checksum" and "verify" values.
+// usage: driver <case|all> <n> <reps> <warmup>
+import {
+  FOLD_INIT,
+  Result,
+  fail,
+  fold,
+  maxU64,
+  minU64,
+  mix64,
+  nowNs,
+  rnd,
+  runDriver,
+  since,
+} from "../common";
+import { DList } from "./dlist";
+
+const I64_MIN: i64 = -9223372036854775807 - 1;
+const I64_MAX: i64 = 9223372036854775807;
+
+// The value of the i-th element a case creates.
+function valAt(i: u64): i64 {
+  return mix64(i ^ 0x5a5a5a5a5a5a5a5a) as i64;
+}
+
+function b(x: boolean): u64 {
+  return x ? 1 : 0;
+}
+
+// Hash the observable state of the list: its length, every value from front to back and from
+// back to front, then the results of a few operations at both ends. Every link is checked
+// against its neighbour's. The list is left as it was found.
+function verifyFull(caseName: string, n: u64, l: DList): u64 {
+  let h = FOLD_INIT;
+  const len = l.count as u64;
+  h = fold(h, len);
+
+  let count: u64 = 0;
+  let before: u64 = 0;
+  for (let x = l.front(); x != 0; x = l.next(x)) {
+    if (count == len) {
+      fail(caseName, n, "walking next() from front() visits more than len() nodes");
+    }
+    if (l.prev(x) != before) {
+      fail(caseName, n, `prev() of the node at position ${count} is not the node before it`);
+    }
+    h = fold(h, l.get(x) as u64);
+    before = x;
+    count++;
+  }
+  if (count != len) {
+    fail(caseName, n, `walking next() from front() visits ${count} nodes, but len() = ${len}`);
+  }
+  if (l.back() != before) {
+    fail(caseName, n, "back() is not the last node reached by next()");
+  }
+
+  let after: u64 = 0;
+  count = 0;
+  for (let x = l.back(); x != 0; x = l.prev(x)) {
+    if (count == len) {
+      fail(caseName, n, "walking prev() from back() visits more than len() nodes");
+    }
+    if (l.next(x) != after) {
+      fail(
+        caseName,
+        n,
+        `next() of the node ${count} places from the back is not the node after it`,
+      );
+    }
+    h = fold(h, l.get(x) as u64);
+    after = x;
+    count++;
+  }
+  if (count != len) {
+    fail(caseName, n, `walking prev() from back() visits ${count} nodes, but len() = ${len}`);
+  }
+  if (l.front() != after) {
+    fail(caseName, n, "front() is not the last node reached by prev()");
+  }
+
+  // Operations at both ends, undone again.
+  const a = l.pushFront(I64_MIN);
+  const bk = l.pushBack(I64_MAX);
+  h = fold(h, l.get(l.front()) as u64);
+  h = fold(h, l.get(l.back()) as u64);
+  const c = l.insertAfter(a, 7);
+  const d = l.insertBefore(bk, -7);
+  h = fold(h, l.count as u64);
+  h = fold(h, l.get(l.next(a)) as u64);
+  h = fold(h, l.get(l.prev(bk)) as u64);
+  h = fold(h, b(l.next(a) == c));
+  h = fold(h, b(l.prev(bk) == d));
+  l.moveToFront(d);
+  h = fold(h, b(l.front() == d));
+  h = fold(h, b(l.next(d) == a));
+  h = fold(h, b(l.prev(a) == d));
+  l.moveToFront(d); // already the first: nothing changes
+  h = fold(h, l.get(l.front()) as u64);
+  h = fold(h, b(l.prev(l.front()) == 0));
+  h = fold(h, b(l.next(l.back()) == 0));
+  h = fold(h, l.count as u64);
+  h = fold(h, l.remove(c) as u64);
+  h = fold(h, l.remove(a) as u64);
+  let found = l.tryPopFront(); // d
+  h = fold(h, b(found));
+  h = fold(h, l.popped as u64);
+  found = l.tryPopBack(); // bk
+  h = fold(h, b(found));
+  h = fold(h, l.popped as u64);
+  h = fold(h, l.count as u64);
+  if (len == 0) {
+    found = l.tryPopFront();
+    h = fold(h, b(found));
+    found = l.tryPopBack();
+    h = fold(h, b(found));
+    h = fold(h, b(l.front() == 0));
+    h = fold(h, b(l.back() == 0));
+  }
+  return h;
+}
+
+// Append valAt(0..n) in order, keeping the handles (untimed setup).
+function buildSequential(l: DList, hs: u64[], n: u64) {
+  for (let i: u64 = 0; i < n; i++) {
+    hs[i] = l.pushBack(valAt(i));
+  }
+}
+
+// Where the j-th element of a scattered list goes: next to a random earlier element (`at` is
+// that element's number, `side` says before or after).
+function scatterPlan(at: u64[], side: u8[], n: u64) {
+  at[0] = 0;
+  side[0] = 0;
+  for (let j: u64 = 1; j < n; j++) {
+    const r = rnd(1, j);
+    at[j] = (r >> 1) % j;
+    side[j] = (r & 1) as u8;
+  }
+}
+
+// Build a list of n elements in which every element is inserted next to a random earlier one
+// (untimed setup).
+function buildScattered(l: DList, hs: u64[], n: u64) {
+  const at = new Array<u64>(n).fill(0);
+  const side = new Array<u8>(n).fill(0);
+  scatterPlan(at, side, n);
+  hs[0] = l.pushBack(valAt(0));
+  for (let j: u64 = 1; j < n; j++) {
+    hs[j] = side[j] != 0 ? l.insertAfter(hs[at[j]], valAt(j)) : l.insertBefore(hs[at[j]], valAt(j));
+  }
+}
+
+function casePushBack(name: string, n: u64): Result {
+  const rounds: u64 = 20;
+  const len = n as i32;
+  const vs = new Array<i64>(len).fill(0);
+  const hs = new Array<u64>(len).fill(0);
+  for (let i: i32 = 0; i < len; i++) {
+    vs[i] = valAt(i as u64);
+  }
+  let acc: u64 = 0;
+  let ns: u64 = 0;
+  let h = FOLD_INIT;
+  for (let round: u64 = 0; round < rounds; round++) {
+    const l = new DList();
+    const t0 = nowNs();
+    for (let i: i32 = 0; i < len; i++) {
+      hs[i] = l.pushBack(vs[i]);
+    }
+    ns += since(t0);
+    acc += l.count as u64;
+    h = fold(h, l.get(hs[n / 2]) as u64);
+    if (round + 1 == rounds) {
+      h = fold(h, verifyFull(name, n, l));
+    }
+  }
+  return new Result(rounds * n, ns, acc, h);
+}
+
+function caseInsertRandom(name: string, n: u64): Result {
+  const rounds: u64 = 4;
+  const len = n as i32;
+  const at = new Array<u64>(len).fill(0);
+  const hs = new Array<u64>(len).fill(0);
+  const side = new Array<u8>(len).fill(0);
+  const vs = new Array<i64>(len).fill(0);
+  scatterPlan(at, side, n);
+  for (let i: i32 = 0; i < len; i++) {
+    vs[i] = valAt(i as u64);
+  }
+  let acc: u64 = 0;
+  let ns: u64 = 0;
+  let h = FOLD_INIT;
+  for (let round: u64 = 0; round < rounds; round++) {
+    const l = new DList();
+    hs[0] = l.pushBack(vs[0]);
+    const t0 = nowNs();
+    for (let j: i32 = 1; j < len; j++) {
+      hs[j] = side[j] != 0 ? l.insertAfter(hs[at[j]], vs[j]) : l.insertBefore(hs[at[j]], vs[j]);
+    }
+    ns += since(t0);
+    acc += l.count as u64;
+    if (round + 1 == rounds) {
+      h = fold(h, verifyFull(name, n, l));
+    }
+  }
+  return new Result(rounds * n, ns, acc, h);
+}
+
+function caseTraverse(name: string, n: u64, scattered: boolean): Result {
+  const passes: u64 = scattered ? 1 : 24;
+  const l = new DList();
+  const hs = new Array<u64>(n).fill(0);
+  if (scattered) {
+    buildScattered(l, hs, n);
+  } else {
+    buildSequential(l, hs, n);
+  }
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let pass: u64 = 0; pass < passes; pass++) {
+    for (let x = l.front(); x != 0; x = l.next(x)) {
+      acc += l.get(x) as u64;
+    }
+    for (let x = l.back(); x != 0; x = l.prev(x)) {
+      acc += (l.get(x) as u64) ^ 1;
+    }
+  }
+  const ns = since(t0);
+  return new Result(passes * 2 * n, ns, acc, verifyFull(name, n, l));
+}
+
+function caseRemoveRandom(name: string, n: u64): Result {
+  const rounds: u64 = 6;
+  const len = n as i32;
+  const hs = new Array<u64>(len).fill(0);
+  const d = new Array<u64>(len).fill(0);
+  const order = new Array<u64>(len).fill(0);
+  for (let j: i32 = 0; j < len; j++) {
+    order[j] = j as u64;
+  }
+  for (let j = n - 1; j > 0; j--) {
+    // a random permutation (Fisher-Yates)
+    const o = rnd(2, j) % (j + 1);
+    const tmp = order[j];
+    order[j] = order[o];
+    order[o] = tmp;
+  }
+  let acc: u64 = 0;
+  let ns: u64 = 0;
+  let h = FOLD_INIT;
+  for (let round: u64 = 0; round < rounds; round++) {
+    const l = new DList();
+    buildSequential(l, hs, n);
+    for (let j: i32 = 0; j < len; j++) {
+      d[j] = hs[order[j]];
+    }
+    const t0 = nowNs();
+    for (let j: i32 = 0; j < len; j++) {
+      acc += (l.remove(d[j]) as u64) ^ (j as u64);
+    }
+    ns += since(t0);
+    if (round + 1 == rounds) {
+      h = fold(h, verifyFull(name, n, l));
+      const again = minU64(n, 100); // an emptied list must be usable again
+      for (let i: u64 = 0; i < again; i++) {
+        if ((i & 1) != 0) {
+          l.pushFront(valAt(i));
+        } else {
+          l.pushBack(valAt(i));
+        }
+      }
+      h = fold(h, verifyFull(name, n, l));
+    }
+  }
+  return new Result(rounds * n, ns, acc, h);
+}
+
+function caseMoveToFront(name: string, n: u64): Result {
+  const passes: u64 = 6;
+  const len = n as i32;
+  const l = new DList();
+  const hs = new Array<u64>(len).fill(0);
+  const q = new Array<u64>(len).fill(0);
+  buildScattered(l, hs, n);
+  for (let j: i32 = 0; j < len; j++) {
+    q[j] = hs[rnd(3, j as u64) % n];
+  }
+  const t0 = nowNs();
+  for (let pass: u64 = 0; pass < passes; pass++) {
+    for (let j: i32 = 0; j < len; j++) {
+      l.moveToFront(q[j]);
+    }
+  }
+  const ns = since(t0);
+  let acc: u64 = 0; // the checksum looks at the first elements afterwards
+  let i: u64 = 0;
+  for (let x = l.front(); x != 0 && i < 1000; x = l.next(x), i++) {
+    acc += (l.get(x) as u64) ^ i;
+  }
+  return new Result(passes * n, ns, acc, verifyFull(name, n, l));
+}
+
+function caseQueue(name: string, n: u64): Result {
+  const passes: u64 = 16;
+  const held = maxU64(1, n / 8);
+  const len = n as i32;
+  const vs = new Array<i64>(len).fill(0);
+  for (let i: i32 = 0; i < len; i++) {
+    vs[i] = valAt(n + (i as u64));
+  }
+  const l = new DList();
+  for (let i: u64 = 0; i < held; i++) {
+    l.pushBack(valAt(i));
+  }
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let pass: u64 = 0; pass < passes; pass++) {
+    for (let i: i32 = 0; i < len; i++) {
+      l.pushBack(vs[i]);
+      l.tryPopFront();
+      acc += (l.popped as u64) ^ (i as u64);
+    }
+  }
+  const ns = since(t0);
+  return new Result(passes * 2 * n, ns, acc, verifyFull(name, n, l));
+}
+
+function caseJosephus(name: string, n: u64): Result {
+  const rounds: u64 = 6;
+  const hs = new Array<u64>(n).fill(0);
+  let acc: u64 = 0;
+  let ns: u64 = 0;
+  let h = FOLD_INIT;
+  for (let round: u64 = 0; round < rounds; round++) {
+    const l = new DList();
+    buildSequential(l, hs, n);
+    const t0 = nowNs();
+    let x = l.front();
+    for (let i: u64 = 0; i < n; i++) {
+      for (let s: u64 = 0; s < 2; s++) {
+        // skip two, wrapping around
+        x = l.next(x);
+        if (x == 0) {
+          x = l.front();
+        }
+      }
+      const nx = l.next(x);
+      acc += (l.remove(x) as u64) ^ i;
+      x = nx != 0 ? nx : l.front();
+    }
+    ns += since(t0);
+    if (round + 1 == rounds) {
+      h = fold(h, verifyFull(name, n, l));
+    }
+  }
+  return new Result(rounds * n, ns, acc, h);
+}
+
+function caseDeque(name: string, n: u64): Result {
+  const rounds: u64 = 8;
+  const len = n as i32;
+  const vs = new Array<i64>(len).fill(0);
+  for (let i: i32 = 0; i < len; i++) {
+    vs[i] = valAt(i as u64);
+  }
+  let acc: u64 = 0;
+  let ns: u64 = 0;
+  let h = FOLD_INIT;
+  for (let round: u64 = 0; round < rounds; round++) {
+    const l = new DList();
+    const t0 = nowNs();
+    for (let i: i32 = 0; i < len; i++) {
+      if ((i & 1) != 0) {
+        l.pushFront(vs[i]);
+      } else {
+        l.pushBack(vs[i]);
+      }
+    }
+    for (let i: i32 = 0; i < len; i++) {
+      if ((i & 1) != 0) {
+        l.tryPopBack();
+      } else {
+        l.tryPopFront();
+      }
+      acc += (l.popped as u64) ^ (i as u64);
+    }
+    ns += since(t0);
+    if (round + 1 == rounds) {
+      h = fold(h, verifyFull(name, n, l));
+    }
+  }
+  return new Result(rounds * 2 * n, ns, acc, h);
+}
+
+const OP_AFTER: u8 = 0;
+const OP_BEFORE: u8 = 1;
+const OP_REMOVE: u8 = 2;
+const OP_GET: u8 = 3;
+const OP_MOVE: u8 = 4;
+
+function caseMixed(name: string, n: u64): Result {
+  const count = 3 * n;
+  const cnt = count as i32;
+  const hs = new Array<u64>(n + count).fill(0);
+  const op = new Array<u8>(cnt).fill(0);
+  const at = new Array<i32>(cnt).fill(0);
+  const vs = new Array<i64>(cnt).fill(0);
+  let live = n;
+  for (let j: i32 = 0; j < cnt; j++) {
+    const r = rnd(9, j as u64);
+    const p = r % 100;
+    at[j] = ((r >> 8) % live) as i32;
+    vs[j] = mix64(r) as i64;
+    if (p < 30) {
+      op[j] = OP_AFTER;
+      live++;
+    } else if (p < 40) {
+      op[j] = OP_BEFORE;
+      live++;
+    } else if (p < 70 && live > 1) {
+      op[j] = OP_REMOVE;
+      live--;
+    } else if (p < 90) {
+      op[j] = OP_GET;
+    } else {
+      op[j] = OP_MOVE;
+    }
+  }
+  const l = new DList();
+  buildSequential(l, hs, n);
+  let lv = n as i32;
+  let acc: u64 = 0;
+  const t0 = nowNs();
+  for (let j: i32 = 0; j < cnt; j++) {
+    const x = hs[at[j]];
+    switch (op[j]) {
+      case OP_AFTER:
+        hs[lv++] = l.insertAfter(x, vs[j]);
+        break;
+      case OP_BEFORE:
+        hs[lv++] = l.insertBefore(x, vs[j]);
+        break;
+      case OP_REMOVE:
+        acc += (l.remove(x) as u64) ^ (j as u64);
+        hs[at[j]] = hs[--lv];
+        break;
+      case OP_GET:
+        acc += (l.get(x) as u64) ^ (j as u64);
+        break;
+      default:
+        l.moveToFront(x);
+        break;
+    }
+  }
+  const ns = since(t0);
+  acc += l.count as u64;
+  return new Result(count, ns, acc, verifyFull(name, n, l));
+}
+
+const CASES = [
+  "push_back",
+  "insert_random",
+  "traverse",
+  "traverse_sequential",
+  "remove_random",
+  "move_to_front",
+  "queue",
+  "josephus",
+  "deque",
+  "mixed",
+];
+
+function runCase(name: string, n: u64): Result {
+  switch (name) {
+    case "push_back":
+      return casePushBack(name, n);
+    case "insert_random":
+      return caseInsertRandom(name, n);
+    case "traverse":
+      return caseTraverse(name, n, true);
+    case "traverse_sequential":
+      return caseTraverse(name, n, false);
+    case "remove_random":
+      return caseRemoveRandom(name, n);
+    case "move_to_front":
+      return caseMoveToFront(name, n);
+    case "queue":
+      return caseQueue(name, n);
+    case "josephus":
+      return caseJosephus(name, n);
+    case "deque":
+      return caseDeque(name, n);
+    default:
+      return caseMixed(name, n);
+  }
+}
+
+// mixed allocates 4n handles: (int.MaxValue - 64) / 4, as the C# driver allows.
+runDriver(CASES, runCase, 536870895);

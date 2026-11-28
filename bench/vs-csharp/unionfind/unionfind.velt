@@ -1,0 +1,120 @@
+// Disjoint-set forest (union by size, full path compression): a port of the benchmark's C#
+// solution (UnionFind.cs). p[x] < 0: x is a root and -p[x] is the size of its set; p[x] >= 0:
+// the parent of x.
+
+function findSlow(p: i32[], x: i32, parent: i32, gp: i32): i32 {
+  const ggp = p[gp];
+  if (ggp < 0) {
+    p[x] = gp;
+    return gp;
+  }
+  let r = ggp;
+  let next = p[r];
+  while (next >= 0) {
+    r = next;
+    next = p[r];
+  }
+  p[x] = r;
+  p[parent] = r;
+  if (ggp != r) {
+    let cur = gp;
+    let nxt = ggp;
+    do {
+      p[cur] = r;
+      cur = nxt;
+      nxt = p[cur];
+    } while (nxt != r);
+  }
+  return r;
+}
+
+export class UnionFind {
+  private p: i32[];
+  private sets: i32;
+  readonly count: i32;
+
+  constructor(n: i32) {
+    this.count = n;
+    this.sets = n;
+    this.p = new Array<i32>(n).fill(-1);
+  }
+
+  setCount(): i32 {
+    return this.sets;
+  }
+
+  parent(x: i32): i32 {
+    const p = this.p[x];
+    return p < 0 ? x : p;
+  }
+
+  find(x: i32): i32 {
+    const p = this.p;
+    const px = p[x];
+    const r = px < 0 ? x : px;
+    const pr = p[r];
+    if (pr < 0) {
+      return r;
+    }
+    return findSlow(p, x, r, pr);
+  }
+
+  union(a: i32, b: i32): boolean {
+    const p = this.p;
+    const pa = p[a];
+    const pb = p[b];
+    let ra = pa < 0 ? a : pa;
+    let rb = pb < 0 ? b : pb;
+    let sa = p[ra];
+    let sb = p[rb];
+    if ((sa & sb) >= 0) {
+      if (sa >= 0) {
+        ra = findSlow(p, a, ra, sa);
+        sa = p[ra];
+      }
+      if (sb >= 0) {
+        rb = findSlow(p, b, rb, sb);
+        sb = p[rb];
+      }
+    }
+    if (ra == rb) {
+      return false;
+    }
+    const big = sa <= sb ? ra : rb;
+    const small = sa <= sb ? rb : ra;
+    p[big] = sa + sb;
+    p[small] = big;
+    this.sets--;
+    return true;
+  }
+
+  connected(a: i32, b: i32): boolean {
+    const p = this.p;
+    const pa = p[a];
+    const pb = p[b];
+    let ra = pa < 0 ? a : pa;
+    let rb = pb < 0 ? b : pb;
+    const sa = p[ra];
+    const sb = p[rb];
+    if ((sa & sb) >= 0) {
+      if (sa >= 0) {
+        ra = findSlow(p, a, ra, sa);
+      }
+      if (sb >= 0) {
+        rb = findSlow(p, b, rb, sb);
+      }
+    }
+    return ra == rb;
+  }
+
+  setSize(x: i32): i32 {
+    const p = this.p;
+    const s = p[x];
+    const r = s < 0 ? x : s;
+    const pr = p[r];
+    if (pr < 0) {
+      return -pr;
+    }
+    return -p[findSlow(p, x, r, pr)];
+  }
+}
