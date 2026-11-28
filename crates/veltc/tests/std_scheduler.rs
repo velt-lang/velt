@@ -705,10 +705,11 @@ fn a_spawned_task_awaits_a_shared_promise_while_microtasks_are_queued() {
     );
 }
 
-/// `main`'s root runs on the executor in Velt on WASI too (#3905 step 1), whose one thread waits
-/// in `poll_oneoff`; a JS host keeps the runtime's executor.
+/// `main`'s root runs on the executor in Velt on WebAssembly too: on WASI (#3905 step 1) through
+/// `schedBlockOn`, whose one thread waits in `poll_oneoff`; on a JS host (step 2) through
+/// `schedHostMain`, in the turns the host drives.
 #[test]
-fn wasi_runs_the_executor_in_velt_a_js_host_does_not() {
+fn webassembly_runs_the_executor_in_velt() {
     let dir = test_dir::TestDir::new();
     std::fs::write(
         dir.path().join("main.velt"),
@@ -728,7 +729,8 @@ fn wasi_runs_the_executor_in_velt_a_js_host_does_not() {
         String::from_utf8_lossy(&o.stdout).into_owned()
     };
     assert!(ir(true, "wasm32-wasip1").contains("schedBlockOn"));
-    assert!(!ir(true, "wasm32-unknown-unknown").contains("schedBlockOn"));
+    let js = ir(true, "wasm32-unknown-unknown");
+    assert!(js.contains("schedHostMain") && !js.contains("schedBlockOn"));
     assert!(ir(true, "aarch64-unknown-linux-gnu").contains("schedBlockOn"));
 }
 
