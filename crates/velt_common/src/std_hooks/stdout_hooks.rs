@@ -3,7 +3,7 @@
 //! out_hooked.velt) and the WebAssembly runtime's elsewhere (out_rt.velt). `console.log` and `console.error` write through
 //! the writers (`velt_vir` `console.rs`), and every exit Velt code reaches calls `flushForExit`
 //! first. Not `replaces(…)`: a WebAssembly build keeps velt_rt_wasm's `velt_rt_write_str` and the
-//! rest (out_rt.velt forwards to them), while velt_rt's go once nothing calls them. No construct
+//! rest (out_rt.velt forwards to them), while velt_rt has none of them any more. No construct
 //! lists them: every program reaches an exit, and process.velt imports the module, so every
 //! program loads it. Kept apart from the rest of the table ([`super`]), which
 //! [`with_stdout_hooks`] gives on, with these rows after it, to `with_any_hooks!`.

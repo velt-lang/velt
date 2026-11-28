@@ -1,0 +1,10 @@
+import { serve } from "http-server";
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    console.log("got a request");
+    return new Response("v1");
+  });
+  console.log(`listening on ${server.port}`);
+  await sleep(1000000000);
+}

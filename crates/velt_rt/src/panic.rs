@@ -24,7 +24,6 @@
 
 use std::cell::Cell;
 
-use crate::io;
 use crate::str::VeltStr;
 
 /// Exit code used for panics (same as Rust).
@@ -49,7 +48,6 @@ pub fn panic_message(msg: &[u8]) -> Vec<u8> {
 
 fn die(msg: &[u8]) -> ! {
     use std::io::Write;
-    io::try_flush_stdout();
     let _ = std::io::stderr().lock().write_all(&panic_message(msg));
     std::process::exit(PANIC_EXIT_CODE)
 }
@@ -193,9 +191,10 @@ fn reset_uncaught_report() {
     REPORTER.store(0, std::sync::atomic::Ordering::Release);
 }
 
+/// Ends the process with `code`. Compiled code flushed stdout first (std's `flushForExit`, which
+/// also reports `VELT_STDOUT_STATS`); so did it before `velt_rt_panic`.
 #[no_mangle]
 pub extern "C" fn velt_rt_exit(code: i32) -> ! {
-    io::flush_stdout();
     crate::str::stats::report();
     #[cfg(all(debug_assertions, not(velt_rt_host)))]
     crate::debug_alloc::check_quarantine(&crate::GLOBAL_QUARANTINE);
