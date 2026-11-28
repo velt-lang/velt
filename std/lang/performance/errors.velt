@@ -1,0 +1,12 @@
+// velt/lang/performance (internal): the `TypeError`s perf_hooks throws, with Node's `code`.
+
+/** A `TypeError` with Node's error `code` (`ERR_PERFORMANCE_INVALID_TIMESTAMP`). */
+export class CodedTypeError extends TypeError {
+  /** Node's code of the error. */
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
+}

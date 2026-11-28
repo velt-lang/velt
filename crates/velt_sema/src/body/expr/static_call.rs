@@ -56,6 +56,15 @@ impl FnCx<'_, '_> {
             return self.simd_static_call(simd, id, prop, type_args, args, exp, span);
         }
         match item {
+            // `performance.now()` of the prelude's `performance` (std/prelude/global/
+            // performance.velt): the clock itself, which never touches the module state that
+            // holds the global's marks.
+            Some(item)
+                if (id.name.as_str(), prop.name.as_str()) == ("performance", "now")
+                    && self.cx.prelude.get("performance") == Some(&item) =>
+            {
+                self.namespace_builtin(id, prop, args, exp, span)
+            }
             Some(Item::Def(d)) if self.cx.enum_info(d).is_some() => {
                 Some(self.variant_value(d, prop, args, exp, span))
             }
