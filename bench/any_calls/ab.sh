@@ -2,7 +2,8 @@
 # What calls through `any` that throw cost (#1938; Linux, valgrind): instructions (cachegrind,
 # VELT_THREADS=1, release compilers) at two git refs of
 # - running bench/any_calls/call_loop.velt (600,000 calls through `any` in a `try`, and in a
-#   `try` each) and bench/any_calls/sort_named.velt (sorts with a named comparator), both in a
+#   `try` each), bench/any_calls/sort_named.velt (sorts with a named comparator) and
+#   bench/any_calls/any_sort.velt (an `any[]` sorted with an arrow that reads through `any`), in a
 #   program whose calls through `any` throw, built --release by that ref's compiler;
 # - compiling them and tests/golden/lang/any_call_caught.velt (`velt build --release`), and
 #   tests/golden/m1/hello.velt, which converts nothing to `any`.
@@ -35,7 +36,7 @@ for ref in "$2" "$3"; do
   fi
 done
 mkdir -p "$W/bench"
-for p in call_loop sort_named; do
+for p in call_loop sort_named any_sort; do
   if [ -n "${BENCH:-}" ]; then
     cp "$BENCH/$p.velt" "$W/bench/$p.velt" || exit 1
   else
@@ -55,13 +56,13 @@ count() {
 for s in "${shas[@]}"; do
   v="$W/target-$s/release/velt"
   b=$(mktemp -d "$W/bin-$s.XXXXXX")
-  for p in call_loop sort_named; do
+  for p in call_loop sort_named any_sort; do
     (cd "$W/src-$s" && VELT_STD="$W/src-$s/std" VELT_BUILD_CACHE=off "$v" build --release \
       "$W/bench/$p.velt" -o "$b/$p") || exit 1
     echo "$s run $p $(count "$s" "$p" "$b/$p")"
     "$b/$p"
   done
-  for p in call_loop sort_named any_call_caught; do
+  for p in call_loop sort_named any_sort any_call_caught; do
     echo "$s build $p $(count "$s" "build-$p" "$v" build --release "$W/bench/$p.velt" -o "$b/c-$p")"
   done
   echo "$s build hello $(count "$s" build-hello "$v" build --release tests/golden/m1/hello.velt -o "$b/h")"

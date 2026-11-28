@@ -1,0 +1,23 @@
+// A `toString` that throws a typed error and also calls through `any`, in a program whose calls
+// through `any` throw (#1938): its typed error stays the compile error it is in a program that
+// converts no throwing function (glue has nowhere to send it); only what the call through `any`
+// throws is left out.
+function check(x: number): number {
+  if (x < 0) throw new RangeError("neg " + x);
+  return x;
+}
+const table: any = { check, show: (): string => "shown" };
+console.log(table.check(1));
+
+class Typed {
+  d: any = table;
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+  toString(): string {
+    if (this.n > 1) throw new TypeError("typed in toString");
+    return this.d.show() as string;
+  }
+}
+console.log(`${new Typed(1)}`);

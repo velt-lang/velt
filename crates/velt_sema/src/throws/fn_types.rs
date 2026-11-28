@@ -116,6 +116,9 @@ pub(crate) struct FnSites {
     /// check, by span, that sort as before: one found to throw `any` is added to the seeds'
     /// `any_sorts` ([`Ctx::any_sort_found`]).
     pub(crate) sort_cmps: FxHashSet<Span>,
+    /// The spans of the throw sources that calls through `any` added (`FnCx::any_call_op`): what
+    /// the methods glue calls leave out of their errors (`Ctx::kept_errors`).
+    pub(crate) any_call_srcs: FxHashSet<Span>,
     /// Structural matches of a converted value's errors (its type, the sites, the errors),
     /// added at the end of the check unless the value reached a site through its variable
     /// ([`Ctx::flush_structural`]).

@@ -1,0 +1,26 @@
+// The `get message()` of a class extending `Error` (which cannot throw: every read of the error's
+// message calls it) calling through `any`, in a program whose calls through `any` throw (#1938):
+// it compiles as in a program that converts no throwing function. Its own golden, as a check by
+// units doesn't support the getter yet (#3792).
+function check(x: number): number {
+  if (x < 0) throw new RangeError("negative");
+  return x;
+}
+const table: any = { check, show: (): string => "shown" };
+console.log(table.check(1));
+
+class Failed extends Error {
+  data: any;
+  constructor(data: any) {
+    super();
+    this.data = data;
+  }
+  get message(): string {
+    return "failed: " + (this.data.show() as string);
+  }
+}
+try {
+  throw new Failed(table);
+} catch (e) {
+  console.log((e as Error).message);
+}

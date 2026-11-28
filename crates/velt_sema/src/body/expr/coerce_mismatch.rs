@@ -15,6 +15,11 @@ impl FnCx<'_, '_> {
         self.cx.seed_reject(found.ty, expected);
         self.cx.seed_reject_fn(found.ty, expected);
         self.cx.seed_promise_site(found.ty, expected);
+        // A typed sort's comparator whose type throws `any`: checked again, sorting as an
+        // `any[]`'s (`in_place_chain.rs`), which drops this report.
+        if self.any_sort_mismatch(found) {
+            return;
+        }
         if self.cx.dynamic(found.ty) == Some(crate::any::Dynamic::Unknown) {
             return self.unknown_use_error(found.span);
         }

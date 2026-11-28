@@ -56,6 +56,7 @@ impl FnCx<'_, '_> {
                     let seen = |s: &ThrowSrc| matches!(s, ThrowSrc::Direct(t, _) if *t == any);
                     if !list.iter().any(seen) {
                         self.throw_src(ThrowSrc::Direct(any, span));
+                        self.cx.fn_sites.any_call_srcs.insert(span);
                     }
                 }
             }
@@ -96,26 +97,63 @@ impl Ctx<'_> {
         true
     }
 
-    /// The error type `t` inferred for function `d`, without `any` when `d` is a method glue
-    /// calls, which cannot throw (`hooks::cannot_throw`), in a program whose calls through `any`
-    /// throw: what it calls that calls through `any` throws nothing out of it, and lowering
-    /// reports such an error as uncaught where it leaves the method (velt_vir `route_error`),
-    /// as in a program that converts no throwing function. Its other errors stay errors.
+    /// The error type `t` inferred for function `d`, or, when `d` is a method glue calls, which
+    /// cannot throw (`hooks::cannot_throw`), in a program whose calls through `any` throw: what
+    /// it throws besides what calls through `any` throw ([`typed_errors`]). Such an error
+    /// throws nothing out of it, and lowering reports it as uncaught where it leaves the method
+    /// (velt_vir `route_error`), as in a program that converts no throwing function. Its other
+    /// errors stay the compile errors they are there.
     pub(crate) fn kept_errors(&mut self, d: hir::DefId, t: Option<TyId>) -> Option<TyId> {
         let any = self.any_type();
-        let (Some(t), Some(any)) = (t, any) else {
+        if t.is_none() || any.is_none() || !self.fn_sites.seeds.any_calls_throw {
             return t;
-        };
-        if !self.fn_sites.seeds.any_calls_throw || !crate::hooks::cannot_throw(self, d) {
-            return Some(t);
         }
-        let members = self.error_members(t);
-        if !members.contains(&any) {
-            return Some(t);
+        if !crate::hooks::cannot_throw(self, d) {
+            return t;
         }
-        let rest: Vec<TyId> = members.into_iter().filter(|m| *m != any).collect();
-        self.error_union(&rest)
+        let mut open = FxHashSet::default();
+        typed_errors(self, d, &mut open)
     }
+}
+
+/// What function `d`'s body throws besides what its calls through `any` throw
+/// (`FnSites::any_call_srcs`), following the calls of functions whose error type is inferred:
+/// a callee's `any` covers whatever else it throws, so its own sources are read instead. Any
+/// other source counts with its whole error type, so an `any` that can't be traced to calls
+/// through `any` (a call through a function value or an interface, a `throw` of an `any`)
+/// stays an error. `open`: the functions being read (a recursive call adds nothing more).
+fn typed_errors(cx: &mut Ctx, d: hir::DefId, open: &mut FxHashSet<hir::DefId>) -> Option<TyId> {
+    if !open.insert(d) {
+        return None;
+    }
+    let srcs = cx.fn_info(d).throw_srcs.clone();
+    let mut all: Vec<TyId> = vec![];
+    for s in &srcs {
+        let t = match s {
+            ThrowSrc::Direct(_, span) if cx.fn_sites.any_call_srcs.contains(span) => None,
+            ThrowSrc::Call(g, targs, _) if traced(cx, *g) => {
+                let t = typed_errors(cx, *g, open);
+                t.map(|t| subst(cx, t, targs))
+            }
+            _ => super::infer::src_final(cx, s),
+        };
+        if let Some(t) = t {
+            all.extend(cx.error_members(t));
+        }
+    }
+    open.remove(&d);
+    cx.error_union(&all)
+}
+
+/// Is `g` a function whose error type is inferred from its body's sources ([`typed_errors`]
+/// reads them): no written clause, a body checked here, not a member of a dispatch group (an
+/// override's errors are its group's)?
+fn traced(cx: &mut Ctx, g: hir::DefId) -> bool {
+    let f = cx.fn_info(g);
+    if f.declared_throws.is_some() || f.source.is_none() {
+        return false;
+    }
+    cx.throw_groups().group_of(g).is_none()
 }
 
 /// After inference: when user code calls through `any` and the program converts a throwing

@@ -1,0 +1,25 @@
+// A `toJSON` calling a helper that throws a typed error and also calls through `any`, in a
+// program whose calls through `any` throw (#1938): the helper's typed error stays the compile
+// error it is in a program that converts no throwing function; only what the call through `any`
+// throws is left out.
+function check(x: number): number {
+  if (x < 0) throw new RangeError("neg " + x);
+  return x;
+}
+const table: any = { check };
+console.log(table.check(1));
+
+function helper(x: number): string {
+  if (x > 100) throw new TypeError("big");
+  return String(table.check(x));
+}
+class H {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+  toJSON(): string {
+    return helper(this.n);
+  }
+}
+console.log(JSON.stringify(new H(1)));

@@ -1,0 +1,80 @@
+// Typed comparators of every shape whose function type throws `any` (they call a helper that
+// calls through `any`), in a program whose calls through `any` throw (#1938): a member, a class
+// method as a value, a call's result, a conditional, and the comparators of typed arrays. Each
+// sorts, and a throwing one leaves the error to the caller's `catch` with the array unchanged.
+function check(x: number): number {
+  if (x < 0) throw new RangeError("negative " + x);
+  return x;
+}
+const table: any = { check };
+console.log(table.check(1));
+function weight(x: number): number {
+  return table.check(x) as number;
+}
+function plain(a: number, b: number): number {
+  return b - a;
+}
+function heavy(a: number, b: number): number {
+  return weight(a) - weight(b);
+}
+
+const cmpObj = { by: (a: number, b: number): number => weight(a) - weight(b) };
+const xs: number[] = [3, 1, 2];
+xs.sort(cmpObj.by);
+console.log(xs.join(","));
+
+class Order {
+  by(a: number, b: number): number {
+    return weight(b) - weight(a);
+  }
+}
+const ob = new Order();
+console.log(xs.toSorted(ob.by).join(","));
+
+function mk(): (a: number, b: number) => number {
+  return (a: number, b: number): number => weight(a) - weight(b);
+}
+const ys: number[] = [2, 3, 1];
+ys.sort(mk());
+console.log(ys.join(","));
+
+for (const desc of [true, false]) {
+  const zs: number[] = [1, 3, 2];
+  zs.sort(desc ? plain : heavy);
+  console.log(zs.join(","));
+}
+
+const fa = new Float64Array([3, 1, 2]);
+fa.sort((a, b) => weight(a) - weight(b));
+console.log(fa.join(","), fa.toSorted((a, b) => weight(b) - weight(a)).join(","));
+const ia = new Int32Array([2, 3, 1]);
+ia.sort((a, b) => weight(a) - weight(b));
+console.log(ia.join(","));
+
+const bad: number[] = [2, -1, 3];
+try {
+  bad.sort(cmpObj.by);
+} catch (e) {
+  console.log("member caught", (e as Error).message, bad.join(","));
+}
+try {
+  bad.sort(mk());
+} catch (e) {
+  console.log("call caught", (e as Error).message, bad.join(","));
+}
+const badTyped = new Float64Array([2, -5, 3]);
+try {
+  badTyped.sort((a, b) => weight(a) - weight(b));
+} catch (e) {
+  console.log("typed array caught", (e as Error).message, badTyped.join(","));
+}
+try {
+  console.log(new Int32Array([1, -6]).toSorted((a, b) => weight(a) - weight(b)).join(","));
+} catch (e) {
+  console.log("toSorted caught", (e as Error).message);
+}
+
+// An `any[]` arrow that only reads through `any` sorts as before.
+const rows: any[] = [{ k: 2 }, { k: 1 }];
+rows.sort((a: any, b: any): number => (a.k as number) - (b.k as number));
+console.log(rows.map((r: any): number => r.k as number).join(","));

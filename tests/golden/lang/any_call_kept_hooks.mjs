@@ -44,21 +44,6 @@ class Safe {
 }
 console.log(`${new Safe(table)}`);
 
-class Failed extends Error {
-  constructor(data) {
-    super();
-    this.data = data;
-  }
-  get message() {
-    return "failed: " + this.data.show();
-  }
-}
-try {
-  throw new Failed(table);
-} catch (e) {
-  console.log(e.message);
-}
-
 class Described {
   constructor(data) {
     this.data = data;

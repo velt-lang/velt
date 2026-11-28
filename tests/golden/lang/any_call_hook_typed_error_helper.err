@@ -1,0 +1,1 @@
+any_call_hook_typed_error_helper.velt:21:3: error: `toJSON` cannot throw (it throws `TypeError`)

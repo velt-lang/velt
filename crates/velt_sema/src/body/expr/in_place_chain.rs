@@ -46,14 +46,21 @@ impl FnCx<'_, '_> {
         let ([cmp], "sort" | "toSorted") = (args, prop.name.as_str()) else {
             return None;
         };
-        let elem = self.cx.ty.array_elem(recv)?;
+        let Some(elem) = self.cx.ty.array_elem(recv) else {
+            // A typed array (`Float64Array`): its comparators are typed too.
+            return match self.has_dynamic_sort(recv) {
+                true => self.typed_sort_name(prop, cmp),
+                false => None,
+            };
+        };
         if self.cx.dynamic(elem) != Some(crate::any::Dynamic::Any) {
             return self.typed_sort_name(prop, cmp);
         }
         let name = match (prop.name.as_str(), self.returns_dynamic(cmp)) {
             ("sort", true) => "sortAnyResult",
             ("toSorted", true) => "toSortedAnyResult",
-            _ if !self.may_throw(cmp) => return None,
+            // A comparator that can't be seen to throw sorts as a typed array's.
+            _ if !self.may_throw(cmp) => return self.typed_sort_name(prop, cmp),
             ("sort", false) => "sortDynamic",
             _ => "toSortedDynamic",
         };
@@ -63,23 +70,31 @@ impl FnCx<'_, '_> {
         })
     }
 
-    /// `sort(cmp)` or `toSorted(cmp)` of a typed array in a user module of a program whose calls
-    /// through `any` throw (`throws::any_calls`). The comparator type of a typed sort allows no
-    /// error, so a comparator that calls what calls through `any` (a helper, a method, a closure
-    /// of its own) throws what that type can't hold: the check that finds it so
-    /// (`Ctx::any_sort_found`, for the comparators noted here in `FnSites::sort_cmps`) has the
-    /// program checked again, and there it sorts as [`Self::dynamic_sort_name`]'s comparators
-    /// that may throw do (`sortDynamic`, which sends the error to the caller as in JavaScript).
-    /// Any other comparator sorts as before, at its cost; so does every sort in the standard
-    /// library (`toSorted` passing its comparator on to `sort`).
+    /// `sort(cmp)` or `toSorted(cmp)` of an array of typed elements, a typed array, or an `any[]`
+    /// whose comparator can't be seen to throw, in a user module of a program whose calls through
+    /// `any` throw (`throws::any_calls`). The comparator type of such a sort allows no error, so
+    /// a comparator that calls what calls through `any` (a helper, a method, a closure of its
+    /// own) throws what that type can't hold. One rule, whatever the comparator's shape (an
+    /// arrow, a name, a member, a call, a conditional): the check that finds its type throwing
+    /// `any` (`Ctx::any_sort_found`, for the comparators noted here in `FnSites::sort_cmps`: from
+    /// a closure's inferred errors, a function value's, or a "mismatched types" of the argument)
+    /// has the program checked again, and there it sorts as [`Self::dynamic_sort_name`]'s
+    /// comparators that may throw do (`sortDynamic`, which sends the error to the caller as in
+    /// JavaScript). A name already known to throw `any` sorts so at once. Every other comparator
+    /// sorts as before, at its cost. So does every sort in the standard library (`toSorted`
+    /// passing its comparator on to `sort`), which a program's comparator types never reach
+    /// (std's nullable `cmp` is no comparator found throwing `any`): the check is defensive.
     fn typed_sort_name(&mut self, prop: &ast::Ident, cmp: &ast::Expr) -> Option<ast::Ident> {
         if !self.cx.fn_sites.seeds.any_calls_throw || self.cx.scopes[self.module].is_std {
             return None;
         }
         if !self.throws_any_now(cmp) {
-            let key = self.sort_cmp_key(cmp)?;
-            if !self.cx.fn_sites.seeds.any_sorts.contains(&key) {
-                self.cx.fn_sites.sort_cmps.insert(key);
+            let at = super::method_value::strip_parens(cmp).span;
+            let held = self.held_closure_span(cmp);
+            let seeds = &self.cx.fn_sites.seeds.any_sorts;
+            if !seeds.contains(&at) && !held.is_some_and(|s| seeds.contains(&s)) {
+                self.cx.fn_sites.sort_cmps.insert(at);
+                self.cx.fn_sites.sort_cmps.extend(held);
                 return None;
             }
         }
@@ -93,23 +108,44 @@ impl FnCx<'_, '_> {
         })
     }
 
-    /// The span a typed sort's comparator `cmp` is known by from one check to the next (the
-    /// span its errors are reported at): an arrow's own, a named function's where it is used,
-    /// the closure a variable holds where it was written (`const byKey = (a, b) => ...`). `None`
-    /// for another comparator (a member, a call's result).
-    fn sort_cmp_key(&mut self, cmp: &ast::Expr) -> Option<Span> {
-        let cmp = super::method_value::strip_parens(cmp);
-        match &cmp.kind {
-            ast::ExprKind::Arrow { .. } | ast::ExprKind::Function(_) => Some(cmp.span),
-            ast::ExprKind::Ident(id) => match self.named_cmp(id)? {
-                NamedCmp::Fn(_) => Some(cmp.span),
-                NamedCmp::Value(t) => match self.cx.ty.kind(t) {
-                    TyKind::Closure(d) => Some(self.cx.fn_info(*d).span),
-                    _ => None,
-                },
-            },
+    /// When comparator `cmp` names a variable holding a closure (`const byKey = (a, b) => ...`):
+    /// where the closure was written, the span its errors are reported at (the comparator's own
+    /// span is the other one, `typed_sort_name`).
+    fn held_closure_span(&mut self, cmp: &ast::Expr) -> Option<Span> {
+        let ast::ExprKind::Ident(id) = &super::method_value::strip_parens(cmp).kind else {
+            return None;
+        };
+        let Some(NamedCmp::Value(t)) = self.named_cmp(id) else {
+            return None;
+        };
+        match self.cx.ty.kind(t) {
+            TyKind::Closure(d) => Some(self.cx.fn_info(*d).span),
             _ => None,
         }
+    }
+
+    /// Does `recv` (a typed array) have the sort a comparator that may throw sorts with
+    /// (`sortDynamic`, std/lang/typed_array)?
+    fn has_dynamic_sort(&mut self, recv: hir::TyId) -> bool {
+        let TyKind::Adt(d, args) = self.cx.ty.kind(recv).clone() else {
+            return false;
+        };
+        crate::collect::lookup_method(self.cx, d, &args, "sortDynamic").is_some()
+    }
+
+    /// A "mismatched types" of `found` that is a typed sort's comparator (`FnSites::sort_cmps`)
+    /// whose function type throws `any`: checked again, sorting as an `any[]`'s
+    /// (`typed_sort_name`). True when so (the report is dropped).
+    pub(super) fn any_sort_mismatch(&mut self, found: &hir::Expr) -> bool {
+        let throws = match self.cx.ty.kind(found.ty).clone() {
+            TyKind::FnPtr { throws, .. } => Some(throws),
+            TyKind::Closure(d) => crate::throws::throws_now(self.cx, d, &[]),
+            _ => None,
+        };
+        let (Some(throws), Some(any)) = (throws, self.cx.any_type()) else {
+            return false;
+        };
+        self.cx.error_members(throws).contains(&any) && self.cx.any_sort_found(found.span, any)
     }
 
     /// Is comparator `cmp` a named function, or a variable holding a function, already known to
@@ -189,14 +225,18 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// May comparator `cmp` throw? It writes a `throw`, or in a program with proxies (whose
-    /// traps may throw) or whose calls through `any` throw, it reads through its `any`
-    /// parameters or calls something; a function named here may do anything there. Any other comparator sorts as before, at its cost.
+    /// May comparator `cmp` of an `any[]` throw? It writes a `throw`; or in a program with
+    /// proxies (whose traps may throw) it reads through its `any` parameters or calls something,
+    /// and a function named there may do anything; or in a program whose calls through `any`
+    /// throw (`throws::any_calls`), the arrow or function expression calls something (a read
+    /// through `any` throws nothing there; a named comparator is found by
+    /// [`Self::typed_sort_name`]). Any other comparator sorts as before, at its cost.
     fn may_throw(&self, cmp: &ast::Expr) -> bool {
         use velt_syntax::visit::{walk_expr, Visit};
         struct Seen {
             throws: bool,
             reads: bool,
+            calls: bool,
         }
         impl<'a> Visit<'a> for Seen {
             fn stmt(&mut self, s: &'a ast::Stmt) {
@@ -205,21 +245,26 @@ impl FnCx<'_, '_> {
             fn expr(&mut self, e: &'a ast::Expr) {
                 use ast::ExprKind as E;
                 self.reads |= matches!(e.kind, E::Member { .. } | E::Index { .. } | E::Call { .. });
+                self.calls |= matches!(e.kind, E::Call { .. });
             }
         }
         let mut seen = Seen {
             throws: false,
             reads: false,
+            calls: false,
         };
+        let literal = matches!(
+            super::method_value::strip_parens(cmp).kind,
+            ast::ExprKind::Arrow { .. } | ast::ExprKind::Function(_)
+        );
         let arrow = matches!(
             super::method_value::strip_parens(cmp).kind,
             ast::ExprKind::Arrow { .. }
         );
         walk_expr(cmp, &mut seen);
-        // A program whose calls through `any` throw (`throws::any_calls`) is like one with
-        // proxies: what the comparator reads or calls may throw.
-        let dynamic = self.uses_proxy() || self.cx.fn_sites.seeds.any_calls_throw;
-        seen.throws || (dynamic && (seen.reads || !arrow))
+        let proxies = self.uses_proxy() && (seen.reads || !arrow);
+        let any_calls = self.cx.fn_sites.seeds.any_calls_throw && literal && seen.calls;
+        seen.throws || proxies || any_calls
     }
 
     /// `recv`, checked from `object`, as the receiver of a member access: when `object` is a

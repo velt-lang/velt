@@ -11,6 +11,7 @@ crate::units::codec::structs! {
         closure_sites, rest_closures, flows, added, last, use_vars, user_vars, var_of, trap_vars,
         vars, solved_anons, solved, var_sets, stored, thrown, reject_values, sets_empty,
         site_closures, closure_defs, structural, var_values, any_calls, sort_cmps,
+        any_call_srcs,
     }
     FnTypeSeeds {
         sites, hints, slots, no_vars, proxy_sites, exact, closure_targets, methods,

@@ -534,6 +534,24 @@ export class Uint32Array extends TypedArray implements Iterable<number> {
   }
 
   /**
+   * `sort(cmp)` with a comparator that may throw, as the compiler calls it (`Array`'s
+   * `sortDynamic`): when `cmp` throws, the error leaves and this array stays as it was.
+   */
+  sortDynamic<E>(cmp: (a: number, b: number) => number throws E): Uint32Array throws E {
+    const xs = this.numbers();
+    xs.sortDynamic(cmp);
+    for (let i: usize = 0; i < this.len; i++) {
+      this.put(i, xs[i]);
+    }
+    return this;
+  }
+
+  /** `toSorted(cmp)` with a comparator that may throw, as [`sortDynamic`]. */
+  toSortedDynamic<E>(cmp: (a: number, b: number) => number throws E): Uint32Array throws E {
+    return this.copy().sortDynamic(cmp);
+  }
+
+  /**
    * A view of the elements in [begin, end) (negative counts from the end) sharing this array's
    * buffer: writes through either are seen by both.
    */
