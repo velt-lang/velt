@@ -140,6 +140,36 @@ class GenG<T> implements Gen<T> {
   }
 }
 
+interface P {
+  s(): string | null;
+  n(): number | undefined;
+  b(): boolean | null | undefined;
+  t(): [number, string] | null;
+  a(): number[] | null;
+  o(k: number): string | null | undefined;
+}
+
+class Q implements P {
+  s(): string {
+    return "x";
+  }
+  n(): number {
+    return 2;
+  }
+  b(): boolean {
+    return true;
+  }
+  t(): [number, string] {
+    return [1, "a"];
+  }
+  a(): number[] {
+    return [1, 2];
+  }
+  o(k: number): string | undefined {
+    return k == 0 ? undefined : "y";
+  }
+}
+
 function main() {
   const g: Get = new Impl();
   console.log(show(g.n()), show(g.u()), show(g.b()));
@@ -152,4 +182,6 @@ function main() {
   console.log(q.next(0), q.next(1)?.total(), q.one()?.total());
   const h: Gen<string> = new GenG<string>("x");
   console.log(h.next(0), h.next(1), h.one());
+  const pq: P = new Q();
+  console.log(pq.s(), pq.n(), pq.b(), pq.t(), pq.a(), pq.o(0), pq.o(1));
 }

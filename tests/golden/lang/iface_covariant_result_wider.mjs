@@ -104,6 +104,26 @@ class GenG {
         return this.v;
     }
 }
+class Q {
+    s() {
+        return "x";
+    }
+    n() {
+        return 2;
+    }
+    b() {
+        return true;
+    }
+    t() {
+        return [1, "a"];
+    }
+    a() {
+        return [1, 2];
+    }
+    o(k) {
+        return k == 0 ? undefined : "y";
+    }
+}
 function main() {
     const g = new Impl();
     console.log(show(g.n()), show(g.u()), show(g.b()));
@@ -116,5 +136,7 @@ function main() {
     console.log(q.next(0), q.next(1)?.total(), q.one()?.total());
     const h = new GenG("x");
     console.log(h.next(0), h.next(1), h.one());
+    const pq = new Q();
+    console.log(pq.s(), pq.n(), pq.b(), pq.t(), pq.a(), pq.o(0), pq.o(1));
 }
 main();

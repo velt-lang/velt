@@ -6,3 +6,4 @@ big undefined big
 7 null 7
 null 7 7
 null x x
+x 2 true [ 1, 'a' ] [ 1, 2 ] undefined y
