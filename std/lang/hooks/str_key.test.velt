@@ -1,4 +1,4 @@
-// velt/lang/hooks (internal): tests of str_key.velt, run by `velt test std/`. `strHash` must give
+// velt/lang/hooks (tests): tests of str_key.velt, run by `velt test std/`. `strHash` must give
 // one hash per text whatever the string's form (inline, static, heap, slice), the same as the
 // runtime's hash gave (the values below), which LLVM's inline copy for short strings repeats;
 // `strEquals` compares bytes.

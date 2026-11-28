@@ -141,9 +141,7 @@ impl FnLower<'_, '_> {
                 let x = self.key_float_bits(f, Ty::F64);
                 self.fx_combine(zero, x)
             }
-            TyKind::Str => {
-                self.str_hash(Operand::Copy(Place::local(data)))
-            }
+            TyKind::Str => self.str_hash(Operand::Copy(Place::local(data))),
             // A `struct` value: its content, agreeing with `AnySame` (#641). A C struct's is
             // below, by its number rules.
             _ if self.cx.value_struct(ty) && !self.cx.c_struct(ty) => {

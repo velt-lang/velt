@@ -323,7 +323,12 @@ fn program(case: Case) -> Program {
                 at = fb.call(at, Callee::Extern(k.hash), args, Some(c));
                 fb.assign(at, h, Rvalue::Cast(copy_local(c), Ty::U64));
             } else {
-                at = fb.call(at, Callee::Func(k.word_of), vec![copy_local(p_rest)], Some(h));
+                at = fb.call(
+                    at,
+                    Callee::Func(k.word_of),
+                    vec![copy_local(p_rest)],
+                    Some(h),
+                );
             }
             if case != Case::U64ResultCompared {
                 let words = vec![copy_local(h), copy_place(field(rest, 1)), int(0, Ty::U64)];

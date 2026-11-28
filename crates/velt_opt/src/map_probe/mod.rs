@@ -122,7 +122,9 @@ impl Probes {
     fn reads_only(&self, callee: &Callee) -> bool {
         match callee {
             Callee::Func(f) => {
-                self.lookups.contains_key(f) || self.hash.contains(f) || self.read_only_fns.contains(f)
+                self.lookups.contains_key(f)
+                    || self.hash.contains(f)
+                    || self.read_only_fns.contains(f)
             }
             Callee::Extern(e) => self.read_only.contains(e),
             Callee::Ptr { .. } => false,
