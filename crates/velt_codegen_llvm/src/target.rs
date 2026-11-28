@@ -162,6 +162,11 @@ impl Target {
         })
     }
 
+    /// Whether the target's C library is musl (`*-linux-musl`, `*-musleabi…`).
+    pub fn is_musl(&self) -> bool {
+        self.os == Os::Linux && self.triple.contains("-musl")
+    }
+
     /// Whether code for this target must be position independent (PIE executables).
     pub fn pic(&self) -> bool {
         !matches!(self.os, Os::Windows | Os::Wasi | Os::WasmBrowser)
