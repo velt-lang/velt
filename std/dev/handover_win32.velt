@@ -1,0 +1,238 @@
+// velt/dev (internal): the listener `velt dev`'s supervisor hands a program on Windows
+// (`#dev-handover`, std/net/tcp_sched.velt's `listen` under `velt dev`). The supervisor's dev
+// channel is a local named pipe (`VELT_DEV_SOCKET`, std/dev/pipe_win32.velt): the program sends
+// `listen <addr>\n` and reads `ok <record>\n`, the listening socket duplicated for this process
+// (`WSADuplicateSocketW`'s `WSAPROTOCOL_INFOW`, in hex), which `WSASocketW` turns into a socket
+// of its own, or `err <message>\n`. Both name one socket: the supervisor's keeps it, its port
+// (port 0's too) and its backlog open across reloads. The pipe is opened here; the request and
+// its reply, which wait for the supervisor, run on the executor's blocking pool.
+
+import { IoResult } from "velt/native/result";
+import { IoStatus } from "velt/native/status";
+import { Ptr } from "velt/ffi/ptr";
+import { wideOf } from "velt/ffi/wide";
+import { utf8Encode } from "velt/encoding/utf8";
+import { addressLoad, addressStore } from "velt/lang/intrinsics";
+import * as bl from "velt/lang/hooks/sched_blocking";
+import * as m from "velt/lang/hooks/sched_mem";
+import { cText } from "velt/net/fd_addr";
+import * as fs from "velt/net/fd_socket";
+import { CloseHandle, GetLastError, openPipe, ReadFile, WriteFile } from "velt/dev/pipe_win32";
+import * as r from "#reactor";
+import { getEnv } from "#env-sys";
+
+declare c("c") function WSASocketW(
+  af: i32,
+  kind: i32,
+  protocol: i32,
+  info: Ptr<u8> | null,
+  group: u32,
+  flags: u32,
+): usize;
+declare c("c") function closesocket$dev(s: usize): i32;
+
+/** `FROM_PROTOCOL_INFO`, and the flags of std's other sockets: overlapped, not inherited. */
+const FROM_PROTOCOL_INFO: i32 = -1;
+const FLAGS: u32 = 0x01 | 0x80;
+const INVALID_SOCKET: usize = 0xffffffffffffffff;
+/** `sizeof(WSAPROTOCOL_INFOW)`. */
+const RECORD: usize = 628;
+/** Longest request and reply line, as the supervisor's side. */
+const MAX_LINE: usize = 4096;
+
+// The round trip's block: the pipe, the request's length, the `GetLastError` of a failed read or
+// write, a count of bytes moved, the request line, the reply (NUL-terminated), the record.
+const B_PIPE: usize = 0;
+const B_OUT_LEN: usize = 8;
+const B_ERROR: usize = 16;
+const B_MOVED: usize = 24;
+const B_OUT: usize = 32;
+const B_REPLY: usize = B_OUT + MAX_LINE;
+const B_RECORD: usize = B_REPLY + MAX_LINE + 8;
+const B_SIZE: usize = B_RECORD + RECORD;
+
+/** The supervisor's listener for `addr` (a socket ready for the reactor), or the failure. */
+export async function listener(addr: string): Promise<IoResult<u64>> {
+  const name = getEnv("VELT_DEV_SOCKET") ?? "";
+  const line = utf8Encode(`listen ${addr}\n`);
+  if (line.length > MAX_LINE) {
+    return fs.failed<u64>({ code: 4, message: "listen: address too long" }, 0);
+  }
+  const wide = wideOf(name);
+  if (wide == null) {
+    return fs.failed<u64>(unreachable(4, "the channel's name holds a NUL"), 0);
+  }
+  const h = openPipe(wide, 0);
+  if (h === null) {
+    // SAFETY: no precondition (right after the open that failed).
+    const st = pipeError(unsafe { GetLastError() });
+    return fs.failed<u64>(unreachable(st.code, st.message), 0);
+  }
+  const b = m.zeroed(B_SIZE);
+  m.st(b + B_PIPE, Ptr.addressOf(h));
+  m.st(b + B_OUT_LEN, line.length as usize);
+  // SAFETY: the block's request line, within its room (checked above).
+  unsafe {
+    for (let i = 0; i < line.length; i++) {
+      addressStore<u8>(b + B_OUT + (i as usize), line[i]);
+    }
+  }
+  if (bl.supported()) {
+    await bl.run((): i32 => roundTrip(b));
+  } else {
+    roundTrip(b);
+  }
+  // SAFETY: the pipe, not used after.
+  unsafe {
+    CloseHandle(h);
+  }
+  const got = finish(b);
+  m.release(b, B_SIZE);
+  return got;
+}
+
+/** On a pool thread: writes the request and reads the reply line into block `b`. */
+function roundTrip(b: usize): i32 {
+  const pipe = m.ptrTo<void>(m.ld(b + B_PIPE));
+  const moved = m.ptrTo<u32>(b + B_MOVED);
+  const n = m.ld(b + B_OUT_LEN);
+  let sent: usize = 0;
+  while (sent < n) {
+    const rest = m.ptrTo<void>(b + B_OUT + sent);
+    const count = (n - sent) as u32;
+    // SAFETY: the rest of the request line in the block; a synchronous pipe handle.
+    const ok = unsafe { WriteFile(pipe, rest, count, moved, null) };
+    if (ok === 0) {
+      return failed(b);
+    }
+    sent += m.ld32(b + B_MOVED) as usize;
+  }
+  let len: usize = 0;
+  while (len < MAX_LINE - 1 && (len === 0 || lastByte(b, len) !== 10)) {
+    const room = (MAX_LINE - 1 - len) as u32;
+    // SAFETY: the reply's free room, one byte kept for its NUL.
+    const ok = unsafe { ReadFile(pipe, m.ptrTo<void>(b + B_REPLY + len), room, moved, null) };
+    if (ok === 0) {
+      if (len === 0) {
+        return failed(b);
+      }
+      break;
+    }
+    const k = m.ld32(b + B_MOVED) as usize;
+    if (k === 0) {
+      break;
+    }
+    len += k;
+  }
+  // Only the line: the supervisor sends nothing after it.
+  if (len > 0 && lastByte(b, len) === 10) {
+    // SAFETY: within the reply.
+    unsafe {
+      addressStore<u8>(b + B_REPLY + len - 1, 0);
+    }
+  }
+  return 0;
+}
+
+function lastByte(b: usize, len: usize): u8 {
+  // SAFETY: a byte of the reply read so far.
+  return unsafe { addressLoad<u8>(b + B_REPLY + len - 1) };
+}
+
+/** Notes this thread's `GetLastError` in block `b`. */
+function failed(b: usize): i32 {
+  // SAFETY: no precondition.
+  const e = unsafe { GetLastError() };
+  m.st32(b + B_ERROR, e === 0 ? 0xffffffff : e);
+  return 0;
+}
+
+/** Back on the program's thread: the listener block `b` received, or why there is none. */
+function finish(b: usize): IoResult<u64> {
+  const e = m.ld32(b + B_ERROR);
+  if (e !== 0) {
+    return fs.failed<u64>(pipeError(e), 0);
+  }
+  const line = cText(b + B_REPLY).trimEnd();
+  if (!line.startsWith("ok ")) {
+    const message = line.startsWith("err ") ? line.slice(4) : line;
+    return fs.failed<u64>({ code: 99, message: message }, 0);
+  }
+  const hex = line.slice(3);
+  if ((hex.length as usize) !== 2 * RECORD || !decodeHex(hex, b + B_RECORD)) {
+    const what = `velt dev: malformed listener record (${hex.length} chars)`;
+    return fs.failed<u64>({ code: 99, message: what }, 0);
+  }
+  const record = m.ptrTo<u8>(b + B_RECORD);
+  const from = FROM_PROTOCOL_INFO;
+  // SAFETY: the record `WSADuplicateSocketW` made for this process, in the block.
+  const s = unsafe { WSASocketW(from, from, from, record, 0, FLAGS) };
+  if (s === INVALID_SOCKET) {
+    return fs.failed<u64>(fs.osError(r.errno()), 0);
+  }
+  if (s > 0x7fffffff) {
+    // A handle the callers' `i32` descriptor can't hold, refused as std/net/calls_win32.velt's
+    // `socket` refuses one.
+    // SAFETY: the socket just made, not used after.
+    unsafe {
+      closesocket$dev(s);
+    }
+    return fs.failed<u64>(fs.osError(10024), 0);
+  }
+  const e2 = r.prepare(s as i32);
+  if (e2 !== 0) {
+    fs.closeFd(s as i32);
+    return fs.failed<u64>(fs.osError(e2), 0);
+  }
+  return fs.value<u64>(s as u64);
+}
+
+/** The bytes of `hex` into memory at `out`; false if it isn't hex. */
+function decodeHex(hex: string, out: usize): bool {
+  for (let i: i64 = 0; i < (hex.length as i64); i += 2) {
+    const hi = nibble(hex.charCodeAt(i));
+    const lo = nibble(hex.charCodeAt(i + 1));
+    if (hi < 0 || lo < 0) {
+      return false;
+    }
+    // SAFETY: byte `i >> 1` of the record, which holds `hex.length / 2` (checked by the caller).
+    unsafe {
+      addressStore<u8>(out + ((i >> 1) as usize), (hi * 16 + lo) as u8);
+    }
+  }
+  return true;
+}
+
+function nibble(c: i64): i64 {
+  if (c >= 48 && c <= 57) {
+    return c - 48;
+  }
+  if (c >= 97 && c <= 102) {
+    return c - 87;
+  }
+  return -1;
+}
+
+/**
+ * The status of a failure of the pipe (a Win32 error, not Winsock's): the code Rust's I/O
+ * errors gave the runtime's side, which the program saw before (not found, access denied, a
+ * broken pipe), and Windows' message.
+ */
+function pipeError(e: u32): IoStatus {
+  const st = fs.osError(e as i32);
+  if (e === 2 || e === 3) {
+    return { code: 1, message: st.message };
+  }
+  if (e === 5) {
+    return { code: 2, message: st.message };
+  }
+  if (e === 109 || e === 232) {
+    return { code: 10, message: st.message };
+  }
+  return { code: 99, message: st.message };
+}
+
+/** A failure to reach the supervisor, as the runtime's side worded it. */
+function unreachable(code: i32, message: string): IoStatus {
+  return { code: code, message: `velt dev: cannot reach the supervisor: ${message}` };
+}

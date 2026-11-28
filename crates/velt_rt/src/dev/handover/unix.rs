@@ -2,12 +2,17 @@
 //! listener travels as a file descriptor (`SCM_RIGHTS`) attached to the `ok` reply.
 
 use std::ffi::OsStr;
-use std::io::{self, BufRead, BufReader, Read};
+use std::io;
+#[cfg(test)]
+use std::io::{BufRead, BufReader, Read};
 use std::net::TcpListener;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsRawFd, RawFd};
+#[cfg(test)]
+use std::os::fd::{FromRawFd, OwnedFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 
+#[cfg(test)]
 use super::MAX_LINE;
 
 /// One connection on the dev channel.
@@ -106,7 +111,9 @@ pub fn reply_ok(stream: &Stream, listener: &TcpListener) -> io::Result<()> {
     send_with_fd(stream, b"ok\n", listener.as_raw_fd())
 }
 
-/// Program side: the listener from an `ok` reply, or the `err` reply as an error.
+/// The tests' program side (a program's is std's, std/dev/handover_posix.velt): the listener from
+/// an `ok` reply, or the `err` reply as an error.
+#[cfg(test)]
 pub(super) fn receive_listener(stream: &Stream) -> io::Result<TcpListener> {
     let (line, fd) = recv_line_with_fd(stream)?;
     match (line.strip_prefix("ok"), fd) {
@@ -153,6 +160,7 @@ fn send_with_fd(stream: &UnixStream, data: &[u8], fd: RawFd) -> io::Result<()> {
 }
 
 /// Read one reply line; the descriptor, if any, arrives with its first bytes.
+#[cfg(test)]
 fn recv_line_with_fd(stream: &UnixStream) -> io::Result<(String, Option<OwnedFd>)> {
     let mut data = vec![0u8; MAX_LINE];
     let mut cmsg = CmsgBuf { bytes: [0; 64] };

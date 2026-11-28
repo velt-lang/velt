@@ -109,7 +109,6 @@ velt_rt velt_rt_strbuf_push_inspect_str
 velt_rt velt_rt_strbuf_push_str
 velt_rt velt_rt_strbuf_push_u8s
 velt_rt velt_rt_strbuf_push_words
-velt_rt velt_rt_tcp_listen
 velt_rt velt_rt_thread_yield
 velt_rt velt_rt_throw_loc
 velt_rt velt_rt_tla_at

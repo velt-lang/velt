@@ -1,7 +1,8 @@
 //! The `velt dev` protocol between the supervisor and the program (rt_abi_async.md §13): one
-//! request per connection to the supervisor's dev channel (`VELT_DEV_SOCKET`). Both sides of
-//! every request live here so they cannot drift apart, except the program side of the stop
-//! channel, which is std's (std/dev/stop_win32.velt; `protocol_round_trip` writes its lines).
+//! request per connection to the supervisor's dev channel (`VELT_DEV_SOCKET`). The supervisor's
+//! side and the JIT host's live here; the program's side of the listener handover and of the
+//! stop channel is std's (std/dev/handover_posix.velt, handover_win32.velt, stop_win32.velt).
+//! The tests keep a program side of their own (`request`), which speaks the same lines.
 //! The transport is per platform:
 //! - `unix`: a Unix socket; listeners travel as file descriptors (`SCM_RIGHTS`);
 //! - `windows`: a named pipe; listeners travel as `WSAPROTOCOL_INFOW` records
@@ -23,6 +24,7 @@
 
 use std::ffi::OsStr;
 use std::io::{self, BufRead, BufReader, Read, Write};
+#[cfg(test)]
 use std::net::TcpListener;
 use std::path::PathBuf;
 
@@ -32,11 +34,11 @@ mod unix;
 #[cfg(windows)]
 mod windows;
 
-#[cfg(unix)]
+#[cfg(all(unix, test))]
 use unix::receive_listener;
 #[cfg(unix)]
 pub use unix::{connect, peer_pid, reply_ok, Server, Stream};
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 use windows::receive_listener;
 #[cfg(windows)]
 pub use windows::{connect, peer_pid, reply_ok, Server, Stream};
@@ -46,8 +48,10 @@ const MAX_LINE: usize = 4096;
 /// Longest build report accepted (a few hundred paths).
 const MAX_REPORT: u64 = 1 << 20;
 
-/// Program side: ask the supervisor at `socket` for a listener bound to `addr`.
-pub fn request(socket: &OsStr, addr: &str) -> io::Result<TcpListener> {
+/// The tests' program side (a program's is std's): ask the supervisor at `socket` for a listener
+/// bound to `addr`.
+#[cfg(test)]
+fn request(socket: &OsStr, addr: &str) -> io::Result<TcpListener> {
     let stream = connect(socket).map_err(|e| {
         io::Error::new(
             e.kind(),

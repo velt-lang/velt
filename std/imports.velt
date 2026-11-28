@@ -279,6 +279,8 @@ export const imports: Imports = {
    * channel on Windows.
    */
   "#dev-stop": { win32: "./dev/stop_win32.velt", default: "./dev/stop_posix.velt" },
+  /** The listener `velt dev`'s supervisor hands over (std/net/tcp_sched.velt): pipe or socket. */
+  "#dev-handover": { win32: "./dev/handover_win32.velt", default: "./dev/handover_posix.velt" },
   /**
    * What a `MappedFile` is made of (velt/fs): a mapping of the file (`mmap` through
    * `#fd-system`, Win32's file mappings on Windows), the file read into memory on WebAssembly.
