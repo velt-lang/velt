@@ -297,7 +297,7 @@ the holder of a node that drives it, whose hub keeps it allocated while any hold
 The call of an async host function (`declare host("m") async function f(…): Promise<T>`,
 https://veltlang.com/docs/reference/host-functions/) is the import `m.f`, which calls the JS
 function and returns a `u32` id under which the glue keeps its JS promise, then a promise leaf over
-that id (velt_rt_wasm `host_promise.rs`), and the promise of a std hook awaiting the leaf (velt_vir
+that id (std's `schedHostPromise`, std/lang/hooks/sched_host.velt), and the promise of a std hook awaiting the leaf (velt_vir
 `lower/host.rs`). The leaf's result is std's `HostSettled<W>` (std/host/promise.velt) in its foreign
 layout, `{ VeltStr code; VeltStr message; W value; }` (offsets 0, 24, 48): `W` is `T`, `u32` (a
 `HostRef` slot, 0 for `null`) for `HostRef` and `HostRef | null`, and `bool` (unused) for `void`.
@@ -432,9 +432,10 @@ aborts it with a message carrying the delay, and std passes `timed` to a wait fo
 by `any` holds references to its sources until it is aborted (they reach it only through links it
 owns).
 
-Natively the signals are std's (`#task-signal`: std/task/signal_sched.velt over signal_core.velt,
-in raw memory; a wait is a heap future linked into its signal, woken in the order the waits
-began). WebAssembly's runtime keeps its own:
+The signals are std's on every target (std/task/signal_sched.velt over signal_core.velt, in raw
+memory; a wait is a heap future linked into its signal, woken in the order the waits began).
+velt_rt_wasm still defines its own, which no program calls since WebAssembly runs the executor in
+Velt (#3905); they go with its executor:
 
 | Symbol (velt_rt_wasm) | Signature | Notes |
 |---|---|---|
