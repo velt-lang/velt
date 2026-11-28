@@ -774,7 +774,6 @@ Neither runtime has clock functions.
 | `velt_rt_deep_eq_leave` | `() -> ()` | the pair `velt_rt_deep_eq_enter` last took on is compared |
 | `velt_rt_lk_write` | `(u64* count)` | a write of the lock-set object whose count word is at `count`: stops the program in read mode unless the reader made the object (§9.1) |
 | `velt_rt_free_after_reads` | `(void* obj, void (*drop)(void** slot))` | the last reference to the lock-set object `obj` (count still 1) went in code changing the caller's containers inside a read: `drop` (its drop glue) frees it now, or in read mode once this thread's outermost read ends (§9.1) |
-| `velt_rt_str_hash` | `(const VeltStr* s) -> u64` | string Map/Set keys; fixed seed (deterministic), not flood-resistant |
 | `velt_rt_math_sqrt` / `_floor` / `_ceil` / `_round` / `_trunc` / `_fabs` | `(f64) -> f64` | `round` = JS `Math.round` (ties toward +∞, keeps `-0`) |
 | `velt_rt_math_to_int32` | `(f64) -> i32` | JS ToInt32 (bitwise operators on numbers); backends emit the case of magnitude below 2^63 inline and call it only for the rest |
 | `velt_rt_math_mul_int32` | `(i32 a, i32 b) -> i32` | JS `(a * b) \| 0`: the exact product rounded like the double multiply, low 32 bits; emitted inline |
@@ -1017,7 +1016,6 @@ runtime keeps the functions below.
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_str_byte_slice` | `(const VeltStr* s, u64 start, u64 end, u64 units, VeltStr* out)` | **[non-additive, #2816]** bytes `start..end` of the WTF-8 (velt/encoding `utf8Substring`, `trim`, `split`, and `slice` / `substring` / `charAt` / `at`, whose positions std translates); `units` is the piece's UTF-16 length, or `u64::MAX` when the caller doesn't know it (the runtime counts); the caller checks `start <= end <= len` and code point boundaries (`slice` itself is std's, the runtime's JS slice is gone) |
-| `velt_rt_str_eq` | `(const VeltStr* a, const VeltStr* b) -> u8` | `==` fast path: length check + one memcmp |
 | `velt_rt_str_join` | `(const VeltStrArray* parts, const VeltStr* sep, VeltStr* out)` | `parts.join(sep)`: sums the pieces' lengths and unit counts, then writes the result once (inline, or a heap buffer of exactly its size) |
 | `velt_rt_str_to_upper` / `_to_lower` | `(const VeltStr* s, VeltStr* out)` | full Unicode default case mapping (`ß` → `SS`, final sigma), like JS, for text that is not ASCII; ASCII text is mapped in std (std/lang/string/case.velt), which calls these for the rest |
 | `velt_rt_str_from_char_code` | `(i64 code, VeltStr* out)` | JS `ToUint16(code)`; a surrogate gives a lone surrogate, as JS. std makes the string of an ASCII unit itself (inline, no call) and calls this for the others |

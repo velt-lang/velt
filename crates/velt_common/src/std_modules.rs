@@ -142,6 +142,7 @@ table! {
     lang_hooks_sched_share_alias => "lang/hooks/sched_share_alias",
     lang_hooks_sched_spawn => "lang/hooks/sched_spawn",
     lang_hooks_sched_yield => "lang/hooks/sched_yield",
+    lang_hooks_str_key => "lang/hooks/str_key",
     lang_hooks_string => "lang/hooks/string",
     lang_hooks_syntax => "lang/hooks/syntax",
     lang_hooks_transfer => "lang/hooks/transfer",

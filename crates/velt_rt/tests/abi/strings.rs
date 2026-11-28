@@ -5,7 +5,6 @@ use super::js_table as js;
 use crate::str::{velt_rt_str_drop, VeltStr};
 use crate::str_ops::case::*;
 use crate::str_ops::number::*;
-use crate::str_ops::search::*;
 use crate::str_ops::slice::*;
 use std::mem::MaybeUninit;
 
@@ -173,17 +172,6 @@ fn static_inputs_give_borrowed_results() {
         assert_eq!(t.as_bytes(), b"hello");
         velt_rt_str_drop(&mut t);
     }
-}
-
-#[test]
-fn str_eq() {
-    let eq = |a: &'static str, b: &str| unsafe { velt_rt_str_eq(&lit(a), &*heap(b)) };
-    assert_eq!(eq("abc", "abc"), 1);
-    assert_eq!(eq("abc", "abd"), 0);
-    assert_eq!(eq("abc", "ab"), 0);
-    assert_eq!(eq("", ""), 1);
-    let s = lit("same");
-    assert_eq!(unsafe { velt_rt_str_eq(&s, &s) }, 1);
 }
 
 #[test]

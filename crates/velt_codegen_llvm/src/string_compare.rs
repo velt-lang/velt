@@ -218,8 +218,6 @@ mod tests {
         ];
         let sig = [Ty::Ptr, Ty::Ptr];
         assert!(literal_compare(&f, "velt_rt_str_cmp", &sig, Ty::I32, &args).is_none());
-        let (f, args) = function(ONE_BYTE_ASCII_W1, 0, false);
-        assert!(literal_compare(&f, "velt_rt_str_eq", &sig, Ty::U8, &args).is_none());
     }
 
     #[test]

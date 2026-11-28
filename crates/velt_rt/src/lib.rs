@@ -23,7 +23,6 @@ pub mod dev;
 pub mod entry;
 pub mod freed;
 pub mod handle;
-pub mod hash;
 pub mod hazard;
 pub mod host;
 pub mod inspect;

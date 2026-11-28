@@ -3,7 +3,8 @@
 //! Every `Map` method (std/prelude/map.velt) probes with `lookup(key, hash(key) * FIB)`, so
 //! `m.set(k, (m.get(k) ?? 0) + 1)`, `m.has(k) ? m.get(k)! : …` or a `Record` update hash the key
 //! and walk the probe sequence twice once the methods are inlined. Both are pure: `lookup` only
-//! reads the map, and `velt_rt_str_hash` only reads the string. This pass replaces a call `P` to
+//! reads the map, and std's `strHash` (std/lang/hooks/str_key.velt, `@noInline`, so it stays a
+//! call here) only reads the string. This pass replaces a call `P` to
 //! one of them by a copy of the result of an earlier call `Q` to the same function when:
 //! - `Q` dominates `P` and its result is still in its destination at `P` (a local written only
 //!   by `Q`);
@@ -43,9 +44,17 @@ const LOOKUP_PREFIX: &str = "_V3stdP7preludeP3mapN3MapM6lookup_";
 /// the first one with a write in between, which every farther one has too.
 const CANDIDATES: usize = 4;
 
-/// Runtime functions that only read memory: the probes, and the string comparisons a `lookup`
-/// inlined into the caller would make.
-const READ_ONLY_EXTERNS: [&str; 3] = ["velt_rt_str_hash", "velt_rt_str_eq", "velt_rt_str_cmp"];
+/// Runtime functions that only read memory: the string comparison a `lookup` inlined into the
+/// caller would make (its `==` is std's `strEquals`, [`Probes::read_only_fns`]).
+const READ_ONLY_EXTERNS: [&str; 1] = ["velt_rt_str_cmp"];
+
+/// Is `symbol` std's hook `name` (its mangled name: `velt_common::std_hook!`), or a clone of it?
+fn is_hook(symbol: &str, name: &str) -> bool {
+    let hook = velt_vir::mangle::mangle(name);
+    symbol
+        .strip_prefix(hook.as_str())
+        .is_some_and(|tail| tail.is_empty() || tail.starts_with("_L"))
+}
 
 /// `velt_rt_str_clone(src, out)`: writes `*out` and `src`'s reference count.
 const STR_CLONE: &str = "velt_rt_str_clone";
@@ -54,10 +63,12 @@ const STR_CLONE: &str = "velt_rt_str_clone";
 pub(crate) struct Probes {
     /// `Map.lookup` instances (pure, may be reused) and their parameter types.
     lookups: FxHashMap<FuncId, Vec<Ty>>,
-    /// `velt_rt_str_hash`: pure, may be reused.
-    hash: Option<ExternId>,
+    /// std's `strHash` (and its clones): pure, may be reused.
+    hash: FxHashSet<FuncId>,
     /// Externs that write no memory.
     read_only: FxHashSet<ExternId>,
+    /// std's `strEquals` (and its clones), which only reads the strings.
+    read_only_fns: FxHashSet<FuncId>,
     clone: Option<ExternId>,
     /// `velt_rt_alloc`: returns fresh memory, writes nothing a probe can read.
     alloc: Option<ExternId>,
@@ -66,6 +77,12 @@ pub(crate) struct Probes {
 impl Probes {
     /// Find the probe functions of `program`.
     pub(crate) fn find(program: &Program) -> Probes {
+        let hooks = |name: &str| -> FxHashSet<FuncId> {
+            (0..program.funcs.len() as u32)
+                .map(FuncId)
+                .filter(|f| is_hook(&program.funcs[f.0 as usize].symbol, name))
+                .collect()
+        };
         let lookups = (0..program.funcs.len() as u32)
             .map(FuncId)
             .filter(|f| {
@@ -84,8 +101,9 @@ impl Probes {
         };
         Probes {
             lookups,
-            hash: ext("velt_rt_str_hash"),
+            hash: hooks(velt_common::std_hook!(str_hash)),
             read_only: READ_ONLY_EXTERNS.iter().filter_map(|n| ext(n)).collect(),
+            read_only_fns: hooks(velt_common::std_hook!(str_equals)),
             clone: ext(STR_CLONE),
             alloc: ext("velt_rt_alloc"),
         }
@@ -94,16 +112,17 @@ impl Probes {
     /// Whether a call to `callee` may be replaced by an earlier one's result.
     fn reusable(&self, callee: &Callee) -> bool {
         match callee {
-            Callee::Func(f) => self.lookups.contains_key(f),
-            Callee::Extern(e) => Some(*e) == self.hash,
-            Callee::Ptr { .. } => false,
+            Callee::Func(f) => self.lookups.contains_key(f) || self.hash.contains(f),
+            Callee::Extern(_) | Callee::Ptr { .. } => false,
         }
     }
 
     /// Whether a call to `callee` writes no memory.
     fn reads_only(&self, callee: &Callee) -> bool {
         match callee {
-            Callee::Func(f) => self.lookups.contains_key(f),
+            Callee::Func(f) => {
+                self.lookups.contains_key(f) || self.hash.contains(f) || self.read_only_fns.contains(f)
+            }
             Callee::Extern(e) => self.read_only.contains(e),
             Callee::Ptr { .. } => false,
         }
@@ -112,8 +131,8 @@ impl Probes {
     /// Parameter types of a reusable probe.
     fn params(&self, callee: &Callee) -> &[Ty] {
         match callee {
-            Callee::Func(f) => self.lookups.get(f).map_or(&[], Vec::as_slice),
-            _ => &[Ty::Ptr],
+            Callee::Func(f) => self.lookups.get(f).map_or(&[Ty::Ptr], Vec::as_slice),
+            _ => &[],
         }
     }
 

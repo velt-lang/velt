@@ -73,21 +73,21 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// `velt_rt_str_eq(a, b)` (string pointers) as a `Bool`: a length check, then one memcmp.
+    /// `a == b` of the strings at addresses `a` and `b`, as a `Bool`: std's `strEquals`
+    /// (std/lang/hooks/str_key.velt), a length check, then the bytes.
     pub(super) fn str_eq(&mut self, a: Operand, b: Operand) -> Operand {
-        let r = self.temp(Ty::U8);
-        self.call_rt(Rt::StrEq, vec![a, b], Some(Place::local(r)));
-        self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(
-                vir::BinOp::Ne,
-                Operand::Copy(Place::local(r)),
-                cint(0, Ty::U8),
-            ),
-        )
+        hooks::str_equals(self, ty::Str::arg(a), ty::Str::arg(b))
+            .emit(self)
+            .op()
     }
 
-    /// String `==`/`!=`: `velt_rt_str_eq`; `<`/…: `velt_rt_str_cmp(&a, &b) <op> 0`; `+` (from
+    /// The hash of the string at address `s` as a key (a `U64`): std's `strHash`
+    /// (std/lang/hooks/str_key.velt).
+    pub(super) fn str_hash(&mut self, s: Operand) -> Operand {
+        hooks::str_hash(self, ty::Str::arg(s)).emit(self).op()
+    }
+
+    /// String `==`/`!=`: `str_eq`; `<`/…: `velt_rt_str_cmp(&a, &b) <op> 0`; `+` (from
     /// `s += t`): concat.
     fn str_binop(&mut self, op: hir::BinOp, l: Operand, r: Operand, result_ty: TyId) -> Operand {
         let str_ty = Ty::Agg(crate::vir::STR_AGG);

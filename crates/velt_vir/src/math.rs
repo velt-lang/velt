@@ -430,10 +430,8 @@ impl Effects {
 pub const CHAR_CODE_AT_ENTRY: &str = "velt_hook_string_char_code_at";
 
 /// The runtime functions besides the [`MathOp`]s whose effects are not [`Effects::Any`].
-const EFFECTS: [(&str, Effects); 4] = [
+const EFFECTS: [(&str, Effects); 2] = [
     ("velt_rt_str_cmp", Effects::ReadOnly),
-    ("velt_rt_str_eq", Effects::ReadOnly),
-    ("velt_rt_str_hash", Effects::ReadOnly),
     ("velt_rt_array_view_cold", Effects::Cold),
 ];
 

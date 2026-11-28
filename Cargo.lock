@@ -1448,6 +1448,7 @@ dependencies = [
  "object",
  "rustc-hash",
  "velt_codegen_cl",
+ "velt_common",
  "velt_opt",
  "velt_vir",
 ]

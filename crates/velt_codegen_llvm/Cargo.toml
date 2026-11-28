@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 velt_vir.workspace = true
+velt_common.workspace = true
 velt_codegen_cl.workspace = true
 rustc-hash = "2.1.3"
 # The build cache key of a codegen unit: its IR hashed in place (clang.rs).

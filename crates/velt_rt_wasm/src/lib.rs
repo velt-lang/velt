@@ -6,8 +6,8 @@
 //! Two kinds of modules:
 //! - **shared with velt_rt**, compiled from `crates/velt_rt/src` (`#[path]`): strings, string
 //!   methods and builders, number formatting, byte buffers
-//!   and their bulk operations, BigInts, results, object handles, hashing (also `velt/hash`'s
-//!   FNV-1a), HTML escaping, math, memory, the fs operations and the
+//!   and their bulk operations, BigInts, results, object handles, HTML escaping, math, memory,
+//!   the fs operations and the
 //!   `*_sync` fs calls. Their
 //!   `repr(C)` types put a pointer only where an 8-byte field follows, so on wasm32 each pointer
 //!   occupies the first half of its 8-byte VIR slot (see `velt_codegen_llvm`'s
@@ -36,8 +36,6 @@ pub mod freed;
 pub mod fs;
 #[path = "../../velt_rt/src/handle.rs"]
 pub mod handle;
-#[path = "../../velt_rt/src/hash.rs"]
-pub mod hash;
 pub mod host;
 #[cfg(any(test, all(target_family = "wasm", target_os = "unknown")))]
 pub mod host_promise;

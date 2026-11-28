@@ -32,8 +32,9 @@ enum Case {
     /// A read-only Velt function's `u64` result of `rest` (its first word, as `strWord0` gives
     /// it), rebuilt into a string with `rest`'s second word and stored: it is a data word.
     U64ResultRebuiltAndStored,
-    /// A read-only runtime call's `u64` result of `rest` (a hash) rebuilt and stored the same
-    /// way: a runtime function returns no address as an integer, so this is no view.
+    /// A read-only runtime call's result of `rest` (a comparison, widened to `u64`) rebuilt and
+    /// stored the same way: a runtime function returns no address as an integer, so this is no
+    /// view.
     RuntimeU64RebuiltAndStored,
     /// The Velt function's `u64` result only compared.
     U64ResultCompared,
@@ -86,7 +87,7 @@ fn kit() -> Kit {
         Ty::Unit,
         false,
     );
-    let hash = pb.ext("velt_rt_str_hash", &[Ty::Ptr], Ty::U64, false);
+    let hash = pb.ext("velt_rt_str_cmp", &[Ty::Ptr, Ty::Ptr], Ty::I32, false);
     // `word_of(s)`: the first word of the string at `s` (`strWord0`), a read-only Velt function.
     let mut wb = FuncBuilder::internal("word_of", &[Ty::Ptr], Ty::U64);
     let (sp, w) = (wb.param(0), wb.local(Ty::U64));
@@ -316,12 +317,14 @@ fn program(case: Case) -> Program {
         Case::U64ResultRebuiltAndStored
         | Case::RuntimeU64RebuiltAndStored
         | Case::U64ResultCompared => {
-            let callee = if case == Case::RuntimeU64RebuiltAndStored {
-                Callee::Extern(k.hash)
+            if case == Case::RuntimeU64RebuiltAndStored {
+                let c = fb.local(Ty::I32);
+                let args = vec![copy_local(p_rest), copy_local(p_rest)];
+                at = fb.call(at, Callee::Extern(k.hash), args, Some(c));
+                fb.assign(at, h, Rvalue::Cast(copy_local(c), Ty::U64));
             } else {
-                Callee::Func(k.word_of)
-            };
-            at = fb.call(at, callee, vec![copy_local(p_rest)], Some(h));
+                at = fb.call(at, Callee::Func(k.word_of), vec![copy_local(p_rest)], Some(h));
+            }
             if case != Case::U64ResultCompared {
                 let words = vec![copy_local(h), copy_place(field(rest, 1)), int(0, Ty::U64)];
                 fb.assign(at, other_str, Rvalue::Aggregate(STR_AGG, words));

@@ -177,7 +177,7 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// `value == literal` for a literal pattern (strings: `velt_rt_str_eq`).
+    /// `value == literal` for a literal pattern (strings: std's `strEquals`).
     fn lit_eq(&mut self, l: &Lit, place: &Place, ty: TyId) -> Operand {
         if let Lit::Null = l {
             let some = self.option_present(place, ty);

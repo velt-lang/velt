@@ -13,11 +13,9 @@
 //! `VELT_UTF16_CASES` changes the number of operations.
 
 use super::utf16_model::{self as model, show, wtf8_decode, wtf8_encode};
-use crate::hash::velt_rt_str_hash;
 use crate::str::{
     cmp_utf16, velt_rt_str_cmp, velt_rt_str_concat, velt_rt_str_drop, wtf8, BytePos, VeltStr,
 };
-use crate::str_ops::search::*;
 use crate::str_ops::slice::*;
 use crate::strbuf::{velt_rt_strbuf_new, velt_rt_strbuf_push_str};
 use std::mem::MaybeUninit;
@@ -310,8 +308,8 @@ fn check_one(rng: &mut Rng, alphabets: &[Alphabet]) -> Result<(), String> {
                 )
             }
             7 => {
-                // Equal text built two ways (whole, and concatenated halves) is equal and hashes
-                // the same.
+                // Equal text built two ways (whole, and concatenated halves) has the same bytes,
+                // which std's `==` and key hash read (std/lang/hooks/str_key.velt).
                 let cut = rng.below(s.len() + 1);
                 let (a, b) = (to_rt(rng, &s[..cut]), to_rt(rng, &s[cut..]));
                 let mut joined = MaybeUninit::<VeltStr>::uninit();
@@ -319,11 +317,10 @@ fn check_one(rng: &mut Rng, alphabets: &[Alphabet]) -> Result<(), String> {
                 let joined = Rt(joined.assume_init());
                 let op = format!("{} split at {cut} and joined", show(&s));
                 diff(format!("{op}: text"), units(&joined.0), s.clone())?;
-                diff(format!("{op}: =="), velt_rt_str_eq(rs, &joined.0), 1)?;
                 diff(
-                    format!("{op}: hash"),
-                    velt_rt_str_hash(rs),
-                    velt_rt_str_hash(&joined.0),
+                    format!("{op}: bytes"),
+                    (*rs).as_bytes().to_vec(),
+                    joined.0.as_bytes().to_vec(),
                 )
             }
             8 => {

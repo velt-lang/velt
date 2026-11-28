@@ -1,4 +1,4 @@
-//! Emulated string builder (rt_abi_async.md §12.1) and `velt_rt_str_eq`. A builder is an owned
+//! Emulated string builder (rt_abi_async.md §12.1). A builder is an owned
 //! `VeltStr`; every push reallocates (simple, and leak/double-free checked like any string).
 
 use super::rt::{inspect_num, js_num};
@@ -88,7 +88,6 @@ impl Interp<'_> {
                 self.write_bytes(a[1], &hdr);
                 self.write_bytes(a[0], &[0; 24]);
             }
-            "velt_rt_str_eq" => return Some((self.str_bytes(a[0]) == self.str_bytes(a[1])) as u64),
             _ => return None,
         }
         Some(0)

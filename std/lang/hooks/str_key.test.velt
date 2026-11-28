@@ -1,0 +1,88 @@
+// velt/lang/hooks (internal): tests of str_key.velt, run by `velt test std/`. `strHash` must give
+// one hash per text whatever the string's form (inline, static, heap, slice), the same as the
+// runtime's hash gave (the values below), which LLVM's inline copy for short strings repeats;
+// `strEquals` compares bytes.
+import { describe, expect, it } from "velt/test";
+import { strEquals, strHash } from "velt/lang/hooks/str_key";
+
+/** `s` built again at run time (a heap or inline string, never the static literal). */
+function rebuilt(s: string): string {
+  let out = "";
+  for (const c of s) {
+    out += c;
+  }
+  return out;
+}
+
+/** Strings of every length from 0 to 70 (inline and heap forms, every tail length), ASCII. */
+function asciiStrings(): string[] {
+  const out: string[] = [];
+  let s = "";
+  for (let i = 0; i <= 70; i++) {
+    out.push(s);
+    s += String.fromCharCode(33 + ((i * 7) % 90));
+  }
+  return out;
+}
+
+describe("strHash", () => {
+  it("gives the runtime's hash of the same text", () => {
+    // The values of velt_rt `hash.rs`, which this function replaced (bench/stdport has its
+    // formula in Rust): the hash is how keys spread in a map, and must not change by accident.
+    const pinned: [string, string][] = [
+      ["", "7acdbb98b1344213"],
+      ["a", "27a02e168da21aa0"],
+      ["key", "ed53c5dc377066b1"],
+      ["abcdefgh", "c7df49b82f67aa3c"],
+      ["abcdefghi", "c9478ec07eaacb3e"],
+      ["héllo wörld, longer than eight", "fffa3726e60ec825"],
+      ["日本語", "3b6b36f88afe85b6"],
+    ];
+    for (const [s, h] of pinned) {
+      expect(strHash(s).toString(16)).toBe(h);
+      expect(strHash(rebuilt(s)).toString(16)).toBe(h);
+    }
+  });
+
+  it("is the same for every form of one text", () => {
+    const long = "the quick brown fox jumps over the lazy dog, twice: ";
+    for (let i: i64 = 0; i <= 50; i++) {
+      // A slice of a heap string, the same text built again and the static literal's slice.
+      const heap = rebuilt(long);
+      const cut = heap.slice(i, i + 9);
+      expect(strHash(cut)).toBe(strHash(rebuilt(cut)));
+      expect(strHash(cut)).toBe(strHash(long.slice(i, i + 9)));
+      expect(strHash(heap.slice(i))).toBe(strHash(long.slice(i)));
+    }
+    for (const s of asciiStrings()) {
+      expect(strHash(s)).toBe(strHash(rebuilt(s)));
+    }
+  });
+
+  it("ignores what an inline string holds after its text", () => {
+    // `abcdefgh` cut down to `abc` in place: the bytes after the text are not part of it.
+    let s = "abcdefgh";
+    s = rebuilt(s).slice(0, 3);
+    expect(strHash(s)).toBe(strHash("abc"));
+    expect(strHash("a") != strHash("a\0")).toBe(true);
+  });
+});
+
+describe("strEquals", () => {
+  it("compares bytes of every length and form", () => {
+    for (const s of asciiStrings()) {
+      expect(strEquals(s, rebuilt(s))).toBe(true);
+      expect(strEquals(s, s + "x")).toBe(false);
+      if (s.length > 0) {
+        // The last byte changed: a difference in a word and in the tail is seen.
+        const other = s.slice(0, (s.length - 1) as i64) + "~";
+        expect(strEquals(s, other)).toBe(s.endsWith("~"));
+        const first = "~" + s.slice(1);
+        expect(strEquals(s, first)).toBe(s.startsWith("~"));
+      }
+    }
+    expect(strEquals("päron", rebuilt("päron"))).toBe(true);
+    expect(strEquals("päron", "paron")).toBe(false);
+    expect(strEquals("", rebuilt(""))).toBe(true);
+  });
+});

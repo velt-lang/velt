@@ -22,7 +22,6 @@
 
 pub mod case;
 pub mod number;
-pub mod search;
 pub mod slice;
 
 use crate::str::{VeltStr, Wtf8};

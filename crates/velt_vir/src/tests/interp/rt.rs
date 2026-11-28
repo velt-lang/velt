@@ -233,12 +233,6 @@ impl Interp<'_> {
                 );
                 self.heap_free(a[0]);
             }
-            "velt_rt_str_hash" => {
-                let b = self.str_bytes(a[0]);
-                return Ok(b.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &x| {
-                    (h ^ x as u64).wrapping_mul(0x100_0000_01b3)
-                }));
-            }
             "velt_rt_rc_inc" => {
                 let n = self.read_u64(a[0]) + 1;
                 self.write_bytes(a[0], &n.to_le_bytes());
