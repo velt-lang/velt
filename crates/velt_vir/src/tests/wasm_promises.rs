@@ -1,7 +1,7 @@
 //! What the runtime answers about a promise in a program that runs nothing on the executor in
-//! Velt (lower/sched.rs `no_runtime_promises`, #3905): natively velt_rt's `velt_rt_fut_peek`,
-//! `velt_rt_fut_id` and `velt_rt_fut_share`; on WebAssembly, whose runtime has no promises, the
-//! answer is lowered inline, so the module links no such function.
+//! Velt: nothing, on any target. Natively std answers (`velt_rt_fut_peek` is std's `schedPeek`
+//! since #2196 9f); on WebAssembly, whose runtime has no promises, the answer is lowered inline
+//! (lower/sched.rs `no_runtime_promises`, #3905), so the module links no such function.
 
 use super::c_wasi::{check_for, lower_checked_for};
 use crate::vir;
@@ -29,8 +29,8 @@ fn webassembly_asks_the_runtime_nothing_about_promises() {
 }
 
 #[test]
-fn a_native_target_keeps_the_runtime_s_answers() {
-    // The program reaches them: what the WebAssembly test checks is lowered there too.
+fn a_native_target_asks_the_runtime_nothing_either() {
+    // std answers there; without `no_runtime_promises` the WebAssembly test above fails.
     let native = asks("x86_64-unknown-linux-gnu");
-    assert!(native.iter().any(|s| s == "velt_rt_fut_peek"), "{native:?}");
+    assert_eq!(native, Vec::<String>::new());
 }
