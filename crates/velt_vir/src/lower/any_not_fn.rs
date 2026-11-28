@@ -1,11 +1,20 @@
 //! Calling an `any` that holds no function (`f()` with `f` `undefined`, `o.missing()`): Node
-//! throws a `TypeError` (`f is not a function`), which the program can catch (#1422). Typing
-//! does not change: the call adds nothing to what its `try` throws. Lowering throws the error,
-//! as `throw new TypeError(…)` does, when the innermost `catch` of the same function takes a
-//! `TypeError` already (its type is `Error`, `TypeError`, a union with one, or `unknown` /
-//! `any`, from what the rest of the `try` body throws). Anywhere else (no such `catch` around
-//! the call in its function, a `finally` block, glue, the standard library) it stops the
-//! process with the same message: the error never leaves the function.
+//! throws a `TypeError` (`f is not a function`), which the program can catch (#1422). Lowering
+//! throws the error, as `throw new TypeError(…)` does, where it is typed to go:
+//!
+//! - to the innermost `catch` of the same function when that `catch` takes a `TypeError`
+//!   already (its type is `Error`, `TypeError`, a union with one, or `unknown` / `any`, from
+//!   what the rest of the `try` body throws; the call adds nothing to what its `try` throws);
+//! - out of the function when no `catch` of it encloses the call: sema counts the `TypeError`
+//!   among what the function throws there (`expr::catch_any`), so an async function's promise
+//!   rejects with it and a sync function's caller can catch it, as in Node; a function whose
+//!   error type is written or fixed by its context without one keeps stopping;
+//! - from a `finally` block, as from the code around its `try` (also out of the function);
+//!   not on an early exit edge (`return`, `break`, a throw), where the `try`s it leaves are
+//!   still in place.
+//!
+//! Anywhere else (a `catch` that does not take it, glue, the standard library) it stops the
+//! process with the same message.
 
 use velt_common::Span;
 use velt_sema::hir::{self, TyId, TyKind};
@@ -63,14 +72,19 @@ impl FnLower<'_, '_> {
             return None;
         }
         // A `finally` block is lowered on each edge out of its `try`, with the scopes the edge
-        // leaves still in place: they don't enclose its code (`left_by_edge`).
+        // leaves still in place: they don't enclose its code (`left_by_edge`). With no `catch`
+        // around it the error leaves the function, on every edge (an async body rejects).
         let scopes = self.scopes.iter().enumerate().rev();
         let mut inside = scopes.filter(|(i, _)| !self.left_by_edge(*i));
-        let to = inside.find_map(|(_, s)| match &s.kind {
+        let found = inside.find_map(|(_, s)| match &s.kind {
             ScopeKind::Try { ty, .. } => Some(Some(*ty)),
             ScopeKind::Uncaught | ScopeKind::CatchesNothing => Some(None),
             _ => None,
-        })??;
+        });
+        let to = match found {
+            Some(to) => to?,
+            None => self.throws?,
+        };
         let (d, te) = self.type_error_def()?;
         self.takes_error(to, te).then_some((d, te))
     }

@@ -21,6 +21,7 @@ pub(crate) fn infer_all(cx: &mut Ctx) {
     cx.groups = None;
     let groups = cx.throw_groups().clone();
     let fns: Vec<DefId> = cx.unit_fns();
+    super::not_fn::keep_open_only(cx, &fns, &groups);
     for &d in &fns {
         let decl = cx.fn_info(d).declared_throws.map(|t| t.ty);
         let t = decl.flatten();

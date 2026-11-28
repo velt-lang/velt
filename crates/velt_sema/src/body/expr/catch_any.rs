@@ -1,6 +1,8 @@
 //! The `catch` of Node's `TypeError` for a call through `any` that holds no function (#1422).
 //! velt_vir throws that error to the innermost `catch` of the same function when the `catch`'s
-//! type takes a `TypeError` (velt_vir any_not_fn.rs). Typing never grows for it, with one
+//! type takes a `TypeError` (velt_vir any_not_fn.rs); outside every `catch` of the function,
+//! it is one of the function's errors where those are inferred (`throws::not_fn`). A `catch`'s
+//! typing never grows for it, with one
 //! exception that changes no program that compiles: a `catch` whose `try` throws nothing (its
 //! variable is `never`) but calls through `any` gets the type `TypeError` when its body does not
 //! use the variable (a `never` variable read ends the path there, which a `TypeError` would
@@ -60,10 +62,18 @@ struct Trial {
 
 impl FnCx<'_, '_> {
     /// A call through `any` was made here (dynamic_member.rs): counted in user modules only,
-    /// where velt_vir throws the `TypeError`.
+    /// where velt_vir throws the `TypeError`; outside every `catch` of the function it is one of
+    /// the function's errors (`throws::not_fn`).
     pub(crate) fn note_any_call(&mut self) {
         if !self.cx.scopes[self.module].is_std {
             self.f.any_calls += 1;
+            // Outside every `catch` of this function, the `TypeError` leaves it, as in Node
+            // (`throws::not_fn`).
+            if self.f.catch_depth == 0 {
+                if let Some(s) = crate::throws::not_fn_src(self.cx) {
+                    self.throw_src(s);
+                }
+            }
         }
     }
 

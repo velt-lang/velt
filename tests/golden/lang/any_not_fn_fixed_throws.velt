@@ -1,0 +1,20 @@
+// A call through `any` that holds no function, in a function whose `throws` clause is written
+// without `TypeError`, still stops the program with Node's message (#3955): the clause keeps
+// the error from leaving the function, and counting it would break a clause that held. Node's
+// caller `catch` runs here (`caught o.ob is not a function`); add `TypeError` to the clause,
+// or leave the clause out, to get that.
+const o: any = { ob: 5 };
+
+function fixed(): void throws RangeError {
+  if (o.ob === 6) {
+    throw new RangeError("six");
+  }
+  o.ob();
+}
+
+console.log("before");
+try {
+  fixed();
+} catch (e) {
+  console.log("caught", (e as Error).message);
+}
