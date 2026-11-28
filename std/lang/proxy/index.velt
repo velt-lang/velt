@@ -5,7 +5,9 @@
 // `Proxy` object. Its descriptor slots (velt_vir `lower/any_proxy.rs`) call the keyed methods
 // below, so `p.k` runs the handler's `get` trap, `p.k = v` its `set` trap and `"k" in p` its
 // `has` trap, each with the target, the key and the proxy itself as the receiver. A trap the
-// handler leaves out forwards to the target, as in JavaScript. `Reflect.get` / `set` / `has`
+// handler leaves out forwards to the target, as in JavaScript. A proxy of a function is a
+// function: `p(x)` runs the `apply` trap with the target, `this` and the arguments
+// (velt/lang/proxy/calls). `Reflect.get` / `set` / `has`
 // do what the operations do on a plain value, and pass the receiver on to a proxy target.
 //
 // Its bodies use dynamic operations without making the program pay for them: sema counts a
