@@ -175,6 +175,7 @@ fn a_changed_std_file_is_a_miss_and_a_copy_of_the_same_is_not() {
             entries: vec![],
             files,
             tls: vec![],
+            statics: vec![],
         };
         write_atomically(&finder.manifest_path(&key), &manifest.render()).unwrap();
         change(&std_file);

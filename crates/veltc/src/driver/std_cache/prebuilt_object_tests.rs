@@ -373,13 +373,13 @@ fn the_writer_is_called_out_to() {
         )
     };
     let mut p = program(vec![writer, caller(0)], &[tls.as_str()], vec![]);
-    assert!(shares_nothing(&p, &HashSet::new()).is_err());
+    assert!(shares_nothing(&p, &HashSet::new(), &HashSet::new()).is_err());
     let calls = declare_calls_out(&mut p).unwrap();
     assert_eq!(calls, std::slice::from_ref(&write));
     let declared = &p.funcs[0];
     assert!(declared.blocks.is_empty() && declared.linkage == Linkage::Import);
     assert!(!declared.param_attrs[1].readonly);
-    assert_eq!(shares_nothing(&p, &HashSet::new()), Ok(()));
+    assert_eq!(shares_nothing(&p, &HashSet::new(), &HashSet::new()), Ok(()));
     assert_eq!(calls_nothing_else(&p, &calls), Ok(()));
     // Not called out to: refused.
     let err = calls_nothing_else(&p, &[]).unwrap_err();
