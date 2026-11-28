@@ -1,0 +1,16 @@
+dropped: {"a":{"a":1}}
+kept: TypeError
+  replacer ""
+  replacer "a"
+  replacer "a"
+  replacer "self"
+  replacer "b"
+logged: {"a":{"a":1,"self":"cut"},"b":2}
+array dropped: {"list":[1,null]}
+array kept: TypeError
+holder kept: TypeError
+holder replaced: {"name":"root","kids":[{"up":0}]}
+nested: [{"a":[[1,null],null]},null]
+endless: RangeError
+after: {"a":{"a":1}}
+plain after: {"name":"root","kids":[{"name":"kid","kids":[]}]}

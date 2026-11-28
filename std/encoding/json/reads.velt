@@ -1,0 +1,78 @@
+// velt/encoding/json (internal): what writing a dynamic value as a replacer sees it read (any_raw.velt
+// `writeJsonAnyReads`), for the walk that goes on through that value when the replacer keeps it
+// (any_replace.velt): the walk takes each member from here instead of reading it again, so a getter
+// runs once and a member's `toJSON` runs on the value that was read, as in Node.
+//
+// Only what the walk can't take from the view as JSON is kept: a member with a `toJSON` in it, a
+// value cut as a cycle, and the containers on the way to one. Each is an entry in write order
+// (depth first), with the position of its member in its parent's view and the end of its own
+// entries, so the walk can pass over a member the replacer drops or replaces. The value written
+// itself has no entry: its members' entries are all of them.
+
+import { RuntimeType } from "velt/reflect/runtime_type";
+
+/** The values read while one view was written: entries in write order. */
+export class JsonReads {
+  // Made at the first `begin`: most views need no entry.
+  private positions: i64[] | null = null;
+  private values: any[] | null = null;
+  private types: RuntimeType[] | null = null;
+  private ends: i64[] | null = null;
+
+  /** Starts the entry of `v` (of type `t`), member `position` of its parent: its index. */
+  begin(position: i64, v: any, t: RuntimeType): i64 {
+    if (this.positions == null) {
+      this.positions = [position];
+      this.values = [v];
+      this.types = [t];
+      this.ends = [1];
+      return 0;
+    }
+    const i = this.positions!.length as i64;
+    this.positions!.push(position);
+    this.values!.push(v);
+    this.types!.push(t);
+    this.ends!.push(i + 1);
+    return i;
+  }
+
+  /** Ends entry `i` (`begin`): the entries after it so far are its members'. */
+  end(i: i64): void {
+    this.ends![i] = this.positions!.length as i64;
+  }
+
+  /** Takes entry `i` back, with all after it: the walk can take that value from the view. */
+  drop(i: i64): void {
+    while ((this.positions!.length as i64) > i) {
+      this.positions!.pop();
+      this.values!.pop();
+      this.types!.pop();
+      this.ends!.pop();
+    }
+  }
+
+  /** How many entries there are. */
+  count(): i64 {
+    return this.positions == null ? 0 : (this.positions!.length as i64);
+  }
+
+  /** The position of entry `i`'s member in its parent's view. */
+  position(i: i64): i64 {
+    return this.positions![i];
+  }
+
+  /** The value entry `i` read. */
+  value(i: i64): any {
+    return this.values![i];
+  }
+
+  /** The type of `value(i)`. */
+  type(i: i64): RuntimeType {
+    return this.types![i];
+  }
+
+  /** The index after entry `i` and its members' entries. */
+  next(i: i64): i64 {
+    return this.ends![i];
+  }
+}

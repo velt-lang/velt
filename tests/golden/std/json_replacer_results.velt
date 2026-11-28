@@ -1,0 +1,76 @@
+// What a replacer declared with `any` returns, past literals (json_replacer_any): a value that
+// contains itself is Node's catchable `TypeError` (#3871), and later calls work as before; a
+// `Date`, a `Map` or an instance of a class with a `toJSON` it returns is written by its own
+// properties, without that `toJSON` (a `Date` has none: `{}`), as is a `Date` a `toJSON`
+// returns, with a replacer and without. The Node twin is json_replacer_results.mjs.
+
+class Money {
+  cents = 5;
+  toJSON(key: string): string {
+    return `${key}:${this.cents}`;
+  }
+}
+
+class Stamp {
+  toJSON(): Date {
+    return new Date(0);
+  }
+}
+
+class Loose {
+  toJSON(): any {
+    return new Date(0);
+  }
+}
+
+function cyclic(k: string, v: any): any {
+  if (k === "a") {
+    const o: any[] = [1];
+    o.push(o);
+    return o;
+  }
+  return v;
+}
+
+function deep(k: string, v: any): any {
+  if (k === "b") {
+    const inner: any[] = ["x"];
+    const o: any[] = [inner];
+    inner.push(o);
+    return { list: o };
+  }
+  return v;
+}
+
+function objects(k: string, v: any): any {
+  if (k === "d") return new Date(0);
+  if (k === "m") return new Map<string, number>();
+  if (k === "c") return new Money();
+  return v;
+}
+
+function keep(k: string, v: JsonValue): JsonValue | undefined {
+  return v;
+}
+
+function attempt(what: string, f: () => string): void {
+  try {
+    console.log(what, f());
+  } catch (e) {
+    console.log(what, e instanceof TypeError ? "TypeError" : "other");
+  }
+}
+
+function main(): void {
+  attempt("cyclic result:", () => JSON.stringify({ a: 1, b: 2 }, cyclic));
+  attempt("cycle inside:", () => JSON.stringify({ a: 1, b: 2 }, deep));
+  attempt("after:", () => JSON.stringify({ b: [2], c: "x" }, cyclic));
+  attempt("objects:", () => JSON.stringify({ d: 1, m: 2, c: 3 }, objects));
+  attempt("toJSON's Date:", () => JSON.stringify({ s: new Stamp(), l: new Loose() }));
+  attempt("with a replacer:", () => JSON.stringify({ s: new Stamp(), l: new Loose() }, keep));
+  attempt("in an array:", () => JSON.stringify([new Stamp(), new Loose()], keep));
+  const l: any = new Loose();
+  attempt("through any:", () => JSON.stringify(l));
+}
+
+main();

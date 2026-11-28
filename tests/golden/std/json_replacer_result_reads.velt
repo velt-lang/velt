@@ -1,0 +1,315 @@
+// What a replacer declared with `any` returned is walked once, as Node walks it
+// (SerializeJSONProperty): each member read once (a getter runs once), its `toJSON(key)` called
+// once, then the replacer, then its own members; a member the replacer drops or replaces is not
+// walked further, so nothing in it runs. The log prints the order of the getters, `toJSON`s and
+// replacer calls; a cycle the replacer keeps is a `TypeError` where Node throws it, after what ran
+// before it (#3871). The Node twin is json_replacer_result_reads.mjs.
+
+class C {
+  a = 1;
+  self: C | null = null;
+}
+
+const c = new C();
+c.self = c;
+
+let log: string[] = [];
+
+function note(s: string): void {
+  log.push(s);
+}
+
+function flush(what: string, text: string): void {
+  console.log(what, text, log.join(" "));
+  log = [];
+}
+
+function attempt(what: string, f: () => string): void {
+  let text = "";
+  try {
+    text = f();
+  } catch (e) {
+    text = e instanceof TypeError ? "TypeError" : e instanceof RangeError ? "RangeError" : "other";
+  }
+  flush(what, text);
+}
+
+class Pair {
+  a = 1;
+  b = 2;
+}
+
+class Leaf {
+  toJSON(key: string): any {
+    note(`toJSON(${key})`);
+    return [key];
+  }
+}
+
+class Inner {
+  toJSON(key: string): any {
+    note(`inner(${key})`);
+    return [key];
+  }
+}
+
+class Counted {
+  toJSON(key: string): any {
+    note(`counted(${key})`);
+    return { key: key, inner: new Inner() };
+  }
+}
+
+class Self {
+  n = 3;
+  toJSON(key: string): any {
+    note(`self(${key})`);
+    return this;
+  }
+}
+
+class Nested {
+  toJSON(key: string): any {
+    note(`nested(${key})`);
+    let s = "";
+    try {
+      s = JSON.stringify({ q: new Leaf() }, quiet);
+    } catch (e) {
+      s = "err";
+    }
+    return s;
+  }
+}
+
+function quiet(k: string, v: any): any {
+  return v;
+}
+
+function dropSelf(k: string, v: any): any {
+  note(`rep(${k})`);
+  return k === "self" ? undefined : v;
+}
+
+function keepAll(k: string, v: any): any {
+  note(`rep(${k})`);
+  return v;
+}
+
+function dropGone(k: string, v: any): any {
+  note(`rep(${k})`);
+  return k === "gone" ? undefined : v;
+}
+
+function replaceGone(k: string, v: any): any {
+  note(`rep(${k})`);
+  return k === "gone" ? 0 : v;
+}
+
+function getterResult(): any {
+  let reads = 0;
+  const o: any = {
+    a: c,
+    get g(): number {
+      reads = reads + 1;
+      note(`get g ${reads}`);
+      return reads;
+    },
+  };
+  return o;
+}
+
+function reentrant(): any {
+  const o: any = {
+    a: c,
+    get g(): string {
+      note("get g");
+      return JSON.stringify({ q: 1 }, quiet);
+    },
+  };
+  return o;
+}
+
+function ordered(): any {
+  const o: any = {
+    get a(): number {
+      note("get a");
+      return 1;
+    },
+    t: new Leaf(),
+    get b(): number {
+      note("get b");
+      return 2;
+    },
+    n: [new Leaf(), 4],
+  };
+  return o;
+}
+
+function gone(): any {
+  const o: any = {
+    get gone(): number {
+      note("get gone");
+      return 1;
+    },
+    kept: new Leaf(),
+  };
+  return o;
+}
+
+let nestedReads = 0;
+
+// A getter below a member is read when the replacer's view of that member is made (Node reads it
+// later, when it walks there): only how often it runs is printed.
+function nestedGetter(): any {
+  const o: any = {
+    m: {
+      get g(): number {
+        nestedReads = nestedReads + 1;
+        return nestedReads;
+      },
+      t: new Leaf(),
+    },
+  };
+  return o;
+}
+
+class SelfGetter {
+  o: any = {
+    get g(): number {
+      nestedReads = nestedReads + 1;
+      return nestedReads;
+    },
+  };
+  toJSON(key: string): any {
+    note(`selfGetter(${key})`);
+    return this;
+  }
+}
+
+function main(): void {
+  const g = getterResult();
+  attempt(
+    "getter, cycle dropped:",
+    () => JSON.stringify({ x: 1 }, (k: string, v: any): any => (k === "" ? g : dropSelf(k, v))),
+  );
+  const g2 = getterResult();
+  attempt(
+    "getter, cycle kept:",
+    () => JSON.stringify({ x: 1 }, (k: string, v: any): any => (k === "" ? g2 : keepAll(k, v))),
+  );
+  const re = reentrant();
+  attempt(
+    "reentrant getter:",
+    () => JSON.stringify({ x: 1 }, (k: string, v: any): any => (k === "" ? re : dropSelf(k, v))),
+  );
+  attempt(
+    "dropped toJSON result:",
+    () => JSON.stringify(
+      { x: 1 },
+      (k: string, v: any): any =>
+        k === "" ? { n: new Counted(), gone: new Counted() } : dropGone(k, v),
+    ),
+  );
+  attempt(
+    "under a dropped member:",
+    () => JSON.stringify(
+      { x: 1 },
+      (k: string, v: any): any =>
+        k === "" ? { gone: { d: new Leaf() }, l: new Leaf() } : dropGone(k, v),
+    ),
+  );
+  attempt(
+    "under a replaced member:",
+    () => JSON.stringify(
+      { x: 1 },
+      (k: string, v: any): any =>
+        k === "" ? { gone: [new Leaf(), new Nested()], l: new Leaf() } : replaceGone(k, v),
+    ),
+  );
+  attempt(
+    "after a kept cycle:",
+    () => JSON.stringify(
+      { x: 1 },
+      (k: string, v: any): any => k === "" ? { a: c, t: new Leaf() } : keepAll(k, v),
+    ),
+  );
+  attempt(
+    "after a dropped cycle:",
+    () => JSON.stringify(
+      { x: 1 },
+      (k: string, v: any): any => k === "" ? { a: c, t: new Leaf() } : dropSelf(k, v),
+    ),
+  );
+  const o = ordered();
+  attempt(
+    "order:",
+    () => JSON.stringify({ x: 1 }, (k: string, v: any): any => (k === "" ? o : keepAll(k, v))),
+  );
+  const gn = gone();
+  attempt(
+    "getter dropped:",
+    () => JSON.stringify({ x: 1 }, (k: string, v: any): any => (k === "" ? gn : dropGone(k, v))),
+  );
+  attempt(
+    "array, cycle dropped:",
+    () => JSON.stringify(
+      { x: 1 },
+      (k: string, v: any): any => k === "" ? [new Leaf(), c, new Self()] : dropSelf(k, v),
+    ),
+  );
+  attempt(
+    "array, cycle kept:",
+    () => JSON.stringify(
+      { x: 1 },
+      (k: string, v: any): any => k === "" ? [new Leaf(), c, new Self()] : keepAll(k, v),
+    ),
+  );
+  attempt(
+    "nested stringify:",
+    () => JSON.stringify(
+      { x: 1 },
+      (k: string, v: any): any => k === "" ? { a: new Nested(), b: c } : dropSelf(k, v),
+    ),
+  );
+  attempt(
+    "nested in a result:",
+    () => JSON.stringify(
+      { x: 1 },
+      (k: string, v: any): any =>
+        k === ""
+          ? { a: { b: new Leaf() } }
+          : k === "a" ? { c: new Counted(), d: c } : dropSelf(k, v),
+    ),
+  );
+  const ng = nestedGetter();
+  attempt("nested getter:", () => {
+    nestedReads = 0;
+    const s = JSON.stringify({ x: 1 }, (k: string, v: any): any => (k === "" ? ng : keepAll(k, v)));
+    note(`reads ${nestedReads}`);
+    return s;
+  });
+  const sg = new SelfGetter();
+  attempt("return this:", () => {
+    nestedReads = 0;
+    const s = JSON.stringify(
+      { x: 1 },
+      (k: string, v: any): any => k === "" ? { w: { s: sg } } : keepAll(k, v),
+    );
+    note(`reads ${nestedReads}`);
+    return s;
+  });
+  const top: any = new Pair();
+  attempt(
+    "ancestor returned:",
+    () => JSON.stringify({ x: 1 }, (k: string, v: any): any => {
+      if (k === "") {
+        note("rep()");
+        return top;
+      }
+      return k === "b" ? top : keepAll(k, v);
+    }),
+  );
+  attempt("next call:", () => JSON.stringify({ x: [1, new Leaf()] }, keepAll));
+}
+
+main();

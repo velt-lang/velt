@@ -14,9 +14,9 @@ import {
 import { checkJsonTop, jsonPresent } from "velt/encoding/json/any";
 import { writeJsonAnyRaw } from "velt/encoding/json/any_raw";
 import { replaceJsonAny } from "velt/encoding/json/any_replace";
-import { dynamicOf, identity, isProxy } from "velt/reflect";
+import { beginVisit, dynamicOf, endVisit, identity, isProxy } from "velt/reflect";
 import { recordViewIs } from "velt/lang/intrinsics";
-import { jsonEnter, jsonLeave } from "velt/encoding/json/generated";
+import { jsonEnter, jsonLeave, jsonViewEnter, jsonViewLeave } from "velt/encoding/json/generated";
 import {
   jsonReplaced,
   jsonReplacedField,
@@ -26,6 +26,8 @@ import {
   jsonReplacerDepth,
   jsonReplacerKept,
   jsonReplacerView,
+  jsonWalkEnter,
+  jsonWalkLeave,
 } from "velt/encoding/json/replace_ops";
 import { pushRevived, setRevived } from "velt/encoding/json/value_ops";
 import { JsonValue } from "velt/prelude/json/json_value";
@@ -52,7 +54,7 @@ export declare generated("velt/encoding/json/generate/replace") function replace
   raw: JsonValue | null,
   replacer: JsonReplacer,
   depth: i64,
-): JsonValue | undefined throws RangeError;
+): JsonValue | undefined throws RangeError | TypeError;
 
 /** `replaceJson` of what a `toJSON` returned: it is not converted again. */
 export declare generated("velt/encoding/json/generate/replace") function replaceJsonPlain<T>(
@@ -61,7 +63,7 @@ export declare generated("velt/encoding/json/generate/replace") function replace
   raw: JsonValue | null,
   replacer: JsonReplacer,
   depth: i64,
-): JsonValue | undefined throws RangeError;
+): JsonValue | undefined throws RangeError | TypeError;
 
 /** The text of `JSON.stringify(value, replacer)`. */
 export declare generated("velt/encoding/json/generate/replace") function replaceJsonTop<T>(

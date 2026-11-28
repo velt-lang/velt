@@ -1,0 +1,109 @@
+// Node twin of json_replacer_cycles.velt: prints its .out.
+
+class Node1 {
+  constructor(name) {
+    this.name = name;
+    this.kids = [];
+    this.parent = null;
+  }
+}
+
+class Base {
+  tag = "b";
+  other = null;
+}
+
+class Derived extends Base {
+  extra = 1;
+}
+
+function logged(k, v) {
+  console.log(`  replacer ${JSON.stringify(k)}`);
+  return v;
+}
+
+function noParent(k, v) {
+  return k === "parent" ? undefined : v;
+}
+
+function keep(k, v) {
+  return v;
+}
+
+function viewed(k, v) {
+  console.log(`  replacer ${JSON.stringify(k)} ${JSON.stringify(v)}`);
+  return v;
+}
+
+function attempt(what, f) {
+  try {
+    console.log(what, f());
+  } catch (e) {
+    console.log(what, e instanceof TypeError ? "TypeError" : "other");
+  }
+}
+
+const root = new Node1("root");
+const kid = new Node1("kid");
+root.kids.push(kid);
+kid.parent = root;
+attempt("tree, logged:", () => JSON.stringify(root, logged));
+attempt("tree, no parent:", () => JSON.stringify(root, noParent));
+const d = new Derived();
+d.other = d;
+attempt("derived in a base field:", () => JSON.stringify(d, keep));
+attempt("derived, dropped:", () => JSON.stringify(d, (k, v) => (k === "other" ? undefined : v)));
+const a = new Base();
+const b = new Base();
+a.other = b;
+b.other = a;
+attempt("two objects:", () => JSON.stringify(a, keep));
+const l = { id: 1, next: [] };
+l.next.push(l);
+attempt("through an array:", () => JSON.stringify(l, keep));
+attempt("element left out:", () => JSON.stringify(l, (k, v) => (k === "0" ? undefined : v)));
+const shared = new Base();
+attempt("same value twice:", () => JSON.stringify([shared, shared], keep));
+const arr = [1];
+arr.push(arr);
+attempt("any array:", () => JSON.stringify(arr, keep));
+attempt("any array, left out:", () => JSON.stringify(arr, (k, v) => (k === "1" ? undefined : v)));
+const ad = new Derived();
+ad.other = ad;
+const anyClass = ad;
+attempt("any class:", () => JSON.stringify(anyClass, keep));
+attempt("any class, left out:", () => JSON.stringify(anyClass, (k, v) => (k === "other" ? undefined : v)));
+const rec = {};
+rec["n"] = 1;
+rec["me"] = rec;
+attempt("any record:", () => JSON.stringify(rec, keep));
+attempt("any record, left out:", () => JSON.stringify(rec, (k, v) => (k === "me" ? undefined : v)));
+attempt("tree again:", () => JSON.stringify(root, noParent));
+console.log(JSON.stringify({ at: new Date(0), n: 1 }, viewed));
+
+// Deeper than the writer's cycle check starts (16), with no cycle: written whole.
+function deepData() {
+  let t = { id: 0, next: [] };
+  for (let i = 1; i < 40; i++) {
+    t = { id: i, next: [t] };
+  }
+  let b = { id: 0, m: {} };
+  for (let i = 1; i < 40; i++) {
+    const m = {};
+    m["x"] = b;
+    b = { id: i, m };
+  }
+  let n = new Node1("0");
+  for (let i = 1; i < 40; i++) {
+    const p = new Node1(`${i}`);
+    p.kids.push(n);
+    n = p;
+  }
+  console.log("deep:", JSON.stringify(t).length, JSON.stringify(t, keep).length);
+  console.log("deep record:", JSON.stringify(b).length, JSON.stringify(b, keep).length);
+  console.log("deep class:", JSON.stringify(n).length, JSON.stringify(n, keep).length);
+  const self = { id: 1, m: {} };
+  self.m["me"] = self;
+  attempt("record:", () => JSON.stringify(self, keep));
+}
+deepData();

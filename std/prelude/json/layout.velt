@@ -6,6 +6,10 @@ import { JSON } from "velt/prelude/json/json";
 import { JsonValue } from "velt/prelude/json/json_value";
 import { propertyList, relayout } from "velt/encoding/json/relayout";
 import { hookCall } from "velt/lang/intrinsics";
+import { StringBuilder } from "velt/text/string_builder";
+import { replaceJsonResult } from "velt/encoding/json/any_replace";
+import { holdsJsonValue, jsonPresent, writeJsonResult } from "velt/encoding/json/any";
+import { jsonResultFailed, jsonResultWalked } from "velt/encoding/json/replace_ops";
 
 // `JSON.stringify(value, replacer, space)` (the compiler calls these): `text` is
 // `JSON.stringify(value)`; `keys` the replacer array's JSON text, applied when `filter`; `gap`
@@ -15,7 +19,8 @@ import { hookCall } from "velt/lang/intrinsics";
  * JSON form of its value (the value passed itself under the key `""` first), it returns the
  * value to write there, or `undefined` to leave a member out (an array element is then `null`).
  * As in JavaScript, a value's `toJSON(key)` runs just before the replacer is called for its
- * key, so the replacer of a parent sees its members before their `toJSON` (a `Date` as `{}`).
+ * key, so the replacer of a parent sees a member of a class with one as its fields (a `Date` as
+ * its text: its `toJSON` is std's).
  */
 export type JsonReplacer = (key: string, value: JsonValue) => JsonValue | undefined;
 
@@ -25,6 +30,52 @@ export type JsonReplacer = (key: string, value: JsonValue) => JsonValue | undefi
 // By role: only a program that passes a replacer function loads the walk (#3807).
 function jsonStringifyReplaced<T>(value: T, replacer: JsonReplacer): string {
   return hookCall("json_stringify_replaced", value, replacer);
+}
+
+// A replacer function declared with `any` (`(key: string, value: any) => any`) as a
+// `JsonReplacer` (the compiler calls it): what it returns is the JSON Node writes of it.
+function jsonReplacerOfAny(f: (key: string, value: any) => any): JsonReplacer {
+  return (key: string, value: JsonValue): JsonValue | undefined => jsonOfAny(f(key, value), key, f);
+}
+
+// What a replacer declared with `any` returned for `key`, as JSON: a `JsonValue` as it is;
+// `undefined`, a function or a symbol left out, as Node leaves them; a value with members walked
+// here through itself, once, as Node walks it (`replaceJsonResult`: each member read, its
+// `toJSON` called and the replacer called for it, then its own members), and the walk takes it as
+// it is (`jsonResultTaken`); anything else as Node writes it, without its own `toJSON` (that ran
+// before the replacer, if it was the value).
+function jsonOfAny(
+  r: any,
+  key: string,
+  f: (key: string, value: any) => any,
+): JsonValue | undefined {
+  if (!jsonPresent(r)) {
+    return undefined;
+  }
+  if (holdsJsonValue(r)) {
+    return r as JsonValue;
+  }
+  let walked: JsonValue | null = null;
+  try {
+    walked = replaceJsonResult(r, key, f, jsonReplacerOfAny);
+  } catch (e) {
+    // A replacer can't throw: the walk throws this when it takes the `null` returned instead.
+    jsonResultFailed(e instanceof RangeError);
+    return JsonValue.of(null);
+  }
+  if (walked != null) {
+    jsonResultWalked();
+    return walked!;
+  }
+  const w = new StringBuilder();
+  writeJsonResult(w, r, key);
+  let out = JsonValue.of(null);
+  try {
+    out = JsonValue.parse(w.take(), { maxDepth: 4294967295 });
+  } catch (e) {
+    panic(`ICE: JSON.stringify wrote text it cannot read back: ${e.message}`);
+  }
+  return out;
 }
 
 function jsonRelayout(text: string, keys: string, filter: bool, gap: string): string {

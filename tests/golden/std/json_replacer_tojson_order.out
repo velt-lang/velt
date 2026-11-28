@@ -44,7 +44,7 @@ array:
   replacer "1" "q"
 ["p","q"]
 date:
-  replacer "" {"label":"d","when":{}}
+  replacer "" {"label":"d","when":"1970-01-01T00:00:00.000Z"}
   replacer "label" "d"
   replacer "when" "1970-01-01T00:00:00.000Z"
 {"label":"d","when":"1970-01-01T00:00:00.000Z"}

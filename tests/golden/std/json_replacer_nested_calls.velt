@@ -1,0 +1,160 @@
+// `JSON.stringify(value, replacer)` called again while a replacer declared with `any` has its
+// result written: from the `toJSON` of a member of that result, and from the replacer itself. The
+// inner call keeps the outer call's state: a cycle in the outer result is still walked (the
+// replacer keeping the back reference is a `TypeError`, one leaving it out writes the rest), an
+// error the inner call throws and its `toJSON` catches changes nothing outside, and the depth
+// limit still counts the outer call's levels, so a new cycle at every level is the `RangeError`
+// (#3871). Each `toJSON` in such a result runs once. The Node twin is
+// json_replacer_nested_calls.mjs.
+
+class C {
+  a = 1;
+  self: C | null = null;
+}
+
+const c = new C();
+c.self = c;
+
+function attempt(what: string, f: () => string): void {
+  try {
+    console.log(what, f());
+  } catch (e) {
+    const kind =
+      e instanceof TypeError ? "TypeError" : e instanceof RangeError ? "RangeError" : "other";
+    console.log(what, kind);
+  }
+}
+
+function inner(k: string, v: any): any {
+  return v;
+}
+
+// A `toJSON` that calls `JSON.stringify` with a replacer.
+class T {
+  n = 5;
+  toJSON(key: string): any {
+    let s = "";
+    try {
+      s = JSON.stringify({ q: 1 }, inner);
+    } catch (e) {
+      s = "err";
+    }
+    return { inner: s };
+  }
+}
+
+// The same, whose inner call throws (the replacer keeps a cycle): caught inside.
+class Failing {
+  toJSON(key: string): any {
+    let s = "";
+    try {
+      s = JSON.stringify({ q: c }, inner);
+    } catch (e) {
+      s = e instanceof TypeError ? "TypeError" : "other";
+    }
+    return { inner: s };
+  }
+}
+
+// A `toJSON` that counts its calls: each runs once.
+let calls = 0;
+
+class Counted {
+  toJSON(key: string): any {
+    calls = calls + 1;
+    return { key: key, inner: new Inner() };
+  }
+}
+
+class Inner {
+  toJSON(key: string): any {
+    calls = calls + 1;
+    return [key];
+  }
+}
+
+function keep(k: string, v: any): any {
+  return k === "" ? { a: c, t: new T() } : v;
+}
+
+function drop(k: string, v: any): any {
+  if (k === "self") {
+    return undefined;
+  }
+  return k === "" ? { a: c, t: new T() } : v;
+}
+
+function dropFailing(k: string, v: any): any {
+  if (k === "self") {
+    return undefined;
+  }
+  return k === "" ? { a: c, f: new Failing() } : v;
+}
+
+function keepFailing(k: string, v: any): any {
+  return k === "" ? { a: c, f: new Failing() } : v;
+}
+
+function dropCounted(k: string, v: any): any {
+  if (k === "self") {
+    return undefined;
+  }
+  if (k === "") {
+    return { a: c, n: new Counted(), list: [new Counted(), c] };
+  }
+  return v;
+}
+
+function replaceCounted(k: string, v: any): any {
+  if (k === "self") {
+    return undefined;
+  }
+  if (k === "inner") {
+    return "replaced";
+  }
+  return k === "" ? { a: c, n: new Counted() } : v;
+}
+
+// A new cycle at every level, each result holding a `T`: Node's stack overflow `RangeError`.
+function endless(k: string, v: any): any {
+  const o = new C();
+  o.self = o;
+  if (k === "self") {
+    return { a: 2, next: o, t: new T() };
+  }
+  return v;
+}
+
+// The same, the replacer itself calling `JSON.stringify` with a replacer first.
+function endlessCalling(k: string, v: any): any {
+  const o = new C();
+  o.self = o;
+  if (k === "self") {
+    let s = "";
+    try {
+      s = JSON.stringify({ q: 1 }, inner);
+    } catch (e) {
+      s = "err";
+    }
+    return { a: 2, next: o, s: s };
+  }
+  return v;
+}
+
+function main(): void {
+  attempt("kept:", () => JSON.stringify({ x: 1 }, keep));
+  attempt("dropped:", () => JSON.stringify({ x: 1 }, drop));
+  attempt("toJSON once:", () => JSON.stringify({ x: 1 }, dropCounted));
+  console.log("calls:", calls);
+  attempt("toJSON replaced:", () => JSON.stringify({ x: 1 }, replaceCounted));
+  console.log("calls:", calls);
+  attempt("inner throws, dropped:", () => JSON.stringify({ x: 1 }, dropFailing));
+  attempt("inner throws, kept:", () => JSON.stringify({ x: 1 }, keepFailing));
+  attempt("after:", () => JSON.stringify({ x: 1 }, drop));
+  attempt("endless:", () => JSON.stringify(c, endless));
+  attempt("endless calling:", () => JSON.stringify(c, endlessCalling));
+  attempt("after endless:", () => JSON.stringify({ x: 1 }, drop));
+  attempt("plain after:", () => JSON.stringify({ y: [1, 2] }));
+}
+
+main();

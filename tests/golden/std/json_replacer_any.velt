@@ -1,0 +1,75 @@
+// A replacer function declared with `any` (`(key: string, value: any): any`) returns what Node's
+// would: an object or array literal, a number, a string, a boolean or `null` is written as Node
+// writes it; `undefined` and a function leave the member out (an array element is `null`); a
+// value it got returns unchanged (#3871); written in place too. The Node twin is
+// json_replacer_any.mjs.
+
+class Money {
+  cents: number;
+  constructor(cents: number) {
+    this.cents = cents;
+  }
+  toJSON(key: string): string {
+    return `${key}:${this.cents}`;
+  }
+}
+
+function literal(k: string, v: any): any {
+  if (k === "a") {
+    return { z: [9], m: new Money(5) };
+  }
+  return v;
+}
+
+function root(k: string, v: any): any {
+  if (k === "") {
+    return [1, { b: 2 }, "s"];
+  }
+  return v;
+}
+
+function scalars(k: string, v: any): any {
+  if (k === "n") {
+    return 42;
+  }
+  if (k === "s") {
+    return "str";
+  }
+  if (k === "b") {
+    return false;
+  }
+  if (k === "u") {
+    return undefined;
+  }
+  if (k === "x") {
+    return null;
+  }
+  if (k === "f") {
+    return () => 1;
+  }
+  return v;
+}
+
+function seen(k: string, v: any): any {
+  console.log(`  replacer ${JSON.stringify(k)}`);
+  return v;
+}
+
+function main(): void {
+  console.log(JSON.stringify({ a: 1, b: { c: 2 } }, literal));
+  console.log(JSON.stringify({ a: 1 }, root));
+  console.log(JSON.stringify({ n: 1, s: 1, b: 1, u: 1, x: 1, f: 1, k: 1 }, scalars));
+  console.log(JSON.stringify([1, 2, 3], (k: string, v: JsonValue) => v));
+  console.log(JSON.stringify({ a: [true], m: new Money(7) }, seen));
+  // Written in place, as a declared one is.
+  console.log(
+    JSON.stringify({ x: 1, y: 2 }, (k: string, v: any): any => (k === "y" ? undefined : v)),
+  );
+  console.log(
+    JSON.stringify({ x: 1, y: 2 }, function (k: string, v: unknown): unknown {
+      return k === "x" ? [v] : v;
+    }),
+  );
+}
+
+main();

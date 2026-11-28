@@ -1,0 +1,45 @@
+// `JSON.stringify` of values whose types can contain themselves: an object tree held in arrays
+// and a class list, which the writer checks for cycles (bench/json/recursive_ab.sh compares it
+// with a std before that check covered arrays and classes, #3724).
+
+interface Tree {
+  id: i64;
+  name: string;
+  kids: Tree[];
+}
+
+class Cell {
+  value: number;
+  next: Cell | null = null;
+  constructor(value: number) {
+    this.value = value;
+  }
+}
+
+function tree(depth: i64, id: i64): Tree {
+  const kids: Tree[] = [];
+  if (depth > 0) {
+    for (let i: i64 = 0; i < 4; i++) {
+      kids.push(tree(depth - 1, id * 4 + i));
+    }
+  }
+  return { id, name: `n${id}`, kids };
+}
+
+function main(): void {
+  const t = tree(6, 1);
+  const cells: Cell[] = [];
+  for (let i = 0; i < 400; i++) {
+    const c = new Cell(i);
+    c.next = new Cell(i + 1);
+    cells.push(c);
+  }
+  let total = 0;
+  for (let round = 0; round < 10; round++) {
+    total += JSON.stringify(t).length;
+    total += JSON.stringify(cells).length;
+  }
+  console.log(total);
+}
+
+main();
